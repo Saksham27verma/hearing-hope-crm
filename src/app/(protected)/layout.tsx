@@ -8,7 +8,8 @@ import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
 import { LazyUniversalSearch } from '@/components/common/LazyComponents';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
-import { initWebVitalsMonitoring } from '@/utils/performance';
+// Temporarily disabled to fix bundling issue
+// import { initWebVitalsMonitoring } from '@/utils/performance';
 
 // Icons
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -97,10 +98,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     handleProfileMenuClose();
   };
 
-  // Initialize performance monitoring
-  useEffect(() => {
-    initWebVitalsMonitoring();
-  }, []);
+  // Performance monitoring temporarily disabled to fix bundling issues
+  // useEffect(() => {
+  //   if (!pathname.includes('/interaction/')) {
+  //     initWebVitalsMonitoring();
+  //   }
+  // }, [pathname]);
 
   // Keyboard shortcut for search (Ctrl+K / Cmd+K)
   useEffect(() => {

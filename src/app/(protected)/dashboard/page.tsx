@@ -28,7 +28,8 @@ import { collection, getDocs, query, orderBy, limit, where, Timestamp } from 'fi
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { useOptimizedDashboard, useOptimizedCollection } from '@/hooks/useOptimizedFirebase';
+// Temporarily disabled optimized hooks to prevent bundling issues
+// import { useOptimizedDashboard, useOptimizedCollection } from '@/hooks/useOptimizedFirebase';
 
 // Format currency
 const formatCurrency = (amount: number) => {
@@ -52,35 +53,89 @@ const formatDate = (timestamp: Timestamp) => {
 export default function DashboardPage() {
   const { user } = useAuth();
   const router = useRouter();
-  
-  // Use optimized hooks for better performance
-  const { stats, loading: statsLoading, error: statsError, refresh: refreshStats } = useOptimizedDashboard();
-  
-  const { 
-    data: recentSales, 
-    loading: salesLoading 
-  } = useOptimizedCollection('sales', {
-    cacheKey: 'recent_sales',
-    cacheTTL: 2 * 60 * 1000, // 2 minutes for recent data
-    orderByField: 'saleDate',
-    orderDirection: 'desc',
-    enablePagination: true,
-    pageSize: 5
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    totalProducts: 0,
+    totalVisitors: 0,
+    totalSales: 0,
+    monthlySales: 0,
+    monthlyRevenue: 0
   });
+  const [recentSales, setRecentSales] = useState<any[]>([]);
+  const [recentVisitors, setRecentVisitors] = useState<any[]>([]);
 
-  const { 
-    data: recentVisitors, 
-    loading: visitorsLoading 
-  } = useOptimizedCollection('visitors', {
-    cacheKey: 'recent_visitors',
-    cacheTTL: 2 * 60 * 1000, // 2 minutes for recent data
-    orderByField: 'createdAt',
-    orderDirection: 'desc',
-    enablePagination: true,
-    pageSize: 5
-  });
-
-  const loading = statsLoading || salesLoading || visitorsLoading;
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true);
+        
+        // Get counts
+        const productsSnapshot = await getDocs(collection(db, 'products'));
+        const visitorsSnapshot = await getDocs(collection(db, 'visitors'));
+        const salesSnapshot = await getDocs(collection(db, 'sales'));
+        
+        // Calculate monthly data (current month)
+        const now = new Date();
+        const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const firstDayTimestamp = Timestamp.fromDate(firstDayOfMonth);
+        
+        const monthlySalesQuery = query(
+          collection(db, 'sales'),
+          where('saleDate', '>=', firstDayTimestamp)
+        );
+        const monthlySalesSnapshot = await getDocs(monthlySalesQuery);
+        
+        let monthlyRevenue = 0;
+        monthlySalesSnapshot.forEach(doc => {
+          const saleData = doc.data();
+          monthlyRevenue += saleData.totalAmount || 0;
+        });
+        
+        // Recent sales
+        const recentSalesQuery = query(
+          collection(db, 'sales'),
+          orderBy('saleDate', 'desc'),
+          limit(5)
+        );
+        const recentSalesSnapshot = await getDocs(recentSalesQuery);
+        const recentSalesData = recentSalesSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        // Recent visitors
+        const recentVisitorsQuery = query(
+          collection(db, 'visitors'),
+          orderBy('createdAt', 'desc'),
+          limit(5)
+        );
+        const recentVisitorsSnapshot = await getDocs(recentVisitorsQuery);
+        const recentVisitorsData = recentVisitorsSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        setStats({
+          totalProducts: productsSnapshot.size,
+          totalVisitors: visitorsSnapshot.size,
+          totalSales: salesSnapshot.size,
+          monthlySales: monthlySalesSnapshot.size,
+          monthlyRevenue
+        });
+        
+        setRecentSales(recentSalesData);
+        setRecentVisitors(recentVisitorsData);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error fetching dashboard data:', error);
+        setLoading(false);
+      }
+    };
+    
+    if (user) {
+      fetchDashboardData();
+    }
+  }, [user]);
 
   if (loading) {
     return (

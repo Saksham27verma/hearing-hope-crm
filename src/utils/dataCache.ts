@@ -106,9 +106,12 @@ export const CACHE_KEYS = {
   ENQUIRIES: 'enquiries',
 } as const;
 
-// Auto cleanup every 10 minutes
+// Auto cleanup every 10 minutes (client-side only)
 if (typeof window !== 'undefined') {
-  setInterval(() => {
-    dataCache.cleanup();
-  }, 10 * 60 * 1000);
+  // Use setTimeout to avoid blocking the main thread
+  setTimeout(() => {
+    setInterval(() => {
+      dataCache.cleanup();
+    }, 10 * 60 * 1000);
+  }, 1000);
 }

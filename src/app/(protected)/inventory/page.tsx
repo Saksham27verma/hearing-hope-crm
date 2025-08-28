@@ -68,8 +68,9 @@ import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { performanceMonitor, monitorFirebaseQuery } from '@/utils/performance';
-import { dataCache, CACHE_KEYS } from '@/utils/dataCache';
+// Temporarily disabled performance monitoring to prevent bundling issues
+// import { performanceMonitor, monitorFirebaseQuery } from '@/utils/performance';
+// import { dataCache, CACHE_KEYS } from '@/utils/dataCache';
 import InventoryItemDialog from '@/components/inventory/InventoryItemDialog';
 // Alias Grid to avoid type issues with custom Grid wrapper usage
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;

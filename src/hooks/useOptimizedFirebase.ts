@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   collection, 
   getDocs, 
@@ -46,7 +46,7 @@ export function useOptimizedCollection<T = any>(
   } = options;
 
   const [data, setData] = useState<T[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Start with true to prevent hydration mismatch
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({
     hasMore: true,
@@ -175,7 +175,7 @@ export function useOptimizedDashboard() {
     monthlySales: 0,
     monthlyRevenue: 0
   });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // Start with true to prevent hydration mismatch
   const [error, setError] = useState<string | null>(null);
 
   const fetchDashboardData = useCallback(async () => {

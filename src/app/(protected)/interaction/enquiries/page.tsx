@@ -101,7 +101,7 @@ import {
 import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc, getDoc, where, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { v4 as uuidv4 } from 'uuid';
-import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
+import { LazySimplifiedEnquiryForm } from '@/components/common/LazyComponents';
 
 // Create a Grid component that doesn't have TypeScript errors
 const Grid = (props: any) => <MuiGrid {...props} />;
@@ -5667,7 +5667,7 @@ export default function EnquiriesPage() {
       </Dialog>
 
       {/* Simplified Enquiry Form */}
-      <SimplifiedEnquiryForm
+      <LazySimplifiedEnquiryForm
         open={openSimplifiedDialog}
         onClose={() => setOpenSimplifiedDialog(false)}
         onSubmit={handleSimplifiedFormSubmit}
