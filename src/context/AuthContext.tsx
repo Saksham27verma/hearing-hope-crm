@@ -111,9 +111,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setLoading(false);
         
         // Redirect to login if not on login page and not authenticated
-        // But don't redirect if user is on enquiry form pages (they might be loading)
-        if (pathname !== '/login' && pathname !== '/' && 
-            !pathname.startsWith('/interaction/enquiries/')) {
+        if (pathname !== '/login' && pathname !== '/') {
           router.push('/login');
         }
       }

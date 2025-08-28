@@ -6,7 +6,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
-import UniversalSearch from '@/components/universal-search/UniversalSearch';
+import { LazyUniversalSearch } from '@/components/common/LazyComponents';
+import ErrorBoundary from '@/components/common/ErrorBoundary';
+import { initWebVitalsMonitoring } from '@/utils/performance';
 
 // Icons
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -94,6 +96,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     await signOut();
     handleProfileMenuClose();
   };
+
+  // Initialize performance monitoring
+  useEffect(() => {
+    initWebVitalsMonitoring();
+  }, []);
 
   // Keyboard shortcut for search (Ctrl+K / Cmd+K)
   useEffect(() => {
@@ -484,11 +491,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           marginTop: '64px' // height of AppBar
         }}
       >
-        {children}
+        <ErrorBoundary>
+          {children}
+        </ErrorBoundary>
       </Box>
       
       {/* Universal Search Dialog */}
-      <UniversalSearch 
+      <LazyUniversalSearch 
         open={searchOpen} 
         onClose={() => setSearchOpen(false)} 
       />
