@@ -134,14 +134,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     );
   }
 
-  // If still loading, show loading spinner
+  // If still loading, show minimal loading
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-        <CircularProgress />
-        <Typography variant="body2" sx={{ ml: 2 }}>
-          Loading your dashboard...
-        </Typography>
+        <CircularProgress size={24} />
       </Box>
     );
   }

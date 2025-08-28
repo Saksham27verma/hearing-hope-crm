@@ -56,7 +56,7 @@ const AuthContext = createContext<AuthContextInterface>({
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start with false for faster initial load
   const [error, setError] = useState<string | null>(null);
   
   const router = useRouter();
@@ -71,64 +71,50 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
     
+    setLoading(true); // Set loading only when auth listener starts
+    
     const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
-      setLoading(true);
-      
       if (authUser) {
         setUser(authUser);
         
-        // Fetch user profile from Firestore
-        try {
-          if (!db) {
-            throw new Error('Firestore not initialized');
-          }
-          const userDoc = await getDoc(doc(db, 'users', authUser.uid));
-          
-          if (userDoc.exists()) {
-            setUserProfile(userDoc.data() as UserProfile);
-          } else {
-            // User exists in Auth but not in Firestore - create default admin profile
-            console.log('User profile not found, creating default admin profile');
+        // Create immediate temporary profile to avoid loading delays
+        const immediateProfile: UserProfile = {
+          uid: authUser.uid,
+          email: authUser.email!,
+          displayName: authUser.email?.split('@')[0] || 'User',
+          role: 'admin',
+          allowedModules: ['users', 'inventory', 'customers', 'sales', 'purchases', 'reports', 'settings', 'interaction', 'products', 'materials', 'parties', 'centers', 'stock', 'cash'],
+          createdAt: Date.now(),
+        };
+        setUserProfile(immediateProfile);
+        setLoading(false);
+        
+        // Fetch/create actual profile in background (non-blocking)
+        if (db) {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', authUser.uid));
             
-            const defaultProfile: UserProfile = {
-              uid: authUser.uid,
-              email: authUser.email!,
-              displayName: authUser.email?.split('@')[0] || 'User',
-              role: 'admin',
-              allowedModules: ['users', 'inventory', 'customers', 'sales', 'purchases', 'reports', 'settings', 'interaction', 'products', 'materials', 'parties', 'centers', 'stock', 'cash'],
-              createdAt: Date.now(),
-            };
-            
-            await setDoc(doc(db, 'users', authUser.uid), defaultProfile);
-            setUserProfile(defaultProfile);
-            console.log('Default admin profile created successfully');
+            if (userDoc.exists()) {
+              setUserProfile(userDoc.data() as UserProfile);
+            } else {
+              // Create profile in Firestore for future use
+              await setDoc(doc(db, 'users', authUser.uid), immediateProfile);
+            }
+          } catch (err) {
+            console.warn('Background profile fetch/create failed:', err);
+            // Continue with immediate profile
           }
-        } catch (err) {
-          console.error('Error fetching/creating user profile:', err);
-          
-          // If there's an error with Firestore, create a temporary profile to allow access
-          const tempProfile: UserProfile = {
-            uid: authUser.uid,
-            email: authUser.email!,
-            displayName: authUser.email?.split('@')[0] || 'User',
-            role: 'admin',
-            allowedModules: ['users', 'inventory', 'customers', 'sales', 'purchases', 'reports', 'settings', 'interaction', 'products', 'materials', 'parties', 'centers', 'stock', 'cash'],
-            createdAt: Date.now(),
-          };
-          setUserProfile(tempProfile);
-          console.log('Using temporary admin profile due to Firestore error');
         }
       } else {
         setUser(null);
         setUserProfile(null);
+        setLoading(false);
         
         // Redirect to login if not on login page and not authenticated
         if (pathname !== '/login' && pathname !== '/') {
           router.push('/login');
         }
       }
-      
-      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -137,9 +123,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // Sign in function
   const signIn = async (email: string, password: string) => {
     try {
-      setLoading(true);
       setError(null);
       await signInWithEmailAndPassword(auth, email, password);
+      // Don't set loading here, let onAuthStateChanged handle it
       router.push('/dashboard');
     } catch (err: any) {
       console.error('Sign in error:', err);
