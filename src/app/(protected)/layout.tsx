@@ -110,12 +110,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     };
   }, []);
 
-  // Redirect to login if not authenticated
+  // Redirect to login if not authenticated (except for enquiry form pages)
   useEffect(() => {
-    if (!loading && !user) {
+    if (!loading && !user && !shouldHideSidebar) {
       router.push('/login');
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, shouldHideSidebar]);
 
   // If there's an error, show error message
   if (error) {
@@ -339,8 +339,17 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     </>
   );
 
-  // If on enquiry form pages, render without sidebar
+  // If on enquiry form pages, render without sidebar (but still check auth)
   if (shouldHideSidebar) {
+    // Still need authentication for enquiry pages
+    if (!user || !userProfile) {
+      return (
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+          <CircularProgress size={24} />
+        </Box>
+      );
+    }
+    
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
         <CssBaseline />
