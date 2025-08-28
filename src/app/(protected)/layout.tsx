@@ -31,10 +31,18 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   // Check if we should hide sidebar for enquiry pages
   const shouldHideSidebar = pathname?.includes('/enquiries/new') || pathname?.includes('/enquiries/edit');
 
-  // Navigation items
+  // Navigation items - restored to original structure
   const navigationItems: NavItem[] = [
     { text: 'Dashboard', path: '/dashboard', icon: '📊' },
+    { text: 'Products', path: '/products', icon: '🎧' },
     { text: 'Inventory', path: '/inventory', icon: '📦' },
+    { text: 'Purchases', path: '/purchase-management', icon: '🛒' },
+    { text: 'Material In', path: '/material-in', icon: '📥' },
+    { text: 'Material Out', path: '/material-out', icon: '📤' },
+    { text: 'Distribution Sales', path: '/distribution-sales', icon: '🚚' },
+    { text: 'Sales', path: '/sales', icon: '💰' },
+    { text: 'Parties', path: '/parties', icon: '🤝' },
+    { text: 'Centers', path: '/centers', icon: '🏢' },
     {
       text: 'Interaction',
       path: '/interaction',
@@ -45,22 +53,21 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         { text: 'Telecalling Records', path: '/telecalling-records' },
       ]
     },
-    { text: 'Sales', path: '/sales', icon: '💰' },
-    { text: 'Purchases', path: '/purchases', icon: '🛒' },
-    { text: 'Material In', path: '/material-in', icon: '📥' },
-    { text: 'Material Out', path: '/material-out', icon: '📤' },
-    { text: 'Material Management', path: '/material-management', icon: '🔧' },
-    { text: 'Purchase Management', path: '/purchase-management', icon: '📋' },
     { text: 'Stock Transfer', path: '/stock-transfer', icon: '🔄' },
-    { text: 'Distribution Sales', path: '/distribution-sales', icon: '🚚' },
     { text: 'Cash Register', path: '/cash-register', icon: '💳' },
+    { text: 'Appointment Scheduler', path: '/appointments', icon: '📅' },
     { text: 'Reports', path: '/reports', icon: '📈' },
-    { text: 'Staff', path: '/staff', icon: '👨‍💼' },
-    { text: 'Parties', path: '/parties', icon: '🤝' },
-    { text: 'Products', path: '/products', icon: '🎧' },
-    { text: 'Centers', path: '/centers', icon: '🏢' },
-    { text: 'Appointments', path: '/appointments', icon: '📅' },
-    { text: 'Users', path: '/users', icon: '👤', adminOnly: true },
+    {
+      text: 'Staff',
+      path: '/staff',
+      icon: '👨‍💼',
+      adminOnly: true,
+      children: [
+        { text: 'Staff Management', path: '/staff' },
+        { text: 'Loans & Advances', path: '/staff/loans-advances' },
+      ]
+    },
+    { text: 'Settings', path: '/settings', icon: '⚙️', adminOnly: true },
     { text: 'Admin Cleanup', path: '/admin-cleanup', icon: '🧹', adminOnly: true },
   ];
 
@@ -224,6 +231,25 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       boxShadow: '0 4px 12px rgba(255,107,53,0.3)',
     },
   };
+
+  // Keyboard shortcut for search (Ctrl+K / Cmd+K)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (event.key === 'Escape') {
+        setSearchOpen(false);
+        setProfileMenuAnchor(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   // Handle menu toggle
   const toggleMenu = (menuText: string) => {
@@ -464,6 +490,162 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           }}
           onClick={() => setProfileMenuAnchor(null)}
         />
+      )}
+
+      {/* Universal Search Modal */}
+      {searchOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            zIndex: 1400,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            paddingTop: '10vh',
+          }}
+          onClick={() => setSearchOpen(false)}
+        >
+          <div
+            style={{
+              backgroundColor: 'white',
+              borderRadius: '12px',
+              width: '90%',
+              maxWidth: '600px',
+              maxHeight: '70vh',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+              overflow: 'hidden',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ padding: '24px 24px 16px 24px', borderBottom: '1px solid #eee' }}>
+              <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', color: '#333' }}>
+                🔍 Universal Search
+              </h2>
+              <input
+                type="text"
+                placeholder="Search modules, customers, products..."
+                style={{
+                  width: '100%',
+                  padding: '12px 16px',
+                  border: '2px solid #ff6b35',
+                  borderRadius: '8px',
+                  fontSize: '16px',
+                  outline: 'none',
+                }}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setSearchOpen(false);
+                  }
+                }}
+              />
+            </div>
+            <div style={{ padding: '16px 24px' }}>
+              <div style={{ marginBottom: '16px' }}>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#666', textTransform: 'uppercase' }}>
+                  Quick Actions
+                </h3>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                  {[
+                    { name: 'New Enquiry', path: '/interaction/enquiries/new', icon: '📝' },
+                    { name: 'Add Product', path: '/products', icon: '🎧' },
+                    { name: 'View Inventory', path: '/inventory', icon: '📦' },
+                    { name: 'Sales Report', path: '/reports', icon: '📈' },
+                  ].map((action) => (
+                    <button
+                      key={action.name}
+                      style={{
+                        padding: '8px 12px',
+                        backgroundColor: '#f8f9fa',
+                        border: '1px solid #ddd',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.2s ease',
+                      }}
+                      onClick={() => {
+                        router.push(action.path);
+                        setSearchOpen(false);
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#ff6b35';
+                        e.currentTarget.style.color = 'white';
+                        e.currentTarget.style.borderColor = '#ff6b35';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#f8f9fa';
+                        e.currentTarget.style.color = 'black';
+                        e.currentTarget.style.borderColor = '#ddd';
+                      }}
+                    >
+                      <span>{action.icon}</span>
+                      <span>{action.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#666', textTransform: 'uppercase' }}>
+                  Navigation
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px' }}>
+                  {navigationItems
+                    .filter(item => !item.adminOnly || userProfile?.role === 'admin')
+                    .slice(0, 8)
+                    .map((item) => (
+                    <button
+                      key={item.text}
+                      style={{
+                        padding: '12px',
+                        backgroundColor: '#f8f9fa',
+                        border: '1px solid #ddd',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        textAlign: 'left',
+                        transition: 'all 0.2s ease',
+                      }}
+                      onClick={() => {
+                        if (item.path) {
+                          router.push(item.path);
+                          setSearchOpen(false);
+                        }
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.backgroundColor = '#ff6b35';
+                        e.currentTarget.style.color = 'white';
+                        e.currentTarget.style.borderColor = '#ff6b35';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.backgroundColor = '#f8f9fa';
+                        e.currentTarget.style.color = 'black';
+                        e.currentTarget.style.borderColor = '#ddd';
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span>{item.icon}</span>
+                        <span>{item.text}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '6px' }}>
+                <div style={{ fontSize: '12px', color: '#666' }}>
+                  💡 <strong>Tip:</strong> Press <kbd style={{ padding: '2px 6px', backgroundColor: '#ddd', borderRadius: '3px' }}>Ctrl+K</kbd> to open search from anywhere
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Main Content */}
