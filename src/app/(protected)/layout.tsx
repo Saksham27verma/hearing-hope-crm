@@ -69,7 +69,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     container: {
       display: 'flex',
       minHeight: '100vh',
-      backgroundColor: '#f5f5f5',
+      backgroundColor: '#f8f9fa',
     },
     sidebar: {
       position: 'fixed' as const,
@@ -77,7 +77,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       top: 0,
       height: '100vh',
       width: drawerOpen ? '240px' : '60px',
-      backgroundColor: '#1976d2',
+      backgroundColor: '#ff6b35',
       color: 'white',
       transition: 'width 0.3s ease',
       overflowY: 'auto' as const,
@@ -95,11 +95,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       width: '32px',
       height: '32px',
       backgroundColor: 'white',
-      borderRadius: '50%',
+      borderRadius: '8px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       fontSize: '18px',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
     },
     sidebarTitle: {
       fontSize: '18px',
@@ -124,7 +125,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       textDecoration: 'none',
       cursor: 'pointer',
       transition: 'all 0.2s ease',
-      backgroundColor: pathname === '/dashboard' ? 'rgba(255,255,255,0.1)' : 'transparent',
+      backgroundColor: pathname === '/dashboard' ? 'rgba(255,255,255,0.15)' : 'transparent',
+      borderRadius: '0',
     },
     navIcon: {
       fontSize: '20px',
@@ -143,7 +145,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       left: shouldHideSidebar ? 0 : (drawerOpen ? '240px' : '60px'),
       right: 0,
       height: '64px',
-      backgroundColor: '#1976d2',
+      backgroundColor: '#ff6b35',
       color: 'white',
       display: 'flex',
       alignItems: 'center',
@@ -213,12 +215,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       color: '#666',
     },
     errorContainer: {
-      backgroundColor: '#f44336',
+      backgroundColor: '#ff6b35',
       color: 'white',
       padding: '16px',
-      borderRadius: '4px',
+      borderRadius: '8px',
       margin: '16px',
       textAlign: 'center' as const,
+      boxShadow: '0 4px 12px rgba(255,107,53,0.3)',
     },
   };
 
@@ -261,7 +264,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         <p>{error}</p>
         <button 
           onClick={() => window.location.reload()} 
-          style={{ padding: '8px 16px', backgroundColor: 'white', color: '#f44336', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+          style={{ padding: '8px 16px', backgroundColor: 'white', color: '#ff6b35', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', transition: 'all 0.2s ease' }}
+          onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.05)'}
+          onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
         >
           Retry
         </button>
@@ -303,9 +308,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                       <div
                         style={{
                           ...styles.navLink,
-                          backgroundColor: item.children.some(child => pathname?.startsWith(child.path)) ? 'rgba(255,255,255,0.1)' : 'transparent'
+                          backgroundColor: item.children.some(child => pathname?.startsWith(child.path)) ? 'rgba(255,255,255,0.15)' : 'transparent'
                         }}
                         onClick={() => toggleMenu(item.text)}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = item.children.some(child => pathname?.startsWith(child.path)) ? 'rgba(255,255,255,0.15)' : 'transparent'}
                       >
                         <span style={styles.navIcon}>{item.icon}</span>
                         <span style={styles.navText}>{item.text}</span>
@@ -324,8 +331,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                                 style={{
                                   ...styles.navLink,
                                   paddingLeft: '48px',
-                                  backgroundColor: pathname === child.path ? 'rgba(255,255,255,0.15)' : 'transparent'
+                                  backgroundColor: pathname === child.path ? 'rgba(255,255,255,0.2)' : 'transparent'
                                 }}
+                                onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                                onMouseLeave={(e) => e.currentTarget.style.backgroundColor = pathname === child.path ? 'rgba(255,255,255,0.2)' : 'transparent'}
                               >
                                 <span style={styles.navText}>{child.text}</span>
                               </Link>
@@ -339,8 +348,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                       href={item.path}
                       style={{
                         ...styles.navLink,
-                        backgroundColor: pathname === item.path ? 'rgba(255,255,255,0.1)' : 'transparent'
+                        backgroundColor: pathname === item.path ? 'rgba(255,255,255,0.15)' : 'transparent'
                       }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = pathname === item.path ? 'rgba(255,255,255,0.15)' : 'transparent'}
                     >
                       <span style={styles.navIcon}>{item.icon}</span>
                       <span style={styles.navText}>{item.text}</span>
@@ -425,11 +436,12 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
               padding: '12px 16px',
               border: 'none',
               backgroundColor: 'transparent',
-              color: '#f44336',
+              color: '#ff6b35',
               cursor: 'pointer',
               textAlign: 'left',
               fontSize: '14px',
               transition: 'background 0.2s ease',
+              fontWeight: '500',
             }}
             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f5f5f5'}
             onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
