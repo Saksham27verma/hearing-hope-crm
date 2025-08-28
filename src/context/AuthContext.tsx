@@ -9,7 +9,6 @@ import {
   createUserWithEmailAndPassword,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase/config';
 import { useRouter, usePathname } from 'next/navigation';
 
 // Define user role type
@@ -64,12 +63,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Listen for auth state changes
   useEffect(() => {
-    if (!auth) {
-      console.error('Firebase Auth not initialized');
-      setError('Firebase configuration error');
-      setLoading(false);
-      return;
-    }
+    // Dynamic import to prevent bundling issues
+    const initAuth = async () => {
+      try {
+        const { auth, db } = await import('../firebase/config');
+        
+        if (!auth) {
+          console.error('Firebase Auth not initialized');
+          setError('Firebase configuration error');
+          setLoading(false);
+          return;
+        }
     
     setLoading(true); // Set loading only when auth listener starts
     
@@ -117,13 +121,22 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     });
 
-    return () => unsubscribe();
+        return () => unsubscribe();
+      } catch (err) {
+        console.error('Auth initialization error:', err);
+        setError('Firebase initialization failed');
+        setLoading(false);
+      }
+    };
+    
+    initAuth();
   }, [router, pathname]);
 
   // Sign in function
   const signIn = async (email: string, password: string) => {
     try {
       setError(null);
+      const { auth } = await import('../firebase/config');
       await signInWithEmailAndPassword(auth, email, password);
       // Don't set loading here, let onAuthStateChanged handle it
       router.push('/dashboard');
@@ -137,6 +150,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // Sign out function
   const signOut = async () => {
     try {
+      const { auth } = await import('../firebase/config');
       await firebaseSignOut(auth);
       router.push('/login');
     } catch (err: any) {
@@ -159,6 +173,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setError(null);
       
       // Create user in Firebase Auth
+      const { auth, db } = await import('../firebase/config');
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const newUser = userCredential.user;
       

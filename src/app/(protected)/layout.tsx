@@ -9,7 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 // Temporarily removed lazy components and error boundaries to fix bundling issues
 // import { LazyUniversalSearch } from '@/components/common/LazyComponents';
 // import ErrorBoundary from '@/components/common/ErrorBoundary';
-import UniversalSearch from '@/components/universal-search/UniversalSearch';
+// import UniversalSearch from '@/components/universal-search/UniversalSearch';
 
 // Icons
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -497,11 +497,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         {children}
       </Box>
       
-      {/* Universal Search Dialog */}
-      <UniversalSearch 
+      {/* Universal Search Dialog - Temporarily disabled */}
+      {/* <UniversalSearch 
         open={searchOpen} 
         onClose={() => setSearchOpen(false)} 
-      />
+      /> */}
 
       {/* Profile Menu */}
       <Menu
