@@ -6,23 +6,52 @@ import { getStorage, connectStorageEmulator } from 'firebase/storage';
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "demo-api-key",
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || "demo-project.firebaseapp.com",
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "demo-project",
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || "demo-project.appspot.com",
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || "123456789",
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:123456789:web:abcdef123456",
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "G-XXXXXXXXXX",
 };
 
-// Initialize Firebase
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const db = getFirestore(app);
-const auth = getAuth(app);
-const storage = getStorage(app);
+// Check if all required environment variables are present
+const isConfigValid = process.env.NEXT_PUBLIC_FIREBASE_API_KEY && 
+                     process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
+                     process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+
+// Initialize Firebase only if config is valid or in development
+let app: any = null;
+let db: any = null;
+let auth: any = null;
+let storage: any = null;
+
+if (isConfigValid || process.env.NODE_ENV === 'development') {
+  try {
+    app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+    db = getFirestore(app);
+    auth = getAuth(app);
+    storage = getStorage(app);
+  } catch (error) {
+    console.warn('Firebase initialization failed:', error);
+    // Initialize with demo config for build purposes
+    if (!app) {
+      app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+      db = getFirestore(app);
+      auth = getAuth(app);
+      storage = getStorage(app);
+    }
+  }
+} else {
+  console.warn('Firebase environment variables not found. Using demo configuration for build.');
+  app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+  db = getFirestore(app);
+  auth = getAuth(app);
+  storage = getStorage(app);
+}
 
 // Set auth persistence to LOCAL (survives browser restarts)
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && auth) {
   setPersistence(auth, browserLocalPersistence)
     .then(() => {
       console.log('Firebase Auth persistence set to LOCAL');
@@ -33,7 +62,7 @@ if (typeof window !== 'undefined') {
 }
 
 // Connect to emulators if in development and emulators are enabled
-if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true') {
+if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true' && app && db && auth && storage) {
   // Connect to Firestore emulator
   if (process.env.NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_URL) {
     const [host, portStr] = process.env.NEXT_PUBLIC_FIREBASE_FIRESTORE_EMULATOR_URL.split(':');
