@@ -1,6 +1,14 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { 
+  User, 
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  createUserWithEmailAndPassword,
+} from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useRouter, usePathname } from 'next/navigation';
 
 // Define user role type
@@ -19,7 +27,7 @@ export interface UserProfile {
 
 // Auth context interface
 interface AuthContextInterface {
-  user: any | null;
+  user: User | null;
   userProfile: UserProfile | null;
   loading: boolean;
   error: string | null;
@@ -43,29 +51,22 @@ const AuthContext = createContext<AuthContextInterface>({
   isAllowedModule: () => false,
 });
 
-// Provider component
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any | null>(null);
+// Auth Provider component
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // Start with false for faster initial load
   const [error, setError] = useState<string | null>(null);
   
   const router = useRouter();
   const pathname = usePathname();
 
-  // Initialize auth listener
+  // Listen for auth state changes
   useEffect(() => {
-    let unsubscribe: (() => void) | null = null;
-    
+    // Dynamic import to prevent bundling issues
     const initAuth = async () => {
       try {
-        setLoading(true);
-        
-        // Dynamic import to prevent bundling issues
-        const firebaseModule = await import('../firebase/config');
-        const { auth, db } = firebaseModule;
-        const { onAuthStateChanged } = await import('firebase/auth');
-        const { doc, getDoc, setDoc } = await import('firebase/firestore');
+        const { auth, db } = await import('../firebase/config');
         
         if (!auth) {
           console.error('Firebase Auth not initialized');
@@ -73,47 +74,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setLoading(false);
           return;
         }
+    
+    setLoading(true); // Set loading only when auth listener starts
+    
+    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+      if (authUser) {
+        setUser(authUser);
         
-        unsubscribe = onAuthStateChanged(auth, async (authUser) => {
-          if (authUser) {
-            setUser(authUser);
+        // Create immediate temporary profile to avoid loading delays
+        const immediateProfile: UserProfile = {
+          uid: authUser.uid,
+          email: authUser.email!,
+          displayName: authUser.email?.split('@')[0] || 'User',
+          role: 'admin',
+          allowedModules: ['users', 'inventory', 'customers', 'sales', 'purchases', 'reports', 'settings', 'interaction', 'products', 'materials', 'parties', 'centers', 'stock', 'cash'],
+          createdAt: Date.now(),
+        };
+        setUserProfile(immediateProfile);
+        setLoading(false);
+        
+        // Fetch/create actual profile in background (non-blocking)
+        if (db) {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', authUser.uid));
             
-            // Create immediate temporary profile
-            const immediateProfile: UserProfile = {
-              uid: authUser.uid,
-              email: authUser.email!,
-              displayName: authUser.email?.split('@')[0] || 'User',
-              role: 'admin',
-              allowedModules: ['users', 'inventory', 'customers', 'sales', 'purchases', 'reports', 'settings', 'interaction', 'products', 'materials', 'parties', 'centers', 'stock', 'cash'],
-              createdAt: Date.now(),
-            };
-            setUserProfile(immediateProfile);
-            setLoading(false);
-            
-            // Fetch actual profile in background if db is available
-            if (db) {
-              try {
-                const userDoc = await getDoc(doc(db, 'users', authUser.uid));
-                if (userDoc.exists()) {
-                  setUserProfile(userDoc.data() as UserProfile);
-                } else {
-                  await setDoc(doc(db, 'users', authUser.uid), immediateProfile);
-                }
-              } catch (err) {
-                console.warn('Background profile fetch failed:', err);
-              }
+            if (userDoc.exists()) {
+              setUserProfile(userDoc.data() as UserProfile);
+            } else {
+              // Create profile in Firestore for future use
+              await setDoc(doc(db, 'users', authUser.uid), immediateProfile);
             }
-          } else {
-            setUser(null);
-            setUserProfile(null);
-            setLoading(false);
-            
-            if (pathname !== '/login' && pathname !== '/') {
-              router.push('/login');
-            }
+          } catch (err) {
+            console.warn('Background profile fetch/create failed:', err);
+            // Continue with immediate profile
           }
-        });
+        }
+      } else {
+        setUser(null);
+        setUserProfile(null);
+        setLoading(false);
         
+        // Redirect to login if not on login page and not authenticated
+        if (pathname !== '/login' && pathname !== '/') {
+          router.push('/login');
+        }
+      }
+    });
+
+        return () => unsubscribe();
       } catch (err) {
         console.error('Auth initialization error:', err);
         setError('Firebase initialization failed');
@@ -122,10 +130,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     
     initAuth();
-    
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
   }, [router, pathname]);
 
   // Sign in function
@@ -133,8 +137,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       setError(null);
       const { auth } = await import('../firebase/config');
-      const { signInWithEmailAndPassword } = await import('firebase/auth');
       await signInWithEmailAndPassword(auth, email, password);
+      // Don't set loading here, let onAuthStateChanged handle it
       router.push('/dashboard');
     } catch (err: any) {
       console.error('Sign in error:', err);
@@ -147,7 +151,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     try {
       const { auth } = await import('../firebase/config');
-      const { signOut: firebaseSignOut } = await import('firebase/auth');
       await firebaseSignOut(auth);
       router.push('/login');
     } catch (err: any) {
@@ -156,7 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Create user function
+  // Create new user function (admin only)
   const createUser = async (
     email: string, 
     password: string, 
@@ -169,13 +172,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       setError(null);
       
+      // Create user in Firebase Auth
       const { auth, db } = await import('../firebase/config');
-      const { createUserWithEmailAndPassword } = await import('firebase/auth');
-      const { doc, setDoc } = await import('firebase/firestore');
-      
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const newUser = userCredential.user;
       
+      // Create user profile in Firestore
       const userProfile: UserProfile = {
         uid: newUser.uid,
         email: newUser.email!,
@@ -187,6 +189,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
       
       await setDoc(doc(db, 'users', newUser.uid), userProfile);
+      
       setLoading(false);
     } catch (err: any) {
       console.error('Create user error:', err);
@@ -195,36 +198,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Reset error
+  // Reset error state
   const resetError = () => {
     setError(null);
   };
 
-  // Check module access
+  // Check if user is allowed to access a module
   const isAllowedModule = (moduleName: string) => {
     if (!userProfile) return false;
+    
+    // Admin has access to all modules
     if (userProfile.role === 'admin') return true;
+    
+    // Staff has access to specific modules
     return userProfile.allowedModules?.includes(moduleName) || false;
   };
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      userProfile,
-      loading,
-      error,
-      signIn,
-      signOut,
-      createUser,
-      resetError,
-      isAllowedModule,
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        userProfile,
+        loading,
+        error,
+        signIn,
+        signOut,
+        createUser,
+        resetError,
+        isAllowedModule,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
-}
+};
 
-// Hook to use auth context
-export function useAuth() {
-  return useContext(AuthContext);
-}
+// Custom hook to use auth context
+export const useAuth = () => useContext(AuthContext); 

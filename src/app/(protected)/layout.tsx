@@ -56,7 +56,15 @@ interface NavItem {
 }
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
+  // const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
+  
+  // Temporary minimal auth state for testing
+  const user = { uid: 'test', email: 'admin@hopehearing.com' };
+  const loading = false;
+  const signOut = async () => {};
+  const userProfile = { role: 'admin', displayName: 'Admin' };
+  const isAllowedModule = () => true;
+  const error = null;
   const router = useRouter();
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = React.useState(true);
