@@ -6,10 +6,10 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
-import { LazyUniversalSearch } from '@/components/common/LazyComponents';
-import ErrorBoundary from '@/components/common/ErrorBoundary';
-// Temporarily disabled to fix bundling issue
-// import { initWebVitalsMonitoring } from '@/utils/performance';
+// Temporarily removed lazy components and error boundaries to fix bundling issues
+// import { LazyUniversalSearch } from '@/components/common/LazyComponents';
+// import ErrorBoundary from '@/components/common/ErrorBoundary';
+import UniversalSearch from '@/components/universal-search/UniversalSearch';
 
 // Icons
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -494,13 +494,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           marginTop: '64px' // height of AppBar
         }}
       >
-        <ErrorBoundary>
-          {children}
-        </ErrorBoundary>
+        {children}
       </Box>
       
       {/* Universal Search Dialog */}
-      <LazyUniversalSearch 
+      <UniversalSearch 
         open={searchOpen} 
         onClose={() => setSearchOpen(false)} 
       />
