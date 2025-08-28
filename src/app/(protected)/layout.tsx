@@ -53,7 +53,7 @@ interface NavItem {
 }
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading, signOut, userProfile, isAllowedModule } = useAuth();
+  const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = React.useState(true);
@@ -117,11 +117,31 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }
   }, [user, loading, router]);
 
+  // If there's an error, show error message
+  if (error) {
+    return (
+      <Box display="flex" flexDirection="column" justifyContent="center" alignItems="center" minHeight="100vh" p={3}>
+        <Typography variant="h6" color="error" gutterBottom>
+          Firebase Connection Error
+        </Typography>
+        <Typography variant="body2" color="text.secondary" align="center" sx={{ maxWidth: 400 }}>
+          {error}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 2 }}>
+          Please check your internet connection and try refreshing the page.
+        </Typography>
+      </Box>
+    );
+  }
+
   // If still loading, show loading spinner
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
         <CircularProgress />
+        <Typography variant="body2" sx={{ ml: 2 }}>
+          Loading your dashboard...
+        </Typography>
       </Box>
     );
   }

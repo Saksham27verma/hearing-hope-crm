@@ -18,36 +18,43 @@ const firebaseConfig = {
 // Check if all required environment variables are present
 const isConfigValid = process.env.NEXT_PUBLIC_FIREBASE_API_KEY && 
                      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
-                     process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+                     process.env.NEXT_PUBLIC_FIREBASE_APP_ID &&
+                     process.env.NEXT_PUBLIC_FIREBASE_API_KEY !== "demo-api-key";
 
-// Initialize Firebase only if config is valid or in development
+// Initialize Firebase
 let app: any = null;
 let db: any = null;
 let auth: any = null;
 let storage: any = null;
 
-if (isConfigValid || process.env.NODE_ENV === 'development') {
-  try {
+try {
+  if (isConfigValid) {
+    console.log('Initializing Firebase with valid configuration');
     app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
     db = getFirestore(app);
     auth = getAuth(app);
     storage = getStorage(app);
-  } catch (error) {
-    console.warn('Firebase initialization failed:', error);
-    // Initialize with demo config for build purposes
-    if (!app) {
+    console.log('Firebase initialized successfully');
+  } else {
+    console.warn('Firebase environment variables not found or using demo values.');
+    if (process.env.NODE_ENV === 'development') {
+      // In development, still try to initialize for testing
       app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
       db = getFirestore(app);
       auth = getAuth(app);
       storage = getStorage(app);
+    } else {
+      throw new Error('Firebase configuration invalid in production');
     }
   }
-} else {
-  console.warn('Firebase environment variables not found. Using demo configuration for build.');
-  app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-  db = getFirestore(app);
-  auth = getAuth(app);
-  storage = getStorage(app);
+} catch (error) {
+  console.error('Firebase initialization error:', error);
+  
+  // Create fallback objects to prevent app crashes
+  app = null;
+  db = null;
+  auth = null;
+  storage = null;
 }
 
 // Set auth persistence to LOCAL (survives browser restarts)
