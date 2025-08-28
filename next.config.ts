@@ -5,9 +5,6 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
   
-  // Bundle optimization
-  swcMinify: true,
-  
   // Image optimization
   images: {
     domains: ['localhost'],
@@ -16,7 +13,6 @@ const nextConfig: NextConfig = {
   
   // Experimental features for better performance
   experimental: {
-    optimizeCss: true,
     serverActions: {
       allowedOrigins: ['localhost:3000'],
     },

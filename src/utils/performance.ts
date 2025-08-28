@@ -95,20 +95,27 @@ export const performanceMonitor = new PerformanceMonitor();
 
 // HOC for monitoring React component render performance
 export function withPerformanceMonitoring<T extends object>(
-  Component: React.ComponentType<T>,
+  Component: any,
   componentName?: string
 ) {
   const WrappedComponent = (props: T) => {
     const name = componentName || Component.displayName || Component.name || 'Component';
     
-    React.useEffect(() => {
-      performanceMonitor.startTimer(`${name}_mount`);
-      return () => {
-        performanceMonitor.endTimer(`${name}_mount`);
-      };
-    }, [name]);
+    if (typeof window !== 'undefined') {
+      // Only use React hooks on client side
+      const { useEffect, createElement } = require('react');
+      
+      useEffect(() => {
+        performanceMonitor.startTimer(`${name}_mount`);
+        return () => {
+          performanceMonitor.endTimer(`${name}_mount`);
+        };
+      }, [name]);
 
-    return React.createElement(Component, props);
+      return createElement(Component, props);
+    }
+    
+    return null;
   };
 
   WrappedComponent.displayName = `withPerformanceMonitoring(${Component.displayName || Component.name})`;
@@ -117,11 +124,20 @@ export function withPerformanceMonitoring<T extends object>(
 
 // Hook for monitoring custom operations
 export function usePerformanceTimer(operationName: string) {
-  const startTimer = React.useCallback((metadata?: Record<string, any>) => {
+  if (typeof window === 'undefined') {
+    return { 
+      startTimer: () => {}, 
+      endTimer: () => null 
+    };
+  }
+
+  const { useCallback } = require('react');
+  
+  const startTimer = useCallback((metadata?: Record<string, any>) => {
     performanceMonitor.startTimer(operationName, metadata);
   }, [operationName]);
 
-  const endTimer = React.useCallback(() => {
+  const endTimer = useCallback(() => {
     return performanceMonitor.endTimer(operationName);
   }, [operationName]);
 
@@ -171,7 +187,6 @@ export function logBundleInfo() {
   // Log information about the current bundle
   console.group('📦 Bundle Information');
   console.log('Next.js version:', process.env.NEXT_PUBLIC_VERCEL_ENV || 'development');
-  console.log('React version:', React.version);
   console.log('Environment:', process.env.NODE_ENV);
   console.groupEnd();
 }
