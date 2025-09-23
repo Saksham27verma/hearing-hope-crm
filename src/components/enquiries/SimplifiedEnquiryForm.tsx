@@ -5,6 +5,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
+import { useAuth } from '@/context/AuthContext';
 import {
   TextField, Button, Typography, Box, Paper,
   FormControl, InputLabel, Select, MenuItem,
@@ -12,7 +13,7 @@ import {
   Grid as MuiGrid, IconButton, FormHelperText,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Tabs, Tab, Chip, InputAdornment, Switch, FormControlLabel,
-  Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack
+  Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -88,7 +89,30 @@ const referenceOptions = [
   'walking'
 ];
 
-const staffOptions = [
+// Job roles from the staff module
+const JOB_ROLES = [
+  'Manager',
+  'Audiologist', 
+  'Sales Executive',
+  'Technician',
+  'Receptionist',
+  'Accountant',
+  'Administrator',
+  'Customer Support',
+  'Marketing Executive',
+  'Telecaller',
+];
+
+// Staff member interface
+interface StaffMember {
+  id: string;
+  name: string;
+  jobRole: string;
+  status: 'active' | 'inactive';
+}
+
+// Default fallback staff options (for backward compatibility)
+const fallbackStaffOptions = [
   'Aditya', 'Chirag', 'Deepika', 'Deepika Jain', 'Manish', 'Nisha', 
   'Pankaj', 'Priya', 'Raghav', 'Rohit', 'Saksham', 'Sanjana', 
   'Siddharth', 'Tushar', 'Vikash'
@@ -267,6 +291,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   isEditMode = false,
   fullPage = true // Always full page now
 }) => {
+  const { userProfile } = useAuth();
+  const isAdmin = userProfile?.role === 'admin';
+  
   const [step, setStep] = useState(0);
   const [activeVisit, setActiveVisit] = useState(-1);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
@@ -276,6 +303,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     nextFollowUpDate: '',
     callerName: ''
   });
+  
+  // Staff management states
+  const [staffManagementOpen, setStaffManagementOpen] = useState(false);
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [staffByRole, setStaffByRole] = useState<Record<string, StaffMember[]>>({});
+  const [selectedRoles, setSelectedRoles] = useState<Record<string, string[]>>({
+    telecaller: ['Telecaller', 'Customer Support'],
+    assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
+    testBy: ['Audiologist', 'Technician'], 
+    programmingBy: ['Audiologist', 'Technician'],
+    general: JOB_ROLES
+  });
+  const [currentField, setCurrentField] = useState<keyof typeof selectedRoles>('telecaller');
   const [products, setProducts] = useState<any[]>([]);
   const [hearingAidProducts, setHearingAidProducts] = useState<Product[]>([]);
   const [centers, setCenters] = useState<any[]>([]);
@@ -495,6 +535,56 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
     fetchCenters();
   }, []);
+
+  // Fetch staff members
+  useEffect(() => {
+    const fetchStaffMembers = async () => {
+      try {
+        const staffQuery = collection(db, 'staff');
+        const querySnapshot = await getDocs(staffQuery);
+        const staffList: StaffMember[] = querySnapshot.docs
+          .map(doc => ({
+            id: doc.id,
+            name: doc.data().name,
+            jobRole: doc.data().jobRole,
+            status: doc.data().status
+          }))
+          .filter(staff => staff.status === 'active'); // Only active staff
+
+        setStaffMembers(staffList);
+        
+        // Group staff by role
+        const groupedByRole: Record<string, StaffMember[]> = {};
+        JOB_ROLES.forEach(role => {
+          groupedByRole[role] = staffList.filter(staff => staff.jobRole === role);
+        });
+        setStaffByRole(groupedByRole);
+        
+      } catch (error) {
+        console.error('Error fetching staff members:', error);
+      }
+    };
+
+    fetchStaffMembers();
+  }, []);
+
+  // Function to get staff options for a specific field
+  const getStaffOptionsForField = (fieldName: keyof typeof selectedRoles): string[] => {
+    const allowedRoles = selectedRoles[fieldName] || [];
+    const staffForField: string[] = [];
+    
+    allowedRoles.forEach(role => {
+      const staffInRole = staffByRole[role] || [];
+      staffInRole.forEach(staff => {
+        if (!staffForField.includes(staff.name)) {
+          staffForField.push(staff.name);
+        }
+      });
+    });
+    
+    // Fallback to default options if no staff found
+    return staffForField.length > 0 ? staffForField : fallbackStaffOptions;
+  };
 
   // Fetch previous sales when sales return is activated
   useEffect(() => {
@@ -1573,64 +1663,114 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     />
                   </Grid>
                   <Grid item xs={12} md={6}>
-                    <Controller
-                      name="assignedTo"
-                      control={control}
-                      render={({ field }) => (
-                        <FormControl fullWidth>
-                          <InputLabel id="assigned-to-label">Assigned To</InputLabel>
-                          <Select
-                            {...field}
-                            labelId="assigned-to-label"
-                            label="Assigned To"
-                            sx={{ borderRadius: 2, minWidth: '200px' }}
-                            MenuProps={{
-                              PaperProps: {
-                                style: {
-                                  maxHeight: 300
+                    <Box sx={{ position: 'relative' }}>
+                      <Controller
+                        name="assignedTo"
+                        control={control}
+                        render={({ field }) => (
+                          <FormControl fullWidth>
+                            <InputLabel id="assigned-to-label">Assigned To</InputLabel>
+                            <Select
+                              {...field}
+                              labelId="assigned-to-label"
+                              label="Assigned To"
+                              sx={{ borderRadius: 2, minWidth: '200px' }}
+                              MenuProps={{
+                                PaperProps: {
+                                  style: {
+                                    maxHeight: 300
+                                  }
                                 }
-                              }
-                            }}
-                          >
-                            {staffOptions.map(option => (
-                              <MenuItem key={option} value={option}>
-                                {option}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
+                              }}
+                            >
+                              {getStaffOptionsForField('assignedTo').map(option => (
+                                <MenuItem key={option} value={option}>
+                                  {option}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        )}
+                      />
+                      {isAdmin && (
+                        <IconButton
+                          onClick={() => {
+                            setCurrentField('assignedTo');
+                            setStaffManagementOpen(true);
+                          }}
+                          sx={{
+                            position: 'absolute',
+                            top: 8,
+                            right: 8,
+                            bgcolor: '#ff6b35',
+                            color: 'white',
+                            '&:hover': { bgcolor: '#e55a2b' },
+                            width: '24px',
+                            height: '24px',
+                            zIndex: 1
+                          }}
+                          size="small"
+                          title="Edit Assigned To Categories (Admin Only)"
+                        >
+                          <EditIcon sx={{ fontSize: '14px' }} />
+                        </IconButton>
                       )}
-                    />
+                    </Box>
                   </Grid>
                   <Grid item xs={12} md={6}>
-                    <Controller
-                      name="telecaller"
-                      control={control}
-                      render={({ field }) => (
-                        <FormControl fullWidth>
-                          <InputLabel id="telecaller-label">Telecaller</InputLabel>
-                          <Select
-                            {...field}
-                            labelId="telecaller-label"
-                            label="Telecaller"
-                            sx={{ borderRadius: 2, minWidth: '200px' }}
-                            MenuProps={{
-                              PaperProps: {
-                                style: {
-                                  maxHeight: 300
+                    <Box sx={{ position: 'relative' }}>
+                      <Controller
+                        name="telecaller"
+                        control={control}
+                        render={({ field }) => (
+                          <FormControl fullWidth>
+                            <InputLabel id="telecaller-label">Telecaller</InputLabel>
+                            <Select
+                              {...field}
+                              labelId="telecaller-label"
+                              label="Telecaller"
+                              sx={{ borderRadius: 2, minWidth: '200px' }}
+                              MenuProps={{
+                                PaperProps: {
+                                  style: {
+                                    maxHeight: 300
+                                  }
                                 }
-                              }
-                            }}
-                          >
-                            {staffOptions.map(option => (
-                              <MenuItem key={option} value={option}>
-                                {option}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
+                              }}
+                            >
+                              {getStaffOptionsForField('telecaller').map(option => (
+                                <MenuItem key={option} value={option}>
+                                  {option}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        )}
+                      />
+                      {isAdmin && (
+                        <IconButton
+                          onClick={() => {
+                            setCurrentField('telecaller');
+                            setStaffManagementOpen(true);
+                          }}
+                          sx={{
+                            position: 'absolute',
+                            top: 8,
+                            right: 8,
+                            bgcolor: '#ff6b35',
+                            color: 'white',
+                            '&:hover': { bgcolor: '#e55a2b' },
+                            width: '24px',
+                            height: '24px',
+                            zIndex: 1
+                          }}
+                          size="small"
+                          title="Edit Telecaller Categories (Admin Only)"
+                        >
+                          <EditIcon sx={{ fontSize: '14px' }} />
+                        </IconButton>
                       )}
-                    />
+                    </Box>
                   </Grid>
                   <Grid item xs={12} md={6}>
                     <Controller
@@ -1946,21 +2086,46 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               />
                             </Grid>
                             <Grid item xs={12} md={4}>
-                              <FormControl fullWidth>
-                                <InputLabel>Test Done By</InputLabel>
-                                <Select 
-                                  value={currentVisit.testDoneBy}
-                                  onChange={(e) => updateVisit(activeVisit, 'testDoneBy', e.target.value)}
-                                  label="Test Done By"
-                                  sx={{ borderRadius: 2 }}
-                                >
-                                  {staffOptions.map(option => (
-                                    <MenuItem key={option} value={option}>
-                                      {option}
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
+                              <Box sx={{ position: 'relative' }}>
+                                <FormControl fullWidth>
+                                  <InputLabel>Test Done By</InputLabel>
+                                  <Select 
+                                    value={currentVisit.testDoneBy}
+                                    onChange={(e) => updateVisit(activeVisit, 'testDoneBy', e.target.value)}
+                                    label="Test Done By"
+                                    sx={{ borderRadius: 2 }}
+                                  >
+                                    {getStaffOptionsForField('testBy').map(option => (
+                                      <MenuItem key={option} value={option}>
+                                        {option}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                                {isAdmin && (
+                                  <IconButton
+                                    onClick={() => {
+                                      setCurrentField('testBy');
+                                      setStaffManagementOpen(true);
+                                    }}
+                                    sx={{
+                                      position: 'absolute',
+                                      top: 6,
+                                      right: 6,
+                                      bgcolor: '#ff6b35',
+                                      color: 'white',
+                                      '&:hover': { bgcolor: '#e55a2b' },
+                                      width: '20px',
+                                      height: '20px',
+                                      zIndex: 1
+                                    }}
+                                    size="small"
+                                    title="Edit Test Done By Categories (Admin Only)"
+                                  >
+                                    <EditIcon sx={{ fontSize: '12px' }} />
+                                  </IconButton>
+                                )}
+                              </Box>
                             </Grid>
                             <Grid item xs={12} md={4}>
                               <TextField
@@ -3863,21 +4028,40 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
-                              <FormControl fullWidth>
-                                <InputLabel>Programming Done By</InputLabel>
-                                <Select
-                                  value={currentVisit.programmingDoneBy}
-                                  onChange={(e) => updateVisit(activeVisit, 'programmingDoneBy', e.target.value)}
-                                  label="Programming Done By"
-                                  sx={{ borderRadius: 2 }}
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <FormControl fullWidth>
+                                  <InputLabel>Programming Done By</InputLabel>
+                                  <Select
+                                    value={currentVisit.programmingDoneBy}
+                                    onChange={(e) => updateVisit(activeVisit, 'programmingDoneBy', e.target.value)}
+                                    label="Programming Done By"
+                                    sx={{ borderRadius: 2 }}
+                                  >
+                                    {getStaffOptionsForField('programmingBy').map(option => (
+                                      <MenuItem key={option} value={option}>
+                                        👤 {option}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                                <IconButton
+                                  onClick={() => {
+                                    setSelectedCategory('programmingBy');
+                                    setStaffManagementOpen(true);
+                                  }}
+                                  sx={{
+                                    bgcolor: '#ff6b35',
+                                    color: 'white',
+                                    '&:hover': { bgcolor: '#e55a2b' },
+                                    minWidth: '32px',
+                                    height: '32px'
+                                  }}
+                                  title="Edit Programming Done By Options"
+                                  size="small"
                                 >
-                                  {staffOptions.map(option => (
-                                    <MenuItem key={option} value={option}>
-                                      👤 {option}
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
+                                  <EditIcon fontSize="small" />
+                                </IconButton>
+                              </Box>
                             </Grid>
                                                          <Grid item xs={12} md={3}>
                                <FormControlLabel
@@ -4158,21 +4342,40 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       />
                     </Grid>
                     <Grid item xs={12} md={2.5}>
-                      <FormControl fullWidth size="small" required sx={{ minWidth: 200 }}>
-                        <InputLabel>Call Done By *</InputLabel>
-                        <Select
-                          value={currentFollowUp.callerName}
-                          onChange={(e) => handleFollowUpChange('callerName', e.target.value)}
-                          label="Call Done By *"
-                          sx={{ borderRadius: 2 }}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <FormControl fullWidth size="small" required sx={{ minWidth: 200 }}>
+                          <InputLabel>Call Done By *</InputLabel>
+                          <Select
+                            value={currentFollowUp.callerName}
+                            onChange={(e) => handleFollowUpChange('callerName', e.target.value)}
+                            label="Call Done By *"
+                            sx={{ borderRadius: 2 }}
+                          >
+                            {getStaffOptionsForField('telecaller').map(option => (
+                              <MenuItem key={option} value={option}>
+                                👤 {option}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                        <IconButton
+                          onClick={() => {
+                            setSelectedCategory('telecaller');
+                            setStaffManagementOpen(true);
+                          }}
+                          sx={{
+                            bgcolor: '#ff6b35',
+                            color: 'white',
+                            '&:hover': { bgcolor: '#e55a2b' },
+                            minWidth: '28px',
+                            height: '28px'
+                          }}
+                          title="Edit Call Done By Options"
+                          size="small"
                         >
-                          {staffOptions.map(option => (
-                            <MenuItem key={option} value={option}>
-                              👤 {option}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
+                          <EditIcon sx={{ fontSize: '16px' }} />
+                        </IconButton>
+                      </Box>
                     </Grid>
                     <Grid item xs={12} md={5.5}>
                       <TextField
@@ -5681,6 +5884,148 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               Selected: {currentProduct.name}
             </Button>
           )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Staff Management Dialog */}
+      <Dialog 
+        open={staffManagementOpen} 
+        onClose={() => setStaffManagementOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ bgcolor: '#ff6b35', color: 'white', py: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <EditIcon />
+            <Typography variant="h6">
+              Manage Staff Categories - {currentField.charAt(0).toUpperCase() + currentField.slice(1)}
+            </Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent sx={{ p: 3 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            Select which <strong>job roles</strong> should be included in the <strong>{currentField}</strong> dropdown options.
+            Staff members from the selected roles will appear as options.
+          </Typography>
+          
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Available Job Roles:
+            </Typography>
+            
+            <Box sx={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', 
+              gap: 2,
+              maxHeight: '400px',
+              overflowY: 'auto',
+              border: '1px solid #ddd',
+              borderRadius: 2,
+              p: 2
+            }}>
+              {JOB_ROLES.map((role) => (
+                <FormControlLabel
+                  key={role}
+                  control={
+                    <Checkbox
+                      checked={selectedRoles[currentField].includes(role)}
+                      onChange={(e) => {
+                        const newSelectedRoles = { ...selectedRoles };
+                        if (e.target.checked) {
+                          newSelectedRoles[currentField] = [...newSelectedRoles[currentField], role];
+                        } else {
+                          newSelectedRoles[currentField] = newSelectedRoles[currentField].filter(r => r !== role);
+                        }
+                        setSelectedRoles(newSelectedRoles);
+                      }}
+                      sx={{
+                        color: '#ff6b35',
+                        '&.Mui-checked': {
+                          color: '#ff6b35',
+                        },
+                      }}
+                    />
+                  }
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                      <Box>
+                        <Typography variant="body2" sx={{ fontWeight: 500 }}>{role}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {staffByRole[role]?.length || 0} staff members
+                        </Typography>
+                      </Box>
+                      {selectedRoles[currentField].includes(role) && (
+                        <Chip 
+                          size="small" 
+                          label="Selected" 
+                          sx={{ 
+                            bgcolor: '#ff6b35', 
+                            color: 'white',
+                            fontSize: '0.7rem',
+                            height: '20px'
+                          }} 
+                        />
+                      )}
+                    </Box>
+                  }
+                />
+              ))}
+            </Box>
+
+            <Box sx={{ mt: 2, p: 2, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <strong>Currently selected roles for {currentField}:</strong> {selectedRoles[currentField].length} roles
+              </Typography>
+              <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                {selectedRoles[currentField].map((role) => (
+                  <Chip
+                    key={role}
+                    label={role}
+                    size="small"
+                    sx={{ 
+                      bgcolor: '#ff6b35', 
+                      color: 'white',
+                      fontSize: '0.75rem'
+                    }}
+                    onDelete={() => {
+                      const newSelectedRoles = { ...selectedRoles };
+                      newSelectedRoles[currentField] = newSelectedRoles[currentField].filter(r => r !== role);
+                      setSelectedRoles(newSelectedRoles);
+                    }}
+                  />
+                ))}
+              </Box>
+              <Typography variant="caption" color="text.secondary">
+                <strong>Staff members that will appear:</strong> {getStaffOptionsForField(currentField).join(', ') || 'None'}
+              </Typography>
+            </Box>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
+          <Button
+            onClick={() => {
+              setSelectedRoles({
+                telecaller: ['Telecaller', 'Customer Support'],
+                assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
+                testBy: ['Audiologist', 'Technician'], 
+                programmingBy: ['Audiologist', 'Technician'],
+                general: JOB_ROLES
+              });
+            }}
+            sx={{ color: '#666' }}
+          >
+            Reset to Default
+          </Button>
+          <Button
+            onClick={() => setStaffManagementOpen(false)}
+            variant="contained"
+            sx={{
+              bgcolor: '#ff6b35',
+              '&:hover': { bgcolor: '#e55a2b' }
+            }}
+          >
+            Save Changes
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
