@@ -62,7 +62,6 @@ const collectionsToClean = [
   { name: 'sales', label: 'Sales' },
   { name: 'distributions', label: 'Distribution Sales' },
   { name: 'parties', label: 'Parties' },
-  { name: 'products', label: 'Products' },
   { name: 'telecallingRecords', label: 'Telecalling Records' },
   { name: 'staff', label: 'Staff Management' },
   { name: 'visitors', label: 'Visitors' },
@@ -75,6 +74,7 @@ const collectionsToClean = [
 const preservedCollections = [
   'centers',
   'users',
+  'products',
 ];
 
 export default function AdminCleanupPage() {
