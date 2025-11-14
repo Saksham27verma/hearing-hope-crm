@@ -313,6 +313,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
     testBy: ['Audiologist', 'Technician'], 
     programmingBy: ['Audiologist', 'Technician'],
+    sales: ['Sales Executive', 'Manager'],
     general: JOB_ROLES
   });
   const [currentField, setCurrentField] = useState<keyof typeof selectedRoles>('telecaller');
@@ -2734,13 +2735,46 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 </FormControl>
                               </Grid>
                               <Grid item xs={12} md={3}>
-                                <TextField
-                                  fullWidth
-                                  size="small"
-                                  label="Who Sold"
-                                  value={currentVisit.hearingAidBrand}
-                                  onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
-                                />
+                                <Box sx={{ position: 'relative' }}>
+                                  <FormControl fullWidth size="small">
+                                    <InputLabel>Who Sold</InputLabel>
+                                    <Select
+                                      value={currentVisit.hearingAidBrand}
+                                      onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
+                                      label="Who Sold"
+                                      sx={{ borderRadius: 2 }}
+                                    >
+                                      {getStaffOptionsForField('sales').map(option => (
+                                        <MenuItem key={option} value={option}>
+                                          💼 {option}
+                                        </MenuItem>
+                                      ))}
+                                    </Select>
+                                  </FormControl>
+                                  {isAdmin && (
+                                    <IconButton
+                                      onClick={() => {
+                                        setCurrentField('sales');
+                                        setStaffManagementOpen(true);
+                                      }}
+                                      sx={{
+                                        position: 'absolute',
+                                        top: 4,
+                                        right: 4,
+                                        bgcolor: '#ff6b35',
+                                        color: 'white',
+                                        '&:hover': { bgcolor: '#e55a2b' },
+                                        width: '20px',
+                                        height: '20px',
+                                        zIndex: 1
+                                      }}
+                                      size="small"
+                                      title="Edit Who Sold Categories (Admin Only)"
+                                    >
+                                      <EditIcon sx={{ fontSize: '12px' }} />
+                                    </IconButton>
+                                  )}
+                                </Box>
                               </Grid>
                             </Grid>
                           </Box>
@@ -6009,6 +6043,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
                 testBy: ['Audiologist', 'Technician'], 
                 programmingBy: ['Audiologist', 'Technician'],
+                sales: ['Sales Executive', 'Manager'],
                 general: JOB_ROLES
               });
             }}

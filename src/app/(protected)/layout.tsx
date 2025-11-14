@@ -41,8 +41,10 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     { text: 'Material Out', path: '/material-out', icon: '📤' },
     { text: 'Distribution Sales', path: '/distribution-sales', icon: '🚚' },
     { text: 'Sales', path: '/sales', icon: '💰' },
+    { text: 'Invoice Manager', path: '/invoice-manager', icon: '📄' },
     { text: 'Parties', path: '/parties', icon: '🤝' },
     { text: 'Centers', path: '/centers', icon: '🏢' },
+    { text: 'Companies', path: '/companies', icon: '🏭', adminOnly: true },
     {
       text: 'Interaction',
       path: '/interaction',

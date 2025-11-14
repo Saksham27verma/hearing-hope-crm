@@ -83,6 +83,7 @@ interface InventoryItem {
   serialNumber: string;
   type: string;
   company: string;
+  originalProductCompany?: string; // Original product company from products collection
   location: string;
   status: 'In Stock' | 'Sold' | 'Damaged';
   dealerPrice: number;
@@ -146,7 +147,8 @@ export default function InventoryPage() {
     inStock: 0,
     sold: 0,
     damaged: 0,
-    inventoryValue: 0,
+    inventoryValueDealer: 0,
+    inventoryValueMRP: 0,
   });
 
   // Dialog state
@@ -327,6 +329,8 @@ export default function InventoryPage() {
             const type = prod.type || productRef.type || '';
             // Use companyLocation (from material-in form) as the primary company, fallback to product company
             const company = companyLocation || productRef.company || '';
+            // Store original product company separately for manufacturer analysis
+            const originalProductCompany = productRef.company || '';
             const mrp = prod.mrp ?? productRef.mrp ?? 0;
             const dealerPrice = prod.dealerPrice ?? prod.finalPrice ?? 0;
             const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
@@ -364,6 +368,7 @@ export default function InventoryPage() {
                 serialNumber: sn,
                 type,
                 company,
+                originalProductCompany,
                 location: documentLocation,
                 status,
                 dealerPrice: dealerPrice || 0,
@@ -394,6 +399,8 @@ export default function InventoryPage() {
             const type = prod.type || productRef.type || '';
             // Use companyLocation (from purchase form) as the primary company, fallback to product company
             const company = companyLocation || productRef.company || '';
+            // Store original product company separately for manufacturer analysis
+            const originalProductCompany = productRef.company || '';
             const mrp = prod.mrp ?? productRef.mrp ?? 0;
             const dealerPrice = prod.dealerPrice ?? prod.finalPrice ?? 0;
             const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
@@ -431,6 +438,7 @@ export default function InventoryPage() {
                 serialNumber: sn,
                 type,
                 company,
+                originalProductCompany,
                 location: documentLocation,
                 status,
                 dealerPrice: dealerPrice || 0,
@@ -535,6 +543,7 @@ export default function InventoryPage() {
               serialNumber: '-',
               type: productRef.type || '',
               company: productRef.company || '',
+              originalProductCompany: productRef.company || '',
               location: inInfo.lastLocation || '-',
             status: 'In Stock',
               dealerPrice: inInfo.dealerPrice || 0,
@@ -560,9 +569,12 @@ export default function InventoryPage() {
           .reduce((sum, i) => sum + (i.quantity || 1), 0);
         const sold = items.filter(i => i.status === 'Sold').length;
         const damaged = items.filter(i => i.status === 'Damaged').length; // no data source; stays 0
-        const inventoryValue = items
+        const inventoryValueDealer = items
           .filter(i => i.status === 'In Stock')
           .reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0);
+        const inventoryValueMRP = items
+          .filter(i => i.status === 'In Stock')
+          .reduce((sum, i) => sum + (i.mrp || 0) * (i.quantity || 1), 0);
 
         setInventory(items);
         setFilteredInventory(items);
@@ -571,7 +583,8 @@ export default function InventoryPage() {
           inStock,
           sold,
           damaged,
-          inventoryValue,
+          inventoryValueDealer,
+          inventoryValueMRP,
         });
         
         setLoading(false);
@@ -623,11 +636,13 @@ export default function InventoryPage() {
       filtered = filtered.filter(item => item.location === locationFilter);
     }
     
-    // Apply company filter
+    // Apply company filter (check both manufacturer and business company)
     if (companyFilter) {
       filtered = filtered.filter(item => {
-        // Check both product company and purchase/material-in company location
-        return item.company.toLowerCase().includes(companyFilter.toLowerCase());
+        // Check both original product company (manufacturer) and business company
+        const manufacturerMatch = item.originalProductCompany?.toLowerCase().includes(companyFilter.toLowerCase());
+        const businessCompanyMatch = item.company?.toLowerCase().includes(companyFilter.toLowerCase());
+        return manufacturerMatch || businessCompanyMatch;
       });
     }
     
@@ -732,10 +747,12 @@ export default function InventoryPage() {
       filtered = filtered.filter(item => item.type === typeFilter);
     }
 
-    // Filter by company
+    // Filter by company (check both manufacturer and business company)
     if (companyFilter) {
       filtered = filtered.filter(item => {
-        return item.company?.toLowerCase().includes(companyFilter.toLowerCase());
+        const manufacturerMatch = item.originalProductCompany?.toLowerCase().includes(companyFilter.toLowerCase());
+        const businessCompanyMatch = item.company?.toLowerCase().includes(companyFilter.toLowerCase());
+        return manufacturerMatch || businessCompanyMatch;
       });
     }
 
@@ -745,16 +762,20 @@ export default function InventoryPage() {
     const inStock = filtered.filter(i => i.status === 'In Stock').length;
     const sold = filtered.filter(i => i.status === 'Sold').length;
     const damaged = filtered.filter(i => i.status === 'Damaged').length;
-    const inventoryValue = filtered
+    const inventoryValueDealer = filtered
       .filter(i => i.status === 'In Stock')
-      .reduce((sum, i) => sum + i.dealerPrice, 0);
+      .reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0);
+    const inventoryValueMRP = filtered
+      .filter(i => i.status === 'In Stock')
+      .reduce((sum, i) => sum + (i.mrp || 0) * (i.quantity || 1), 0);
 
     setStats({
       totalItems: filtered.length,
       inStock,
       sold,
       damaged,
-      inventoryValue,
+      inventoryValueDealer,
+      inventoryValueMRP,
     });
   }, [inventory, locationFilter, searchTerm, statusFilter, typeFilter, companyFilter, showSoldItems]);
 
@@ -762,17 +783,19 @@ export default function InventoryPage() {
   const productTypes = Array.from(new Set(inventory.map(item => item.type)));
   const locations = Array.from(new Set(inventory.map(item => item.location)));
   const companies = Array.from(new Set(inventory.map(item => item.company).filter(Boolean)));
+  const originalProductCompanies = Array.from(new Set(inventory.map(item => item.originalProductCompany).filter(Boolean)));
 
   // Grouped view: Category -> Products -> Serials (In Stock only)
   const grouped = React.useMemo(() => {
     const inStockItems = filteredInventory.filter(i => i.status === 'In Stock');
-    const byCategory: Record<string, { value: number; count: number; products: Record<string, { company: string; items: InventoryItem[] }> }> = {};
+    const byCategory: Record<string, { dealerValue: number; mrpValue: number; count: number; products: Record<string, { company: string; items: InventoryItem[] }> }> = {};
     for (const item of inStockItems) {
       const cat = item.type || 'Other';
       if (!byCategory[cat]) {
-        byCategory[cat] = { value: 0, count: 0, products: {} };
+        byCategory[cat] = { dealerValue: 0, mrpValue: 0, count: 0, products: {} };
       }
-      byCategory[cat].value += item.mrp || 0;
+      byCategory[cat].dealerValue += (item.dealerPrice || 0) * (item.quantity || 1);
+      byCategory[cat].mrpValue += (item.mrp || 0) * (item.quantity || 1);
       byCategory[cat].count += 1;
       const key = item.productName || 'Unnamed';
       if (!byCategory[cat].products[key]) {
@@ -783,7 +806,8 @@ export default function InventoryPage() {
     // Convert to array with sorted categories
     const categories = Object.keys(byCategory).sort().map(cat => ({
       category: cat,
-      totalValue: byCategory[cat].value,
+      totalDealerValue: byCategory[cat].dealerValue,
+      totalMRPValue: byCategory[cat].mrpValue,
       totalCount: byCategory[cat].count,
       products: Object.entries(byCategory[cat].products)
         .sort((a, b) => a[0].localeCompare(b[0]))
@@ -896,16 +920,20 @@ export default function InventoryPage() {
       const inStock = updatedInventory.filter(i => i.status === 'In Stock').length;
       const sold = updatedInventory.filter(i => i.status === 'Sold').length;
       const damaged = updatedInventory.filter(i => i.status === 'Damaged').length;
-      const inventoryValue = updatedInventory
+      const inventoryValueDealer = updatedInventory
         .filter(i => i.status === 'In Stock')
-        .reduce((sum, i) => sum + i.dealerPrice, 0);
+        .reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0);
+      const inventoryValueMRP = updatedInventory
+        .filter(i => i.status === 'In Stock')
+        .reduce((sum, i) => sum + (i.mrp || 0) * (i.quantity || 1), 0);
       
       setStats({
         totalItems: updatedInventory.length,
         inStock,
         sold,
         damaged,
-        inventoryValue,
+        inventoryValueDealer,
+        inventoryValueMRP,
       });
       
       setOpenDialog(false);
@@ -934,16 +962,20 @@ export default function InventoryPage() {
       const inStock = updatedInventory.filter(i => i.status === 'In Stock').length;
       const sold = updatedInventory.filter(i => i.status === 'Sold').length;
       const damaged = updatedInventory.filter(i => i.status === 'Damaged').length;
-      const inventoryValue = updatedInventory
+      const inventoryValueDealer = updatedInventory
         .filter(i => i.status === 'In Stock')
-        .reduce((sum, i) => sum + i.dealerPrice, 0);
+        .reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0);
+      const inventoryValueMRP = updatedInventory
+        .filter(i => i.status === 'In Stock')
+        .reduce((sum, i) => sum + (i.mrp || 0) * (i.quantity || 1), 0);
       
       setStats({
         totalItems: updatedInventory.length,
         inStock,
         sold,
         damaged,
-        inventoryValue,
+        inventoryValueDealer,
+        inventoryValueMRP,
       });
       
       setSuccessMessage('Inventory item deleted successfully');
@@ -1124,11 +1156,23 @@ export default function InventoryPage() {
           <Box display="flex" alignItems="center" mb={1}>
             <TrendingUpIcon color="primary" sx={{ mr: 1, fontSize: 20 }} />
             <Typography variant="subtitle2" color="text.secondary">
-              Total Value
+              Dealer Value
             </Typography>
           </Box>
           <Typography variant="h5" fontWeight="bold" color="primary.main" noWrap>
-            {formatCurrency(stats.inventoryValue)}
+            {formatCurrency(stats.inventoryValueDealer)}
+          </Typography>
+        </Card>
+        
+        <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
+          <Box display="flex" alignItems="center" mb={1}>
+            <TrendingUpIcon color="success" sx={{ mr: 1, fontSize: 20 }} />
+            <Typography variant="subtitle2" color="text.secondary">
+              MRP Value
+            </Typography>
+          </Box>
+          <Typography variant="h5" fontWeight="bold" color="success.main" noWrap>
+            {formatCurrency(stats.inventoryValueMRP)}
           </Typography>
         </Card>
       </Box>
@@ -1138,20 +1182,21 @@ export default function InventoryPage() {
         <Box display="flex" alignItems="center" mb={3}>
           <BusinessIcon color="primary" sx={{ mr: 2 }} />
           <Typography variant="h6" fontWeight="600" color="text.primary">
-            Stock Position by Company
+            Stock Position by Manufacturer
           </Typography>
         </Box>
         
         <Grid container spacing={2}>
-          {companies.map(company => {
-            // Use filteredInventory if other filters are applied, otherwise use all inventory
-            const baseItems = (locationFilter || statusFilter || typeFilter || searchTerm) ? filteredInventory : inventory;
-            const companyItems = baseItems.filter(item => item.company === company);
+          {originalProductCompanies.map(company => {
+            // Use filteredInventory if any filters are applied, otherwise use all inventory
+            const baseItems = (locationFilter || statusFilter || typeFilter || searchTerm || companyFilter) ? filteredInventory : inventory;
+            const companyItems = baseItems.filter(item => item.originalProductCompany === company);
             const companyStats = {
               total: companyItems.length,
               inStock: companyItems.filter(i => i.status === 'In Stock').length,
               sold: companyItems.filter(i => i.status === 'Sold').length,
-              value: companyItems.filter(i => i.status === 'In Stock').reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0)
+              dealerValue: companyItems.filter(i => i.status === 'In Stock').reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0),
+              mrpValue: companyItems.filter(i => i.status === 'In Stock').reduce((sum, i) => sum + (i.mrp || 0) * (i.quantity || 1), 0)
             };
             
             return (
@@ -1165,7 +1210,7 @@ export default function InventoryPage() {
                   cursor: 'pointer',
                   '&:hover': { borderColor: 'primary.light', boxShadow: 1 }
                 }}
-                onClick={() => setCompanyFilter(companyFilter === company ? '' : company)}
+                onClick={() => setCompanyFilter(companyFilter === company ? '' : company || '')}
                 >
                   <CardContent>
                     <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
@@ -1174,7 +1219,7 @@ export default function InventoryPage() {
                           width: 40, 
                           height: 40, 
                           borderRadius: 1, 
-                          bgcolor: company === 'Hope Enterprises' ? 'primary.main' : 'success.main',
+                          bgcolor: company === 'Phonak' ? 'primary.main' : company === 'Siemens' ? 'success.main' : 'secondary.main',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -1199,7 +1244,7 @@ export default function InventoryPage() {
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns="repeat(4, 1fr)" gap={1}>
+                    <Box display="grid" gridTemplateColumns="repeat(5, 1fr)" gap={1}>
                       <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
                         <Typography variant="h6" fontWeight="bold" color="success.main">
                           {companyStats.inStock}
@@ -1224,12 +1269,20 @@ export default function InventoryPage() {
                           Total
                         </Typography>
                       </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
-                        <Typography variant="body2" fontWeight="bold" color="warning.main" noWrap>
-                          {formatCurrency(companyStats.value)}
+                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                        <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
+                          {formatCurrency(companyStats.dealerValue)}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Value
+                          Dealer
+                        </Typography>
+                      </Box>
+                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
+                        <Typography variant="body2" fontWeight="bold" color="warning.main" noWrap>
+                          {formatCurrency(companyStats.mrpValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          MRP
                         </Typography>
                       </Box>
                     </Box>
@@ -1241,12 +1294,159 @@ export default function InventoryPage() {
         </Grid>
       </Paper>
 
+      {/* Stock Distribution by Manufacturer */}
+      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
+        <Box display="flex" alignItems="center" mb={3}>
+          <BusinessIcon color="secondary" sx={{ mr: 2 }} />
+          <Typography variant="h6" fontWeight="600" color="text.primary">
+            Stock Position by Company
+          </Typography>
+        </Box>
+        
+        <Grid container spacing={2}>
+          {(() => {
+            // Get all inventory items (not just hearing aids)
+            const allItems = (locationFilter || statusFilter || typeFilter || searchTerm || companyFilter) ? filteredInventory : inventory;
+            const inStockItems = allItems.filter(item => item.status === 'In Stock');
+            
+            // Group by business company (from location/company field)
+            const companyMap = new Map();
+            inStockItems.forEach(item => {
+              const businessCompany = item.company || 'Unknown';
+              if (!companyMap.has(businessCompany)) {
+                companyMap.set(businessCompany, {
+                  name: businessCompany,
+                  items: [],
+                  totalCount: 0,
+                  dealerValue: 0,
+                  mrpValue: 0
+                });
+              }
+              const companyData = companyMap.get(businessCompany);
+              companyData.items.push(item);
+              companyData.totalCount += (item.quantity || 1);
+              companyData.dealerValue += (item.dealerPrice || 0) * (item.quantity || 1);
+              companyData.mrpValue += (item.mrp || 0) * (item.quantity || 1);
+            });
+            
+            // Convert to array and sort by count
+            const businessCompanies = Array.from(companyMap.values())
+              .sort((a, b) => b.totalCount - a.totalCount);
+            
+            // Get business company colors
+            const getCompanyColor = (name: string): string => {
+              const colors: Record<string, string> = {
+                'Hope Enterprises': '#1976d2',
+                'HDIPL': '#388e3c', 
+                'Hope Digital Innovations': '#f57c00',
+                'Head Office': '#7b1fa2'
+              };
+              return colors[name] || '#616161';
+            };
+            
+            return businessCompanies.map(company => (
+              <Grid item xs={12} sm={6} md={4} lg={3} key={company.name}>
+                <Card elevation={0} sx={{ 
+                  borderRadius: 2, 
+                  border: '2px solid', 
+                  borderColor: companyFilter === company.name ? getCompanyColor(company.name) : 'divider',
+                  bgcolor: 'background.paper',
+                  transition: 'all 0.3s ease',
+                  cursor: 'pointer',
+                  '&:hover': { 
+                    borderColor: getCompanyColor(company.name),
+                    boxShadow: `0 4px 20px ${getCompanyColor(company.name)}20`,
+                    transform: 'translateY(-2px)'
+                  }
+                }}
+                onClick={() => setCompanyFilter(companyFilter === company.name ? '' : company.name)}>
+                  <CardContent sx={{ p: 2.5 }}>
+                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+                      <Box display="flex" alignItems="center">
+                        <Box sx={{ 
+                          width: 48, 
+                          height: 48, 
+                          borderRadius: 2, 
+                          bgcolor: getCompanyColor(company.name),
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          mr: 2,
+                          boxShadow: `0 4px 12px ${getCompanyColor(company.name)}30`
+                        }}>
+                          <Typography variant="h6" fontWeight="bold" color="white">
+                            {company.name.charAt(0)}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="subtitle1" fontWeight="700" color="text.primary">
+                            {company.name}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {company.totalCount} items
+                          </Typography>
+                        </Box>
+                      </Box>
+                    </Box>
+                    
+                    <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1} mt={2}>
+                      <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                        <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
+                          {formatCurrency(company.dealerValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Dealer Value
+                        </Typography>
+                      </Box>
+                      <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'success.lighter', borderRadius: 1 }}>
+                        <Typography variant="body2" fontWeight="bold" color="success.main" noWrap>
+                          {formatCurrency(company.mrpValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          MRP Value
+                        </Typography>
+                      </Box>
+                    </Box>
+                    
+                    <Box mt={2} sx={{ p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" textAlign="center">
+                        {((company.totalCount / inStockItems.length) * 100).toFixed(1)}% of total inventory
+                      </Typography>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ));
+          })()}
+        </Grid>
+        
+        {(() => {
+          const allItems = (locationFilter || statusFilter || typeFilter || searchTerm) ? filteredInventory : inventory;
+          const inStockItems = allItems.filter(item => item.status === 'In Stock');
+          
+          if (inStockItems.length === 0) {
+            return (
+              <Box textAlign="center" py={4}>
+                <BusinessIcon sx={{ fontSize: 64, color: 'grey.300', mb: 2 }} />
+                <Typography variant="h6" color="text.secondary" gutterBottom>
+                  No items in stock
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Add some inventory to see company distribution
+                </Typography>
+              </Box>
+            );
+          }
+          return null;
+        })()}
+      </Paper>
+
       {/* Center-wise Stock Overview */}
       <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
         <Box display="flex" alignItems="center" mb={3}>
           <LocationIcon color="primary" sx={{ mr: 2 }} />
           <Typography variant="h6" fontWeight="600" color="text.primary">
-            Stock Distribution by Center
+            Stock Position by Center
           </Typography>
         </Box>
         
@@ -1259,7 +1459,8 @@ export default function InventoryPage() {
               total: locationItems.length,
               inStock: locationItems.filter(i => i.status === 'In Stock').length,
               sold: locationItems.filter(i => i.status === 'Sold').length,
-              value: locationItems.filter(i => i.status === 'In Stock').reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0)
+              dealerValue: locationItems.filter(i => i.status === 'In Stock').reduce((sum, i) => sum + (i.dealerPrice || 0) * (i.quantity || 1), 0),
+              mrpValue: locationItems.filter(i => i.status === 'In Stock').reduce((sum, i) => sum + (i.mrp || 0) * (i.quantity || 1), 0)
             };
             
             const centerName = getCenterName(location);
@@ -1309,7 +1510,7 @@ export default function InventoryPage() {
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns="repeat(3, 1fr)" gap={1} mt={2}>
+                    <Box display="grid" gridTemplateColumns="repeat(4, 1fr)" gap={1} mt={2}>
                       <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
                         <Typography variant="body1" fontWeight="bold" color="success.main">
                           {locationStats.inStock}
@@ -1326,12 +1527,20 @@ export default function InventoryPage() {
                           Sold
                         </Typography>
                       </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
-                        <Typography variant="caption" fontWeight="bold" color="warning.main" noWrap>
-                          {formatCurrency(locationStats.value)}
+                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                        <Typography variant="caption" fontWeight="bold" color="primary.main" noWrap>
+                          {formatCurrency(locationStats.dealerValue)}
                         </Typography>
                         <Typography variant="caption" color="text.secondary" display="block">
-                          Value
+                          Dealer
+                        </Typography>
+                      </Box>
+                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
+                        <Typography variant="caption" fontWeight="bold" color="warning.main" noWrap>
+                          {formatCurrency(locationStats.mrpValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          MRP
                         </Typography>
                       </Box>
                     </Box>
@@ -1384,12 +1593,24 @@ export default function InventoryPage() {
                         variant="outlined" 
                       />
                     </Box>
-                    <Typography variant="h6" fontWeight="bold" color="success.main">
-                      {formatCurrency(group.totalValue)}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" mt={1}>
-                      Stock value
-                    </Typography>
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
+                      <Box textAlign="left">
+                        <Typography variant="body1" fontWeight="bold" color="primary.main">
+                          {formatCurrency(group.totalDealerValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Dealer Value
+                        </Typography>
+                      </Box>
+                      <Box textAlign="right">
+                        <Typography variant="body1" fontWeight="bold" color="success.main">
+                          {formatCurrency(group.totalMRPValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          MRP Value
+                        </Typography>
+                      </Box>
+                    </Box>
                   </CardContent>
                 </Card>
               </Grid>
@@ -1406,7 +1627,9 @@ export default function InventoryPage() {
             <Paper key={group.category} elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
               <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Typography variant="subtitle1" fontWeight={700}>{group.category}</Typography>
-                <Typography variant="body2" color="text.secondary">{group.totalCount} items • {formatCurrency(group.totalValue)}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {group.totalCount} items • Dealer: {formatCurrency(group.totalDealerValue)} • MRP: {formatCurrency(group.totalMRPValue)}
+                </Typography>
               </Box>
               <TableContainer>
                 <Table size="small">
@@ -1604,7 +1827,7 @@ export default function InventoryPage() {
                 sx={{ borderRadius: 1 }}
               >
                 <MenuItem value="">All Companies</MenuItem>
-                {companies.map(company => (
+                {originalProductCompanies.map(company => (
                   <MenuItem key={company} value={company}>{company}</MenuItem>
                 ))}
               </Select>
@@ -1716,6 +1939,12 @@ export default function InventoryPage() {
                 </TableCell>
                 <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
                   <Box display="flex" alignItems="center">
+                    <BusinessIcon sx={{ mr: 1, fontSize: 20, color: 'secondary.main' }} />
+                    Manufacturer
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                  <Box display="flex" alignItems="center">
                     <LocationIcon sx={{ mr: 1, fontSize: 20 }} />
                     Location
                   </Box>
@@ -1812,6 +2041,23 @@ export default function InventoryPage() {
                         </Box>
                       </TableCell>
                       <TableCell sx={{ py: 3 }}>
+                        <Box display="flex" alignItems="center">
+                          <Box sx={{ 
+                            width: 8, 
+                            height: 8, 
+                            borderRadius: '50%', 
+                            bgcolor: item.originalProductCompany === 'Phonak' ? 'primary.main' : 
+                                     item.originalProductCompany === 'Siemens' ? 'success.main' : 
+                                     item.originalProductCompany === 'ReSound' ? 'warning.main' : 
+                                     'secondary.main',
+                            mr: 1
+                          }} />
+                          <Typography variant="body2" fontWeight="medium">
+                            {item.originalProductCompany || '-'}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell sx={{ py: 3 }}>
                         <Typography variant="body2" color="text.secondary">
                           {getCenterName(item.location)}
                         </Typography>
@@ -1891,7 +2137,7 @@ export default function InventoryPage() {
                   ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={8} sx={{ py: 8 }}>
+                  <TableCell colSpan={9} sx={{ py: 8 }}>
                     <Box textAlign="center">
                       <InventoryIcon sx={{ fontSize: 64, color: '#cbd5e1', mb: 2 }} />
                       <Typography variant="h6" color="text.secondary" gutterBottom>

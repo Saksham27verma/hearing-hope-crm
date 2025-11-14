@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Tax Invoice - Hope Enterprises</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <table border="0" cellspacing="0" cellpadding="0" width="100%" style="background:#fff;padding:2px;">
+        <tbody>
+            <tr>
+                <td>
+                    <table border="0" cellspacing="0" cellpadding="0" width="100%" style="border-left:1px solid #c0c6cc;border-right:4px solid #c0c6cc;border-top:1px solid #c0c6cc;border-bottom:4px solid #c0c6cc;padding:10px;background-color:white;">
+                        <tbody>
+                            <tr>
+                                <td valign="top">
+                                    <table border="0" cellspacing="0" cellpadding="0" width="100%" style="font-size:18px;">
+                                        <tbody>
+                                            <tr>
+                                                <td valign="top" align="left">
+                                                    <img src="{{LOGO_PLACEHOLDER}}" align="" height="100" width="100"><br>
+                                                </td>
+                                                <td style="color: black;" valign="Bottom" align="left">
+                                                    <span style="color: black; font-weight: bold;"><font size="5">Hope Enterprises</font></span><br>
+                                                    <span style="font-size: 12px;">G-14, Ground Floor, King Mall, Twin District Center,</span><br>
+                                                    <span style="font-size: 12px;">Opp. Baba Saheb Ambedkar Hospital Rohini,Rohini West Metro Station</span><br>
+                                                    <span style="font-size: 12px;">Sector-10, Rohini , Delhi - 110085</span><br>
+                                                    <span style="font-size: 12px;">Email: Hearinghope@gmail.com<br></span>
+                                                    <span style="font-size: 12px;">Contact: 9711871169</span><br>
+                                                    <span style="font-size: 12px;">Website: Hearinghope.in</span>
+                                                </td>
+                                                <td style="color: black;" valign="Bottom" align="right">
+                                                    <span style="font-size: 20px;"><b>TAX INVOICE</b></span><br>
+                                                    <span style="font-size: 12px; color: black;"><b>Bill Date: {{INVOICE_DATE}}</b></span><br>
+                                                    <span style="font-size: 12px; color: black;">Bill Number: {{INVOICE_NUMBER}}<br></span>
+                                                    <span style="font-size: 12px;">GSTIN: 07AFNPM1470L1Z3</span>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                    <hr>
+                                    <b>
+                                        <font size="4">Name: {{CUSTOMER_NAME}}<br></font>
+                                        Contact No.: {{CUSTOMER_PHONE}}<br>
+                                        Address: {{CUSTOMER_ADDRESS}}<br>
+                                        Customer GSTIN: {{CUSTOMER_GSTIN}}<br>
+                                        Mode of Payment: {{PAYMENT_MODE}}<br>
+                                        Warranty: {{WARRANTY_PERIOD}}
+                                    </b>
+                                    <div style="text-align: justify;"></div>
+                                    
+                                    <table border="0" cellspacing="0" cellpadding="0" width="100%" style="font-family: sans-serif;font-size:11px;color:#000;">
+                                        <thead>
+                                            <tr>
+                                                <td style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">S.No</td>
+                                                <td style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">Product Name</td>
+                                                <td style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">Serial No.</td>
+                                                <td style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">HSN Code</td>
+                                                <td align="right" style="text-align: center; font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">MRP<br>(per unit)</td>
+                                                <td align="right" style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">QTY</td>
+                                                <td align="right" style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">Total MRP</td>
+                                                <td align="right" style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">Discount<br>(%)</td>
+                                                <td align="right" style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">Selling Price</td>
+                                                <td align="right" style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">GST<br>(%)</td>
+                                                <td align="right" style="font-weight:bold;background-color:#eaeaea;border-top:2px solid gray;">GST Amount</td>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {{ITEMS_PLACEHOLDER}}
+                                        </tbody>
+                                        <tbody>
+                                            <tr>
+                                                <td align="right" colspan="10"><b>Total Excluding GST:</b></td>
+                                                <td align="right">{{SUBTOTAL}}<br><br></td>
+                                            </tr>
+                                            <tr>
+                                                <td align="right" colspan="10"><b>Total GST:</b></td>
+                                                <td align="right">{{TAX_AMOUNT}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td align="right" colspan="10"><br></td>
+                                                <td align="right"><br></td>
+                                            </tr>
+                                            <tr>
+                                                <td align="right" colspan="10" style="border-bottom:2px solid #c0c6cc"><b><font size="3">Grand Total:&nbsp;</font></b></td>
+                                                <td align="right" style="border-bottom:2px solid #c0c6cc;border-top:2px solid #c0c6cc;">{{TOTAL}}<br><br></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                    
+                                    <div style="text-align: justify;"><br></div>
+                                    <div style="text-align: justify;">
+                                        <span style="font-size: x-small; font-family: 'times new roman', times, serif;">I Acknowledge that the particulars given above are true and correct and, I am satisfied with the prescribed hearing aid during the trial of {{TRIAL_PERIOD}} day(s). I have been informed that the hearing aid once sold will not be returned.</span>
+                                    </div>
+                                    <div style="text-align: justify;"><br></div>
+                                    
+                                    <br><br>
+                                    <b>Customer Signature:<br></b><br>
+                                    
+                                    <table border="0" cellspacing="0" cellpadding="5" width="100%">
+                                        <tbody>
+                                            <tr>
+                                                <td style="border-top: 2px solid gray;">
+                                                    <b>
+                                                        Terms and Conditions<br>
+                                                        <font size="2">
+                                                            1. Goods once sold will not be taken back or replaced<br>
+                                                            2. Interest @24% P.a will be Charged if Payment is not Replaced within 15 Days from Date of Bill<br>
+                                                            3. All disputes are subject to Delhi Jurisdiction<br>
+                                                            4. Home visit Charge will be Extra
+                                                        </font>
+                                                    </b>
+                                                    <div style="text-align: right; margin-top: 20px;">
+                                                        <img src="{{SIGNATURE_PLACEHOLDER}}" height="100" width="170">
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>
+                                                    <div style="text-align: right;">
+                                                        <b>Authorised Signatory</b>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</body>
+</html>
+

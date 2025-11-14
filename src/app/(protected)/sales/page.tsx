@@ -58,6 +58,9 @@ import { useAuth } from '@/hooks/useAuth';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import PDFInvoiceGenerator from '@/components/invoices/PDFInvoiceGenerator';
+import { convertSaleToInvoiceData } from '@/services/invoiceService';
+import TemplateSelector from '@/components/invoices/TemplateSelector';
 
 // Types
 interface Product {
@@ -127,6 +130,9 @@ const SalesPage = () => {
   const [enquirySales, setEnquirySales] = useState<any[]>([]);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceSale, setInvoiceSale] = useState<any | null>(null);
+  const [templateSelectorOpen, setTemplateSelectorOpen] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [selectedTemplateData, setSelectedTemplateData] = useState<any>(null);
   const [doctors, setDoctors] = useState<any[]>([]);
   const [salesPersons, setSalesPersons] = useState<any[]>([]);
   const [dateFilter, setDateFilter] = useState<Date | null>(null);
@@ -692,7 +698,14 @@ const SalesPage = () => {
                     </TableCell>
                     <TableCell align="right" sx={{ fontWeight: 'medium' }}>{formatCurrency(sale.totalAmount || 0)}</TableCell>
                     <TableCell align="right">
-                      <IconButton size="small" color="primary" onClick={() => { setInvoiceSale(sale); setInvoiceOpen(true); }}>
+                      <IconButton 
+                        size="small" 
+                        color="primary" 
+                        onClick={() => { 
+                          setInvoiceSale(sale); 
+                          setTemplateSelectorOpen(true); 
+                        }}
+                      >
                         <PrintIcon fontSize="small" />
                       </IconButton>
                     </TableCell>
@@ -820,7 +833,15 @@ const SalesPage = () => {
                         >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
-                        <IconButton size="small" color="default">
+                        <IconButton 
+                          size="small" 
+                          color="default"
+                          onClick={() => {
+                            setInvoiceSale(sale);
+                            setTemplateSelectorOpen(true);
+                          }}
+                          title="Print Invoice"
+                        >
                           <PrintIcon fontSize="small" />
                         </IconButton>
                       </TableCell>
@@ -1258,64 +1279,57 @@ const SalesPage = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Invoice Preview for Enquiry Sales */}
-      <Dialog open={invoiceOpen} onClose={() => setInvoiceOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>
-          Invoice Preview
-          <IconButton onClick={() => window.print()} sx={{ ml: 1 }} size="small">
-            <PrintIcon fontSize="small" />
-          </IconButton>
-        </DialogTitle>
-        <DialogContent dividers>
-          {invoiceSale && (
-            <Box>
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle2">Patient</Typography>
-                <Typography variant="body1" fontWeight="medium">{invoiceSale.patientName}</Typography>
-                {invoiceSale.address && (
-                  <Typography variant="caption" color="text.secondary">{invoiceSale.address}</Typography>
-                )}
-              </Box>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Product</TableCell>
-                    <TableCell>Serial</TableCell>
-                    <TableCell align="right">MRP</TableCell>
-                    <TableCell align="right">Price</TableCell>
-                    <TableCell align="right">GST%</TableCell>
-                    <TableCell align="right">Total</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {invoiceSale.products.map((p: any, i: number) => (
-                    <TableRow key={i}>
-                      <TableCell>{p.name}</TableCell>
-                      <TableCell>{p.serialNumber || '—'}</TableCell>
-                      <TableCell align="right">{formatCurrency(p.mrp || 0)}</TableCell>
-                      <TableCell align="right">{formatCurrency(p.sellingPrice || 0)}</TableCell>
-                      <TableCell align="right">{(p.gstPercent ?? 0)}%</TableCell>
-                      <TableCell align="right">{formatCurrency(p.finalAmount || p.sellingPrice || 0)}</TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow>
-                    <TableCell colSpan={5} align="right">
-                      <Typography variant="subtitle2">Grand Total</Typography>
-                    </TableCell>
-                    <TableCell align="right">
-                      <Typography variant="subtitle2">{formatCurrency(invoiceSale.totalAmount || 0)}</Typography>
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setInvoiceOpen(false)}>Close</Button>
-          <Button variant="contained" onClick={() => window.print()} startIcon={<PrintIcon />}>Print</Button>
-        </DialogActions>
-      </Dialog>
+      {/* Template Selector */}
+      <TemplateSelector
+        open={templateSelectorOpen}
+        onClose={() => {
+          setTemplateSelectorOpen(false);
+          setInvoiceSale(null);
+        }}
+        onSelect={async (templateId, template) => {
+          setSelectedTemplateId(templateId);
+          
+          // Fetch full template data from Firestore if it's an HTML template
+          if (template.templateType === 'html') {
+            try {
+              const templateDoc = await getDocs(collection(db, 'invoiceTemplates'));
+              const fullTemplate = templateDoc.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .find(t => t.id === templateId);
+              
+              if (fullTemplate) {
+                setSelectedTemplateData({
+                  id: fullTemplate.id,
+                  htmlContent: fullTemplate.htmlContent,
+                  images: fullTemplate.images || [],
+                });
+              }
+            } catch (error) {
+              console.error('Error fetching template:', error);
+            }
+          } else {
+            setSelectedTemplateData(null);
+          }
+          
+          setTemplateSelectorOpen(false);
+          setInvoiceOpen(true);
+        }}
+        selectedTemplateId={selectedTemplateId}
+      />
+
+      {/* Invoice Preview with PDF Generation */}
+      {invoiceSale && (
+        <PDFInvoiceGenerator
+          open={invoiceOpen}
+          onClose={() => {
+            setInvoiceOpen(false);
+            setInvoiceSale(null);
+          }}
+          invoiceData={convertSaleToInvoiceData(invoiceSale)}
+          template="modern"
+          customTemplate={selectedTemplateData}
+        />
+      )}
       
       {/* Success/Error messages */}
       <Snackbar open={!!successMsg} autoHideDuration={6000} onClose={handleCloseSnackbar}>

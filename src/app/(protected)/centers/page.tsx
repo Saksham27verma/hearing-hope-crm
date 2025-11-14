@@ -48,6 +48,7 @@ interface Center {
   monthlyElectricity: number;
   otherMonthlyExpenses: number;
   staffIds: string[];
+  companies?: string[]; // Array of company names
   isHeadOffice?: boolean;
   createdAt?: any;
 }
@@ -70,6 +71,7 @@ const formatCurrency = (amount: number) =>
 export default function CentersPage() {
   const [centers, setCenters] = useState<Center[]>([]);
   const [staff, setStaff] = useState<StaffUser[]>([]);
+  const [companies, setCompanies] = useState<Array<{id: string; name: string}>>([]);
   const [loading, setLoading] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -85,6 +87,7 @@ export default function CentersPage() {
     monthlyElectricity: '',
     otherMonthlyExpenses: '',
     staffIds: [] as string[],
+    companies: [] as string[],
     isHeadOffice: false,
   });
 
@@ -125,13 +128,27 @@ export default function CentersPage() {
     }
   };
 
+  const loadCompanies = async () => {
+    try {
+      const companiesSnap = await getDocs(query(collection(db, 'companies'), orderBy('name', 'asc')));
+      const list = companiesSnap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().name || d.id
+      }));
+      setCompanies(list);
+    } catch (err) {
+      console.error('Failed to load companies', err);
+    }
+  };
+
   useEffect(() => {
     loadCenters();
     loadStaff();
+    loadCompanies();
   }, []);
 
   const resetForm = () => {
-    setForm({ name: '', monthlyRent: '', monthlyElectricity: '', otherMonthlyExpenses: '', staffIds: [], isHeadOffice: false });
+    setForm({ name: '', monthlyRent: '', monthlyElectricity: '', otherMonthlyExpenses: '', staffIds: [], companies: [], isHeadOffice: false });
     setEditMode(false);
     setCurrentCenter(null);
   };
@@ -158,6 +175,7 @@ export default function CentersPage() {
         monthlyElectricity: Number(form.monthlyElectricity) || 0,
         otherMonthlyExpenses: Number(form.otherMonthlyExpenses) || 0,
         staffIds: form.staffIds,
+        companies: form.companies,
         isHeadOffice: form.isHeadOffice,
       };
 
@@ -195,6 +213,7 @@ export default function CentersPage() {
       monthlyElectricity: center.monthlyElectricity?.toString() || '',
       otherMonthlyExpenses: center.otherMonthlyExpenses?.toString() || '',
       staffIds: center.staffIds || [],
+      companies: center.companies || [],
       isHeadOffice: center.isHeadOffice || false,
     });
     setOpenDialog(true);
@@ -279,6 +298,7 @@ export default function CentersPage() {
                   <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: 'primary.lighter' } }}>
                     <TableCell>Name</TableCell>
                     <TableCell>Type</TableCell>
+                    <TableCell>Companies</TableCell>
                     <TableCell align="right">Monthly Rent</TableCell>
                     <TableCell align="right">Electricity</TableCell>
                     <TableCell align="right">Other Expenses</TableCell>
@@ -310,6 +330,24 @@ export default function CentersPage() {
                               variant="outlined" 
                             />
                           )}
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                            {(c.companies && c.companies.length > 0) ? (
+                              c.companies.map((companyName) => (
+                                <Chip 
+                                  key={companyName} 
+                                  label={companyName} 
+                                  size="small" 
+                                  color="primary"
+                                  variant="outlined"
+                                  icon={<DomainIcon fontSize="small" />}
+                                />
+                              ))
+                            ) : (
+                              <Typography variant="caption" color="text.secondary">-</Typography>
+                            )}
+                          </Box>
                         </TableCell>
                         <TableCell align="right">{formatCurrency(c.monthlyRent)}</TableCell>
                         <TableCell align="right">{formatCurrency(c.monthlyElectricity)}</TableCell>
@@ -451,6 +489,37 @@ export default function CentersPage() {
                         ))}
                       </Select>
                     </FormControl>
+                  </Grid>
+
+                  <Grid item xs={12}>
+                    <FormControl fullWidth>
+                      <InputLabel>Companies</InputLabel>
+                      <Select
+                        multiple
+                        label="Companies"
+                        value={form.companies}
+                        onChange={(e) => setForm((p) => ({ ...p, companies: e.target.value as string[] }))}
+                        renderValue={(selected) => (
+                          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+                            {(selected as string[]).map((companyName) => (
+                              <Chip key={companyName} label={companyName} size="small" color="primary" />
+                            ))}
+                          </Box>
+                        )}
+                      >
+                        {companies.map((company) => (
+                          <MenuItem key={company.id} value={company.name}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <DomainIcon fontSize="small" color="primary" />
+                              <Typography>{company.name}</Typography>
+                            </Box>
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                      Select one or more companies that this center operates for
+                    </Typography>
                   </Grid>
 
                   <Grid item xs={12} md={4}>
