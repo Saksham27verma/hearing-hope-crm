@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
+import UniversalSearch from '@/components/universal-search/UniversalSearch';
 
 interface NavItem {
   text: string;
@@ -340,7 +341,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                         }}
                         onClick={() => toggleMenu(item.text)}
                         onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
-                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = item.children.some(child => pathname?.startsWith(child.path)) ? 'rgba(255,255,255,0.15)' : 'transparent'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = item.children?.some(child => pathname?.startsWith(child.path)) ? 'rgba(255,255,255,0.15)' : 'transparent'}
                       >
                         <span style={styles.navIcon}>{item.icon}</span>
                         <span style={styles.navText}>{item.text}</span>
@@ -495,160 +496,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       )}
 
       {/* Universal Search Modal */}
-      {searchOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            zIndex: 1400,
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'center',
-            paddingTop: '10vh',
-          }}
-          onClick={() => setSearchOpen(false)}
-        >
-          <div
-            style={{
-              backgroundColor: 'white',
-              borderRadius: '12px',
-              width: '90%',
-              maxWidth: '600px',
-              maxHeight: '70vh',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-              overflow: 'hidden',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ padding: '24px 24px 16px 24px', borderBottom: '1px solid #eee' }}>
-              <h2 style={{ margin: '0 0 16px 0', fontSize: '20px', color: '#333' }}>
-                🔍 Universal Search
-              </h2>
-              <input
-                type="text"
-                placeholder="Search modules, customers, products..."
-                style={{
-                  width: '100%',
-                  padding: '12px 16px',
-                  border: '2px solid #ff6b35',
-                  borderRadius: '8px',
-                  fontSize: '16px',
-                  outline: 'none',
-                }}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    setSearchOpen(false);
-                  }
-                }}
-              />
-            </div>
-            <div style={{ padding: '16px 24px' }}>
-              <div style={{ marginBottom: '16px' }}>
-                <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#666', textTransform: 'uppercase' }}>
-                  Quick Actions
-                </h3>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  {[
-                    { name: 'New Enquiry', path: '/interaction/enquiries/new', icon: '📝' },
-                    { name: 'Add Product', path: '/products', icon: '🎧' },
-                    { name: 'View Inventory', path: '/inventory', icon: '📦' },
-                    { name: 'Sales Report', path: '/reports', icon: '📈' },
-                  ].map((action) => (
-                    <button
-                      key={action.name}
-                      style={{
-                        padding: '8px 12px',
-                        backgroundColor: '#f8f9fa',
-                        border: '1px solid #ddd',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        transition: 'all 0.2s ease',
-                      }}
-                      onClick={() => {
-                        router.push(action.path);
-                        setSearchOpen(false);
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#ff6b35';
-                        e.currentTarget.style.color = 'white';
-                        e.currentTarget.style.borderColor = '#ff6b35';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = '#f8f9fa';
-                        e.currentTarget.style.color = 'black';
-                        e.currentTarget.style.borderColor = '#ddd';
-                      }}
-                    >
-                      <span>{action.icon}</span>
-                      <span>{action.name}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h3 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#666', textTransform: 'uppercase' }}>
-                  Navigation
-                </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '8px' }}>
-                  {navigationItems
-                    .filter(item => !item.adminOnly || userProfile?.role === 'admin')
-                    .slice(0, 8)
-                    .map((item) => (
-                    <button
-                      key={item.text}
-                      style={{
-                        padding: '12px',
-                        backgroundColor: '#f8f9fa',
-                        border: '1px solid #ddd',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        textAlign: 'left',
-                        transition: 'all 0.2s ease',
-                      }}
-                      onClick={() => {
-                        if (item.path) {
-                          router.push(item.path);
-                          setSearchOpen(false);
-                        }
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#ff6b35';
-                        e.currentTarget.style.color = 'white';
-                        e.currentTarget.style.borderColor = '#ff6b35';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = '#f8f9fa';
-                        e.currentTarget.style.color = 'black';
-                        e.currentTarget.style.borderColor = '#ddd';
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span>{item.icon}</span>
-                        <span>{item.text}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#f8f9fa', borderRadius: '6px' }}>
-                <div style={{ fontSize: '12px', color: '#666' }}>
-                  💡 <strong>Tip:</strong> Press <kbd style={{ padding: '2px 6px', backgroundColor: '#ddd', borderRadius: '3px' }}>Ctrl+K</kbd> to open search from anywhere
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
 
       {/* Main Content */}
       <main style={styles.content}>

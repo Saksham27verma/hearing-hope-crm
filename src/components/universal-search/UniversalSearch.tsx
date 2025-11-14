@@ -62,6 +62,23 @@ interface UniversalSearchProps {
   onClose: () => void;
 }
 
+// Quick actions for the search dialog
+const quickActions = [
+  { name: 'New Enquiry', path: '/interaction/enquiries/new', icon: <PersonIcon />, color: '#2196f3' },
+  { name: 'Add Product', path: '/products', icon: <HearingIcon />, color: '#ff9800' },
+  { name: 'View Inventory', path: '/inventory', icon: <InventoryIcon />, color: '#4caf50' },
+  { name: 'Sales Report', path: '/reports', icon: <AssignmentIcon />, color: '#9c27b0' },
+];
+
+const navigationShortcuts = [
+  { text: 'Dashboard', path: '/dashboard', icon: <AssignmentIcon />, color: '#2196f3' },
+  { text: 'Products', path: '/products', icon: <HearingIcon />, color: '#ff9800' },
+  { text: 'Inventory', path: '/inventory', icon: <InventoryIcon />, color: '#4caf50' },
+  { text: 'Material Out', path: '/material-out', icon: <ShippingIcon />, color: '#f44336' },
+  { text: 'Sales', path: '/sales', icon: <ReceiptIcon />, color: '#9c27b0' },
+  { text: 'Parties', path: '/parties', icon: <BusinessIcon />, color: '#00bcd4' },
+];
+
 const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -387,6 +404,113 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
           sx={{ mb: 2 }}
           autoFocus
         />
+
+        {/* Quick Actions - Show when no search term */}
+        {!searchTerm && (
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="subtitle2" color="primary" sx={{ mb: 1.5, fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+              QUICK ACTIONS
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 1 }}>
+              {quickActions.map((action) => (
+                <Paper
+                  key={action.name}
+                  elevation={0}
+                  sx={{
+                    p: 1.5,
+                    cursor: 'pointer',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 2,
+                    transition: 'all 0.2s',
+                    '&:hover': {
+                      borderColor: action.color,
+                      bgcolor: `${action.color}10`,
+                      transform: 'translateY(-2px)',
+                      boxShadow: 2,
+                    },
+                  }}
+                  onClick={() => {
+                    router.push(action.path);
+                    onClose();
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <Avatar sx={{ bgcolor: action.color, width: 32, height: 32 }}>
+                      {action.icon}
+                    </Avatar>
+                    <Typography variant="body2" fontWeight={500}>
+                      {action.name}
+                    </Typography>
+                  </Box>
+                </Paper>
+              ))}
+            </Box>
+          </Box>
+        )}
+
+        {/* Navigation Shortcuts - Show when no search term */}
+        {!searchTerm && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2" color="primary" sx={{ mb: 1.5, fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+              NAVIGATION
+            </Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1 }}>
+              {navigationShortcuts.map((nav) => (
+                <Paper
+                  key={nav.text}
+                  elevation={0}
+                  sx={{
+                    p: 1,
+                    cursor: 'pointer',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 1.5,
+                    transition: 'all 0.2s',
+                    '&:hover': {
+                      borderColor: nav.color,
+                      bgcolor: `${nav.color}10`,
+                      boxShadow: 1,
+                    },
+                  }}
+                  onClick={() => {
+                    router.push(nav.path);
+                    onClose();
+                  }}
+                >
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
+                    <Avatar sx={{ bgcolor: nav.color, width: 28, height: 28 }}>
+                      {nav.icon}
+                    </Avatar>
+                    <Typography variant="caption" align="center" sx={{ fontSize: '0.7rem' }}>
+                      {nav.text}
+                    </Typography>
+                  </Box>
+                </Paper>
+              ))}
+            </Box>
+          </Box>
+        )}
+
+        {/* Keyboard shortcut hint */}
+        {!searchTerm && (
+          <Paper 
+            elevation={0} 
+            sx={{ 
+              p: 1.5, 
+              bgcolor: 'primary.50', 
+              border: '1px solid', 
+              borderColor: 'primary.200',
+              borderRadius: 1.5 
+            }}
+          >
+            <Typography variant="caption" color="primary.dark" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              💡 <strong>Tip:</strong> Press{' '}
+              <Chip label="Ctrl+K" size="small" sx={{ height: 20, fontSize: '0.7rem' }} />{' '}
+              to open search from anywhere
+            </Typography>
+          </Paper>
+        )}
 
         {searchTerm.length > 0 && searchTerm.length < 2 && (
           <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
