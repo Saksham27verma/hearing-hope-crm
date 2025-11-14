@@ -1,7 +1,40 @@
 'use client';
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { Box, Paper, Stack, Typography, Button, Chip, IconButton, Tooltip, Divider, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Grid, MenuItem, Autocomplete, ToggleButtonGroup, ToggleButton, TableContainer, Table, TableHead, TableRow, TableCell, TableBody, InputAdornment } from '@mui/material';
+import { 
+  Box, 
+  Paper, 
+  Stack, 
+  Typography, 
+  Button, 
+  Chip, 
+  IconButton, 
+  Tooltip, 
+  Divider, 
+  TextField, 
+  Dialog, 
+  DialogTitle, 
+  DialogContent, 
+  DialogActions, 
+  Grid, 
+  MenuItem, 
+  Autocomplete, 
+  ToggleButtonGroup, 
+  ToggleButton, 
+  TableContainer, 
+  Table, 
+  TableHead, 
+  TableRow, 
+  TableCell, 
+  TableBody, 
+  InputAdornment,
+  FormControl,
+  InputLabel,
+  Select,
+  Menu,
+  ListItemIcon,
+  ListItemText,
+} from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -12,13 +45,19 @@ import PlaceIcon from '@mui/icons-material/Place';
 import PersonIcon from '@mui/icons-material/Person';
 import EventIcon from '@mui/icons-material/Event';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import DownloadIcon from '@mui/icons-material/Download';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import ImageIcon from '@mui/icons-material/Image';
 import { db } from '@/firebase/config';
-import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc, where } from 'firebase/firestore';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
 import listPlugin from '@fullcalendar/list';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 type AppointmentType = 'center' | 'home';
 
@@ -27,14 +66,14 @@ interface Appointment {
   title: string;
   enquiryId?: string;
   patientName?: string;
-  type: AppointmentType; // center or home
-  centerId?: string; // for center visit
-  address?: string; // for home visit
-  homeVisitorStaffId?: string; // staff assigned for home visit
+  type: AppointmentType;
+  centerId?: string;
+  address?: string;
+  homeVisitorStaffId?: string;
   homeVisitorName?: string;
   notes?: string;
-  start: string; // ISO
-  end: string; // ISO
+  start: string;
+  end: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -67,6 +106,11 @@ export default function AppointmentSchedulerPage() {
   const [enquirySearch, setEnquirySearch] = useState('');
   const [enquiriesLoading, setEnquiriesLoading] = useState(false);
   const [staffList, setStaffList] = useState<any[]>([]);
+  
+  // Filters
+  const [selectedCenter, setSelectedCenter] = useState<string>('all');
+  const [selectedExecutive, setSelectedExecutive] = useState<string>('all');
+  const [exportMenuAnchor, setExportMenuAnchor] = useState<null | HTMLElement>(null);
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -105,7 +149,32 @@ export default function AppointmentSchedulerPage() {
     );
   }, [allEnquiries, enquirySearch]);
 
-  const events = useMemo(() => appointments.map(a => ({
+  // Filter appointments based on selected filters
+  const filteredAppointments = useMemo(() => {
+    let filtered = [...appointments];
+    
+    // Filter by center
+    if (selectedCenter !== 'all') {
+      filtered = filtered.filter(apt => apt.centerId === selectedCenter);
+    }
+    
+    // Filter by executive (staff)
+    if (selectedExecutive !== 'all') {
+      filtered = filtered.filter(apt => apt.homeVisitorStaffId === selectedExecutive);
+    }
+    
+    return filtered;
+  }, [appointments, selectedCenter, selectedExecutive]);
+
+  // Get upcoming appointments (future appointments)
+  const upcomingAppointments = useMemo(() => {
+    const now = new Date();
+    return filteredAppointments
+      .filter(apt => new Date(apt.start) >= now)
+      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  }, [filteredAppointments]);
+
+  const events = useMemo(() => filteredAppointments.map(a => ({
     id: a.id,
     title: a.patientName || a.title || 'Patient',
     start: a.start,
@@ -113,7 +182,7 @@ export default function AppointmentSchedulerPage() {
     extendedProps: a,
     backgroundColor: a.type === 'center' ? '#1976d2' : '#43a047',
     borderColor: a.type === 'center' ? '#1565c0' : '#2e7d32',
-  })), [appointments]);
+  })), [filteredAppointments]);
 
   const handleDateSelect = (info: any) => {
     setNewAppt({
@@ -127,7 +196,6 @@ export default function AppointmentSchedulerPage() {
   const handleEventClick = async (clickInfo: any) => {
     const data = clickInfo.event.extendedProps as Appointment;
     setPreviewAppt(data);
-    // Fetch additional preview fields
     let phone = '';
     let centerName = '';
     let homeVisitorName = data.homeVisitorName || '';
@@ -154,12 +222,10 @@ export default function AppointmentSchedulerPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Minimal validation
       if (!newAppt.patientName) throw new Error('Select a patient');
       if (newAppt.type === 'center' && !newAppt.centerId) throw new Error('Select a center');
       if (newAppt.type === 'home' && !newAppt.homeVisitorStaffId) throw new Error('Select staff for home visit');
       if (newAppt.id) {
-        // For simplicity, recreate document with same id logic can be added later
         await addDoc(collection(db, 'appointments'), {
           ...newAppt,
           createdAt: serverTimestamp(),
@@ -184,14 +250,323 @@ export default function AppointmentSchedulerPage() {
     }
   };
 
+  // Export functions
+  const exportAsImage = async () => {
+    try {
+      setExportMenuAnchor(null);
+      
+      // Create a temporary div with the appointments list
+      const exportDiv = document.createElement('div');
+      exportDiv.style.width = '800px';
+      exportDiv.style.padding = '40px';
+      exportDiv.style.backgroundColor = 'white';
+      exportDiv.style.fontFamily = 'Arial, sans-serif';
+      
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+      
+      exportDiv.innerHTML = `
+        <div style="text-align: center; margin-bottom: 30px; border-bottom: 3px solid #1976d2; padding-bottom: 20px;">
+          <h1 style="color: #1976d2; margin: 0; font-size: 32px;">Upcoming Appointments</h1>
+          <p style="color: #666; margin: 10px 0 0 0; font-size: 16px;">Generated on ${dateStr}</p>
+        </div>
+        <div style="margin-top: 30px;">
+          ${upcomingAppointments.length === 0 ? 
+            '<p style="text-align: center; color: #999; font-size: 18px; padding: 40px;">No upcoming appointments</p>' :
+            upcomingAppointments.map((apt, idx) => {
+              const aptDate = new Date(apt.start);
+              const dateStr = aptDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+              const timeStr = aptDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+              const center = centers.find(c => c.id === apt.centerId);
+              const staff = staffList.find(s => s.id === apt.homeVisitorStaffId);
+              
+              return `
+                <div style="margin-bottom: 25px; padding: 20px; border: 2px solid ${apt.type === 'center' ? '#1976d2' : '#43a047'}; border-radius: 8px; background: ${apt.type === 'center' ? '#e3f2fd' : '#e8f5e9'};">
+                  <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+                    <div>
+                      <h2 style="margin: 0; color: #333; font-size: 24px;">${apt.patientName || 'Patient'}</h2>
+                      <p style="margin: 5px 0 0 0; color: #666; font-size: 14px;">${apt.type === 'center' ? '🏢 Center Visit' : '🏠 Home Visit'}</p>
+                    </div>
+                    <div style="text-align: right;">
+                      <p style="margin: 0; color: #1976d2; font-size: 18px; font-weight: bold;">${dateStr}</p>
+                      <p style="margin: 5px 0 0 0; color: #666; font-size: 16px;">${timeStr}</p>
+                    </div>
+                  </div>
+                  <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                    ${apt.type === 'center' && center ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Center:</strong> ${center.name}</p>` : ''}
+                    ${apt.type === 'home' && staff ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Executive:</strong> ${staff.name}</p>` : ''}
+                    ${apt.type === 'home' && apt.address ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Address:</strong> ${apt.address}</p>` : ''}
+                    ${apt.notes ? `<p style="margin: 10px 0 0 0; color: #666; font-size: 13px; font-style: italic;">${apt.notes}</p>` : ''}
+                  </div>
+                </div>
+              `;
+            }).join('')
+          }
+        </div>
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #ddd; text-align: center; color: #999; font-size: 12px;">
+          <p style="margin: 0;">Hope Hearing CRM - Appointment Schedule</p>
+        </div>
+      `;
+      
+      document.body.appendChild(exportDiv);
+      
+      const canvas = await html2canvas(exportDiv, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        logging: false,
+      });
+      
+      document.body.removeChild(exportDiv);
+      
+      const imgData = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `appointments-${now.toISOString().split('T')[0]}.png`;
+      link.href = imgData;
+      link.click();
+    } catch (error) {
+      console.error('Error exporting as image:', error);
+      alert('Failed to export as image. Please try again.');
+    }
+  };
+
+  const exportAsPDF = async () => {
+    try {
+      setExportMenuAnchor(null);
+      
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 20;
+      const contentWidth = pageWidth - 2 * margin;
+      
+      let yPos = margin;
+      
+      // Header
+      pdf.setFontSize(24);
+      pdf.setTextColor(25, 118, 210);
+      pdf.text('Upcoming Appointments', pageWidth / 2, yPos, { align: 'center' });
+      yPos += 10;
+      
+      pdf.setFontSize(12);
+      pdf.setTextColor(100, 100, 100);
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+      pdf.text(`Generated on ${dateStr}`, pageWidth / 2, yPos, { align: 'center' });
+      yPos += 15;
+      
+      // Draw line
+      pdf.setDrawColor(25, 118, 210);
+      pdf.setLineWidth(0.5);
+      pdf.line(margin, yPos, pageWidth - margin, yPos);
+      yPos += 10;
+      
+      if (upcomingAppointments.length === 0) {
+        pdf.setFontSize(14);
+        pdf.setTextColor(150, 150, 150);
+        pdf.text('No upcoming appointments', pageWidth / 2, yPos, { align: 'center' });
+      } else {
+        upcomingAppointments.forEach((apt, idx) => {
+          // Check if we need a new page
+          if (yPos > pageHeight - 60) {
+            pdf.addPage();
+            yPos = margin;
+          }
+          
+          const aptDate = new Date(apt.start);
+          const dateStr = aptDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+          const timeStr = aptDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+          const center = centers.find(c => c.id === apt.centerId);
+          const staff = staffList.find(s => s.id === apt.homeVisitorStaffId);
+          
+          // Appointment box background
+          pdf.setFillColor(apt.type === 'center' ? 227 : 232, apt.type === 'center' ? 242 : 245, apt.type === 'center' ? 253 : 233);
+          pdf.roundedRect(margin, yPos, contentWidth, 35, 3, 3, 'F');
+          
+          // Border
+          pdf.setDrawColor(apt.type === 'center' ? 25 : 67, apt.type === 'center' ? 118 : 160, apt.type === 'center' ? 210 : 71);
+          pdf.setLineWidth(0.5);
+          pdf.roundedRect(margin, yPos, contentWidth, 35, 3, 3, 'D');
+          
+          yPos += 8;
+          
+          // Patient name
+          pdf.setFontSize(16);
+          pdf.setTextColor(50, 50, 50);
+          pdf.setFont(undefined, 'bold');
+          pdf.text(apt.patientName || 'Patient', margin + 5, yPos);
+          
+          // Date and time on the right
+          pdf.setFontSize(12);
+          pdf.setTextColor(25, 118, 210);
+          pdf.setFont(undefined, 'bold');
+          const dateWidth = pdf.getTextWidth(dateStr);
+          pdf.text(dateStr, pageWidth - margin - 5 - dateWidth, yPos);
+          yPos += 6;
+          
+          pdf.setFontSize(10);
+          pdf.setTextColor(100, 100, 100);
+          pdf.setFont(undefined, 'normal');
+          pdf.text(`${apt.type === 'center' ? '🏢 Center Visit' : '🏠 Home Visit'}`, margin + 5, yPos);
+          
+          const timeWidth = pdf.getTextWidth(timeStr);
+          pdf.text(timeStr, pageWidth - margin - 5 - timeWidth, yPos);
+          yPos += 8;
+          
+          // Details
+          pdf.setFontSize(10);
+          pdf.setTextColor(80, 80, 80);
+          
+          if (apt.type === 'center' && center) {
+            pdf.text(`Center: ${center.name}`, margin + 5, yPos);
+            yPos += 5;
+          }
+          
+          if (apt.type === 'home' && staff) {
+            pdf.text(`Executive: ${staff.name}`, margin + 5, yPos);
+            yPos += 5;
+          }
+          
+          if (apt.type === 'home' && apt.address) {
+            const addressLines = pdf.splitTextToSize(`Address: ${apt.address}`, contentWidth - 10);
+            pdf.text(addressLines, margin + 5, yPos);
+            yPos += addressLines.length * 5;
+          }
+          
+          if (apt.notes) {
+            pdf.setFont(undefined, 'italic');
+            pdf.setTextColor(100, 100, 100);
+            const notesLines = pdf.splitTextToSize(apt.notes, contentWidth - 10);
+            pdf.text(notesLines, margin + 5, yPos);
+            yPos += notesLines.length * 5;
+          }
+          
+          yPos += 10; // Space between appointments
+        });
+      }
+      
+      // Footer
+      const totalPages = pdf.internal.pages.length - 1;
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(150, 150, 150);
+        pdf.text('Hope Hearing CRM - Appointment Schedule', pageWidth / 2, pageHeight - 10, { align: 'center' });
+      }
+      
+      pdf.save(`appointments-${now.toISOString().split('T')[0]}.pdf`);
+    } catch (error) {
+      console.error('Error exporting as PDF:', error);
+      alert('Failed to export as PDF. Please try again.');
+    }
+  };
+
   return (
     <Box>
-      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Typography variant="h5">Appointment Scheduler</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setNewAppt(defaultNewAppointment); setOpenDialog(true); }}>
-          New Appointment
-        </Button>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
+        <Typography variant="h5" fontWeight="bold" color="primary">Appointment Scheduler</Typography>
+        <Stack direction="row" spacing={2} alignItems="center">
+          {/* Filters */}
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel>Filter by Center</InputLabel>
+            <Select
+              value={selectedCenter}
+              onChange={(e) => setSelectedCenter(e.target.value)}
+              label="Filter by Center"
+            >
+              <MenuItem value="all">All Centers</MenuItem>
+              {centers.map(center => (
+                <MenuItem key={center.id} value={center.id}>{center.name}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel>Filter by Executive</InputLabel>
+            <Select
+              value={selectedExecutive}
+              onChange={(e) => setSelectedExecutive(e.target.value)}
+              label="Filter by Executive"
+            >
+              <MenuItem value="all">All Executives</MenuItem>
+              {staffList.map(staff => (
+                <MenuItem key={staff.id} value={staff.id}>{staff.name}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          
+          {/* Export Button */}
+          <Button
+            variant="outlined"
+            startIcon={<DownloadIcon />}
+            onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+            sx={{ minWidth: 140 }}
+          >
+            Export
+          </Button>
+          
+          <Menu
+            anchorEl={exportMenuAnchor}
+            open={Boolean(exportMenuAnchor)}
+            onClose={() => setExportMenuAnchor(null)}
+          >
+            <MenuItem onClick={exportAsImage}>
+              <ListItemIcon>
+                <ImageIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>Export as Image (JPG)</ListItemText>
+            </MenuItem>
+            <MenuItem onClick={exportAsPDF}>
+              <ListItemIcon>
+                <PictureAsPdfIcon fontSize="small" />
+              </ListItemIcon>
+              <ListItemText>Export as PDF</ListItemText>
+            </MenuItem>
+          </Menu>
+          
+          <Button 
+            variant="contained" 
+            startIcon={<AddIcon />} 
+            onClick={() => { setNewAppt(defaultNewAppointment); setOpenDialog(true); }}
+          >
+            New Appointment
+          </Button>
+        </Stack>
       </Box>
+
+      {/* Filter Summary */}
+      {(selectedCenter !== 'all' || selectedExecutive !== 'all') && (
+        <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Chip 
+            icon={<FilterListIcon />} 
+            label="Active Filters:" 
+            color="primary" 
+            variant="outlined"
+          />
+          {selectedCenter !== 'all' && (
+            <Chip 
+              label={`Center: ${centers.find(c => c.id === selectedCenter)?.name || 'Unknown'}`}
+              onDelete={() => setSelectedCenter('all')}
+              color="primary"
+            />
+          )}
+          {selectedExecutive !== 'all' && (
+            <Chip 
+              label={`Executive: ${staffList.find(s => s.id === selectedExecutive)?.name || 'Unknown'}`}
+              onDelete={() => setSelectedExecutive('all')}
+              color="secondary"
+            />
+          )}
+          <Button 
+            size="small" 
+            onClick={() => {
+              setSelectedCenter('all');
+              setSelectedExecutive('all');
+            }}
+          >
+            Clear All
+          </Button>
+        </Box>
+      )}
 
       <Paper sx={{ p: 2 }}>
         <FullCalendar
@@ -204,7 +579,7 @@ export default function AppointmentSchedulerPage() {
           events={events}
           select={handleDateSelect}
           eventClick={handleEventClick}
-          height="calc(100vh - 220px)"
+          height="calc(100vh - 280px)"
         />
       </Paper>
 
@@ -314,7 +689,6 @@ export default function AppointmentSchedulerPage() {
               <Typography variant="subtitle2" color="text.secondary">Patient & Visit</Typography>
               <Divider sx={{ mt: 1, mb: 2 }} />
             </Grid>
-            {/* Removed Title field; patient name will be used as title */}
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
@@ -445,5 +819,3 @@ export default function AppointmentSchedulerPage() {
     </Box>
   );
 }
-
-
