@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, startTransition } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -28,9 +28,25 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<null | HTMLElement>(null);
+  const [isRedirecting, setIsRedirecting] = useState(false);
+  const hasRedirectedRef = useRef<string | null>(null);
 
   // Check if we should hide sidebar for enquiry pages
   const shouldHideSidebar = pathname?.includes('/enquiries/new') || pathname?.includes('/enquiries/edit');
+
+  // Staff allowed modules - only these modules will be visible to staff users
+  const staffAllowedModules = [
+    'Dashboard',
+    'Products',
+    'Sales',
+    'Interaction',
+    'Stock Transfer',
+    'Cash Register',
+    'Appointment Scheduler',
+    'Material In',
+    'Material Out',
+    'Inventory',
+  ];
 
   // Navigation items - restored to original structure
   const navigationItems: NavItem[] = [
@@ -276,11 +292,75 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }
   };
 
+  // Route protection: Redirect staff users from restricted pages
+  // IMPORTANT: This hook must be called before any early returns
+  useEffect(() => {
+    // Skip if still loading, no user profile, or should hide sidebar
+    if (loading || !userProfile || shouldHideSidebar) {
+      hasRedirectedRef.current = null;
+      setIsRedirecting(false);
+      return;
+    }
+
+    // Only check for staff users
+    if (userProfile.role !== 'staff' || !pathname) {
+      setIsRedirecting(false);
+      return;
+    }
+
+    // Define allowed paths for staff
+    const allowedPaths = [
+      '/dashboard',
+      '/products',
+      '/sales',
+      '/interaction',
+      '/interaction/visitors',
+      '/interaction/enquiries',
+      '/telecalling-records',
+      '/stock-transfer',
+      '/cash-register',
+      '/appointments',
+      '/material-in',
+      '/material-out',
+      '/inventory',
+    ];
+
+    // Check if current path is allowed
+    const isAllowed = allowedPaths.some(path => pathname === path || pathname.startsWith(path + '/'));
+    
+    // If not allowed and we haven't redirected yet, redirect to dashboard
+    if (!isAllowed && pathname !== '/dashboard') {
+      // Only redirect once per pathname
+      const redirectKey = `redirect_${pathname}`;
+      if (hasRedirectedRef.current !== redirectKey) {
+        hasRedirectedRef.current = redirectKey;
+        setIsRedirecting(true);
+        // Use startTransition to avoid updating router during render
+        startTransition(() => {
+          router.push('/dashboard');
+        });
+      }
+    } else if (isAllowed) {
+      hasRedirectedRef.current = null;
+      setIsRedirecting(false);
+    }
+  }, [userProfile, pathname, shouldHideSidebar, loading, router]);
+
   // Show loading spinner during authentication
+  // IMPORTANT: Early returns must come AFTER all hooks
   if (loading) {
     return (
       <div style={styles.loadingContainer}>
         <div>🔄 Loading your dashboard...</div>
+      </div>
+    );
+  }
+
+  // Show redirecting message for staff accessing restricted pages
+  if (isRedirecting) {
+    return (
+      <div style={styles.loadingContainer}>
+        <div>🔄 Redirecting to allowed page...</div>
       </div>
     );
   }
@@ -315,6 +395,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     );
   }
 
+
   return (
     <div style={styles.container}>
       {/* Sidebar */}
@@ -328,8 +409,31 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           <nav>
             <ul style={styles.navList}>
               {navigationItems
-                .filter(item => !item.adminOnly || (userProfile?.role === 'admin'))
-                .filter(item => isAllowedModule?.(item.text.toLowerCase()) !== false)
+                .filter(item => {
+                  // If user profile is not loaded yet, don't show anything
+                  if (!userProfile) {
+                    return false;
+                  }
+                  
+                  // Admin-only items: only show to admins
+                  if (item.adminOnly && userProfile.role !== 'admin') {
+                    return false;
+                  }
+                  
+                  // Staff users: only show allowed modules
+                  if (userProfile.role === 'staff') {
+                    return staffAllowedModules.includes(item.text);
+                  }
+                  
+                  // Admin users: show all modules (except adminOnly is already handled above)
+                  // Also check isAllowedModule if it exists
+                  if (userProfile.role === 'admin') {
+                    return isAllowedModule?.(item.text.toLowerCase()) !== false;
+                  }
+                  
+                  // Default: don't show if role is not recognized
+                  return false;
+                })
                 .map((item) => (
                 <li key={item.text} style={styles.navItem}>
                   {item.children ? (

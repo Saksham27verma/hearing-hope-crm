@@ -826,13 +826,15 @@ const SalesPage = () => {
                         >
                           <EditIcon fontSize="small" />
                         </IconButton>
-                        <IconButton 
-                          size="small" 
-                          color="error" 
-                          onClick={() => sale.id && handleDeleteSale(sale.id)}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
+                        {userProfile?.role === 'admin' && (
+                          <IconButton 
+                            size="small" 
+                            color="error" 
+                            onClick={() => sale.id && handleDeleteSale(sale.id)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        )}
                         <IconButton 
                           size="small" 
                           color="default"

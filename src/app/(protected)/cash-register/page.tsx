@@ -114,7 +114,7 @@ interface DailySheetDoc {
 
 // Component
 const CashRegisterPage = () => {
-  const { user, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
   const router = useRouter();
   const [transactions, setTransactions] = useState<CashTransaction[]>([]);
   const [filteredTransactions, setFilteredTransactions] = useState<CashTransaction[]>([]);
@@ -824,9 +824,11 @@ const CashRegisterPage = () => {
                   }}>
                     <EditIcon fontSize="small" />
                   </IconButton>
-                  <IconButton size="small" color="error" onClick={async () => { await deleteDoc(doc(db, 'cashDailySheets', s.id)); await loadDailySheets(); }}>
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
+                  {userProfile?.role === 'admin' && (
+                    <IconButton size="small" color="error" onClick={async () => { await deleteDoc(doc(db, 'cashDailySheets', s.id)); await loadDailySheets(); }}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  )}
                 </TableCell>
                 </TableRow>
               ))}

@@ -139,7 +139,7 @@ const emptyTransfer: Omit<StockTransfer, 'id'> = {
 };
 
 const StockTransferPage = () => {
-  const { user, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
   const router = useRouter();
   const [transfers, setTransfers] = useState<StockTransfer[]>([]);
   const [filteredTransfers, setFilteredTransfers] = useState<StockTransfer[]>([]);
@@ -1364,15 +1364,17 @@ const StockTransferPage = () => {
                             <EditIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                        <Tooltip title="Delete">
-                          <IconButton 
-                            size="small" 
-                            color="error" 
-                            onClick={() => transfer.id && handleDeleteTransfer(transfer.id)}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                        {userProfile?.role === 'admin' && (
+                          <Tooltip title="Delete">
+                            <IconButton 
+                              size="small" 
+                              color="error" 
+                              onClick={() => transfer.id && handleDeleteTransfer(transfer.id)}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))

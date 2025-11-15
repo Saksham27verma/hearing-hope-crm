@@ -127,7 +127,7 @@ interface MaterialInward {
 }
 
 export default function MaterialInPage() {
-  const { user, isAllowedModule } = useAuth();
+  const { user, userProfile, isAllowedModule } = useAuth();
   const [materials, setMaterials] = useState<MaterialInward[]>([]);
   const [filteredMaterials, setFilteredMaterials] = useState<MaterialInward[]>([]);
   const [loading, setLoading] = useState(true);
@@ -799,7 +799,8 @@ export default function MaterialInPage() {
     );
   }
 
-  if (!isAllowedModule('materials')) {
+  // Allow staff users or users with materials module access
+  if (userProfile?.role !== 'staff' && !isAllowedModule('materials')) {
     return (
       <Box textAlign="center" p={4}>
         <Typography variant="h5" color="error" gutterBottom>
@@ -1133,15 +1134,17 @@ export default function MaterialInPage() {
                         >
                           <EditIcon fontSize="small" />
                         </IconButton>
-                        <IconButton 
-                          size="small" 
-                          color="error" 
-                          onClick={() => material.id && handleDeleteMaterial(material.id)}
-                          disabled={material.convertedToPurchase}
-                          sx={{ display: material.convertedToPurchase ? 'none' : 'inline-flex' }}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
+                        {userProfile?.role === 'admin' && (
+                          <IconButton 
+                            size="small" 
+                            color="error" 
+                            onClick={() => material.id && handleDeleteMaterial(material.id)}
+                            disabled={material.convertedToPurchase}
+                            sx={{ display: material.convertedToPurchase ? 'none' : 'inline-flex' }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        )}
                         <IconButton 
                           size="small" 
                           color="success" 

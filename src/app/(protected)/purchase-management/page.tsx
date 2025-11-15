@@ -113,7 +113,7 @@ interface Purchase {
 }
 
 export default function PurchaseManagement() {
-  const { user, isAllowedModule } = useAuth();
+  const { user, userProfile, isAllowedModule } = useAuth();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [filteredPurchases, setFilteredPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -629,19 +629,21 @@ export default function PurchaseManagement() {
                               <EditIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
-                          <Tooltip title="Delete">
-                            <IconButton 
-                              size="small" 
-                              color="error" 
-                              onClick={() => purchase.id && handleDeletePurchase(purchase.id)}
-                              sx={{ 
-                                bgcolor: 'error.lighter', 
-                                '&:hover': { bgcolor: 'error.light' } 
-                              }}
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
+                          {userProfile?.role === 'admin' && (
+                            <Tooltip title="Delete">
+                              <IconButton 
+                                size="small" 
+                                color="error" 
+                                onClick={() => purchase.id && handleDeletePurchase(purchase.id)}
+                                sx={{ 
+                                  bgcolor: 'error.lighter', 
+                                  '&:hover': { bgcolor: 'error.light' } 
+                                }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>

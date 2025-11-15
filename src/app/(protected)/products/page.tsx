@@ -1334,14 +1334,16 @@ export default function ProductsPage() {
                         >
                           <EditIcon fontSize="small" />
                         </IconButton>
-                        <IconButton 
-                          color="error" 
-                          onClick={() => handleDeleteProduct(product.id)}
-                          size="small"
-                          sx={{ bgcolor: 'error.lighter', '&:hover': { bgcolor: 'error.light' } }}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
+                        {userProfile?.role === 'admin' && (
+                          <IconButton 
+                            color="error" 
+                            onClick={() => handleDeleteProduct(product.id)}
+                            size="small"
+                            sx={{ bgcolor: 'error.lighter', '&:hover': { bgcolor: 'error.light' } }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        )}
                       </Box>
                     </TableCell>
                   </TableRow>
@@ -2065,7 +2067,7 @@ export default function ProductsPage() {
           <Button onClick={handlePreviewClose} variant="outlined">
             Close
           </Button>
-          {previewProduct && (
+          {previewProduct && userProfile?.role === 'admin' && (
             <>
               <Button 
                 onClick={() => handleDeleteProduct(previewProduct.id)} 

@@ -102,6 +102,7 @@ import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc,
 import { db } from '@/firebase/config';
 import { v4 as uuidv4 } from 'uuid';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
+import { useAuth } from '@/context/AuthContext';
 
 // Create a Grid component that doesn't have TypeScript errors
 const Grid = (props: any) => <MuiGrid {...props} />;
@@ -408,6 +409,7 @@ interface VisitSchedule {
 }
 
 export default function EnquiriesPage() {
+  const { userProfile } = useAuth();
   // State with proper typing
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [filteredEnquiries, setFilteredEnquiries] = useState<Enquiry[]>([]);
@@ -4272,15 +4274,17 @@ export default function EnquiriesPage() {
                              <PersonAddIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Delete">
-                           <IconButton 
-                             size="small" 
-                             onClick={() => handleOpenDeleteDialog(enquiry)}
-                             sx={{ color: 'error.main' }}
-                           >
-                             <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                    {userProfile?.role === 'admin' && (
+                      <Tooltip title="Delete">
+                             <IconButton 
+                               size="small" 
+                               onClick={() => handleOpenDeleteDialog(enquiry)}
+                               sx={{ color: 'error.main' }}
+                             >
+                               <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                        </Box>
                   </TableCell>
                 </TableRow>

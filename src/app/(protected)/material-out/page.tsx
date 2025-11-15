@@ -131,7 +131,7 @@ interface MaterialOut {
 }
 
 export default function MaterialOutPage() {
-  const { user, isAllowedModule } = useAuth();
+  const { user, userProfile, isAllowedModule } = useAuth();
   const [materials, setMaterials] = useState<MaterialOut[]>([]);
   const [filteredMaterials, setFilteredMaterials] = useState<MaterialOut[]>([]);
   const [loading, setLoading] = useState(true);
@@ -702,7 +702,8 @@ export default function MaterialOutPage() {
     );
   }
 
-  if (!isAllowedModule('deliveries')) {
+  // Allow staff users or users with deliveries module access
+  if (userProfile?.role !== 'staff' && !isAllowedModule('deliveries')) {
     return (
       <Box textAlign="center" p={4}>
         <Typography variant="h5" color="error" gutterBottom>
@@ -935,15 +936,17 @@ export default function MaterialOutPage() {
                           </IconButton>
                         </Tooltip>
                         
-                        <Tooltip title="Delete">
-                          <IconButton 
-                            size="small" 
-                            onClick={() => handleDeleteMaterial(material.id!)}
-                            color="error"
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                        {userProfile?.role === 'admin' && (
+                          <Tooltip title="Delete">
+                            <IconButton 
+                              size="small" 
+                              onClick={() => handleDeleteMaterial(material.id!)}
+                              color="error"
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                       </Box>
                     </TableCell>
                   </TableRow>

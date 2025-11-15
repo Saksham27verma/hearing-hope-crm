@@ -125,7 +125,7 @@ const formatDate = (timestamp: any) => {
 };
 
 export default function InventoryPage() {
-  const { user, isAllowedModule } = useAuth();
+  const { user, userProfile, isAllowedModule } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
@@ -646,10 +646,15 @@ export default function InventoryPage() {
       });
     }
     
+    // For staff users, filter out sold items
+    if (userProfile?.role === 'staff') {
+      filtered = filtered.filter(item => item.status !== 'Sold');
+    }
+    
     setFilteredInventory(filtered);
     // Reset pagination when filters change
     setPage(0);
-  }, [inventory, searchTerm, statusFilter, typeFilter, locationFilter, companyFilter]);
+  }, [inventory, searchTerm, statusFilter, typeFilter, locationFilter, companyFilter, userProfile]);
 
   // Table pagination handlers
   const handleChangePage = (event: unknown, newPage: number) => {
@@ -1044,24 +1049,26 @@ export default function InventoryPage() {
             </Box>
           </Box>
           <Box textAlign="right" display="flex" gap={1} alignItems="center">
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={showSoldItems}
-                  onChange={(e) => setShowSoldItems(e.target.checked)}
-                  color="warning"
-                />
-              }
-              label={
-                <Box display="flex" alignItems="center">
-                  <VisibilityIcon sx={{ mr: 0.5, fontSize: 16, color: 'text.secondary' }} />
-                  <Typography variant="body2" color="text.secondary">
-                    Show Sold Items
-                  </Typography>
-                </Box>
-              }
-              sx={{ mr: 2 }}
-            />
+            {userProfile?.role !== 'staff' && (
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={showSoldItems}
+                    onChange={(e) => setShowSoldItems(e.target.checked)}
+                    color="warning"
+                  />
+                }
+                label={
+                  <Box display="flex" alignItems="center">
+                    <VisibilityIcon sx={{ mr: 0.5, fontSize: 16, color: 'text.secondary' }} />
+                    <Typography variant="body2" color="text.secondary">
+                      Show Sold Items
+                    </Typography>
+                  </Box>
+                }
+                sx={{ mr: 2 }}
+              />
+            )}
             <Button
               variant="outlined"
               color="primary"
@@ -1073,22 +1080,27 @@ export default function InventoryPage() {
             >
               {loading ? 'Refreshing...' : 'Refresh Data'}
             </Button>
-            <Button
-              variant="contained"
-              color="primary"
-              size="large"
-              startIcon={<AddIcon />}
-              onClick={() => handleOpenDialog()}
-              sx={{ borderRadius: 2 }}
-            >
-              Add New Item
-            </Button>
+            {userProfile?.role !== 'staff' && (
+              <Button
+                variant="contained"
+                color="primary"
+                size="large"
+                startIcon={<AddIcon />}
+                onClick={() => handleOpenDialog()}
+                sx={{ borderRadius: 2 }}
+              >
+                Add New Item
+              </Button>
+            )}
           </Box>
         </Box>
       </Paper>
 
       {/* Clean Stats Cards */}
-      <Box display="grid" gridTemplateColumns={{ xs: '1fr 1fr', sm: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' }} gap={2} mb={3}>
+      <Box display="grid" gridTemplateColumns={userProfile?.role === 'staff' 
+        ? { xs: '1fr 1fr', sm: 'repeat(3, 1fr)', lg: 'repeat(3, 1fr)' }
+        : { xs: '1fr 1fr', sm: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' }
+      } gap={2} mb={3}>
         <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
           <Box display="flex" alignItems="center" mb={1}>
             <InventoryIcon color="primary" sx={{ mr: 1, fontSize: 20 }} />
@@ -1113,19 +1125,21 @@ export default function InventoryPage() {
           </Typography>
         </Card>
         
-        <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-          <Box display="flex" alignItems="center" mb={1}>
-            <ShoppingCartIcon color="info" sx={{ mr: 1, fontSize: 20 }} />
-            <Typography variant="subtitle2" color="text.secondary">
-              Sold
+        {userProfile?.role !== 'staff' && (
+          <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
+            <Box display="flex" alignItems="center" mb={1}>
+              <ShoppingCartIcon color="info" sx={{ mr: 1, fontSize: 20 }} />
+              <Typography variant="subtitle2" color="text.secondary">
+                Sold
+              </Typography>
+            </Box>
+            <Typography variant="h4" fontWeight="bold" color="info.main">
+              {stats.sold}
             </Typography>
-          </Box>
-          <Typography variant="h4" fontWeight="bold" color="info.main">
-            {stats.sold}
-          </Typography>
-        </Card>
+          </Card>
+        )}
         
-        {showSoldItems && (
+        {showSoldItems && userProfile?.role !== 'staff' && (
           <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
             <Box display="flex" alignItems="center" mb={1}>
               <VisibilityIcon color="warning" sx={{ mr: 1, fontSize: 20 }} />
@@ -1152,29 +1166,33 @@ export default function InventoryPage() {
           </Typography>
         </Card>
         
-        <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-          <Box display="flex" alignItems="center" mb={1}>
-            <TrendingUpIcon color="primary" sx={{ mr: 1, fontSize: 20 }} />
-            <Typography variant="subtitle2" color="text.secondary">
-              Dealer Value
-            </Typography>
-          </Box>
-          <Typography variant="h5" fontWeight="bold" color="primary.main" noWrap>
-            {formatCurrency(stats.inventoryValueDealer)}
-          </Typography>
-        </Card>
-        
-        <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-          <Box display="flex" alignItems="center" mb={1}>
-            <TrendingUpIcon color="success" sx={{ mr: 1, fontSize: 20 }} />
-            <Typography variant="subtitle2" color="text.secondary">
-              MRP Value
-            </Typography>
-          </Box>
-          <Typography variant="h5" fontWeight="bold" color="success.main" noWrap>
-            {formatCurrency(stats.inventoryValueMRP)}
-          </Typography>
-        </Card>
+        {userProfile?.role !== 'staff' && (
+          <>
+            <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
+              <Box display="flex" alignItems="center" mb={1}>
+                <TrendingUpIcon color="primary" sx={{ mr: 1, fontSize: 20 }} />
+                <Typography variant="subtitle2" color="text.secondary">
+                  Dealer Value
+                </Typography>
+              </Box>
+              <Typography variant="h5" fontWeight="bold" color="primary.main" noWrap>
+                {formatCurrency(stats.inventoryValueDealer)}
+              </Typography>
+            </Card>
+            
+            <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
+              <Box display="flex" alignItems="center" mb={1}>
+                <TrendingUpIcon color="success" sx={{ mr: 1, fontSize: 20 }} />
+                <Typography variant="subtitle2" color="text.secondary">
+                  MRP Value
+                </Typography>
+              </Box>
+              <Typography variant="h5" fontWeight="bold" color="success.main" noWrap>
+                {formatCurrency(stats.inventoryValueMRP)}
+              </Typography>
+            </Card>
+          </>
+        )}
       </Box>
 
       {/* Company-wise Stock Position */}
@@ -1244,7 +1262,7 @@ export default function InventoryPage() {
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns="repeat(5, 1fr)" gap={1}>
+                    <Box display="grid" gridTemplateColumns={userProfile?.role === 'staff' ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)'} gap={1}>
                       <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
                         <Typography variant="h6" fontWeight="bold" color="success.main">
                           {companyStats.inStock}
@@ -1253,38 +1271,46 @@ export default function InventoryPage() {
                           In Stock
                         </Typography>
                       </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
-                        <Typography variant="h6" fontWeight="bold" color="info.main">
-                          {companyStats.sold}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Sold
-                        </Typography>
-                      </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'grey.100', borderRadius: 1 }}>
-                        <Typography variant="h6" fontWeight="bold" color="text.primary">
-                          {companyStats.total}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Total
-                        </Typography>
-                      </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
-                        <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
-                          {formatCurrency(companyStats.dealerValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Dealer
-                        </Typography>
-                      </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
-                        <Typography variant="body2" fontWeight="bold" color="warning.main" noWrap>
-                          {formatCurrency(companyStats.mrpValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          MRP
-                        </Typography>
-                      </Box>
+                      {userProfile?.role !== 'staff' && (
+                        <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
+                          <Typography variant="h6" fontWeight="bold" color="info.main">
+                            {companyStats.sold}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Sold
+                          </Typography>
+                        </Box>
+                      )}
+                      {userProfile?.role !== 'staff' && (
+                        <Box textAlign="center" sx={{ p: 1, bgcolor: 'grey.100', borderRadius: 1 }}>
+                          <Typography variant="h6" fontWeight="bold" color="text.primary">
+                            {companyStats.total}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Total
+                          </Typography>
+                        </Box>
+                      )}
+                      {userProfile?.role !== 'staff' && (
+                        <>
+                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                            <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
+                              {formatCurrency(companyStats.dealerValue)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Dealer
+                            </Typography>
+                          </Box>
+                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
+                            <Typography variant="body2" fontWeight="bold" color="warning.main" noWrap>
+                              {formatCurrency(companyStats.mrpValue)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              MRP
+                            </Typography>
+                          </Box>
+                        </>
+                      )}
                     </Box>
                   </CardContent>
                 </Card>
@@ -1389,24 +1415,26 @@ export default function InventoryPage() {
                       </Box>
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1} mt={2}>
-                      <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'primary.lighter', borderRadius: 1 }}>
-                        <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
-                          {formatCurrency(company.dealerValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Dealer Value
-                        </Typography>
+                    {userProfile?.role !== 'staff' && (
+                      <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1} mt={2}>
+                        <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                          <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
+                            {formatCurrency(company.dealerValue)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Dealer Value
+                          </Typography>
+                        </Box>
+                        <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'success.lighter', borderRadius: 1 }}>
+                          <Typography variant="body2" fontWeight="bold" color="success.main" noWrap>
+                            {formatCurrency(company.mrpValue)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            MRP Value
+                          </Typography>
+                        </Box>
                       </Box>
-                      <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'success.lighter', borderRadius: 1 }}>
-                        <Typography variant="body2" fontWeight="bold" color="success.main" noWrap>
-                          {formatCurrency(company.mrpValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          MRP Value
-                        </Typography>
-                      </Box>
-                    </Box>
+                    )}
                     
                     <Box mt={2} sx={{ p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
                       <Typography variant="caption" color="text.secondary" display="block" textAlign="center">
@@ -1510,7 +1538,7 @@ export default function InventoryPage() {
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns="repeat(4, 1fr)" gap={1} mt={2}>
+                    <Box display="grid" gridTemplateColumns={userProfile?.role === 'staff' ? '1fr' : 'repeat(4, 1fr)'} gap={1} mt={2}>
                       <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
                         <Typography variant="body1" fontWeight="bold" color="success.main">
                           {locationStats.inStock}
@@ -1519,30 +1547,36 @@ export default function InventoryPage() {
                           In Stock
                         </Typography>
                       </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
-                        <Typography variant="body1" fontWeight="bold" color="info.main">
-                          {locationStats.sold}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Sold
-                        </Typography>
-                      </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
-                        <Typography variant="caption" fontWeight="bold" color="primary.main" noWrap>
-                          {formatCurrency(locationStats.dealerValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          Dealer
-                        </Typography>
-                      </Box>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
-                        <Typography variant="caption" fontWeight="bold" color="warning.main" noWrap>
-                          {formatCurrency(locationStats.mrpValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          MRP
-                        </Typography>
-                      </Box>
+                      {userProfile?.role !== 'staff' && (
+                        <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
+                          <Typography variant="body1" fontWeight="bold" color="info.main">
+                            {locationStats.sold}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Sold
+                          </Typography>
+                        </Box>
+                      )}
+                      {userProfile?.role !== 'staff' && (
+                        <>
+                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                            <Typography variant="caption" fontWeight="bold" color="primary.main" noWrap>
+                              {formatCurrency(locationStats.dealerValue)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              Dealer
+                            </Typography>
+                          </Box>
+                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
+                            <Typography variant="caption" fontWeight="bold" color="warning.main" noWrap>
+                              {formatCurrency(locationStats.mrpValue)}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              MRP
+                            </Typography>
+                          </Box>
+                        </>
+                      )}
                     </Box>
                   </CardContent>
                 </Card>
@@ -1593,24 +1627,26 @@ export default function InventoryPage() {
                         variant="outlined" 
                       />
                     </Box>
-                    <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
-                      <Box textAlign="left">
-                        <Typography variant="body1" fontWeight="bold" color="primary.main">
-                          {formatCurrency(group.totalDealerValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Dealer Value
-                        </Typography>
+                    {userProfile?.role !== 'staff' && (
+                      <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
+                        <Box textAlign="left">
+                          <Typography variant="body1" fontWeight="bold" color="primary.main">
+                            {formatCurrency(group.totalDealerValue)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Dealer Value
+                          </Typography>
+                        </Box>
+                        <Box textAlign="right">
+                          <Typography variant="body1" fontWeight="bold" color="success.main">
+                            {formatCurrency(group.totalMRPValue)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            MRP Value
+                          </Typography>
+                        </Box>
                       </Box>
-                      <Box textAlign="right">
-                        <Typography variant="body1" fontWeight="bold" color="success.main">
-                          {formatCurrency(group.totalMRPValue)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          MRP Value
-                        </Typography>
-                      </Box>
-                    </Box>
+                    )}
                   </CardContent>
                 </Card>
               </Grid>
@@ -1628,7 +1664,7 @@ export default function InventoryPage() {
               <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Typography variant="subtitle1" fontWeight={700}>{group.category}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {group.totalCount} items • Dealer: {formatCurrency(group.totalDealerValue)} • MRP: {formatCurrency(group.totalMRPValue)}
+                  {group.totalCount} items{userProfile?.role !== 'staff' && ` • Dealer: ${formatCurrency(group.totalDealerValue)} • MRP: ${formatCurrency(group.totalMRPValue)}`}
                 </Typography>
               </Box>
               <TableContainer>
@@ -1689,16 +1725,18 @@ export default function InventoryPage() {
                 Reset All
               </Button>
             )}
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<AddIcon />}
-              onClick={() => handleOpenDialog()}
-              size="small"
-              sx={{ borderRadius: 1 }}
-            >
-              Add New Item
-            </Button>
+            {userProfile?.role !== 'staff' && (
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<AddIcon />}
+                onClick={() => handleOpenDialog()}
+                size="small"
+                sx={{ borderRadius: 1 }}
+              >
+                Add New Item
+              </Button>
+            )}
           </Box>
         </Box>
 
@@ -1752,12 +1790,14 @@ export default function InventoryPage() {
                     In Stock
                   </Box>
                 </MenuItem>
-                <MenuItem value="Sold">
-                  <Box display="flex" alignItems="center">
-                    <ShoppingCartIcon color="warning" sx={{ mr: 1 }} />
-                    Sold
-                  </Box>
-                </MenuItem>
+                {userProfile?.role !== 'staff' && (
+                  <MenuItem value="Sold">
+                    <Box display="flex" alignItems="center">
+                      <ShoppingCartIcon color="warning" sx={{ mr: 1 }} />
+                      Sold
+                    </Box>
+                  </MenuItem>
+                )}
                 <MenuItem value="Damaged">
                   <Box display="flex" alignItems="center">
                     <WarningIcon color="error" sx={{ mr: 1 }} />
@@ -1955,12 +1995,16 @@ export default function InventoryPage() {
                     Status
                   </Box>
                 </TableCell>
-                <TableCell align="right" sx={{ fontWeight: 'bold', py: 2 }}>
-                  Pricing
-                </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
-                  Purchase Info
-                </TableCell>
+                {userProfile?.role !== 'staff' && (
+                  <>
+                    <TableCell align="right" sx={{ fontWeight: 'bold', py: 2 }}>
+                      Pricing
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                      Purchase Info
+                    </TableCell>
+                  </>
+                )}
                 <TableCell align="center" sx={{ fontWeight: 'bold', py: 2 }}>
                   Actions
                 </TableCell>
@@ -2071,26 +2115,30 @@ export default function InventoryPage() {
                           sx={{ fontWeight: 'bold' }}
                         />
                       </TableCell>
-                      <TableCell align="right" sx={{ py: 3 }}>
-                        <Box textAlign="right">
-                          <Typography variant="body2" fontWeight="bold" color="primary">
-                            {formatCurrency(item.dealerPrice)}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            MRP: {formatCurrency(item.mrp)}
-                          </Typography>
-                        </Box>
-                      </TableCell>
-                      <TableCell sx={{ py: 3 }}>
-                        <Box>
-                          <Typography variant="body2" fontWeight="medium">
-                            {formatDate(item.purchaseDate)}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {item.supplier}
-                          </Typography>
-                        </Box>
-                      </TableCell>
+                      {userProfile?.role !== 'staff' && (
+                        <>
+                          <TableCell align="right" sx={{ py: 3 }}>
+                            <Box textAlign="right">
+                              <Typography variant="body2" fontWeight="bold" color="primary">
+                                {formatCurrency(item.dealerPrice)}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                MRP: {formatCurrency(item.mrp)}
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                          <TableCell sx={{ py: 3 }}>
+                            <Box>
+                              <Typography variant="body2" fontWeight="medium">
+                                {formatDate(item.purchaseDate)}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {item.supplier}
+                              </Typography>
+                            </Box>
+                          </TableCell>
+                        </>
+                      )}
                       <TableCell align="center" sx={{ py: 3 }}>
                         <Box display="flex" justifyContent="center" gap={1}>
                           <Tooltip title="View Details">
@@ -2105,39 +2153,43 @@ export default function InventoryPage() {
                               <VisibilityIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
-                          <Tooltip title="Edit Item">
-                            <IconButton 
-                              size="small" 
-                              color="primary"
-                              onClick={() => handleOpenDialog(item)}
-                              sx={{ 
-                                bgcolor: '#e8f5e8',
-                                '&:hover': { bgcolor: '#c8e6c9' }
-                              }}
-                            >
-                              <EditIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete Item">
-                            <IconButton 
-                              size="small" 
-                              color="error"
-                              onClick={() => handleDeleteItem(item.id)}
-                              sx={{ 
-                                bgcolor: '#ffebee',
-                                '&:hover': { bgcolor: '#ffcdd2' }
-                              }}
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
+                          {userProfile?.role !== 'staff' && (
+                            <Tooltip title="Edit Item">
+                              <IconButton 
+                                size="small" 
+                                color="primary"
+                                onClick={() => handleOpenDialog(item)}
+                                sx={{ 
+                                  bgcolor: '#e8f5e8',
+                                  '&:hover': { bgcolor: '#c8e6c9' }
+                                }}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          {userProfile?.role === 'admin' && (
+                            <Tooltip title="Delete Item">
+                              <IconButton 
+                                size="small" 
+                                color="error"
+                                onClick={() => handleDeleteItem(item.id)}
+                                sx={{ 
+                                  bgcolor: '#ffebee',
+                                  '&:hover': { bgcolor: '#ffcdd2' }
+                                }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>
                   ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={9} sx={{ py: 8 }}>
+                  <TableCell colSpan={userProfile?.role === 'staff' ? 7 : 9} sx={{ py: 8 }}>
                     <Box textAlign="center">
                       <InventoryIcon sx={{ fontSize: 64, color: '#cbd5e1', mb: 2 }} />
                       <Typography variant="h6" color="text.secondary" gutterBottom>

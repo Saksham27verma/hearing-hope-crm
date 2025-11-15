@@ -133,7 +133,7 @@ function TabPanel(props: TabPanelProps) {
 }
 
 const InvoiceManagerPage = () => {
-  const { user } = useAuth();
+  const { user, userProfile } = useAuth();
   const [templates, setTemplates] = useState<InvoiceTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState(0);
@@ -822,19 +822,21 @@ const InvoiceManagerPage = () => {
           <ListItemText>Share</ListItemText>
         </MenuItem>
         <Divider />
-        <MenuItem 
-          onClick={() => {
-            if (selectedTemplate && !selectedTemplate.isDefault) {
-              handleDeleteTemplate(selectedTemplate.id);
-            }
-            handleMenuClose();
-          }}
-          disabled={selectedTemplate?.isDefault}
-          sx={{ color: 'error.main' }}
-        >
-          <ListItemIcon><DeleteIcon sx={{ color: 'error.main' }} /></ListItemIcon>
-          <ListItemText>Delete</ListItemText>
-        </MenuItem>
+        {userProfile?.role === 'admin' && (
+          <MenuItem 
+            onClick={() => {
+              if (selectedTemplate && !selectedTemplate.isDefault) {
+                handleDeleteTemplate(selectedTemplate.id);
+              }
+              handleMenuClose();
+            }}
+            disabled={selectedTemplate?.isDefault}
+            sx={{ color: 'error.main' }}
+          >
+            <ListItemIcon><DeleteIcon sx={{ color: 'error.main' }} /></ListItemIcon>
+            <ListItemText>Delete</ListItemText>
+          </MenuItem>
+        )}
       </Menu>
 
       {/* Invoice Builder Dialog */}

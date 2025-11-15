@@ -982,19 +982,21 @@ export default function PartiesPage() {
                             <EditIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                        <Tooltip title="Delete Party">
-                          <IconButton 
-                            color="error" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteParty(party.id);
-                            }}
-                            size="small"
-                            sx={{ bgcolor: 'error.lighter', '&:hover': { bgcolor: 'error.light' } }}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                        {userProfile?.role === 'admin' && (
+                          <Tooltip title="Delete Party">
+                            <IconButton 
+                              color="error" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteParty(party.id);
+                              }}
+                              size="small"
+                              sx={{ bgcolor: 'error.lighter', '&:hover': { bgcolor: 'error.light' } }}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                       </Box>
                     </TableCell>
                   </TableRow>
