@@ -880,54 +880,49 @@ export default function EnquiriesPage() {
       let filteredData = enquiryData;
       if (userProfile?.role === 'audiologist') {
         filteredData = enquiryData.filter(enquiry => {
-          let hasHearingTest = false;
-          
-          // Check if enquiry has hearing test in visitSchedules
-          if (enquiry.visitSchedules && Array.isArray(enquiry.visitSchedules)) {
-            hasHearingTest = enquiry.visitSchedules.some((visit: any) => {
-              // Check if medicalServices array includes 'hearing_test'
-              if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
-                if (visit.medicalServices.includes('hearing_test')) {
-                  return true;
-                }
-              }
-              // Check if medicalServices is an object with hearingTest property (UI state)
-              if (visit.medicalServices && typeof visit.medicalServices === 'object' && !Array.isArray(visit.medicalServices)) {
-                if (visit.medicalServices.hearingTest === true) {
-                  return true;
-                }
-              }
-              // Check if medicalService is 'hearing_test' (legacy field)
-              if (visit.medicalService === 'hearing_test') {
-                return true;
-              }
-              // Check if hearingTestDetails exists (indicates hearing test was done)
-              if (visit.hearingTestDetails) {
-                // If hearingTestDetails exists, it means hearing test was done
-                if (visit.hearingTestDetails.testResults || visit.hearingTestDetails.testType || visit.hearingTestDetails.testDoneBy || Object.keys(visit.hearingTestDetails).length > 0) {
-                  return true;
-                }
-              }
-              return false;
-            });
+          // Must have visitSchedules to be considered
+          if (!enquiry.visitSchedules || !Array.isArray(enquiry.visitSchedules) || enquiry.visitSchedules.length === 0) {
+            return false;
           }
           
-          // If not found in visitSchedules, check legacy fields
-          if (!hasHearingTest) {
-            // Check if enquiry has testDetails (legacy support)
-            if (enquiry.testDetails && (enquiry.testDetails.testResults || enquiry.testDetails.testName)) {
-              hasHearingTest = true;
+          // Check if ANY visit has hearing test service explicitly selected
+          const hasHearingTest = enquiry.visitSchedules.some((visit: any) => {
+            // PRIMARY CHECK: Check if medicalServices array includes 'hearing_test'
+            // This is the main way hearing test service is stored when saved
+            if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
+              return visit.medicalServices.includes('hearing_test');
             }
-            // Check if visits array has hearing test (legacy support)
-            if (!hasHearingTest && enquiry.visits && Array.isArray(enquiry.visits)) {
-              hasHearingTest = enquiry.visits.some((visit: any) => visit.hearingTest === true || visit.testResults);
+            
+            // SECONDARY CHECK: Check if medicalService is 'hearing_test' (legacy field)
+            if (visit.medicalService === 'hearing_test') {
+              return true;
             }
-          }
+            
+            // TERTIARY CHECK: Check if hearingTestDetails exists with audiogramData
+            // Only show if audiogram data exists (meaning hearing test was actually used)
+            if (visit.hearingTestDetails && visit.hearingTestDetails.audiogramData) {
+              return true;
+            }
+            
+            return false;
+          });
           
           return hasHearingTest;
         });
         
         console.log(`[Audiologist Filter] Total enquiries: ${enquiryData.length}, Filtered: ${filteredData.length}`);
+        // Debug: Log first few filtered enquiries to verify
+        if (filteredData.length > 0) {
+          console.log('[Audiologist Filter] Sample filtered enquiry:', {
+            id: filteredData[0].id,
+            name: filteredData[0].name,
+            visitSchedules: filteredData[0].visitSchedules?.map((v: any) => ({
+              medicalServices: v.medicalServices,
+              medicalService: v.medicalService,
+              hasAudiogram: !!v.hearingTestDetails?.audiogramData
+            }))
+          });
+        }
       }
       
       setEnquiries(enquiryData);
@@ -1149,49 +1144,32 @@ export default function EnquiriesPage() {
     let finalResult = result;
     if (userProfile?.role === 'audiologist') {
       finalResult = result.filter(enquiry => {
-        let hasHearingTest = false;
-        
-        // Check if enquiry has hearing test in visitSchedules
-        if (enquiry.visitSchedules && Array.isArray(enquiry.visitSchedules)) {
-          hasHearingTest = enquiry.visitSchedules.some((visit: any) => {
-            // Check if medicalServices array includes 'hearing_test'
-            if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
-              if (visit.medicalServices.includes('hearing_test')) {
-                return true;
-              }
-            }
-            // Check if medicalServices is an object with hearingTest property (UI state)
-            if (visit.medicalServices && typeof visit.medicalServices === 'object' && !Array.isArray(visit.medicalServices)) {
-              if (visit.medicalServices.hearingTest === true) {
-                return true;
-              }
-            }
-            // Check if medicalService is 'hearing_test' (legacy field)
-            if (visit.medicalService === 'hearing_test') {
-              return true;
-            }
-            // Check if hearingTestDetails exists (indicates hearing test was done)
-            if (visit.hearingTestDetails) {
-              // If hearingTestDetails exists, it means hearing test was done
-              if (visit.hearingTestDetails.testResults || visit.hearingTestDetails.testType || visit.hearingTestDetails.testDoneBy || Object.keys(visit.hearingTestDetails).length > 0) {
-                return true;
-              }
-            }
-            return false;
-          });
+        // Must have visitSchedules to be considered
+        if (!enquiry.visitSchedules || !Array.isArray(enquiry.visitSchedules) || enquiry.visitSchedules.length === 0) {
+          return false;
         }
         
-        // If not found in visitSchedules, check legacy fields
-        if (!hasHearingTest) {
-          // Check if enquiry has testDetails (legacy support)
-          if (enquiry.testDetails && (enquiry.testDetails.testResults || enquiry.testDetails.testName)) {
-            hasHearingTest = true;
+        // Check if ANY visit has hearing test service explicitly selected
+        const hasHearingTest = enquiry.visitSchedules.some((visit: any) => {
+          // PRIMARY CHECK: Check if medicalServices array includes 'hearing_test'
+          // This is the main way hearing test service is stored when saved
+          if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
+            return visit.medicalServices.includes('hearing_test');
           }
-          // Check if visits array has hearing test (legacy support)
-          if (!hasHearingTest && enquiry.visits && Array.isArray(enquiry.visits)) {
-            hasHearingTest = enquiry.visits.some((visit: any) => visit.hearingTest === true || visit.testResults);
+          
+          // SECONDARY CHECK: Check if medicalService is 'hearing_test' (legacy field)
+          if (visit.medicalService === 'hearing_test') {
+            return true;
           }
-        }
+          
+          // TERTIARY CHECK: Check if hearingTestDetails exists with audiogramData
+          // Only show if audiogram data exists (meaning hearing test was actually used)
+          if (visit.hearingTestDetails && visit.hearingTestDetails.audiogramData) {
+            return true;
+          }
+          
+          return false;
+        });
         
         return hasHearingTest;
       });

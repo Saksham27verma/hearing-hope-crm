@@ -986,14 +986,16 @@ export default function ProductsPage() {
     <>
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="h4">Product Management</Typography>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-        >
-          Add Product
-        </Button>
+        {userProfile?.role !== 'audiologist' && (
+          <Button 
+            variant="contained" 
+            color="primary" 
+            startIcon={<AddIcon />}
+            onClick={() => handleOpenDialog()}
+          >
+            Add Product
+          </Button>
+        )}
       </Box>
       
       <Paper sx={{ mb: 4, p: 3, borderRadius: 2, boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
@@ -1041,20 +1043,22 @@ export default function ProductsPage() {
               )}
             </Button>
             
-            <Button 
-              variant="contained" 
-              color="primary" 
-              startIcon={<AddIcon />}
-              onClick={() => handleOpenDialog()}
-              sx={{ 
-                borderRadius: 1.5, 
-                boxShadow: 2,
-                px: 3,
-                whiteSpace: 'nowrap'
-              }}
-            >
-              Add Product
-            </Button>
+            {userProfile?.role !== 'audiologist' && (
+              <Button 
+                variant="contained" 
+                color="primary" 
+                startIcon={<AddIcon />}
+                onClick={() => handleOpenDialog()}
+                sx={{ 
+                  borderRadius: 1.5, 
+                  boxShadow: 2,
+                  px: 3,
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                Add Product
+              </Button>
+            )}
           </Box>
         </Box>
         
@@ -1326,14 +1330,16 @@ export default function ProductsPage() {
                     </TableCell>
                     <TableCell align="center">
                       <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1 }}>
-                        <IconButton 
-                          color="primary" 
-                          onClick={() => handleOpenDialog(product)}
-                          size="small"
-                          sx={{ bgcolor: 'primary.lighter', '&:hover': { bgcolor: 'primary.light' } }}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
+                        {userProfile?.role !== 'audiologist' && (
+                          <IconButton 
+                            color="primary" 
+                            onClick={() => handleOpenDialog(product)}
+                            size="small"
+                            sx={{ bgcolor: 'primary.lighter', '&:hover': { bgcolor: 'primary.light' } }}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        )}
                         {userProfile?.role === 'admin' && (
                           <IconButton 
                             color="error" 
@@ -2086,6 +2092,16 @@ export default function ProductsPage() {
                 Edit
               </Button>
             </>
+          )}
+          {previewProduct && userProfile?.role !== 'audiologist' && userProfile?.role !== 'admin' && (
+            <Button 
+              onClick={handleEditFromPreview} 
+              variant="contained" 
+              color="primary"
+              startIcon={<EditIcon />}
+            >
+              Edit
+            </Button>
           )}
         </DialogActions>
       </Dialog>

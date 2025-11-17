@@ -51,6 +51,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   // Audiologist/Fitter allowed modules - restricted access for sales team
   const audiologistAllowedModules = [
     'Dashboard',
+    'Products',
     'Inventory',
     'Appointment Scheduler',
     'Interaction',
@@ -347,6 +348,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     } else if (userProfile.role === 'audiologist') {
       allowedPaths = [
         '/dashboard',
+        '/products',
         '/inventory',
         '/appointments',
         '/interaction',
