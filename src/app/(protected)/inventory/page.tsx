@@ -232,22 +232,40 @@ export default function InventoryPage() {
         // Outgoing serials: materials out and sales (excluding stock transfers that were received)
         const pendingOutSerials = new Set<string>();
         const dispatchedOutSerials = new Set<string>();
+        const stockTransferOutSerials = new Map<string, string>(); // key: serial key, value: source location
         materialsOutSnap.docs.forEach(docSnap => {
           const data: any = docSnap.data();
           const status = data.status as string;
           const notes = data.notes || '';
+          const documentLocation = data.location || headOfficeId;
+          const isStockTransfer = notes.includes('Stock Transfer:');
           
           (data.products || []).forEach((prod: any) => {
             (prod.serialNumbers || []).forEach((sn: string) => {
               const key = `${prod.productId || prod.id || ''}|${sn}`;
               
-              // Skip if this is a stock transfer that has been received elsewhere
-              if (notes.includes('Stock Transfer:') && stockTransferInSerials.has(key)) {
-                return; // Don't mark as reserved/dispatched
+              // For stock transfers, track which location the serial was transferred from
+              if (isStockTransfer) {
+                // Skip if this stock transfer was received elsewhere (already handled)
+                if (stockTransferInSerials.has(key)) {
+                  return; // Don't mark as reserved/dispatched, and don't remove from source
+                }
+                // Track that this serial was transferred out from this location
+                stockTransferOutSerials.set(key, documentLocation);
+                // Remove from incomingMap if it exists at this location
+                const existingItem = Array.from(incomingMap.values()).find(
+                  item => item.productId === (prod.productId || prod.id) && 
+                          item.serialNumber === sn && 
+                          item.location === documentLocation
+                );
+                if (existingItem) {
+                  incomingMap.delete(`${prod.productId || prod.id || ''}|${sn}`);
+                }
+              } else {
+                // Regular materials out (not stock transfers)
+                if (status === 'pending') pendingOutSerials.add(key);
+                if (status === 'dispatched') dispatchedOutSerials.add(key);
               }
-              
-              if (status === 'pending') pendingOutSerials.add(key);
-              if (status === 'dispatched') dispatchedOutSerials.add(key);
             });
           });
         });
@@ -311,9 +329,10 @@ export default function InventoryPage() {
 
         // Incoming serials from materialIn and purchases (dedupe by productId|serial)
         const incomingMap = new Map<string, InventoryItem>();
-        // Non-serial incoming aggregation
+        // Non-serial incoming aggregation - track by product+location for accurate stock transfers
         type NonSerialAgg = { qty: number; lastDate: any; lastSupplier: string; lastInvoice: string; lastSourceType?: 'materialIn' | 'purchase'; lastDocId?: string; lastLocation?: string; mrp?: number; dealerPrice?: number };
-        const nonSerialInByProduct = new Map<string, NonSerialAgg>();
+        const nonSerialInByProductAndLocation = new Map<string, NonSerialAgg>(); // key: `${productId}|${location}`
+        const nonSerialInByProduct = new Map<string, NonSerialAgg>(); // Legacy: for backward compatibility
 
         // Material Inward
         materialInSnap.docs.forEach(docSnap => {
@@ -455,18 +474,30 @@ export default function InventoryPage() {
           });
         });
 
-        // Outgoing non-serial aggregation (materials out + sales)
-        const nonSerialOutByProduct = new Map<string, number>();
+        // Outgoing non-serial aggregation (materials out + sales) - track by productId + location
+        const nonSerialOutByProductAndLocation = new Map<string, number>(); // key: `${productId}|${location}`
+        const nonSerialOutByProduct = new Map<string, number>(); // Global for sales (not location-specific)
         
-        // Count materials out
+        // Count materials out by location (for stock transfers)
         materialsOutSnap.docs.forEach(docSnap => {
           const data: any = docSnap.data();
+          const documentLocation = data.location || headOfficeId;
+          const notes = data.notes || '';
+          const isStockTransfer = notes.includes('Stock Transfer:');
+          
           (data.products || []).forEach((prod: any) => {
             const productId = prod.productId || prod.id;
             const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
             const hasSerial = serials && serials.length > 0;
             if (!hasSerial) {
-              nonSerialOutByProduct.set(productId, (nonSerialOutByProduct.get(productId) || 0) + (prod.quantity || 0));
+              // For stock transfers, track by location; for other materials out, track globally
+              if (isStockTransfer) {
+                const key = `${productId}|${documentLocation}`;
+                nonSerialOutByProductAndLocation.set(key, (nonSerialOutByProductAndLocation.get(key) || 0) + (prod.quantity || 0));
+              } else {
+                // Regular materials out (not stock transfers) - track globally
+                nonSerialOutByProduct.set(productId, (nonSerialOutByProduct.get(productId) || 0) + (prod.quantity || 0));
+              }
             }
           });
         });
@@ -527,15 +558,153 @@ export default function InventoryPage() {
           return itm;
         });
 
-        // Build non-serial items per product with remaining quantity
+        // Build non-serial items per product and location with remaining quantity
+        // Aggregate incoming by product + location (populate the map declared above)
+        materialInSnap.docs.forEach(docSnap => {
+          const data: any = docSnap.data();
+          const documentLocation = data.location || headOfficeId;
+          (data.products || []).forEach((prod: any) => {
+            const productId = prod.productId || prod.id;
+            const productRef = productById.get(productId) || {};
+            const isSerialTracked = !!productRef.hasSerialNumber;
+            const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+            const hasSerial = Array.isArray(serials) && serials.length > 0;
+            
+            if (!hasSerial && !isSerialTracked) {
+              const key = `${productId}|${documentLocation}`;
+              const prev = nonSerialInByProductAndLocation.get(key) || { 
+                qty: 0, lastDate: null, lastSupplier: '', lastInvoice: '', 
+                lastLocation: documentLocation, mrp: prod.mrp ?? productRef.mrp ?? 0, 
+                dealerPrice: prod.dealerPrice ?? prod.finalPrice ?? 0,
+                lastSourceType: undefined as 'materialIn' | 'purchase' | undefined,
+                lastDocId: undefined as string | undefined
+              };
+              const receivedDate = data.receivedDate;
+              const thisDate = receivedDate?.toMillis ? receivedDate.toMillis() : (receivedDate?.seconds || 0);
+              const prevDate = prev.lastDate?.toMillis ? prev.lastDate.toMillis() : (prev.lastDate?.seconds || 0);
+              const newer = !prev.lastDate || thisDate >= prevDate;
+              
+              nonSerialInByProductAndLocation.set(key, {
+                qty: prev.qty + (prod.quantity || 0),
+                lastDate: newer ? receivedDate : prev.lastDate,
+                lastSupplier: newer ? (data.supplier?.name || '') : prev.lastSupplier,
+                lastInvoice: newer ? (data.challanNumber || '') : prev.lastInvoice,
+                lastSourceType: newer ? 'materialIn' : prev.lastSourceType,
+                lastDocId: newer ? docSnap.id : prev.lastDocId,
+                lastLocation: documentLocation,
+                mrp: prod.mrp ?? productRef.mrp ?? prev.mrp ?? 0,
+                dealerPrice: prod.dealerPrice ?? prod.finalPrice ?? prev.dealerPrice ?? 0,
+              });
+            }
+          });
+        });
+        
+        // Also add purchases by location
+        purchasesSnap.docs.forEach(docSnap => {
+          const data: any = docSnap.data();
+          const documentLocation = data.location || headOfficeId;
+          (data.products || []).forEach((prod: any) => {
+            const productId = prod.productId || prod.id;
+            const productRef = productById.get(productId) || {};
+            const isSerialTracked = !!productRef.hasSerialNumber;
+            const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+            const hasSerial = Array.isArray(serials) && serials.length > 0;
+            
+            if (!hasSerial && !isSerialTracked) {
+              const key = `${productId}|${documentLocation}`;
+              const prev = nonSerialInByProductAndLocation.get(key) || { 
+                qty: 0, lastDate: null, lastSupplier: '', lastInvoice: '', 
+                lastLocation: documentLocation, mrp: prod.mrp ?? productRef.mrp ?? 0, 
+                dealerPrice: prod.dealerPrice ?? prod.finalPrice ?? 0,
+                lastSourceType: undefined as 'materialIn' | 'purchase' | undefined,
+                lastDocId: undefined as string | undefined
+              };
+              const purchaseDate = data.purchaseDate;
+              const thisDate = purchaseDate?.toMillis ? purchaseDate.toMillis() : (purchaseDate?.seconds || 0);
+              const prevDate = prev.lastDate?.toMillis ? prev.lastDate.toMillis() : (prev.lastDate?.seconds || 0);
+              const newer = !prev.lastDate || thisDate >= prevDate;
+              
+              nonSerialInByProductAndLocation.set(key, {
+                qty: prev.qty + (prod.quantity || 0),
+                lastDate: newer ? purchaseDate : prev.lastDate,
+                lastSupplier: newer ? (data.party?.name || '') : prev.lastSupplier,
+                lastInvoice: newer ? (data.invoiceNo || '') : prev.lastInvoice,
+                lastSourceType: newer ? 'purchase' : prev.lastSourceType,
+                lastDocId: newer ? docSnap.id : prev.lastDocId,
+                lastLocation: documentLocation,
+                mrp: prod.mrp ?? productRef.mrp ?? prev.mrp ?? 0,
+                dealerPrice: prod.dealerPrice ?? prod.finalPrice ?? prev.dealerPrice ?? 0,
+              });
+            }
+          });
+        });
+        
+        // Build non-serial items per product and location with remaining quantity
         const nonSerialItems: InventoryItem[] = [];
+        nonSerialInByProductAndLocation.forEach((inInfo, key) => {
+          const [productId, location] = key.split('|');
+          const productRef = productById.get(productId) || {};
+          const isSerialTracked = !!productRef.hasSerialNumber;
+          if (isSerialTracked) return; // Skip serial-tracked items
+          
+          const inQty = inInfo.qty || 0;
+          // Subtract location-specific materials out (stock transfers)
+          const locationOutKey = `${productId}|${location}`;
+          const locationOutQty = nonSerialOutByProductAndLocation.get(locationOutKey) || 0;
+          // Also subtract global materials out (sales and non-stock-transfer materials out)
+          const globalOutQty = nonSerialOutByProduct.get(productId) || 0;
+          // For location-specific stock, only subtract location-specific out, not global
+          // But we need to be careful: if there's a stock transfer out from this location,
+          // we should subtract it. If there's a sale, it should also reduce stock at this location.
+          // Actually, sales should reduce stock globally, so we should subtract both.
+          const remainingQty = Math.max(0, inQty - locationOutQty - globalOutQty);
+          
+          if (remainingQty > 0) {
+            nonSerialItems.push({
+              id: `qty-${productId}-${location}`,
+              productId,
+              productName: productRef.name || '',
+              serialNumber: '-',
+              type: productRef.type || '',
+              company: productRef.company || '',
+              originalProductCompany: productRef.company || '',
+              location: location,
+            status: 'In Stock',
+              dealerPrice: inInfo.dealerPrice || 0,
+              mrp: inInfo.mrp || 0,
+              purchaseDate: inInfo.lastDate || null,
+              purchaseInvoice: inInfo.lastInvoice || '-',
+              supplier: inInfo.lastSupplier || '-',
+              sourceType: inInfo.lastSourceType,
+              sourceDocId: inInfo.lastDocId,
+              quantity: remainingQty,
+              isSerialTracked: false,
+              createdAt: inInfo.lastDate || null,
+              updatedAt: inInfo.lastDate || null,
+            });
+          }
+        });
+        
+        // Also handle legacy non-serial items that weren't tracked by location
+        // (for backward compatibility with old data)
         nonSerialInByProduct.forEach((inInfo, productId) => {
           const productRef = productById.get(productId) || {};
+          const isSerialTracked = !!productRef.hasSerialNumber;
+          if (isSerialTracked) return;
+          
+          // Check if we already have this product+location combination
+          const location = inInfo.lastLocation || headOfficeId;
+          const key = `${productId}|${location}`;
+          if (nonSerialInByProductAndLocation.has(key)) {
+            return; // Already handled above
+          }
+          
+          // This is legacy data without location tracking, use global calculation
           const inQty = inInfo.qty || 0;
           const outQty = nonSerialOutByProduct.get(productId) || 0;
           const remainingQty = Math.max(0, inQty - outQty);
-          const isSerialTracked = !!productRef.hasSerialNumber;
-          if (remainingQty > 0 && !isSerialTracked) {
+          
+          if (remainingQty > 0) {
             nonSerialItems.push({
               id: `qty-${productId}`,
               productId,
@@ -544,7 +713,7 @@ export default function InventoryPage() {
               type: productRef.type || '',
               company: productRef.company || '',
               originalProductCompany: productRef.company || '',
-              location: inInfo.lastLocation || '-',
+              location: location,
             status: 'In Stock',
               dealerPrice: inInfo.dealerPrice || 0,
               mrp: inInfo.mrp || 0,

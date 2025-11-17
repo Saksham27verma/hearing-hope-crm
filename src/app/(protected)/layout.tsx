@@ -87,6 +87,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       ]
     },
     { text: 'Settings', path: '/settings', icon: '⚙️', adminOnly: true },
+    { text: 'Password Management', path: '/password-management', icon: '🔐', adminOnly: true },
     { text: 'Admin Cleanup', path: '/admin-cleanup', icon: '🧹', adminOnly: true },
   ];
 
