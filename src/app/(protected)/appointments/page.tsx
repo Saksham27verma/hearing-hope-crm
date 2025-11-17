@@ -34,6 +34,8 @@ import {
   Menu,
   ListItemIcon,
   ListItemText,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
@@ -91,6 +93,10 @@ const defaultNewAppointment: Appointment = {
 };
 
 export default function AppointmentSchedulerPage() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTablet = useMediaQuery(theme.breakpoints.down('md'));
+  
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
   const [openPreview, setOpenPreview] = useState(false);
@@ -461,12 +467,33 @@ export default function AppointmentSchedulerPage() {
   };
 
   return (
-    <Box>
-      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-        <Typography variant="h5" fontWeight="bold" color="primary">Appointment Scheduler</Typography>
-        <Stack direction="row" spacing={2} alignItems="center">
-          {/* Filters */}
-          <FormControl size="small" sx={{ minWidth: 180 }}>
+    <Box sx={{ p: { xs: 1, sm: 2, md: 3 } }}>
+      {/* Header - Responsive */}
+      <Box sx={{ mb: 2 }}>
+        <Typography 
+          variant="h5" 
+          fontWeight="bold" 
+          color="primary"
+          sx={{ mb: { xs: 2, sm: 0 }, fontSize: { xs: '1.25rem', sm: '1.5rem' } }}
+        >
+          Appointment Scheduler
+        </Typography>
+        
+        {/* Filters and Actions - Stack on mobile */}
+        <Stack 
+          direction={{ xs: 'column', sm: 'row' }} 
+          spacing={{ xs: 1.5, sm: 2 }} 
+          alignItems={{ xs: 'stretch', sm: 'center' }}
+          sx={{ mt: { xs: 1, sm: 0 } }}
+        >
+          {/* Filters - Full width on mobile */}
+          <FormControl 
+            size="small" 
+            sx={{ 
+              minWidth: { xs: '100%', sm: 180 },
+              width: { xs: '100%', sm: 'auto' }
+            }}
+          >
             <InputLabel>Filter by Center</InputLabel>
             <Select
               value={selectedCenter}
@@ -480,7 +507,13 @@ export default function AppointmentSchedulerPage() {
             </Select>
           </FormControl>
           
-          <FormControl size="small" sx={{ minWidth: 180 }}>
+          <FormControl 
+            size="small" 
+            sx={{ 
+              minWidth: { xs: '100%', sm: 180 },
+              width: { xs: '100%', sm: 'auto' }
+            }}
+          >
             <InputLabel>Filter by Executive</InputLabel>
             <Select
               value={selectedExecutive}
@@ -494,12 +527,15 @@ export default function AppointmentSchedulerPage() {
             </Select>
           </FormControl>
           
-          {/* Export Button */}
+          {/* Export Button - Full width on mobile */}
           <Button
             variant="outlined"
             startIcon={<DownloadIcon />}
             onClick={(e) => setExportMenuAnchor(e.currentTarget)}
-            sx={{ minWidth: 140 }}
+            sx={{ 
+              minWidth: { xs: '100%', sm: 140 },
+              width: { xs: '100%', sm: 'auto' }
+            }}
           >
             Export
           </Button>
@@ -523,30 +559,44 @@ export default function AppointmentSchedulerPage() {
             </MenuItem>
           </Menu>
           
+          {/* New Appointment Button - Full width on mobile */}
           <Button 
             variant="contained" 
             startIcon={<AddIcon />} 
             onClick={() => { setNewAppt(defaultNewAppointment); setOpenDialog(true); }}
+            sx={{ 
+              width: { xs: '100%', sm: 'auto' },
+              minWidth: { xs: '100%', sm: 'auto' }
+            }}
           >
             New Appointment
           </Button>
         </Stack>
       </Box>
 
-      {/* Filter Summary */}
+      {/* Filter Summary - Responsive */}
       {(selectedCenter !== 'all' || selectedExecutive !== 'all') && (
-        <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Box sx={{ 
+          mb: 2, 
+          display: 'flex', 
+          gap: 1, 
+          flexWrap: 'wrap', 
+          alignItems: 'center',
+          p: { xs: 1, sm: 0 }
+        }}>
           <Chip 
             icon={<FilterListIcon />} 
             label="Active Filters:" 
             color="primary" 
             variant="outlined"
+            size={isMobile ? 'small' : 'medium'}
           />
           {selectedCenter !== 'all' && (
             <Chip 
               label={`Center: ${centers.find(c => c.id === selectedCenter)?.name || 'Unknown'}`}
               onDelete={() => setSelectedCenter('all')}
               color="primary"
+              size={isMobile ? 'small' : 'medium'}
             />
           )}
           {selectedExecutive !== 'all' && (
@@ -554,6 +604,7 @@ export default function AppointmentSchedulerPage() {
               label={`Executive: ${staffList.find(s => s.id === selectedExecutive)?.name || 'Unknown'}`}
               onDelete={() => setSelectedExecutive('all')}
               color="secondary"
+              size={isMobile ? 'small' : 'medium'}
             />
           )}
           <Button 
@@ -568,54 +619,136 @@ export default function AppointmentSchedulerPage() {
         </Box>
       )}
 
-      <Paper sx={{ p: 2 }}>
-        <FullCalendar
-          plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
-          headerToolbar={{ left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek' }}
-          initialView="dayGridMonth"
-          selectable
-          selectMirror
-          dayMaxEvents
-          events={events}
-          select={handleDateSelect}
-          eventClick={handleEventClick}
-          height="calc(100vh - 280px)"
-        />
+      {/* Calendar - Responsive */}
+      <Paper sx={{ p: { xs: 1, sm: 2 }, overflow: 'auto' }}>
+        <Box sx={{ 
+          '& .fc': { 
+            fontSize: { xs: '0.75rem', sm: '0.875rem', md: '1rem' }
+          },
+          '& .fc-toolbar': {
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: { xs: 1, sm: 0 }
+          },
+          '& .fc-toolbar-title': {
+            fontSize: { xs: '1rem', sm: '1.25rem', md: '1.5rem' } 
+          },
+          '& .fc-button': {
+            fontSize: { xs: '0.7rem', sm: '0.875rem' },
+            padding: { xs: '4px 8px', sm: '6px 12px' }
+          },
+          '& .fc-daygrid-day-number': {
+            fontSize: { xs: '0.7rem', sm: '0.875rem' },
+            padding: { xs: '2px', sm: '4px' }
+          },
+          '& .fc-event-title': {
+            fontSize: { xs: '0.65rem', sm: '0.75rem' },
+            padding: { xs: '1px 2px', sm: '2px 4px' }
+          }
+        }}>
+          <FullCalendar
+            plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
+            headerToolbar={{ 
+              left: isMobile ? 'prev,next' : 'prev,next today', 
+              center: 'title', 
+              right: isMobile ? 'dayGridMonth,listWeek' : 'dayGridMonth,timeGridWeek,timeGridDay,listWeek'
+            }}
+            initialView={isMobile ? 'listWeek' : 'dayGridMonth'}
+            selectable
+            selectMirror
+            dayMaxEvents={isMobile ? true : undefined}
+            events={events}
+            select={handleDateSelect}
+            eventClick={handleEventClick}
+            height={isMobile ? 'auto' : 'calc(100vh - 280px)'}
+            eventDisplay={isMobile ? 'list-item' : 'block'}
+            dayMaxEventRows={isMobile ? 2 : undefined}
+            moreLinkClick={isMobile ? 'popover' : 'day'}
+            views={{
+              dayGridMonth: {
+                dayMaxEventRows: isMobile ? 2 : 3,
+                moreLinkClick: isMobile ? 'popover' : 'day'
+              },
+              timeGridWeek: {
+                slotMinTime: '08:00:00',
+                slotMaxTime: '20:00:00'
+              },
+              listWeek: {
+                duration: { days: 7 }
+              }
+            }}
+          />
+        </Box>
       </Paper>
 
-      {/* Appointment Preview Dialog */}
-      <Dialog open={openPreview} onClose={() => setOpenPreview(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Appointment Preview</DialogTitle>
-        <DialogContent>
+      {/* Appointment Preview Dialog - Mobile Responsive */}
+      <Dialog 
+        open={openPreview} 
+        onClose={() => setOpenPreview(false)} 
+        fullWidth 
+        maxWidth="sm"
+            fullScreen={isMobile}
+        PaperProps={{
+          sx: {
+            m: { xs: 0, sm: 2 },
+            maxHeight: { xs: '100%', sm: '90vh' }
+          }
+        }}
+      >
+        <DialogTitle sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
+          Appointment Preview
+        </DialogTitle>
+        <DialogContent dividers sx={{ p: { xs: 2, sm: 3 } }}>
           {previewAppt ? (
-            <Box sx={{ p: 1 }}>
-              <Typography variant="subtitle2" color="text.secondary">Patient</Typography>
-              <Typography variant="h6" sx={{ mb: 1 }}>{previewAppt.patientName || '-'}</Typography>
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                Patient
+              </Typography>
+              <Typography variant="h6" sx={{ mb: 1, fontSize: { xs: '1rem', sm: '1.25rem' } }}>
+                {previewAppt.patientName || '-'}
+              </Typography>
               <Typography variant="body2" sx={{ mb: 2 }} color="text.secondary">
                 Mobile: {previewPatientPhone || '—'}
               </Typography>
-              <Typography variant="subtitle2" color="text.secondary">Type</Typography>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                Type
+              </Typography>
               <Typography variant="body1" sx={{ mb: 1 }}>{previewAppt.type === 'center' ? 'Center Visit' : 'Home Visit'}</Typography>
               {previewAppt.type === 'center' && (
                 <>
-                  <Typography variant="subtitle2" color="text.secondary">Center</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Center
+                  </Typography>
                   <Typography variant="body1" sx={{ mb: 1 }}>{previewCenterName || '—'}</Typography>
                 </>
               )}
-              <Typography variant="subtitle2" color="text.secondary">Date & Time</Typography>
-              <Typography variant="body1" sx={{ mb: 1 }}>{new Date(previewAppt.start).toLocaleString()}</Typography>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                Date & Time
+              </Typography>
+              <Typography variant="body1" sx={{ mb: 1, fontSize: { xs: '0.875rem', sm: '1rem' } }}>
+                {new Date(previewAppt.start).toLocaleString()}
+              </Typography>
               {previewAppt.type === 'center' ? null : (
                 <>
-                  <Typography variant="subtitle2" color="text.secondary">Home Address</Typography>
-                  <Typography variant="body1" sx={{ mb: 1 }}>{previewAppt.address || '—'}</Typography>
-                  <Typography variant="subtitle2" color="text.secondary">Home Visit By</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Home Address
+                  </Typography>
+                  <Typography variant="body1" sx={{ mb: 1, wordBreak: 'break-word' }}>
+                    {previewAppt.address || '—'}
+                  </Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Home Visit By
+                  </Typography>
                   <Typography variant="body1" sx={{ mb: 1 }}>{previewHomeVisitorName || '—'}</Typography>
                 </>
               )}
               {previewAppt.notes && (
                 <>
-                  <Typography variant="subtitle2" color="text.secondary">Notes</Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{previewAppt.notes}</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Notes
+                  </Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {previewAppt.notes}
+                  </Typography>
                 </>
               )}
             </Box>
@@ -623,70 +756,176 @@ export default function AppointmentSchedulerPage() {
             <Typography>Loading...</Typography>
           )}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenPreview(false)}>Close</Button>
+        <DialogActions sx={{ p: { xs: 1.5, sm: 2 } }}>
+          <Button 
+            onClick={() => setOpenPreview(false)}
+            variant="contained"
+            fullWidth={isMobile}
+          >
+            Close
+          </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Patient picker dialog */}
-      <Dialog open={openPatientPicker} onClose={() => setOpenPatientPicker(false)} fullWidth maxWidth="md">
-        <DialogTitle>Select Patient from Enquiries</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mb: 2, display: 'flex', gap: 2 }}>
-            <TextField fullWidth label="Search name / phone / city / email" value={enquirySearch} onChange={e => setEnquirySearch(e.target.value)} />
+      {/* Patient picker dialog - Mobile Responsive */}
+      <Dialog 
+        open={openPatientPicker} 
+        onClose={() => setOpenPatientPicker(false)} 
+        fullWidth 
+        maxWidth="md"
+            fullScreen={isMobile}
+        PaperProps={{
+          sx: {
+            m: { xs: 0, sm: 2 },
+            maxHeight: { xs: '100%', sm: '90vh' }
+          }
+        }}
+      >
+        <DialogTitle sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
+          Select Patient from Enquiries
+        </DialogTitle>
+        <DialogContent dividers sx={{ p: { xs: 1, sm: 2 } }}>
+          <Box sx={{ mb: 2 }}>
+            <TextField 
+              fullWidth 
+              label="Search name / phone / city / email" 
+              value={enquirySearch} 
+              onChange={e => setEnquirySearch(e.target.value)}
+              size="small"
+            />
           </Box>
-          <TableContainer component={Paper} variant="outlined">
-            <Table size="small">
+          <TableContainer 
+            component={Paper} 
+            variant="outlined"
+            sx={{ 
+              maxHeight: { xs: '60vh', sm: '50vh' },
+              overflow: 'auto'
+            }}
+          >
+            <Table size="small" stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell>Name</TableCell>
-                  <TableCell>Phone</TableCell>
-                  <TableCell>Email</TableCell>
-                  <TableCell>City</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell align="right">Action</TableCell>
+                  <TableCell sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, fontWeight: 'bold' }}>
+                    Name
+                  </TableCell>
+                  <TableCell sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>
+                    Phone
+                  </TableCell>
+                  <TableCell sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, fontWeight: 'bold', display: { xs: 'none', md: 'table-cell' } }}>
+                    Email
+                  </TableCell>
+                  <TableCell sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, fontWeight: 'bold', display: { xs: 'none', lg: 'table-cell' } }}>
+                    City
+                  </TableCell>
+                  <TableCell sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, fontWeight: 'bold', display: { xs: 'none', sm: 'table-cell' } }}>
+                    Status
+                  </TableCell>
+                  <TableCell align="right" sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' }, fontWeight: 'bold' }}>
+                    Action
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {filteredEnquiries.map((e: any) => (
                   <TableRow key={e.id} hover>
-                    <TableCell>{e.name}</TableCell>
-                    <TableCell>{e.phone || '-'}</TableCell>
-                    <TableCell>{e.email || '-'}</TableCell>
-                    <TableCell>{e.city || '-'}</TableCell>
-                    <TableCell>{e.status || '-'}</TableCell>
+                    <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                      {e.name}
+                      {isMobile && (
+                        <Box sx={{ mt: 0.5 }}>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {e.phone || '-'}
+                          </Typography>
+                          {e.status && (
+                            <Chip 
+                              label={e.status} 
+                              size="small" 
+                              sx={{ mt: 0.5, height: 20, fontSize: '0.65rem' }}
+                            />
+                          )}
+                        </Box>
+                      )}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' }, display: { xs: 'none', sm: 'table-cell' } }}>
+                      {e.phone || '-'}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' }, display: { xs: 'none', md: 'table-cell' } }}>
+                      {e.email || '-'}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' }, display: { xs: 'none', lg: 'table-cell' } }}>
+                      {e.city || '-'}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' }, display: { xs: 'none', sm: 'table-cell' } }}>
+                      {e.status || '-'}
+                    </TableCell>
                     <TableCell align="right">
-                      <Button size="small" variant="contained" onClick={() => {
-                        setNewAppt({ ...newAppt, enquiryId: e.id, patientName: e.name });
-                        setOpenPatientPicker(false);
-                      }}>Select</Button>
+                      <Button 
+                        size="small" 
+                        variant="contained" 
+                        onClick={() => {
+                          setNewAppt({ ...newAppt, enquiryId: e.id, patientName: e.name });
+                          setOpenPatientPicker(false);
+                        }}
+                        sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}
+                      >
+                        Select
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
                 {filteredEnquiries.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} align="center">{enquiriesLoading ? 'Loading enquiries...' : 'No enquiries found'}</TableCell>
+                    <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                      {enquiriesLoading ? 'Loading enquiries...' : 'No enquiries found'}
+                    </TableCell>
                   </TableRow>
                 )}
               </TableBody>
             </Table>
           </TableContainer>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpenPatientPicker(false)}>Close</Button>
+        <DialogActions sx={{ p: { xs: 1.5, sm: 2 } }}>
+          <Button 
+            onClick={() => setOpenPatientPicker(false)}
+            variant="outlined"
+            fullWidth={isMobile}
+          >
+            Close
+          </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={openDialog} onClose={() => setOpenDialog(false)} fullWidth maxWidth="md">
-        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <EventAvailableIcon color="primary" /> {newAppt.id ? 'Edit Appointment' : 'New Appointment'}
+      {/* New/Edit Appointment Dialog - Mobile Responsive */}
+      <Dialog 
+        open={openDialog} 
+        onClose={() => setOpenDialog(false)} 
+        fullWidth 
+        maxWidth="md"
+            fullScreen={isMobile}
+        PaperProps={{
+          sx: {
+            m: { xs: 0, sm: 2 },
+            maxHeight: { xs: '100%', sm: '90vh' }
+          }
+        }}
+      >
+        <DialogTitle sx={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 1,
+          fontSize: { xs: '1.1rem', sm: '1.25rem' },
+          p: { xs: 2, sm: 3 }
+        }}>
+          <EventAvailableIcon color="primary" sx={{ fontSize: { xs: '1.2rem', sm: '1.5rem' } }} /> 
+          {newAppt.id ? 'Edit Appointment' : 'New Appointment'}
         </DialogTitle>
-        <DialogContent sx={{ pt: 2, pb: 2 }}>
+        <DialogContent dividers sx={{ pt: { xs: 2, sm: 3 }, pb: { xs: 2, sm: 3 }, px: { xs: 2, sm: 3 } }}>
           <LocalizationProvider dateAdapter={AdapterDateFns}>
-          <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: 'background.default' }}>
-          <Grid container spacing={3}>
+          <Paper elevation={0} sx={{ p: { xs: 2, sm: 3 }, borderRadius: 2, bgcolor: 'background.default' }}>
+          <Grid container spacing={{ xs: 2, sm: 3 }}>
             <Grid item xs={12}>
-              <Typography variant="subtitle2" color="text.secondary">Patient & Visit</Typography>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                Patient & Visit
+              </Typography>
               <Divider sx={{ mt: 1, mb: 2 }} />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -697,27 +936,55 @@ export default function AppointmentSchedulerPage() {
                 placeholder="Select from enquiries"
                 onClick={() => setOpenPatientPicker(true)}
                 margin="normal"
+                size={isMobile ? 'small' : 'medium'}
                 InputLabelProps={{ sx: { mt: 0.2 } }}
-                InputProps={{ readOnly: true, startAdornment: <InputAdornment position="start"><PersonIcon fontSize="small" /></InputAdornment> }}
+                InputProps={{ 
+                  readOnly: true, 
+                  startAdornment: <InputAdornment position="start"><PersonIcon fontSize="small" /></InputAdornment> 
+                }}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
               <Box>
-                <Typography variant="caption" color="text.secondary" sx={{ minWidth: 120, display: 'inline-block' }}>Visit Type</Typography>
+                <Typography 
+                  variant="caption" 
+                  color="text.secondary" 
+                  sx={{ 
+                    minWidth: 120, 
+                    display: 'inline-block',
+                    fontSize: { xs: '0.7rem', sm: '0.75rem' }
+                  }}
+                >
+                  Visit Type
+                </Typography>
                 <ToggleButtonGroup
                   exclusive
                   fullWidth
                   color="primary"
-                  size="medium"
+                  size={isMobile ? 'small' : 'medium'}
                   value={newAppt.type}
                   onChange={(_, val) => {
                     if (!val) return;
                     setNewAppt({ ...newAppt, type: val as AppointmentType });
                   }}
-                  sx={{ mt: 0.5, border: theme => `1px solid ${theme.palette.divider}`, borderRadius: 2 }}
+                  sx={{ 
+                    mt: 0.5, 
+                    border: theme => `1px solid ${theme.palette.divider}`, 
+                    borderRadius: 2,
+                    '& .MuiToggleButton-root': {
+                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                      px: { xs: 1, sm: 2 }
+                    }
+                  }}
                 >
-                  <ToggleButton value="center"><PlaceIcon sx={{ mr: 0.5 }} fontSize="small" /> Center</ToggleButton>
-                  <ToggleButton value="home"><HomeWorkIcon sx={{ mr: 0.5 }} fontSize="small" /> Home</ToggleButton>
+                  <ToggleButton value="center">
+                    <PlaceIcon sx={{ mr: 0.5, fontSize: { xs: '0.875rem', sm: '1rem' } }} /> 
+                    Center
+                  </ToggleButton>
+                  <ToggleButton value="home">
+                    <HomeWorkIcon sx={{ mr: 0.5, fontSize: { xs: '0.875rem', sm: '1rem' } }} /> 
+                    Home
+                  </ToggleButton>
                 </ToggleButtonGroup>
               </Box>
             </Grid>
@@ -730,6 +997,7 @@ export default function AppointmentSchedulerPage() {
                   value={newAppt.centerId}
                   onChange={e => setNewAppt({ ...newAppt, centerId: e.target.value })}
                   margin="normal"
+                  size={isMobile ? 'small' : 'medium'}
                   InputProps={{ startAdornment: <InputAdornment position="start"><PlaceIcon fontSize="small" /></InputAdornment> }}
                 >
                   {centers.map(c => (
@@ -746,6 +1014,7 @@ export default function AppointmentSchedulerPage() {
                     value={newAppt.address}
                     onChange={e => setNewAppt({ ...newAppt, address: e.target.value })}
                     margin="normal"
+                    size={isMobile ? 'small' : 'medium'}
                     InputProps={{ startAdornment: <InputAdornment position="start"><HomeWorkIcon fontSize="small" /></InputAdornment> }}
                   />
                 </Grid>
@@ -767,6 +1036,7 @@ export default function AppointmentSchedulerPage() {
                         label="Home Visit By (Staff)"
                         fullWidth
                         margin="normal"
+                        size={isMobile ? 'small' : 'medium'}
                       />
                     )}
                   />
@@ -774,7 +1044,9 @@ export default function AppointmentSchedulerPage() {
               </>
             )}
             <Grid item xs={12}>
-              <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1, minWidth: 120 }}>Schedule</Typography>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                Schedule
+              </Typography>
               <Divider sx={{ mt: 1, mb: 2 }} />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -787,24 +1059,35 @@ export default function AppointmentSchedulerPage() {
                   const endIso = new Date(new Date(val).getTime() + 60 * 60 * 1000).toISOString();
                   setNewAppt({ ...newAppt, start: startIso, end: endIso });
                 }}
-                slotProps={{ textField: { fullWidth: true, margin: 'normal' } }}
+                slotProps={{ 
+                  textField: { 
+                    fullWidth: true, 
+                    margin: 'normal',
+                    size: isMobile ? 'small' : 'medium'
+                  } 
+                }}
               />
-              <Typography variant="caption" color="text.secondary">Default duration set to 1 hour</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: '0.7rem', sm: '0.75rem' } }}>
+                Default duration set to 1 hour
+              </Typography>
             </Grid>
             <Grid item xs={12}>
-              <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1 }}>Notes</Typography>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                Notes
+              </Typography>
               <Divider sx={{ mt: 1, mb: 2 }} />
             </Grid>
             <Grid item xs={12}>
               <TextField
                 fullWidth
                 multiline
-                minRows={3}
+                minRows={isMobile ? 2 : 3}
                 label="Notes"
                 value={newAppt.notes}
                 onChange={e => setNewAppt({ ...newAppt, notes: e.target.value })}
                 placeholder="Add any special instructions..."
                 margin="normal"
+                size={isMobile ? 'small' : 'medium'}
               />
             </Grid>
           </Grid>
