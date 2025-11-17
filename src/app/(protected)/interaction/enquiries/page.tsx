@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
   Box, 
   Typography, 
@@ -409,6 +410,7 @@ interface VisitSchedule {
 }
 
 export default function EnquiriesPage() {
+  const router = useRouter();
   const { userProfile } = useAuth();
   // State with proper typing
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
@@ -874,8 +876,62 @@ export default function EnquiriesPage() {
         ...doc.data()
       })) as Enquiry[];
       
+      // Filter for audiologists: only show enquiries with hearing test services
+      let filteredData = enquiryData;
+      if (userProfile?.role === 'audiologist') {
+        filteredData = enquiryData.filter(enquiry => {
+          let hasHearingTest = false;
+          
+          // Check if enquiry has hearing test in visitSchedules
+          if (enquiry.visitSchedules && Array.isArray(enquiry.visitSchedules)) {
+            hasHearingTest = enquiry.visitSchedules.some((visit: any) => {
+              // Check if medicalServices array includes 'hearing_test'
+              if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
+                if (visit.medicalServices.includes('hearing_test')) {
+                  return true;
+                }
+              }
+              // Check if medicalServices is an object with hearingTest property (UI state)
+              if (visit.medicalServices && typeof visit.medicalServices === 'object' && !Array.isArray(visit.medicalServices)) {
+                if (visit.medicalServices.hearingTest === true) {
+                  return true;
+                }
+              }
+              // Check if medicalService is 'hearing_test' (legacy field)
+              if (visit.medicalService === 'hearing_test') {
+                return true;
+              }
+              // Check if hearingTestDetails exists (indicates hearing test was done)
+              if (visit.hearingTestDetails) {
+                // If hearingTestDetails exists, it means hearing test was done
+                if (visit.hearingTestDetails.testResults || visit.hearingTestDetails.testType || visit.hearingTestDetails.testDoneBy || Object.keys(visit.hearingTestDetails).length > 0) {
+                  return true;
+                }
+              }
+              return false;
+            });
+          }
+          
+          // If not found in visitSchedules, check legacy fields
+          if (!hasHearingTest) {
+            // Check if enquiry has testDetails (legacy support)
+            if (enquiry.testDetails && (enquiry.testDetails.testResults || enquiry.testDetails.testName)) {
+              hasHearingTest = true;
+            }
+            // Check if visits array has hearing test (legacy support)
+            if (!hasHearingTest && enquiry.visits && Array.isArray(enquiry.visits)) {
+              hasHearingTest = enquiry.visits.some((visit: any) => visit.hearingTest === true || visit.testResults);
+            }
+          }
+          
+          return hasHearingTest;
+        });
+        
+        console.log(`[Audiologist Filter] Total enquiries: ${enquiryData.length}, Filtered: ${filteredData.length}`);
+      }
+      
       setEnquiries(enquiryData);
-      setFilteredEnquiries(enquiryData);
+      setFilteredEnquiries(filteredData);
     } catch (error) {
       console.error('Error fetching enquiries:', error);
     } finally {
@@ -1089,7 +1145,58 @@ export default function EnquiriesPage() {
       });
     }
     
-    setFilteredEnquiries(result);
+    // Apply audiologist filter if needed
+    let finalResult = result;
+    if (userProfile?.role === 'audiologist') {
+      finalResult = result.filter(enquiry => {
+        let hasHearingTest = false;
+        
+        // Check if enquiry has hearing test in visitSchedules
+        if (enquiry.visitSchedules && Array.isArray(enquiry.visitSchedules)) {
+          hasHearingTest = enquiry.visitSchedules.some((visit: any) => {
+            // Check if medicalServices array includes 'hearing_test'
+            if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
+              if (visit.medicalServices.includes('hearing_test')) {
+                return true;
+              }
+            }
+            // Check if medicalServices is an object with hearingTest property (UI state)
+            if (visit.medicalServices && typeof visit.medicalServices === 'object' && !Array.isArray(visit.medicalServices)) {
+              if (visit.medicalServices.hearingTest === true) {
+                return true;
+              }
+            }
+            // Check if medicalService is 'hearing_test' (legacy field)
+            if (visit.medicalService === 'hearing_test') {
+              return true;
+            }
+            // Check if hearingTestDetails exists (indicates hearing test was done)
+            if (visit.hearingTestDetails) {
+              // If hearingTestDetails exists, it means hearing test was done
+              if (visit.hearingTestDetails.testResults || visit.hearingTestDetails.testType || visit.hearingTestDetails.testDoneBy || Object.keys(visit.hearingTestDetails).length > 0) {
+                return true;
+              }
+            }
+            return false;
+          });
+        }
+        
+        // If not found in visitSchedules, check legacy fields
+        if (!hasHearingTest) {
+          // Check if enquiry has testDetails (legacy support)
+          if (enquiry.testDetails && (enquiry.testDetails.testResults || enquiry.testDetails.testName)) {
+            hasHearingTest = true;
+          }
+          // Check if visits array has hearing test (legacy support)
+          if (!hasHearingTest && enquiry.visits && Array.isArray(enquiry.visits)) {
+            hasHearingTest = enquiry.visits.some((visit: any) => visit.hearingTest === true || visit.testResults);
+          }
+        }
+        
+        return hasHearingTest;
+      });
+    }
+    setFilteredEnquiries(finalResult);
   };
 
   // Open simplified enquiry dialog
@@ -2172,8 +2279,8 @@ export default function EnquiriesPage() {
   
   // Open detail dialog - navigate to details page
   const handleOpenDetailDialog = (enquiry: Enquiry) => {
-    // Navigate to the enquiry details page
-    window.open(`/interaction/enquiries/${enquiry.id}`, '_blank');
+    // Navigate to the enquiry details page in the same tab
+    router.push(`/interaction/enquiries/${enquiry.id}`);
   };
   
   // Close detail dialog
@@ -3301,7 +3408,9 @@ export default function EnquiriesPage() {
                   </Typography>
                   <Box sx={{ '& > div': { mb: 1 } }}>
                     <Typography variant="body2"><strong>Name:</strong> {newEnquiry.name || 'Not provided'}</Typography>
-                    <Typography variant="body2"><strong>Phone:</strong> {newEnquiry.phone || 'Not provided'}</Typography>
+                    {userProfile?.role !== 'audiologist' && (
+                      <Typography variant="body2"><strong>Phone:</strong> {newEnquiry.phone || 'Not provided'}</Typography>
+                    )}
                     <Typography variant="body2"><strong>Email:</strong> {newEnquiry.email || 'Not provided'}</Typography>
                     <Typography variant="body2"><strong>Address:</strong> {newEnquiry.address || 'Not provided'}</Typography>
                     <Typography variant="body2"><strong>Center:</strong> {newEnquiry.visitingCenter || 'Main Center'}</Typography>
@@ -3417,14 +3526,16 @@ export default function EnquiriesPage() {
           >
             Manage Columns
           </Button>
-        <Button 
-          variant="contained" 
-          startIcon={<AddIcon />}
+        {userProfile?.role !== 'audiologist' && (
+          <Button 
+            variant="contained" 
+            startIcon={<AddIcon />}
             onClick={handleOpenSimplifiedDialog}
             size="small"
-        >
-          New Enquiry
-        </Button>
+          >
+            New Enquiry
+          </Button>
+        )}
         </Box>
       </Box>
 
@@ -4107,7 +4218,9 @@ export default function EnquiriesPage() {
           <TableHead>
             <TableRow>
                    <TableCell sx={{ fontWeight: 600, width: 160, minWidth: 160, backgroundColor: '#f5f5f5' }}>Name</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 120, minWidth: 120, backgroundColor: '#f5f5f5' }}>Phone</TableCell>
+                   {userProfile?.role !== 'audiologist' && (
+                     <TableCell sx={{ fontWeight: 600, width: 120, minWidth: 120, backgroundColor: '#f5f5f5' }}>Phone</TableCell>
+                   )}
                    <TableCell sx={{ fontWeight: 600, width: 180, minWidth: 180, backgroundColor: '#f5f5f5' }}>Email</TableCell>
                    <TableCell sx={{ fontWeight: 600, width: 150, minWidth: 150, backgroundColor: '#f5f5f5' }}>Address</TableCell>
                    <TableCell sx={{ fontWeight: 600, width: 100, minWidth: 100, backgroundColor: '#f5f5f5' }}>Reference</TableCell>
@@ -4139,13 +4252,13 @@ export default function EnquiriesPage() {
           <TableBody>
             {loading ? (
               <TableRow>
-                   <TableCell colSpan={13} align="center" sx={{ py: 4 }}>
+                   <TableCell colSpan={userProfile?.role === 'audiologist' ? 12 : 13} align="center" sx={{ py: 4 }}>
                   <CircularProgress />
                 </TableCell>
               </TableRow>
             ) : filteredEnquiries.length === 0 ? (
               <TableRow>
-                   <TableCell colSpan={13} align="center" sx={{ py: 4 }}>
+                   <TableCell colSpan={userProfile?.role === 'audiologist' ? 12 : 13} align="center" sx={{ py: 4 }}>
                      <Typography variant="body2" color="text.secondary">
                   No enquiries found
                      </Typography>
@@ -4170,11 +4283,13 @@ export default function EnquiriesPage() {
                          </Typography>
                     </Box>
                   </TableCell>
-                     <TableCell sx={{ width: 120, minWidth: 120 }}>
-                       <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.phone || '-'}
-                       </Typography>
-                  </TableCell>
+                     {userProfile?.role !== 'audiologist' && (
+                       <TableCell sx={{ width: 120, minWidth: 120 }}>
+                         <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
+                           {enquiry.phone || '-'}
+                         </Typography>
+                       </TableCell>
+                     )}
                      <TableCell sx={{ width: 180, minWidth: 180 }}>
                        <Typography variant="body2" noWrap title={enquiry.email || ''} sx={{ fontSize: '0.8rem' }}>
                          {enquiry.email || '-'}
@@ -4246,15 +4361,17 @@ export default function EnquiriesPage() {
                        }}
                      >
                        <Box sx={{ display: 'flex', gap: 0.5 }}>
-                    <Tooltip title="View Details">
-                           <IconButton 
-                             size="small" 
-                             onClick={() => handleOpenDetailDialog(enquiry)}
-                             sx={{ color: 'primary.main' }}
-                           >
-                             <VisibilityIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                    {userProfile?.role !== 'audiologist' && (
+                      <Tooltip title="View Details">
+                             <IconButton 
+                               size="small" 
+                               onClick={() => handleOpenDetailDialog(enquiry)}
+                               sx={{ color: 'primary.main' }}
+                             >
+                               <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                     <Tooltip title="Edit">
                            <IconButton 
                              size="small" 
@@ -4264,16 +4381,18 @@ export default function EnquiriesPage() {
                              <EditIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Convert to Visitor">
-                      <IconButton 
-                             size="small"
-                        onClick={() => handleOpenConvertDialog(enquiry)}
-                             sx={{ color: 'success.main' }}
-                        disabled={enquiry.status === 'converted'}
-                      >
-                             <PersonAddIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                    {userProfile?.role !== 'audiologist' && (
+                      <Tooltip title="Convert to Visitor">
+                        <IconButton 
+                               size="small"
+                          onClick={() => handleOpenConvertDialog(enquiry)}
+                               sx={{ color: 'success.main' }}
+                          disabled={enquiry.status === 'converted'}
+                        >
+                               <PersonAddIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                     {userProfile?.role === 'admin' && (
                       <Tooltip title="Delete">
                              <IconButton 
@@ -5222,10 +5341,12 @@ export default function EnquiriesPage() {
                   <Typography variant="body2" color="text.secondary">Name</Typography>
                   <Typography variant="body1" fontWeight="medium">{newEnquiry.name || 'Not provided'}</Typography>
                 </Grid>
-                <Grid item xs={12} sm={6}>
-                  <Typography variant="body2" color="text.secondary">Phone</Typography>
-                  <Typography variant="body1" fontWeight="medium">{newEnquiry.phone || 'Not provided'}</Typography>
-                </Grid>
+                {userProfile?.role !== 'audiologist' && (
+                  <Grid item xs={12} sm={6}>
+                    <Typography variant="body2" color="text.secondary">Phone</Typography>
+                    <Typography variant="body1" fontWeight="medium">{newEnquiry.phone || 'Not provided'}</Typography>
+                  </Grid>
+                )}
                 <Grid item xs={12} sm={6}>
                   <Typography variant="body2" color="text.secondary">Email</Typography>
                   <Typography variant="body1" fontWeight="medium">{newEnquiry.email || 'Not provided'}</Typography>
@@ -5541,9 +5662,11 @@ export default function EnquiriesPage() {
                 <Typography variant="body2">
                   <strong>Name:</strong> {enquiryToConvert.name}
                 </Typography>
-                <Typography variant="body2">
-                  <strong>Phone:</strong> {enquiryToConvert.phone}
-                </Typography>
+                {userProfile?.role !== 'audiologist' && (
+                  <Typography variant="body2">
+                    <strong>Phone:</strong> {enquiryToConvert.phone}
+                  </Typography>
+                )}
                 {enquiryToConvert.email && (
                   <Typography variant="body2">
                     <strong>Email:</strong> {enquiryToConvert.email}

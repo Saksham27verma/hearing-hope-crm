@@ -48,6 +48,14 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     'Inventory',
   ];
 
+  // Audiologist/Fitter allowed modules - restricted access for sales team
+  const audiologistAllowedModules = [
+    'Dashboard',
+    'Inventory',
+    'Appointment Scheduler',
+    'Interaction',
+  ];
+
   // Navigation items - restored to original structure
   const navigationItems: NavItem[] = [
     { text: 'Dashboard', path: '/dashboard', icon: '📊' },
@@ -293,7 +301,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }
   };
 
-  // Route protection: Redirect staff users from restricted pages
+  // Route protection: Redirect staff and audiologist users from restricted pages
   // IMPORTANT: This hook must be called before any early returns
   useEffect(() => {
     // Skip if still loading, no user profile, or should hide sidebar
@@ -303,31 +311,57 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       return;
     }
 
-    // Only check for staff users
-    if (userProfile.role !== 'staff' || !pathname) {
+    // Admin users have access to all pages - no restrictions
+    if (userProfile.role === 'admin' || !pathname) {
       setIsRedirecting(false);
+      hasRedirectedRef.current = null;
       return;
     }
 
-    // Define allowed paths for staff
-    const allowedPaths = [
-      '/dashboard',
-      '/products',
-      '/sales',
-      '/interaction',
-      '/interaction/visitors',
-      '/interaction/enquiries',
-      '/telecalling-records',
-      '/stock-transfer',
-      '/cash-register',
-      '/appointments',
-      '/material-in',
-      '/material-out',
-      '/inventory',
-    ];
+    // Only check restrictions for staff and audiologist users
+    if (userProfile.role !== 'staff' && userProfile.role !== 'audiologist') {
+      setIsRedirecting(false);
+      hasRedirectedRef.current = null;
+      return;
+    }
+
+    // Define allowed paths based on role
+    let allowedPaths: string[] = [];
+    
+    if (userProfile.role === 'staff') {
+      allowedPaths = [
+        '/dashboard',
+        '/products',
+        '/sales',
+        '/interaction',
+        '/interaction/visitors',
+        '/interaction/enquiries',
+        '/telecalling-records',
+        '/stock-transfer',
+        '/cash-register',
+        '/appointments',
+        '/material-in',
+        '/material-out',
+        '/inventory',
+      ];
+    } else if (userProfile.role === 'audiologist') {
+      allowedPaths = [
+        '/dashboard',
+        '/inventory',
+        '/appointments',
+        '/interaction',
+        '/interaction/enquiries',
+      ];
+    }
 
     // Check if current path is allowed
-    const isAllowed = allowedPaths.some(path => pathname === path || pathname.startsWith(path + '/'));
+    // Match exact path or paths that start with the allowed path followed by /
+    const isAllowed = allowedPaths.some(path => {
+      if (pathname === path) return true;
+      // Check if pathname starts with path + '/' (for nested routes like /interaction/enquiries/[id])
+      if (pathname.startsWith(path + '/')) return true;
+      return false;
+    });
     
     // If not allowed and we haven't redirected yet, redirect to dashboard
     if (!isAllowed && pathname !== '/dashboard') {
@@ -385,13 +419,23 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }
 
   // Redirect to login if not authenticated (but not for enquiry pages)
-  if (!user && !shouldHideSidebar) {
+  // Only redirect if we're sure the user is not authenticated (not just loading)
+  if (!loading && !user && !shouldHideSidebar) {
     if (typeof window !== 'undefined') {
       router.push('/login');
     }
     return (
       <div style={styles.loadingContainer}>
         <div>🔄 Redirecting to login...</div>
+      </div>
+    );
+  }
+  
+  // If still loading auth, show loading screen instead of redirecting
+  if (loading && !user) {
+    return (
+      <div style={styles.loadingContainer}>
+        <div>🔄 Loading your dashboard...</div>
       </div>
     );
   }
@@ -426,6 +470,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                     return staffAllowedModules.includes(item.text);
                   }
                   
+                  // Audiologist users: only show allowed modules
+                  if (userProfile.role === 'audiologist') {
+                    // For Interaction, only show Enquiries (not Visitors or Telecalling)
+                    if (item.text === 'Interaction') {
+                      return true; // Show parent, but filter children below
+                    }
+                    return audiologistAllowedModules.includes(item.text);
+                  }
+                  
                   // Admin users: show all modules (except adminOnly is already handled above)
                   // Also check isAllowedModule if it exists
                   if (userProfile.role === 'admin') {
@@ -458,7 +511,23 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
                       </div>
                       {openMenus[item.text] && drawerOpen && (
                         <ul style={{ ...styles.navList, backgroundColor: 'rgba(0,0,0,0.1)' }}>
-                          {item.children.map((child) => (
+                          {item.children
+                            .filter((child) => {
+                              // For audiologists, only show Enquiries from Interaction menu
+                              if (userProfile?.role === 'audiologist' && item.text === 'Interaction') {
+                                return child.text === 'Enquiries';
+                              }
+                              // For staff, show all children if parent is allowed
+                              if (userProfile?.role === 'staff') {
+                                return true;
+                              }
+                              // For admin, show all
+                              if (userProfile?.role === 'admin') {
+                                return true;
+                              }
+                              return true;
+                            })
+                            .map((child) => (
                             <li key={child.path}>
                               <Link
                                 href={child.path}

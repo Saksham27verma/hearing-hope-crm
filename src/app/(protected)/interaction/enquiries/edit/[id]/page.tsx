@@ -22,7 +22,7 @@ import { db } from '@/firebase/config';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 
 interface EditEnquiryPageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
@@ -31,12 +31,23 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolvedParams, setResolvedParams] = useState<{ id: string } | null>(null);
 
   useEffect(() => {
+    const resolveParams = async () => {
+      const resolved = await params;
+      setResolvedParams(resolved);
+    };
+    resolveParams();
+  }, [params]);
+
+  useEffect(() => {
+    if (!resolvedParams) return;
+    
     const fetchEnquiry = async () => {
       try {
         setLoading(true);
-        const enquiryDoc = await getDoc(doc(db, 'enquiries', params.id));
+        const enquiryDoc = await getDoc(doc(db, 'enquiries', resolvedParams.id));
         
         if (enquiryDoc.exists()) {
           setEnquiry({
@@ -55,7 +66,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
     };
     
     fetchEnquiry();
-  }, [params.id]);
+  }, [resolvedParams]);
 
   // Helper function to find new sales (products that didn't exist before)
   const findNewSales = (oldVisits: any[], newVisits: any[]) => {
@@ -189,8 +200,10 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         updatedAt: serverTimestamp()
       };
 
+      if (!resolvedParams) return;
+      
       // Update in Firestore
-      await updateDoc(doc(db, 'enquiries', params.id), enquiryData);
+      await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
       
       // Reduce inventory for new sales only
       if (newSalesProducts.length > 0) {
@@ -200,7 +213,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       console.log('Enquiry updated successfully');
       
       // Redirect to the enquiry details page
-      router.push(`/interaction/enquiries/${params.id}`);
+      router.push(`/interaction/enquiries/${resolvedParams.id}`);
       
     } catch (error) {
       console.error('Error updating enquiry:', error);
@@ -211,7 +224,11 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
   };
 
   const handleCancel = () => {
-    router.push(`/interaction/enquiries/${params.id}`);
+    if (resolvedParams) {
+      router.push(`/interaction/enquiries/${resolvedParams.id}`);
+    } else {
+      router.push('/interaction/enquiries');
+    }
   };
 
   if (loading) {
@@ -267,13 +284,15 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           >
             Enquiries
           </Link>
-          <Link 
-            color="inherit" 
-            href={`/interaction/enquiries/${params.id}`}
-            sx={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}
-          >
-            {enquiry.name || 'Enquiry Details'}
-          </Link>
+          {resolvedParams && (
+            <Link 
+              color="inherit" 
+              href={`/interaction/enquiries/${resolvedParams.id}`}
+              sx={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}
+            >
+              {enquiry.name || 'Enquiry Details'}
+            </Link>
+          )}
           <Typography color="text.primary" sx={{ display: 'flex', alignItems: 'center' }}>
             <EditIcon sx={{ mr: 0.5 }} fontSize="inherit" />
             Edit

@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
 // Define user role type
-export type UserRole = 'admin' | 'staff';
+export type UserRole = 'admin' | 'staff' | 'audiologist';
 
 // Define user profile type
 export interface UserProfile {

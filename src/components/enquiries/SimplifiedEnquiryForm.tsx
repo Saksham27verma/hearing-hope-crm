@@ -6,6 +6,7 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { useAuth } from '@/context/AuthContext';
+import PureToneAudiogram from './PureToneAudiogram';
 import {
   TextField, Button, Typography, Box, Paper,
   FormControl, InputLabel, Select, MenuItem,
@@ -190,6 +191,15 @@ interface Visit {
   testResults: string;
   recommendations: string;
   testPrice: number;
+  audiogramData?: {
+    rightAirConduction: (number | null)[];
+    leftAirConduction: (number | null)[];
+    rightBoneConduction: (number | null)[];
+    leftBoneConduction: (number | null)[];
+    rightMasking: boolean[];
+    leftMasking: boolean[];
+    notes?: string;
+  };
   hearingAidProductId: string;
   hearingAidType: string;
   hearingAidBrand: string;
@@ -293,6 +303,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 }) => {
   const { userProfile } = useAuth();
   const isAdmin = userProfile?.role === 'admin';
+  const isAudiologist = userProfile?.role === 'audiologist';
   
   const [step, setStep] = useState(0);
   const [activeVisit, setActiveVisit] = useState(-1);
@@ -844,6 +855,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           testResults: visit.hearingTestDetails?.testResults || '',
           recommendations: visit.hearingTestDetails?.recommendations || '',
           testPrice: visit.hearingTestDetails?.testPrice || 0,
+          audiogramData: visit.hearingTestDetails?.audiogramData || undefined,
           hearingAidType: visit.hearingAidDetails?.hearingAidSuggested || '',
           hearingAidBrand: visit.hearingAidDetails?.whoSold || '',
           hearingAidModel: visit.hearingAidDetails?.quotation || '',
@@ -973,6 +985,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       testResults: '',
       recommendations: '',
       testPrice: 0,
+      audiogramData: undefined,
       hearingAidProductId: '',
       hearingAidType: '',
       hearingAidBrand: '',
@@ -1391,6 +1404,29 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   };
 
   // Submit form
+  // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
+  const removeUndefined = (obj: any): any => {
+    if (obj === null || obj === undefined) {
+      return null;
+    }
+    if (Array.isArray(obj)) {
+      return obj.map(item => removeUndefined(item));
+    }
+    if (typeof obj === 'object') {
+      const cleaned: any = {};
+      for (const key in obj) {
+        if (obj.hasOwnProperty(key)) {
+          const value = obj[key];
+          if (value !== undefined) {
+            cleaned[key] = removeUndefined(value);
+          }
+        }
+      }
+      return cleaned;
+    }
+    return obj;
+  };
+
   const onFormSubmit = (data: FormData) => {
     const totalDue = calculateTotalDue();
     const totalPaid = calculateTotalPaid();
@@ -1407,31 +1443,40 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         outstanding,
         paymentStatus: outstanding <= 0 ? 'fully_paid' : 'pending'
       },
-      visitSchedules: data.visits.map(visit => ({
-        id: visit.id,
-        visitType: visit.visitType,
-        visitDate: visit.visitDate,
-        visitTime: visit.visitTime,
-        notes: visit.visitNotes,
-        medicalServices: [
-          ...(visit.hearingTest ? ['hearing_test'] : []),
-          ...(visit.hearingAidTrial ? ['hearing_aid_trial'] : []),
-        ...(visit.hearingAidBooked ? ['hearing_aid_booked'] : []),
-        ...(visit.hearingAidSale ? ['hearing_aid_sale'] : []),
-          ...(visit.accessory ? ['accessory'] : []),
-          ...(visit.programming ? ['programming'] : []),
-          ...(visit.repair ? ['repair'] : []),
-          ...(visit.counselling ? ['counselling'] : [])
-        ],
-        hearingTestDetails: {
-          testType: visit.testType,
-          testDoneBy: visit.testDoneBy,
-          testResults: visit.testResults,
-          recommendations: visit.recommendations,
-          testPrice: visit.testPrice
-        },
-        hearingAidDetails: {
-          hearingAidProductId: visit.hearingAidProductId,
+      visitSchedules: data.visits.map(visit => {
+        // Build hearingTestDetails object, only including audiogramData if it exists
+        const hearingTestDetails: any = {
+          testType: visit.testType || null,
+          testDoneBy: visit.testDoneBy || null,
+          testResults: visit.testResults || null,
+          recommendations: visit.recommendations || null,
+          testPrice: visit.testPrice || null,
+        };
+        
+        // Only add audiogramData if it exists and is not undefined
+        if (visit.audiogramData !== undefined && visit.audiogramData !== null) {
+          hearingTestDetails.audiogramData = visit.audiogramData;
+        }
+        
+        return removeUndefined({
+          id: visit.id,
+          visitType: visit.visitType,
+          visitDate: visit.visitDate,
+          visitTime: visit.visitTime,
+          notes: visit.visitNotes,
+          medicalServices: [
+            ...(visit.hearingTest ? ['hearing_test'] : []),
+            ...(visit.hearingAidTrial ? ['hearing_aid_trial'] : []),
+            ...(visit.hearingAidBooked ? ['hearing_aid_booked'] : []),
+            ...(visit.hearingAidSale ? ['hearing_aid_sale'] : []),
+            ...(visit.accessory ? ['accessory'] : []),
+            ...(visit.programming ? ['programming'] : []),
+            ...(visit.repair ? ['repair'] : []),
+            ...(visit.counselling ? ['counselling'] : [])
+          ],
+          hearingTestDetails: removeUndefined(hearingTestDetails),
+          hearingAidDetails: removeUndefined({
+            hearingAidProductId: visit.hearingAidProductId,
           hearingAidSuggested: visit.hearingAidType,
           whoSold: visit.hearingAidBrand,
           quotation: visit.hearingAidModel,
@@ -1472,25 +1517,29 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           purchaseFromTrial: visit.purchaseFromTrial,
           purchaseDate: visit.purchaseDate,
           purchaseFromVisitId: visit.purchaseFromVisitId
-        },
-        accessoryDetails: {
+        }),
+        accessoryDetails: removeUndefined({
           accessoryName: visit.accessoryName,
           accessoryDetails: visit.accessoryDetails,
           accessoryFOC: visit.accessoryFOC,
           accessoryAmount: visit.accessoryAmount,
           accessoryQuantity: visit.accessoryQuantity
-        },
-        programmingDetails: {
+        }),
+        programmingDetails: removeUndefined({
           programmingReason: visit.programmingReason,
           hearingAidPurchaseDate: visit.hearingAidPurchaseDate,
           hearingAidName: visit.hearingAidName,
           underWarranty: visit.underWarranty,
           programmingAmount: visit.programmingAmount,
           programmingDoneBy: visit.programmingDoneBy
-        }
-      }))
+        })
+        });
+      })
     };
-    onSubmit(formattedData);
+    
+    // Remove all undefined values from the entire data structure before submitting
+    const cleanedData = removeUndefined(formattedData);
+    onSubmit(cleanedData);
   };
 
   const stepTitles = ['Patient Information & Services', 'Review & Submit'];
@@ -1588,36 +1637,39 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           error={!!errors.name}
                           helperText={errors.name?.message}
                           variant="outlined"
+                          disabled={isAudiologist}
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} md={6}>
-                    <Controller
-                      name="phone"
-                      control={control}
-                      rules={{ required: 'Phone is required' }}
-                      render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Phone Number"
-                          required
-                          error={!!errors.phone}
-                          helperText={errors.phone?.message}
-                          InputProps={{
-                            startAdornment: (
-                              <InputAdornment position="start">
-                                <PhoneIcon color="action" />
-                              </InputAdornment>
-                            ),
-                          }}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
-                      )}
-                    />
-                  </Grid>
+                  {!isAudiologist && (
+                    <Grid item xs={12} md={6}>
+                      <Controller
+                        name="phone"
+                        control={control}
+                        rules={{ required: 'Phone is required' }}
+                        render={({ field }) => (
+                          <TextField
+                            {...field}
+                            fullWidth
+                            label="Phone Number"
+                            required
+                            error={!!errors.phone}
+                            helperText={errors.phone?.message}
+                            InputProps={{
+                              startAdornment: (
+                                <InputAdornment position="start">
+                                  <PhoneIcon color="action" />
+                                </InputAdornment>
+                              ),
+                            }}
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          />
+                        )}
+                      />
+                    </Grid>
+                  )}
                   <Grid item xs={12} md={6}>
                     <Controller
                       name="email"
@@ -1628,6 +1680,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           fullWidth
                           label="Email"
                           type="email"
+                          disabled={isAudiologist}
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
                       )}
@@ -1644,6 +1697,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             {...field}
                             labelId="reference-label"
                             label="Reference Source"
+                            disabled={isAudiologist}
                             sx={{ borderRadius: 2, minWidth: '200px' }}
                             MenuProps={{
                               PaperProps: {
@@ -1675,6 +1729,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               {...field}
                               labelId="assigned-to-label"
                               label="Assigned To"
+                              disabled={isAudiologist}
                               sx={{ borderRadius: 2, minWidth: '200px' }}
                               MenuProps={{
                                 PaperProps: {
@@ -1730,6 +1785,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               {...field}
                               labelId="telecaller-label"
                               label="Telecaller"
+                              disabled={isAudiologist}
                               sx={{ borderRadius: 2, minWidth: '200px' }}
                               MenuProps={{
                                 PaperProps: {
@@ -1784,6 +1840,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             {...field}
                             labelId="center-label"
                             label="Center"
+                            disabled={isAudiologist}
                             sx={{ borderRadius: 2 }}
                           >
                             {centers.map(center => (
@@ -1807,6 +1864,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           label="Message/Notes"
                           multiline
                           rows={3}
+                          disabled={isAudiologist}
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
                       )}
@@ -1941,6 +1999,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           type="date"
                           value={currentVisit.visitDate}
                           onChange={(e) => updateVisit(activeVisit, 'visitDate', e.target.value)}
+                          disabled={isAudiologist}
                           InputLabelProps={{ shrink: true }}
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
@@ -1952,6 +2011,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           type="time"
                           value={currentVisit.visitTime}
                           onChange={(e) => updateVisit(activeVisit, 'visitTime', e.target.value)}
+                          disabled={isAudiologist}
                           InputLabelProps={{ shrink: true }}
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
@@ -1963,6 +2023,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             value={currentVisit.visitType}
                             onChange={(e) => updateVisit(activeVisit, 'visitType', e.target.value)}
                             label="Visit Type"
+                            disabled={isAudiologist}
                             sx={{ borderRadius: 2 }}
                           >
                             <MenuItem value="center">Center Visit</MenuItem>
@@ -1977,6 +2038,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.hearingTest}
                                 onChange={(e) => updateVisit(activeVisit, 'hearingTest', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="primary"
                               />
                             }
@@ -1987,6 +2049,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.hearingAidTrial}
                                 onChange={(e) => updateVisit(activeVisit, 'hearingAidTrial', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="info"
                               />
                             }
@@ -1997,6 +2060,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.hearingAidBooked}
                                 onChange={(e) => updateVisit(activeVisit, 'hearingAidBooked', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="warning"
                               />
                             }
@@ -2007,6 +2071,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.hearingAidSale}
                                 onChange={(e) => updateVisit(activeVisit, 'hearingAidSale', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="success"
                               />
                             }
@@ -2017,6 +2082,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.salesReturn}
                                 onChange={(e) => updateVisit(activeVisit, 'salesReturn', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="error"
                               />
                             }
@@ -2027,6 +2093,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.accessory}
                                 onChange={(e) => updateVisit(activeVisit, 'accessory', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="success"
                               />
                             }
@@ -2037,6 +2104,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.programming}
                                 onChange={(e) => updateVisit(activeVisit, 'programming', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="warning"
                               />
                             }
@@ -2047,6 +2115,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.repair}
                                 onChange={(e) => updateVisit(activeVisit, 'repair', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="error"
                               />
                             }
@@ -2057,6 +2126,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Switch
                                 checked={currentVisit.counselling}
                                 onChange={(e) => updateVisit(activeVisit, 'counselling', e.target.checked)}
+                                disabled={isAudiologist}
                                 color="info"
                               />
                             }
@@ -2164,10 +2234,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 rows={3}
                                 value={currentVisit.recommendations}
                                 onChange={(e) => updateVisit(activeVisit, 'recommendations', e.target.value)}
+                                disabled={isAudiologist}
                                 sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                               />
                             </Grid>
                           </Grid>
+
+                          {/* Pure Tone Audiogram - Only for audiologists to edit, everyone can view */}
+                          <Box sx={{ mt: 3 }}>
+                            <PureToneAudiogram
+                              data={currentVisit.audiogramData}
+                              onChange={(data) => updateVisit(activeVisit, 'audiogramData', data)}
+                              editable={isAudiologist}
+                              readOnly={!isAudiologist}
+                            />
+                          </Box>
                         </CardContent>
                       </Card>
                     )}
@@ -4227,7 +4308,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                Open Repair Tracking System
                              </Button>
                             <Typography variant="body2" sx={{ mt: 2, color: 'text.secondary', fontSize: '0.85rem' }}>
-                              Patient: {watch('name')} | Phone: {watch('phone')}
+                              Patient: {watch('name')}{!isAudiologist && ` | Phone: ${watch('phone')}`}
                             </Typography>
                           </Box>
                         </CardContent>
@@ -4916,12 +4997,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchName}</Typography>
                   </Box>
                 </Grid>
-                <Grid item xs={12} md={6}>
-                  <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
-                    <Typography variant="body2" color="text.secondary">Phone</Typography>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchPhone}</Typography>
-                  </Box>
-                </Grid>
+                {!isAudiologist && (
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                      <Typography variant="body2" color="text.secondary">Phone</Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchPhone}</Typography>
+                    </Box>
+                  </Grid>
+                )}
                 <Grid item xs={12} md={6}>
                   <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
                     <Typography variant="body2" color="text.secondary">Email</Typography>
@@ -5185,6 +5268,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Grid>
                     )}
                   </Grid>
+                  
+                  {/* Pure Tone Audiogram - Show in review for all users (read-only) */}
+                  {visit.hearingTest && visit.audiogramData && (
+                    <Box sx={{ mt: 3 }}>
+                      <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, color: 'primary.main' }}>
+                        Pure Tone Audiogram
+                      </Typography>
+                      <PureToneAudiogram
+                        data={visit.audiogramData}
+                        onChange={() => {}} // Read-only in review
+                        editable={false}
+                        readOnly={true}
+                      />
+                    </Box>
+                  )}
                 </Card>
               ))}
             </Card>

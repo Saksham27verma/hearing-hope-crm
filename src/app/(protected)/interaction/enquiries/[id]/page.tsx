@@ -50,7 +50,9 @@ import {
 import { collection, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
+import PureToneAudiogram from '@/components/enquiries/PureToneAudiogram';
 
 // Avoid MUI Grid generic type noise by wrapping
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
@@ -135,38 +137,97 @@ const getFormTypeIcon = (type: string) => {
 
 export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
-  const resolvedParams = React.use(params);
+  const { userProfile, loading: authLoading } = useAuth();
+  const [resolvedParams, setResolvedParams] = useState<{ id: string } | null>(null);
   const [enquiry, setEnquiry] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeVisitTab, setActiveVisitTab] = useState(0);
   
   useEffect(() => {
+    const resolveParams = async () => {
+      const resolved = await params;
+      setResolvedParams(resolved);
+    };
+    resolveParams();
+  }, [params]);
+  
+  useEffect(() => {
+    if (!resolvedParams) return;
+    
     const fetchEnquiry = async () => {
       try {
         setLoading(true);
+        setError(null);
         const enquiryDoc = await getDoc(doc(db, 'enquiries', resolvedParams.id));
         
         if (enquiryDoc.exists()) {
-          setEnquiry({
-            id: enquiryDoc.id,
-            ...enquiryDoc.data()
-          });
+          const enquiryData = enquiryDoc.data();
+          
+          // Safely process the enquiry data, handling any malformed audiogram data
+          try {
+            // Normalize visit schedules to ensure audiogram data is properly structured
+            if (enquiryData.visitSchedules && Array.isArray(enquiryData.visitSchedules)) {
+              enquiryData.visitSchedules = enquiryData.visitSchedules.map((visit: any) => {
+                if (visit && typeof visit === 'object') {
+                  // Ensure hearingTestDetails exists and has proper structure
+                  if (visit.hearingTestDetails && typeof visit.hearingTestDetails === 'object') {
+                    // Validate audiogramData structure
+                    if (visit.hearingTestDetails.audiogramData) {
+                      const audiogram = visit.hearingTestDetails.audiogramData;
+                      // Ensure all required arrays exist
+                      if (!Array.isArray(audiogram.rightAirConduction)) {
+                        audiogram.rightAirConduction = Array(7).fill(null);
+                      }
+                      if (!Array.isArray(audiogram.leftAirConduction)) {
+                        audiogram.leftAirConduction = Array(7).fill(null);
+                      }
+                      if (!Array.isArray(audiogram.rightBoneConduction)) {
+                        audiogram.rightBoneConduction = Array(7).fill(null);
+                      }
+                      if (!Array.isArray(audiogram.leftBoneConduction)) {
+                        audiogram.leftBoneConduction = Array(7).fill(null);
+                      }
+                      if (!Array.isArray(audiogram.rightMasking)) {
+                        audiogram.rightMasking = Array(7).fill(false);
+                      }
+                      if (!Array.isArray(audiogram.leftMasking)) {
+                        audiogram.leftMasking = Array(7).fill(false);
+                      }
+                    }
+                  }
+                }
+                return visit;
+              });
+            }
+            
+            setEnquiry({
+              id: enquiryDoc.id,
+              ...enquiryData
+            });
+          } catch (dataError) {
+            console.error('Error processing enquiry data:', dataError);
+            // Still set the enquiry even if data processing fails
+            setEnquiry({
+              id: enquiryDoc.id,
+              ...enquiryData
+            });
+          }
         } else {
           setError('Enquiry not found');
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error fetching enquiry:', err);
-        setError('Failed to load enquiry details');
+        setError(err.message || 'Failed to load enquiry details');
       } finally {
         setLoading(false);
       }
     };
     
     fetchEnquiry();
-  }, [resolvedParams.id]);
+  }, [resolvedParams]);
   
-  if (loading) {
+  if (!resolvedParams || loading || authLoading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '70vh' }}>
         <CircularProgress />
@@ -210,22 +271,24 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         
         <Typography variant="h5">Enquiry Details</Typography>
         
-        <Button
-          variant="contained"
-          startIcon={<EditIcon />}
-          onClick={() => {
-            // Navigate to edit enquiry
-            router.push(`/interaction/enquiries/edit/${resolvedParams.id}`);
-          }}
-          sx={{ 
-            bgcolor: '#f57c00', 
-            '&:hover': { bgcolor: '#e65100' },
-            boxShadow: '0 2px 8px rgba(245, 124, 0, 0.3)'
-          }}
-          size="small"
-        >
-          Edit Enquiry
-        </Button>
+        {userProfile?.role !== 'audiologist' && resolvedParams && (
+          <Button
+            variant="contained"
+            startIcon={<EditIcon />}
+            onClick={() => {
+              // Navigate to edit enquiry
+              router.push(`/interaction/enquiries/edit/${resolvedParams.id}`);
+            }}
+            sx={{ 
+              bgcolor: '#f57c00', 
+              '&:hover': { bgcolor: '#e65100' },
+              boxShadow: '0 2px 8px rgba(245, 124, 0, 0.3)'
+            }}
+            size="small"
+          >
+            Edit Enquiry
+          </Button>
+        )}
       </Box>
       
       <Paper sx={{ p: 3, borderRadius: 2 }}>
@@ -253,18 +316,20 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           </Box>
           
           {/* Quick Actions */}
-          <IconButton
-            onClick={() => router.push(`/interaction/enquiries/edit/${resolvedParams.id}`)}
-            sx={{ 
-              bgcolor: 'rgba(255,255,255,0.2)', 
-              color: 'white',
-              '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' },
-              border: '1px solid rgba(255,255,255,0.3)'
-            }}
-            title="Edit Enquiry"
-          >
-            <EditIcon />
-          </IconButton>
+          {userProfile?.role !== 'audiologist' && resolvedParams && (
+            <IconButton
+              onClick={() => router.push(`/interaction/enquiries/edit/${resolvedParams.id}`)}
+              sx={{ 
+                bgcolor: 'rgba(255,255,255,0.2)', 
+                color: 'white',
+                '&:hover': { bgcolor: 'rgba(255,255,255,0.3)' },
+                border: '1px solid rgba(255,255,255,0.3)'
+              }}
+              title="Edit Enquiry"
+            >
+              <EditIcon />
+            </IconButton>
+          )}
         </Box>
         
         {/* Basic Information Section */}
@@ -281,13 +346,15 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
               <Typography variant="body1" fontWeight="medium">{enquiry.name || 'Not provided'}</Typography>
             </Grid>
             
-            <Grid item xs={12} md={6}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                <PhoneIcon fontSize="small" color="action" />
-                <Typography variant="subtitle2">Phone Number</Typography>
-              </Box>
-              <Typography variant="body1">{enquiry.phone || 'Not provided'}</Typography>
-            </Grid>
+            {userProfile?.role !== 'audiologist' && (
+              <Grid item xs={12} md={6}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <PhoneIcon fontSize="small" color="action" />
+                  <Typography variant="subtitle2">Phone Number</Typography>
+                </Box>
+                <Typography variant="body1">{enquiry.phone || 'Not provided'}</Typography>
+              </Grid>
+            )}
             
             <Grid item xs={12} md={6}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -807,7 +874,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                     )}
                     
                     {/* Hearing Test Details */}
-                    {(visit.hearingTest || visit.testType || visit.testDoneBy || visit.testResults || visit.recommendations || visit.testPrice) && (
+                    {(visit.hearingTest || visit.testType || visit.testDoneBy || visit.testResults || visit.recommendations || visit.testPrice || visit.hearingTestDetails?.audiogramData) && (
                       <Grid item xs={12}>
                         <Divider sx={{ my: 1 }} />
                         <Paper sx={{ p: 2, bgcolor: alpha('#2196f3', 0.05), border: 1, borderColor: alpha('#2196f3', 0.2) }}>
@@ -885,6 +952,38 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                 </Box>
                               )}
                             </>
+                          )}
+
+                          {/* Pure Tone Audiogram - View only for all users (show even if no data) */}
+                          {(visit.hearingTest || visit.hearingTestDetails) && (
+                            <Box sx={{ mt: 3 }}>
+                              {(() => {
+                                try {
+                                  // Safely extract audiogram data
+                                  const audiogramData = visit.hearingTestDetails?.audiogramData || 
+                                                       visit.audiogramData || 
+                                                       undefined;
+                                  
+                                  return (
+                                    <PureToneAudiogram
+                                      data={audiogramData}
+                                      onChange={() => {}} // Read-only in detail view
+                                      editable={false}
+                                      readOnly={true}
+                                    />
+                                  );
+                                } catch (err) {
+                                  console.error('Error rendering audiogram:', err);
+                                  return (
+                                    <Box sx={{ p: 2, bgcolor: 'error.light', borderRadius: 1 }}>
+                                      <Typography variant="body2" color="error">
+                                        Unable to display audiogram. Please check the data format.
+                                      </Typography>
+                                    </Box>
+                                  );
+                                }
+                              })()}
+                            </Box>
                           )}
                         </Paper>
                       </Grid>

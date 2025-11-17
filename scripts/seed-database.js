@@ -212,6 +212,13 @@ const authUsers = [
     role: 'staff',
     displayName: 'Staff User',
     allowedModules: ['inventory', 'customers', 'sales', 'interaction'],
+  },
+  {
+    email: 'audiologist@hopehearing.com',
+    password: 'audiologist123',
+    role: 'audiologist',
+    displayName: 'Audiologist User',
+    allowedModules: ['inventory', 'appointments', 'interaction'],
   }
 ];
 

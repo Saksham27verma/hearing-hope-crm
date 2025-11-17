@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Box, 
   Typography, 
   Button,
   Breadcrumbs,
-  Link
+  Link,
+  CircularProgress
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -17,11 +18,34 @@ import {
 import { useRouter } from 'next/navigation';
 import { collection, addDoc, serverTimestamp, doc, updateDoc, getDoc, runTransaction, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 
 export default function NewEnquiryPage() {
   const router = useRouter();
+  const { userProfile, loading: authLoading } = useAuth();
   const [saving, setSaving] = useState(false);
+
+  // Redirect audiologists away from new enquiry page
+  useEffect(() => {
+    if (!authLoading && userProfile?.role === 'audiologist') {
+      router.push('/interaction/enquiries');
+    }
+  }, [userProfile, authLoading, router]);
+
+  // Show loading while checking auth
+  if (authLoading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  // Don't render if audiologist (will redirect)
+  if (userProfile?.role === 'audiologist') {
+    return null;
+  }
 
   // Helper function to reduce inventory for sales
   const reduceInventoryForSales = async (visits: any[]) => {

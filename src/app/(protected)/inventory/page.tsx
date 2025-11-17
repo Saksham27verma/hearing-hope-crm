@@ -127,6 +127,10 @@ const formatDate = (timestamp: any) => {
 export default function InventoryPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
   const router = useRouter();
+  
+  // Helper to check if user is staff or audiologist (both have same restricted view)
+  const isRestrictedUser = userProfile?.role === 'staff' || userProfile?.role === 'audiologist';
+  
   const [loading, setLoading] = useState(true);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [filteredInventory, setFilteredInventory] = useState<InventoryItem[]>([]);
@@ -815,15 +819,15 @@ export default function InventoryPage() {
       });
     }
     
-    // For staff users, filter out sold items
-    if (userProfile?.role === 'staff') {
+    // For staff and audiologist users, filter out sold items
+    if (isRestrictedUser) {
       filtered = filtered.filter(item => item.status !== 'Sold');
     }
     
     setFilteredInventory(filtered);
     // Reset pagination when filters change
     setPage(0);
-  }, [inventory, searchTerm, statusFilter, typeFilter, locationFilter, companyFilter, userProfile]);
+  }, [inventory, searchTerm, statusFilter, typeFilter, locationFilter, companyFilter, isRestrictedUser]);
 
   // Table pagination handlers
   const handleChangePage = (event: unknown, newPage: number) => {
@@ -1218,7 +1222,7 @@ export default function InventoryPage() {
             </Box>
           </Box>
           <Box textAlign="right" display="flex" gap={1} alignItems="center">
-            {userProfile?.role !== 'staff' && (
+            {!isRestrictedUser && (
               <FormControlLabel
                 control={
                   <Switch
@@ -1249,7 +1253,7 @@ export default function InventoryPage() {
             >
               {loading ? 'Refreshing...' : 'Refresh Data'}
             </Button>
-            {userProfile?.role !== 'staff' && (
+            {!isRestrictedUser && (
               <Button
                 variant="contained"
                 color="primary"
@@ -1266,7 +1270,7 @@ export default function InventoryPage() {
       </Paper>
 
       {/* Clean Stats Cards */}
-      <Box display="grid" gridTemplateColumns={userProfile?.role === 'staff' 
+      <Box display="grid" gridTemplateColumns={isRestrictedUser 
         ? { xs: '1fr 1fr', sm: 'repeat(3, 1fr)', lg: 'repeat(3, 1fr)' }
         : { xs: '1fr 1fr', sm: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' }
       } gap={2} mb={3}>
@@ -1294,7 +1298,7 @@ export default function InventoryPage() {
           </Typography>
         </Card>
         
-        {userProfile?.role !== 'staff' && (
+        {!isRestrictedUser && (
           <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
             <Box display="flex" alignItems="center" mb={1}>
               <ShoppingCartIcon color="info" sx={{ mr: 1, fontSize: 20 }} />
@@ -1308,7 +1312,7 @@ export default function InventoryPage() {
           </Card>
         )}
         
-        {showSoldItems && userProfile?.role !== 'staff' && (
+        {showSoldItems && !isRestrictedUser && (
           <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
             <Box display="flex" alignItems="center" mb={1}>
               <VisibilityIcon color="warning" sx={{ mr: 1, fontSize: 20 }} />
@@ -1335,7 +1339,7 @@ export default function InventoryPage() {
           </Typography>
         </Card>
         
-        {userProfile?.role !== 'staff' && (
+        {!isRestrictedUser && (
           <>
             <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
               <Box display="flex" alignItems="center" mb={1}>
@@ -1431,7 +1435,7 @@ export default function InventoryPage() {
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns={userProfile?.role === 'staff' ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)'} gap={1}>
+                    <Box display="grid" gridTemplateColumns={isRestrictedUser ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)'} gap={1}>
                       <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
                         <Typography variant="h6" fontWeight="bold" color="success.main">
                           {companyStats.inStock}
@@ -1440,7 +1444,7 @@ export default function InventoryPage() {
                           In Stock
                         </Typography>
                       </Box>
-                      {userProfile?.role !== 'staff' && (
+                      {!isRestrictedUser && (
                         <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
                           <Typography variant="h6" fontWeight="bold" color="info.main">
                             {companyStats.sold}
@@ -1450,7 +1454,7 @@ export default function InventoryPage() {
                           </Typography>
                         </Box>
                       )}
-                      {userProfile?.role !== 'staff' && (
+                      {!isRestrictedUser && (
                         <Box textAlign="center" sx={{ p: 1, bgcolor: 'grey.100', borderRadius: 1 }}>
                           <Typography variant="h6" fontWeight="bold" color="text.primary">
                             {companyStats.total}
@@ -1460,7 +1464,7 @@ export default function InventoryPage() {
                           </Typography>
                         </Box>
                       )}
-                      {userProfile?.role !== 'staff' && (
+                      {!isRestrictedUser && (
                         <>
                           <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
                             <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
@@ -1584,7 +1588,7 @@ export default function InventoryPage() {
                       </Box>
                     </Box>
                     
-                    {userProfile?.role !== 'staff' && (
+                    {!isRestrictedUser && (
                       <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1} mt={2}>
                         <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'primary.lighter', borderRadius: 1 }}>
                           <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
@@ -1707,7 +1711,7 @@ export default function InventoryPage() {
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns={userProfile?.role === 'staff' ? '1fr' : 'repeat(4, 1fr)'} gap={1} mt={2}>
+                    <Box display="grid" gridTemplateColumns={isRestrictedUser ? '1fr' : 'repeat(4, 1fr)'} gap={1} mt={2}>
                       <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
                         <Typography variant="body1" fontWeight="bold" color="success.main">
                           {locationStats.inStock}
@@ -1716,7 +1720,7 @@ export default function InventoryPage() {
                           In Stock
                         </Typography>
                       </Box>
-                      {userProfile?.role !== 'staff' && (
+                      {!isRestrictedUser && (
                         <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
                           <Typography variant="body1" fontWeight="bold" color="info.main">
                             {locationStats.sold}
@@ -1726,7 +1730,7 @@ export default function InventoryPage() {
                           </Typography>
                         </Box>
                       )}
-                      {userProfile?.role !== 'staff' && (
+                      {!isRestrictedUser && (
                         <>
                           <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
                             <Typography variant="caption" fontWeight="bold" color="primary.main" noWrap>
@@ -1796,7 +1800,7 @@ export default function InventoryPage() {
                         variant="outlined" 
                       />
                     </Box>
-                    {userProfile?.role !== 'staff' && (
+                    {!isRestrictedUser && (
                       <Box display="flex" justifyContent="space-between" alignItems="center" mt={1}>
                         <Box textAlign="left">
                           <Typography variant="body1" fontWeight="bold" color="primary.main">
@@ -1833,7 +1837,7 @@ export default function InventoryPage() {
               <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Typography variant="subtitle1" fontWeight={700}>{group.category}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {group.totalCount} items{userProfile?.role !== 'staff' && ` • Dealer: ${formatCurrency(group.totalDealerValue)} • MRP: ${formatCurrency(group.totalMRPValue)}`}
+                  {group.totalCount} items{!isRestrictedUser && ` • Dealer: ${formatCurrency(group.totalDealerValue)} • MRP: ${formatCurrency(group.totalMRPValue)}`}
                 </Typography>
               </Box>
               <TableContainer>
@@ -1894,7 +1898,7 @@ export default function InventoryPage() {
                 Reset All
               </Button>
             )}
-            {userProfile?.role !== 'staff' && (
+            {!isRestrictedUser && (
               <Button
                 variant="contained"
                 color="primary"
@@ -1959,7 +1963,7 @@ export default function InventoryPage() {
                     In Stock
                   </Box>
                 </MenuItem>
-                {userProfile?.role !== 'staff' && (
+                {!isRestrictedUser && (
                   <MenuItem value="Sold">
                     <Box display="flex" alignItems="center">
                       <ShoppingCartIcon color="warning" sx={{ mr: 1 }} />
@@ -2164,7 +2168,7 @@ export default function InventoryPage() {
                     Status
                   </Box>
                 </TableCell>
-                {userProfile?.role !== 'staff' && (
+                {!isRestrictedUser && (
                   <>
                     <TableCell align="right" sx={{ fontWeight: 'bold', py: 2 }}>
                       Pricing
@@ -2284,7 +2288,7 @@ export default function InventoryPage() {
                           sx={{ fontWeight: 'bold' }}
                         />
                       </TableCell>
-                      {userProfile?.role !== 'staff' && (
+                      {!isRestrictedUser && (
                         <>
                           <TableCell align="right" sx={{ py: 3 }}>
                             <Box textAlign="right">
@@ -2322,7 +2326,7 @@ export default function InventoryPage() {
                               <VisibilityIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
-                          {userProfile?.role !== 'staff' && (
+                          {!isRestrictedUser && (
                             <Tooltip title="Edit Item">
                               <IconButton 
                                 size="small" 
@@ -2358,7 +2362,7 @@ export default function InventoryPage() {
                   ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={userProfile?.role === 'staff' ? 7 : 9} sx={{ py: 8 }}>
+                  <TableCell colSpan={isRestrictedUser ? 7 : 9} sx={{ py: 8 }}>
                     <Box textAlign="center">
                       <InventoryIcon sx={{ fontSize: 64, color: '#cbd5e1', mb: 2 }} />
                       <Typography variant="h6" color="text.secondary" gutterBottom>
