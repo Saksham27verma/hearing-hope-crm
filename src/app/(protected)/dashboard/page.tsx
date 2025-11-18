@@ -94,7 +94,61 @@ export default function DashboardPage() {
         setLoading(true);
       }
       
-      // Get counts in parallel
+      // For audiologists, only fetch enquiries data
+      if (userProfile?.role === 'audiologist') {
+        // Recent enquiries - For audiologists, filter to only show enquiries with hearing test but no audiogram
+        const allEnquiriesSnapshot = await getDocs(collection(db, 'enquiries'));
+        const recentEnquiriesData = allEnquiriesSnapshot.docs
+          .map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }))
+          .filter((enquiry: any) => {
+            // Must have visitSchedules
+            if (!enquiry.visitSchedules || !Array.isArray(enquiry.visitSchedules) || enquiry.visitSchedules.length === 0) {
+              return false;
+            }
+            
+            // Check if ANY visit has hearing test service selected
+            const hasHearingTest = enquiry.visitSchedules.some((visit: any) => {
+              // Check if medicalServices array includes 'hearing_test'
+              if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
+                return visit.medicalServices.includes('hearing_test');
+              }
+              // Check if medicalService is 'hearing_test' (legacy field)
+              if (visit.medicalService === 'hearing_test') {
+                return true;
+              }
+              return false;
+            });
+            
+            if (!hasHearingTest) {
+              return false;
+            }
+            
+            // Check if audiogram data is missing (this is what we want)
+            const hasAudiogramData = enquiry.visitSchedules.some((visit: any) => {
+              return visit.hearingTestDetails && visit.hearingTestDetails.audiogramData;
+            });
+            
+            // Return true if hearing test is selected but audiogram data is NOT present
+            return !hasAudiogramData;
+          })
+          .sort((a: any, b: any) => {
+            // Sort by createdAt descending
+            const dateA = a.createdAt?.seconds || a.createdAt?._seconds || 0;
+            const dateB = b.createdAt?.seconds || b.createdAt?._seconds || 0;
+            return dateB - dateA;
+          })
+          .slice(0, 20); // Show up to 20 pending audiograms
+        
+        setRecentEnquiries(recentEnquiriesData);
+        setLoading(false);
+        setRefreshing(false);
+        return;
+      }
+      
+      // Get counts in parallel for non-audiologist users
       const [
         productsSnapshot,
         enquiriesSnapshot,
@@ -142,7 +196,7 @@ export default function DashboardPage() {
         ...doc.data()
       }));
       
-      // Recent enquiries
+      // Recent enquiries - For other users, show recent enquiries as before
       const recentEnquiriesQuery = query(
         collection(db, 'enquiries'),
         orderBy('createdAt', 'desc'),
@@ -263,6 +317,175 @@ export default function DashboardPage() {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress color="primary" size={60} />
+      </Box>
+    );
+  }
+
+  // For audiologists, show custom dashboard with only pending audiogram enquiries
+  if (userProfile?.role === 'audiologist') {
+    return (
+      <Box sx={{ p: 3 }}>
+        {/* Header */}
+        <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box>
+            <Typography variant="h4" fontWeight="bold" color="primary" gutterBottom>
+              Pending Audiogram Entries
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Enquiries requiring hearing test data entry
+            </Typography>
+          </Box>
+          <Tooltip title="Refresh Data">
+            <IconButton 
+              onClick={() => fetchDashboardData(true)}
+              disabled={refreshing}
+              sx={{ 
+                bgcolor: 'primary.50',
+                '&:hover': { bgcolor: 'primary.100' }
+              }}
+            >
+              <RefreshIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
+
+        {refreshing && (
+          <LinearProgress sx={{ mb: 3, borderRadius: 1 }} />
+        )}
+
+        {/* Pending Audiogram Enquiries Table */}
+        <Paper
+          elevation={0}
+          sx={{
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 3,
+            overflow: 'hidden',
+          }}
+        >
+          <Box
+            sx={{
+              p: 2.5,
+              bgcolor: 'primary.50',
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <Avatar sx={{ bgcolor: 'primary.main', width: 40, height: 40 }}>
+                <AssignmentIcon />
+              </Avatar>
+              <Box>
+                <Typography variant="h6" fontWeight="bold">
+                  Enquiries Pending Audiogram
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {recentEnquiries.length} {recentEnquiries.length === 1 ? 'enquiry' : 'enquiries'} waiting for data entry
+                </Typography>
+              </Box>
+            </Box>
+            <Button
+              variant="text"
+              size="small"
+              endIcon={<ArrowForwardIcon />}
+              onClick={() => router.push('/interaction/enquiries')}
+            >
+              View All
+            </Button>
+          </Box>
+          <TableContainer>
+            <Table>
+              <TableHead sx={{ bgcolor: 'grey.50' }}>
+                <TableRow>
+                  <TableCell><strong>Date</strong></TableCell>
+                  <TableCell><strong>Patient Name</strong></TableCell>
+                  <TableCell><strong>Visit Date</strong></TableCell>
+                  <TableCell><strong>Status</strong></TableCell>
+                  <TableCell align="right"><strong>Action</strong></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {recentEnquiries.length > 0 ? (
+                  recentEnquiries.map((enquiry: any) => {
+                    // Find the visit with hearing test
+                    const hearingTestVisit = enquiry.visitSchedules?.find((visit: any) => {
+                      if (visit.medicalServices && Array.isArray(visit.medicalServices)) {
+                        return visit.medicalServices.includes('hearing_test');
+                      }
+                      return visit.medicalService === 'hearing_test';
+                    });
+                    
+                    return (
+                      <TableRow
+                        key={enquiry.id}
+                        hover
+                        sx={{ cursor: 'pointer' }}
+                        onClick={() => router.push(`/interaction/enquiries/edit/${enquiry.id}`)}
+                      >
+                        <TableCell>
+                          <Chip
+                            label={formatDate(enquiry.createdAt)}
+                            size="small"
+                            variant="outlined"
+                            sx={{ fontSize: '0.7rem' }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight={500}>
+                            {enquiry.name || 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" color="text.secondary">
+                            {hearingTestVisit?.visitDate ? new Date(hearingTestVisit.visitDate).toLocaleDateString('en-IN') : 'N/A'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label="Pending"
+                            size="small"
+                            color="warning"
+                            variant="outlined"
+                          />
+                        </TableCell>
+                        <TableCell align="right">
+                          <Button
+                            variant="contained"
+                            size="small"
+                            color="primary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              router.push(`/interaction/enquiries/edit/${enquiry.id}`);
+                            }}
+                          >
+                            Add Audiogram
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={5} align="center" sx={{ py: 6 }}>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                        <AssignmentIcon sx={{ fontSize: 64, color: 'text.secondary', opacity: 0.5 }} />
+                        <Typography variant="h6" color="text.secondary">
+                          No Pending Audiograms
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          All enquiries with hearing test service have audiogram data entered.
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       </Box>
     );
   }
