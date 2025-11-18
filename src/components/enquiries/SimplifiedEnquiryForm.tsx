@@ -472,7 +472,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const watchPhone = watch('phone');
 
   // Check if step 0 is valid
-  const isStep0Valid = watchName?.trim().length > 0 && watchPhone?.trim().length > 0;
+  const isStep0Valid = watchName?.trim().length > 0 && watchPhone?.trim().length > 0 && selectedCenter?.trim().length > 0;
 
   // Fetch products from Firebase
   useEffect(() => {
@@ -1686,6 +1686,23 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       )}
                     />
                   </Grid>
+                  <Grid item xs={12}>
+                    <Controller
+                      name="address"
+                      control={control}
+                      render={({ field }) => (
+                        <TextField
+                          {...field}
+                          fullWidth
+                          label="Address"
+                          disabled={isAudiologist}
+                          multiline
+                          rows={2}
+                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        />
+                      )}
+                    />
+                  </Grid>
                   <Grid item xs={12} md={6}>
                     <Controller
                       name="reference"
@@ -1833,15 +1850,23 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     <Controller
                       name="center"
                       control={control}
+                      rules={{ required: 'Center is required' }}
                       render={({ field }) => (
-                        <FormControl fullWidth>
+                        <FormControl fullWidth error={!!errors.center} required>
                           <InputLabel id="center-label">Center</InputLabel>
                           <Select
                             {...field}
                             labelId="center-label"
                             label="Center"
                             disabled={isAudiologist}
-                            sx={{ borderRadius: 2 }}
+                            sx={{ borderRadius: 2, minWidth: '200px' }}
+                            MenuProps={{
+                              PaperProps: {
+                                style: {
+                                  maxHeight: 300
+                                }
+                              }
+                            }}
                           >
                             {centers.map(center => (
                               <MenuItem key={center.id} value={center.id}>
@@ -1849,6 +1874,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </MenuItem>
                             ))}
                           </Select>
+                          {errors.center && (
+                            <FormHelperText>{errors.center.message}</FormHelperText>
+                          )}
                         </FormControl>
                       )}
                     />
@@ -2024,7 +2052,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             onChange={(e) => updateVisit(activeVisit, 'visitType', e.target.value)}
                             label="Visit Type"
                             disabled={isAudiologist}
-                            sx={{ borderRadius: 2 }}
+                            sx={{ borderRadius: 2, minWidth: '200px' }}
                           >
                             <MenuItem value="center">Center Visit</MenuItem>
                             <MenuItem value="home">Home Visit</MenuItem>
@@ -2164,7 +2192,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     value={currentVisit.testDoneBy}
                                     onChange={(e) => updateVisit(activeVisit, 'testDoneBy', e.target.value)}
                                     label="Test Done By"
-                                    sx={{ borderRadius: 2 }}
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     {getStaffOptionsForField('testBy').map(option => (
                                       <MenuItem key={option} value={option}>
@@ -2306,6 +2334,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       }
                                     }}
                                     label="Continue from Previous Visit"
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     <MenuItem value="">New Journey</MenuItem>
                                     {watchedVisits.slice(0, activeVisit).map((visit, index) => (
@@ -2421,6 +2450,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       }}
                                       label="Choose Hearing Aid Product"
                                       displayEmpty
+                                      sx={{ borderRadius: 2, minWidth: '200px' }}
                                     >
                                       <MenuItem value="">Select a product...</MenuItem>
                                       {hearingAidProducts.map((product) => (
@@ -2490,6 +2520,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     value={currentVisit.whichEar}
                                     onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
                                     label="Which Ear"
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     <MenuItem value="left">Left</MenuItem>
                                     <MenuItem value="right">Right</MenuItem>
@@ -2570,6 +2601,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     }
                                   }}
                                   label="Trial Type"
+                                  sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
                                   <MenuItem value="in_office">In-Office Trial</MenuItem>
                                   <MenuItem value="home">Home Trial</MenuItem>
@@ -2807,7 +2839,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     value={currentVisit.whichEar}
                                     label="Which Ear"
                                     onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
-                                    sx={{ borderRadius: 2 }}
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     <MenuItem value="left">Left</MenuItem>
                                     <MenuItem value="right">Right</MenuItem>
@@ -2823,7 +2855,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       value={currentVisit.hearingAidBrand}
                                       onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
                                       label="Who Sold"
-                                      sx={{ borderRadius: 2 }}
+                                      sx={{ borderRadius: 2, minWidth: '200px' }}
                                     >
                                       {getStaffOptionsForField('sales').map(option => (
                                         <MenuItem key={option} value={option}>
@@ -2968,7 +3000,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       }
                                     }}
                                     label="Continue from Previous Visit"
-                                    sx={{ borderRadius: 2 }}
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     <MenuItem value="">New Journey</MenuItem>
                                     {watchedVisits.slice(0, activeVisit).map((visit, index) => (
@@ -3065,7 +3097,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   value={currentVisit.whichEar}
                                   onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
                                   label="Which Ear"
-                                  sx={{ borderRadius: 2 }}
+                                  sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
                                   <MenuItem value="left">Left</MenuItem>
                                   <MenuItem value="right">Right</MenuItem>
@@ -3080,7 +3112,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     value={currentVisit.hearingAidStatus}
                                     onChange={(e) => updateVisit(activeVisit, 'hearingAidStatus', e.target.value)}
                                     label="Status"
-                                    sx={{ borderRadius: 2 }}
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     <MenuItem value="trial_given">Trial Given</MenuItem>
                                     <MenuItem value="booked">Booked</MenuItem>
@@ -3116,7 +3148,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         }
                                       }}
                                       label="Trial Type"
-                                      sx={{ borderRadius: 2 }}
+                                      sx={{ borderRadius: 2, minWidth: '200px' }}
                                     >
                                       <MenuItem value="in_office">In-Office Trial</MenuItem>
                                       <MenuItem value="home">Home Trial</MenuItem>
@@ -4150,7 +4182,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     value={currentVisit.programmingDoneBy}
                                     onChange={(e) => updateVisit(activeVisit, 'programmingDoneBy', e.target.value)}
                                     label="Programming Done By"
-                                    sx={{ borderRadius: 2 }}
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     {getStaffOptionsForField('programmingBy').map(option => (
                                       <MenuItem key={option} value={option}>
@@ -4376,9 +4408,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     value={currentVisit.testDoneBy}
                                     onChange={(e) => updateVisit(activeVisit, 'testDoneBy', e.target.value)}
                                     label="Session By"
-                                    sx={{ borderRadius: 2 }}
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
-                                    {staffOptions.map(option => (
+                                    {getStaffOptionsForField('testBy').map(option => (
                                       <MenuItem key={option} value={option}>
                                         👤 {option}
                                       </MenuItem>
