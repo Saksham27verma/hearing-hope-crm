@@ -119,7 +119,7 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
 
       // Search Enquiries (Patients)
       try {
-        const enquiriesQuery = query(collection(db, 'enquiries'), limit(10));
+        const enquiriesQuery = query(collection(db, 'enquiries'), limit(50));
         const enquiriesSnapshot = await getDocs(enquiriesQuery);
         
         enquiriesSnapshot.docs.forEach(doc => {
@@ -127,22 +127,40 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
           const name = data.name || '';
           const phone = data.phone || '';
           const email = data.email || '';
+          const reference = data.reference || '';
+          const address = data.address || '';
+          const assignedTo = data.assignedTo || '';
+          const telecaller = data.telecaller || '';
+          const status = data.visitStatus || data.status || '';
           
           if (
             name.toLowerCase().includes(searchTermLower) ||
             phone.includes(searchTermLower) ||
-            email.toLowerCase().includes(searchTermLower)
+            email.toLowerCase().includes(searchTermLower) ||
+            reference.toLowerCase().includes(searchTermLower) ||
+            address.toLowerCase().includes(searchTermLower) ||
+            assignedTo.toLowerCase().includes(searchTermLower) ||
+            telecaller.toLowerCase().includes(searchTermLower)
           ) {
             searchResults.push({
               id: doc.id,
               title: name,
-              subtitle: `Patient • ${phone}`,
+              subtitle: `Enquiry • ${phone} ${reference ? `• Ref: ${reference}` : ''}`,
               type: 'enquiry',
               path: `/interaction/enquiries/${doc.id}`,
               icon: <PersonIcon />,
-              color: '#2196f3',
-              description: email,
-              metadata: { phone, email, type: 'patient' }
+              color: '#ff6b35',
+              description: email || address || `Status: ${status}`,
+              metadata: { 
+                phone, 
+                email, 
+                reference, 
+                address,
+                assignedTo,
+                telecaller,
+                status,
+                type: 'enquiry' 
+              }
             });
           }
         });
@@ -152,7 +170,7 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
 
       // Search Products
       try {
-        const productsQuery = query(collection(db, 'products'), limit(10));
+        const productsQuery = query(collection(db, 'products'), limit(30));
         const productsSnapshot = await getDocs(productsQuery);
         
         productsSnapshot.docs.forEach(doc => {
@@ -185,7 +203,7 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
 
       // Search Parties (Suppliers/Customers)
       try {
-        const partiesQuery = query(collection(db, 'parties'), limit(10));
+        const partiesQuery = query(collection(db, 'parties'), limit(30));
         const partiesSnapshot = await getDocs(partiesQuery);
         
         partiesSnapshot.docs.forEach(doc => {
@@ -219,7 +237,7 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
 
       // Search Material In
       try {
-        const materialInQuery = query(collection(db, 'materialInward'), limit(10));
+        const materialInQuery = query(collection(db, 'materialInward'), limit(30));
         const materialInSnapshot = await getDocs(materialInQuery);
         
         materialInSnapshot.docs.forEach(doc => {
@@ -250,7 +268,7 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
 
       // Search Material Out
       try {
-        const materialOutQuery = query(collection(db, 'materialsOut'), limit(10));
+        const materialOutQuery = query(collection(db, 'materialsOut'), limit(30));
         const materialOutSnapshot = await getDocs(materialOutQuery);
         
         materialOutSnapshot.docs.forEach(doc => {
@@ -346,7 +364,7 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
 
   const getTypeLabel = (type: string) => {
     const labels: Record<string, string> = {
-      'enquiry': 'Patients',
+      'enquiry': 'Enquiries',
       'product': 'Products',
       'party': 'Parties',
       'material-in': 'Material In',
