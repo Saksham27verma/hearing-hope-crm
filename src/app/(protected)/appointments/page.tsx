@@ -53,6 +53,7 @@ import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import ImageIcon from '@mui/icons-material/Image';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import PhoneIcon from '@mui/icons-material/Phone';
 import { db } from '@/firebase/config';
 import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc, where, updateDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
@@ -71,6 +72,8 @@ interface Appointment {
   title: string;
   enquiryId?: string;
   patientName?: string;
+  patientPhone?: string;
+  reference?: string;
   type: AppointmentType;
   centerId?: string;
   address?: string;
@@ -751,9 +754,26 @@ export default function AppointmentSchedulerPage() {
               <Typography variant="h6" sx={{ mb: 1, fontSize: { xs: '1rem', sm: '1.25rem' } }}>
                 {previewAppt.patientName || '-'}
               </Typography>
-              <Typography variant="body2" sx={{ mb: 2 }} color="text.secondary">
-                Mobile: {previewPatientPhone || '—'}
-              </Typography>
+              <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
+                {previewPatientPhone && (
+                  <Chip 
+                    icon={<PhoneIcon />} 
+                    label={previewPatientPhone} 
+                    size="small" 
+                    variant="outlined"
+                    sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}
+                  />
+                )}
+                {previewAppt.reference && (
+                  <Chip 
+                    label={`Ref: ${previewAppt.reference}`} 
+                    size="small" 
+                    color="primary"
+                    variant="outlined"
+                    sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}
+                  />
+                )}
+              </Stack>
               <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
                 Type
               </Typography>
@@ -932,7 +952,15 @@ export default function AppointmentSchedulerPage() {
                         size="small" 
                         variant="contained" 
                         onClick={() => {
-                          setNewAppt({ ...newAppt, enquiryId: e.id, patientName: e.name });
+                          setNewAppt({ 
+                            ...newAppt, 
+                            enquiryId: e.id, 
+                            patientName: e.name,
+                            patientPhone: e.phone || '',
+                            reference: e.reference || '',
+                            address: e.address || '',
+                            centerId: e.center || newAppt.centerId
+                          });
                           setOpenPatientPicker(false);
                         }}
                         sx={{ fontSize: { xs: '0.7rem', sm: '0.875rem' } }}
@@ -1006,7 +1034,7 @@ export default function AppointmentSchedulerPage() {
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Patient"
+                label="Patient Name"
                 value={newAppt.patientName}
                 placeholder="Select from enquiries"
                 onClick={() => setOpenPatientPicker(true)}
@@ -1017,8 +1045,42 @@ export default function AppointmentSchedulerPage() {
                   readOnly: true, 
                   startAdornment: <InputAdornment position="start"><PersonIcon fontSize="small" /></InputAdornment> 
                 }}
+                required
               />
             </Grid>
+            {newAppt.patientPhone && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Patient Phone"
+                  value={newAppt.patientPhone}
+                  margin="normal"
+                  size={isMobile ? 'small' : 'medium'}
+                  InputLabelProps={{ sx: { mt: 0.2 } }}
+                  InputProps={{ 
+                    readOnly: true, 
+                    startAdornment: <InputAdornment position="start"><PhoneIcon fontSize="small" /></InputAdornment> 
+                  }}
+                  sx={{ bgcolor: '#f5f5f5' }}
+                />
+              </Grid>
+            )}
+            {newAppt.reference && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Reference"
+                  value={newAppt.reference}
+                  margin="normal"
+                  size={isMobile ? 'small' : 'medium'}
+                  InputLabelProps={{ sx: { mt: 0.2 } }}
+                  InputProps={{ 
+                    readOnly: true
+                  }}
+                  sx={{ bgcolor: '#f5f5f5' }}
+                />
+              </Grid>
+            )}
             <Grid item xs={12} sm={6}>
               <Box>
                 <Typography 
@@ -1112,6 +1174,24 @@ export default function AppointmentSchedulerPage() {
                         fullWidth
                         margin="normal"
                         size={isMobile ? 'small' : 'medium'}
+                        required
+                        sx={{ 
+                          minWidth: { xs: '100%', sm: '250px' },
+                          '& .MuiOutlinedInput-root': {
+                            minWidth: { xs: '100%', sm: '250px' }
+                          }
+                        }}
+                        InputProps={{
+                          ...params.InputProps,
+                          startAdornment: (
+                            <>
+                              <InputAdornment position="start">
+                                <PersonIcon fontSize="small" />
+                              </InputAdornment>
+                              {params.InputProps.startAdornment}
+                            </>
+                          )
+                        }}
                       />
                     )}
                   />
