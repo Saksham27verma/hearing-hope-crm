@@ -416,6 +416,28 @@ export default function EnquiriesPage() {
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [filteredEnquiries, setFilteredEnquiries] = useState<Enquiry[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [centers, setCenters] = useState<any[]>([]);
+  
+  // Column width state for resizing
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
+    name: 200,
+    phone: 140,
+    email: 220,
+    address: 250,
+    reference: 140,
+    assignedTo: 140,
+    telecaller: 140,
+    center: 150,
+    status: 120,
+    subject: 150,
+    message: 200,
+    date: 130,
+    actions: 200
+  });
+  
+  const [isResizing, setIsResizing] = useState<string | null>(null);
+  const [startX, setStartX] = useState<number>(0);
+  const [startWidth, setStartWidth] = useState<number>(0);
   const [visitLoading, setVisitLoading] = useState<boolean>(false);
   const [openDialog, setOpenDialog] = useState<boolean>(false);
   const [openDetailDialog, setOpenDetailDialog] = useState<boolean>(false);
@@ -856,7 +878,68 @@ export default function EnquiriesPage() {
   
   useEffect(() => {
     fetchEnquiries();
+    fetchCenters();
   }, []);
+
+  // Column resize handlers
+  const handleMouseDown = (columnKey: string, e: React.MouseEvent) => {
+    setIsResizing(columnKey);
+    setStartX(e.pageX);
+    setStartWidth(columnWidths[columnKey]);
+    e.preventDefault();
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizing) {
+        const diff = e.pageX - startX;
+        const newWidth = Math.max(100, startWidth + diff); // Minimum width of 100px
+        setColumnWidths(prev => ({
+          ...prev,
+          [isResizing]: newWidth
+        }));
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(null);
+    };
+
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    }
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing, startX, startWidth]);
+
+  const fetchCenters = async () => {
+    try {
+      const centersQuery = query(collection(db, 'centers'));
+      const querySnapshot = await getDocs(centersQuery);
+      const centersList = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCenters(centersList);
+    } catch (error) {
+      console.error('Error fetching centers:', error);
+    }
+  };
+
+  // Helper function to get center name from center ID
+  const getCenterName = (centerId: string | undefined): string => {
+    if (!centerId) return '-';
+    const center = centers.find(c => c.id === centerId);
+    return center?.name || '-';
+  };
 
   useEffect(() => {
     applyFilters();
@@ -3461,73 +3544,135 @@ export default function EnquiriesPage() {
 
   return (
     <Box sx={{ 
+      width: '100%',
+      height: '100%',
       display: 'flex',
       flexDirection: 'column',
-      minHeight: '100vh',
-      backgroundColor: 'background.default',
-      p: 2
+      bgcolor: '#f5f5f5'
     }}>
       {/* Header Section */}
-      <Box sx={{ 
+      <Paper 
+        elevation={0}
+        sx={{ 
+          p: { xs: 2, sm: 2.5, md: 3 },
+          mb: { xs: 2, sm: 3 },
+          bgcolor: 'white',
+          borderRadius: 0,
+          borderBottom: '1px solid #e0e0e0'
+        }}
+      >
+        <Stack 
+          direction={{ xs: 'column', sm: 'row' }} 
+          spacing={2}
+          alignItems={{ xs: 'flex-start', sm: 'center' }}
+          justifyContent="space-between"
+        >
+          <Typography 
+            variant="h4" 
+            component="h1" 
+            sx={{ 
+              fontWeight: 700,
+              color: '#ff6b35',
+              fontSize: { xs: '1.25rem', sm: '1.5rem', md: '1.75rem' },
         display: 'flex',
-        justifyContent: 'space-between',
         alignItems: 'center',
-        p: 2,
-        borderBottom: '1px solid #e0e0e0',
-        backgroundColor: 'background.paper',
-        zIndex: 1200,
-        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+              gap: 1,
         flexShrink: 0
-      }}>
-        <Typography variant="h5" component="h1">
-          Enquiries Management
+            }}
+          >
+            <Box component="span" sx={{ fontSize: { xs: '1.5rem', sm: '1.75rem', md: '2rem' } }}>📋</Box>
+            <Box component="span" sx={{ whiteSpace: 'nowrap' }}>Enquiries Management</Box>
         </Typography>
-        <Box sx={{ 
-          display: 'flex', 
-          gap: 1,
-          flexWrap: 'wrap'
-        }}>
+          <Stack 
+            direction="row" 
+            spacing={1}
+            sx={{ 
+              flexShrink: 0,
+              width: { xs: '100%', sm: 'auto' },
+              justifyContent: { xs: 'flex-start', sm: 'flex-end' }
+            }}
+          >
           <Button 
             variant="outlined" 
-            startIcon={<RefreshIcon />}
+              startIcon={<RefreshIcon sx={{ fontSize: '1.25rem' }} />}
             onClick={handleRefresh}
             disabled={refreshing}
             size="small"
+              sx={{ 
+                borderColor: '#ff6b35',
+                color: '#ff6b35',
+                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                py: { xs: 0.75, sm: 1 },
+                px: { xs: 1.5, sm: 2 },
+                '&:hover': {
+                  borderColor: '#ff5722',
+                  bgcolor: '#fff3e0'
+                },
+                whiteSpace: 'nowrap'
+              }}
           >
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </Button>
           <Button 
             variant="outlined" 
-            startIcon={<ViewColumnIcon />}
+              startIcon={<ViewColumnIcon sx={{ fontSize: '1.25rem' }} />}
             onClick={() => setColumnManagementOpen(true)}
             size="small"
-          >
-            Manage Columns
+              sx={{ 
+                borderColor: '#ff6b35',
+                color: '#ff6b35',
+                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                py: { xs: 0.75, sm: 1 },
+                px: { xs: 1.5, sm: 2 },
+                '&:hover': {
+                  borderColor: '#ff5722',
+                  bgcolor: '#fff3e0'
+                },
+                whiteSpace: 'nowrap'
+              }}
+            >
+              Columns
           </Button>
         {userProfile?.role !== 'audiologist' && (
           <Button 
             variant="contained" 
-            startIcon={<AddIcon />}
+              startIcon={<AddIcon sx={{ fontSize: '1.25rem' }} />}
             onClick={handleOpenSimplifiedDialog}
             size="small"
+              sx={{ 
+                background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
+                boxShadow: '0 4px 12px rgba(255, 107, 53, 0.3)',
+                fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                py: { xs: 0.75, sm: 1 },
+                px: { xs: 1.5, sm: 2 },
+                '&:hover': {
+                  background: 'linear-gradient(135deg, #ff5722 0%, #ff6b35 100%)',
+                  boxShadow: '0 6px 16px rgba(255, 107, 53, 0.4)',
+                  transform: 'translateY(-2px)'
+                },
+                transition: 'all 0.3s',
+                whiteSpace: 'nowrap'
+              }}
           >
             New Enquiry
           </Button>
         )}
-        </Box>
-      </Box>
+          </Stack>
+        </Stack>
+      </Paper>
 
       {/* Content Area */}
-      <Box sx={{ 
+      <Stack 
+        spacing={{ xs: 2, sm: 3 }} 
+        sx={{ 
         flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        p: 2,
-        overflow: 'hidden'
-      }}>
+          p: { xs: 2, sm: 3 },
+          overflow: 'auto'
+        }}
+      >
 
       {/* Enquiry Statistics Cards */}
-      <Grid container spacing={1} sx={{ mb: 2, flexShrink: 0 }}>
+      <Grid container spacing={{ xs: 2, sm: 2, md: 3 }}>
         {(() => {
           const totalEnquiries = enquiries.length;
           const openEnquiries = enquiries.filter(e => e.status === 'open').length;
@@ -3542,45 +3687,72 @@ export default function EnquiriesPage() {
           }).length;
           
           const statCards = [
-            { title: 'Total Enquiries', value: totalEnquiries, icon: <AssignmentIcon />, color: 'primary.main' },
-            { title: "Today's Enquiries", value: todayEnquiries, icon: <TodayIcon />, color: 'success.main' },
-            { title: 'Open', value: openEnquiries, icon: <EmailIcon />, color: 'info.main' },
-            { title: 'In Progress', value: inProgressEnquiries, icon: <ScheduleIcon />, color: 'warning.main' },
-            { title: 'Resolved', value: resolvedEnquiries, icon: <CheckCircleIcon />, color: 'success.main' }
+            { title: 'Total Enquiries', value: totalEnquiries, icon: <AssignmentIcon />, color: '#ff6b35' },
+            { title: "Today's Enquiries", value: todayEnquiries, icon: <TodayIcon />, color: '#4caf50' },
+            { title: 'Open', value: openEnquiries, icon: <EmailIcon />, color: '#2196f3' },
+            { title: 'In Progress', value: inProgressEnquiries, icon: <ScheduleIcon />, color: '#ff9800' },
+            { title: 'Resolved', value: resolvedEnquiries, icon: <CheckCircleIcon />, color: '#66bb6a' }
           ];
           
           return statCards.map((stat, index) => (
             <Grid item xs={12} sm={6} md={2.4} key={index}>
               <Paper 
+                elevation={0}
                 sx={{ 
-                  p: 1.5, 
+                  p: 2.5, 
                   display: 'flex', 
                   alignItems: 'center', 
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  minHeight: '70px'
+                  bgcolor: 'white',
+                  border: '2px solid',
+                  borderColor: '#e0e0e0',
+                  borderRadius: 2,
+                  height: '100%',
+                  transition: 'all 0.3s',
+                  '&:hover': {
+                    borderColor: stat.color,
+                    transform: 'translateY(-4px)',
+                    boxShadow: `0 8px 24px ${alpha(stat.color, 0.2)}`
+                  }
                 }}
               >
                 <Box 
                   sx={{ 
-                    mr: 1.5, 
-                    p: 1, 
-                    borderRadius: 1, 
-                    bgcolor: stat.color,
-                    color: 'white',
+                    mr: 2, 
+                    p: 1.5,
+                    borderRadius: 2, 
+                    bgcolor: alpha(stat.color, 0.1),
+                    color: stat.color,
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    fontSize: '1.5rem',
+                    minWidth: 56,
+                    minHeight: 56
                   }}
                 >
                   {stat.icon}
                 </Box>
-                <Box>
-                  <Typography variant="h6" sx={{ fontWeight: 'bold', fontSize: '1.1rem' }}>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography 
+                    variant="h4" 
+                    sx={{ 
+                      fontWeight: 800, 
+                      fontSize: '1.75rem',
+                      color: stat.color,
+                      lineHeight: 1,
+                      mb: 0.5
+                    }}
+                  >
                     {stat.value}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+                  <Typography 
+                    variant="body2" 
+                    color="text.secondary" 
+                    sx={{ 
+                      fontSize: '0.875rem',
+                      fontWeight: 500
+                    }}
+                  >
                     {stat.title}
                   </Typography>
                 </Box>
@@ -3593,19 +3765,23 @@ export default function EnquiriesPage() {
 
 
       {/* Advanced Search and Filter Controls */}
-      <Paper sx={{ 
-        p: 2, 
-        mb: 2, 
-        flexShrink: 0,
-        maxHeight: '40vh', // Reduced height to give more space to table
-        overflow: 'auto', // Add scroll if needed
-        '&::-webkit-scrollbar': { width: '8px' },
-        '&::-webkit-scrollbar-track': { backgroundColor: '#f1f1f1' },
-        '&::-webkit-scrollbar-thumb': { backgroundColor: '#888', borderRadius: '4px' }
-      }}>
+      <Paper 
+        elevation={0}
+        sx={{ 
+          p: { xs: 2, sm: 2.5, md: 3 },
+          bgcolor: 'white',
+          border: '1px solid #e0e0e0',
+          borderRadius: 2,
+          maxHeight: '45vh',
+          overflow: 'auto',
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': { backgroundColor: '#f5f5f5', borderRadius: '4px' },
+          '&::-webkit-scrollbar-thumb': { backgroundColor: '#ff6b35', borderRadius: '4px', '&:hover': { backgroundColor: '#ff5722' } }
+        }}
+      >
         {/* Filter Presets */}
         <Box sx={{ mb: 2, display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Typography variant="subtitle2" color="text.secondary">Filter Presets:</Typography>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>Filter Presets:</Typography>
           <FormControl size="small" sx={{ minWidth: 150 }}>
             <Select
               value={currentPreset}
@@ -4174,56 +4350,183 @@ export default function EnquiriesPage() {
       </Dialog>
 
       {/* Enquiries Table */}
-       <Paper sx={{ 
-         width: '100%', 
+       <Paper 
+         elevation={0}
+         sx={{ 
          overflow: 'hidden', 
          display: 'flex', 
          flexDirection: 'column',
-         height: 'auto',
-         minHeight: '600px' // Ensure adequate height for table
-       }}>
+           flex: 1,
+           minHeight: { xs: '400px', sm: '500px' },
+           bgcolor: 'white',
+           border: '1px solid #e0e0e0',
+           borderRadius: 2
+         }}
+       >
          <TableContainer sx={{ 
            flex: 1,
            overflowX: 'auto',
            overflowY: 'auto',
-           maxHeight: '70vh', // Use viewport height instead of fixed calc
-           maxWidth: 'calc(100vw - 280px)', // Account for sidebar width
-           '&::-webkit-scrollbar': { height: '8px', width: '8px' },
-           '&::-webkit-scrollbar-track': { backgroundColor: '#f1f1f1' },
-           '&::-webkit-scrollbar-thumb': { backgroundColor: '#888', borderRadius: '4px' }
+           '&::-webkit-scrollbar': { height: '12px', width: '12px' },
+           '&::-webkit-scrollbar-track': { 
+             backgroundColor: '#f5f5f5',
+             borderRadius: '10px',
+             margin: '4px'
+           },
+           '&::-webkit-scrollbar-thumb': { 
+             backgroundColor: '#ff6b35', 
+             borderRadius: '10px',
+             border: '3px solid #f5f5f5',
+             '&:hover': { 
+               backgroundColor: '#ff5722',
+               border: '3px solid #f5f5f5'
+             } 
+           },
+           '&::-webkit-scrollbar-corner': {
+             backgroundColor: '#f5f5f5'
+           }
          }}>
-           <Table stickyHeader sx={{ minWidth: 1370, width: 'max-content' }}>
+           <Table 
+             stickyHeader 
+             sx={{ 
+               width: '100%', 
+               tableLayout: 'fixed',
+               borderCollapse: 'separate'
+             }}
+           >
           <TableHead>
             <TableRow>
-                   <TableCell sx={{ fontWeight: 600, width: 160, minWidth: 160, backgroundColor: '#f5f5f5' }}>Name</TableCell>
-                   {userProfile?.role !== 'audiologist' && (
-                     <TableCell sx={{ fontWeight: 600, width: 120, minWidth: 120, backgroundColor: '#f5f5f5' }}>Phone</TableCell>
-                   )}
-                   <TableCell sx={{ fontWeight: 600, width: 180, minWidth: 180, backgroundColor: '#f5f5f5' }}>Email</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 150, minWidth: 150, backgroundColor: '#f5f5f5' }}>Address</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 100, minWidth: 100, backgroundColor: '#f5f5f5' }}>Reference</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 100, minWidth: 100, backgroundColor: '#f5f5f5' }}>Assigned To</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 100, minWidth: 100, backgroundColor: '#f5f5f5' }}>Telecaller</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 110, minWidth: 110, backgroundColor: '#f5f5f5' }}>Center</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 100, minWidth: 100, backgroundColor: '#f5f5f5' }}>Status</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 120, minWidth: 120, backgroundColor: '#f5f5f5' }}>Subject</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 150, minWidth: 150, backgroundColor: '#f5f5f5' }}>Message</TableCell>
-                   <TableCell sx={{ fontWeight: 600, width: 100, minWidth: 100, backgroundColor: '#f5f5f5' }}>Date</TableCell>
                    <TableCell 
                      sx={{ 
-                       fontWeight: 600, 
-                       width: 170,
-                       minWidth: 170,
-                       maxWidth: 170,
-                       position: 'sticky', 
-                       right: 0, 
-                       backgroundColor: '#f5f5f5 !important',
+                       fontWeight: 700, 
+                       fontSize: '0.85rem',
+                       width: `${columnWidths.name}px`,
+                       maxWidth: `${columnWidths.name}px`,
+                       minWidth: `${columnWidths.name}px`,
+                       position: 'sticky',
+                       left: 0,
+                       background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%) !important',
+                       color: 'white',
+                       borderBottom: '3px solid #ff6b35',
+                       borderRight: '3px solid #ff5722',
+                       py: 2,
+                       textTransform: 'uppercase',
+                       letterSpacing: '0.5px',
                        zIndex: 1100,
-                       boxShadow: '-4px 0 8px rgba(0,0,0,0.15)',
-                       borderLeft: '2px solid #e0e0e0'
+                       boxShadow: '6px 0 12px rgba(255, 107, 53, 0.2)',
+                       whiteSpace: 'nowrap',
+                       overflow: 'visible'
                      }}
                    >
-                     Actions
+                     <Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                       👤 Name
+                       <Box
+                         onMouseDown={(e) => handleMouseDown('name', e)}
+                         sx={{
+                           position: 'absolute',
+                           right: '-4px',
+                           top: '-16px',
+                           bottom: '-16px',
+                           width: '8px',
+                           cursor: 'col-resize',
+                           backgroundColor: isResizing === 'name' ? 'rgba(255, 255, 255, 0.7)' : 'transparent',
+                           '&:hover': {
+                             backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                             borderRight: '2px solid white'
+                           },
+                           zIndex: 10,
+                           userSelect: 'none'
+                         }}
+                       />
+                     </Box>
+                   </TableCell>
+                   {userProfile?.role !== 'audiologist' && (
+                     <TableCell sx={{ 
+                       fontWeight: 700, 
+                       fontSize: '0.85rem',
+                       width: `${columnWidths.phone}px`,
+                       maxWidth: `${columnWidths.phone}px`,
+                       minWidth: `${columnWidths.phone}px`,
+                       background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
+                       color: 'white',
+                       borderBottom: '3px solid #ff6b35',
+                       py: 2,
+                       textTransform: 'uppercase',
+                       letterSpacing: '0.5px',
+                       whiteSpace: 'nowrap',
+                       overflow: 'visible'
+                     }}>
+                       <Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                         📞 Phone
+                         <Box
+                           onMouseDown={(e) => handleMouseDown('phone', e)}
+                           sx={{
+                             position: 'absolute',
+                             right: '-4px',
+                             top: '-16px',
+                             bottom: '-16px',
+                             width: '8px',
+                             cursor: 'col-resize',
+                             backgroundColor: isResizing === 'phone' ? 'rgba(255, 255, 255, 0.7)' : 'transparent',
+                             '&:hover': {
+                               backgroundColor: 'rgba(255, 255, 255, 0.5)',
+                               borderRight: '2px solid white'
+                             },
+                             zIndex: 10,
+                             userSelect: 'none'
+                           }}
+                         />
+                       </Box>
+                     </TableCell>
+                   )}
+                   <TableCell sx={{ 
+                     fontWeight: 700, 
+                     fontSize: '0.85rem',
+                     width: `${columnWidths.email}px`,
+                     maxWidth: `${columnWidths.email}px`,
+                     minWidth: `${columnWidths.email}px`,
+                     background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
+                     color: 'white',
+                     borderBottom: '3px solid #ff6b35',
+                     py: 2,
+                     textTransform: 'uppercase',
+                     letterSpacing: '0.5px',
+                     overflow: 'visible'
+                   }}>
+                     <Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                       📧 Email
+                       <Box onMouseDown={(e) => handleMouseDown('email', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'email' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} />
+                     </Box>
+                   </TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.address}px`, maxWidth: `${columnWidths.address}px`, minWidth: `${columnWidths.address}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏠 Address<Box onMouseDown={(e) => handleMouseDown('address', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'address' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.reference}px`, maxWidth: `${columnWidths.reference}px`, minWidth: `${columnWidths.reference}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🔖 Reference<Box onMouseDown={(e) => handleMouseDown('reference', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'reference' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>👔 Assigned To<Box onMouseDown={(e) => handleMouseDown('assignedTo', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'assignedTo' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📱 Telecaller<Box onMouseDown={(e) => handleMouseDown('telecaller', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'telecaller' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏢 Center<Box onMouseDown={(e) => handleMouseDown('center', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'center' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📊 Status<Box onMouseDown={(e) => handleMouseDown('status', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'status' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📝 Subject<Box onMouseDown={(e) => handleMouseDown('subject', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'subject' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>💬 Message<Box onMouseDown={(e) => handleMouseDown('message', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'message' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📅 Date<Box onMouseDown={(e) => handleMouseDown('date', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'date' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   <TableCell 
+                     sx={{ 
+                       fontWeight: 700, 
+                       fontSize: '0.85rem',
+                       width: `${columnWidths.actions}px`,
+                       position: 'sticky', 
+                       right: 0, 
+                       background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%) !important',
+                       color: 'white',
+                       zIndex: 1100,
+                       boxShadow: '-8px 0 16px rgba(255, 107, 53, 0.3)',
+                       borderLeft: '3px solid #ff5722',
+                       borderBottom: '3px solid #ff6b35',
+                       py: 2,
+                       textTransform: 'uppercase',
+                       letterSpacing: '0.5px',
+                       textAlign: 'center'
+                     }}
+                   >
+                     ⚡ Actions
                    </TableCell>
             </TableRow>
           </TableHead>
@@ -4247,138 +4550,165 @@ export default function EnquiriesPage() {
                    <TableRow 
                      key={enquiry.id}
                      sx={{
-                       '&:nth-of-type(even)': { backgroundColor: '#fafafa' },
-                       '&:hover': { backgroundColor: '#f0f7ff !important' }
+                       '&:nth-of-type(even)': { backgroundColor: '#f8f9fa' },
+                       '&:nth-of-type(odd)': { backgroundColor: '#ffffff' },
+                       '&:hover': { 
+                         backgroundColor: '#e3f2fd !important',
+                         transform: 'scale(1.001)',
+                         boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)',
+                         transition: 'all 0.2s ease-in-out'
+                       },
+                       borderBottom: '1px solid #e0e0e0'
                      }}
                    >
-                     <TableCell sx={{ width: 160, minWidth: 160 }}>
-                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                         <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', backgroundColor: 'primary.main' }}>
+                     <TableCell sx={{ 
+                       width: `${columnWidths.name}px`,
+                       maxWidth: `${columnWidths.name}px`,
+                       minWidth: `${columnWidths.name}px`,
+                       position: 'sticky',
+                       left: 0,
+                       backgroundColor: (index % 2 === 0 ? '#ffffff' : '#f8f9fa') + ' !important',
+                       py: 2.5,
+                       borderRight: '3px solid #ff5722',
+                       zIndex: 1000,
+                       boxShadow: '6px 0 12px rgba(255, 107, 53, 0.15)',
+                       whiteSpace: 'nowrap',
+                       overflow: 'hidden',
+                       textOverflow: 'ellipsis'
+                     }}>
+                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                         <Avatar sx={{ 
+                           width: 36, 
+                           height: 36, 
+                           fontSize: '0.875rem', 
+                           background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
+                           fontWeight: 600,
+                           boxShadow: '0 2px 8px rgba(255, 107, 53, 0.3)',
+                           flexShrink: 0
+                         }}>
                         {getInitials(enquiry.name)}
                       </Avatar>
-                         <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
+                         <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', fontWeight: 500, color: '#333' }}>
                            {enquiry.name || '-'}
                          </Typography>
                     </Box>
                   </TableCell>
                      {userProfile?.role !== 'audiologist' && (
-                       <TableCell sx={{ width: 120, minWidth: 120 }}>
-                         <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
-                           {enquiry.phone || '-'}
-                         </Typography>
-                       </TableCell>
+                       <TableCell sx={{ width: `${columnWidths.phone}px`, maxWidth: `${columnWidths.phone}px`, minWidth: `${columnWidths.phone}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.phone || '-'}</Typography></TableCell>
                      )}
-                     <TableCell sx={{ width: 180, minWidth: 180 }}>
-                       <Typography variant="body2" noWrap title={enquiry.email || ''} sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.email || '-'}
-                       </Typography>
-                  </TableCell>
-                     <TableCell sx={{ width: 150, minWidth: 150 }}>
-                       <Typography variant="body2" noWrap title={enquiry.address || ''} sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.address || '-'}
-                       </Typography>
-                     </TableCell>
-                     <TableCell sx={{ width: 100, minWidth: 100 }}>
-                       <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.reference || '-'}
-                       </Typography>
-                     </TableCell>
-                     <TableCell sx={{ width: 100, minWidth: 100 }}>
-                       <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.assignedTo || '-'}
-                       </Typography>
-                     </TableCell>
-                     <TableCell sx={{ width: 100, minWidth: 100 }}>
-                       <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.telecaller || '-'}
-                       </Typography>
-                     </TableCell>
-                     <TableCell sx={{ width: 110, minWidth: 110 }}>
-                       <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.visitingCenter || '-'}
-                       </Typography>
-                     </TableCell>
-                     <TableCell sx={{ width: 100, minWidth: 100 }}>
-                       <Chip 
-                         label={enquiry.visitStatus || 'enquiry'} 
-                         size="small" 
-                         sx={{ fontSize: '0.7rem', height: '20px' }}
-                         color={
-                           enquiry.visitStatus === 'completed' ? 'success' :
-                           enquiry.visitStatus === 'visited' ? 'info' :
-                           enquiry.visitStatus === 'scheduled' ? 'warning' : 'default'
-                         }
-                       />
-                     </TableCell>
-                     <TableCell sx={{ width: 120, minWidth: 120 }}>
-                       <Typography variant="body2" noWrap title={enquiry.subject || ''} sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.subject || '-'}
-                       </Typography>
-                     </TableCell>
-                     <TableCell sx={{ width: 150, minWidth: 150 }}>
-                       <Typography variant="body2" noWrap title={enquiry.message || ''} sx={{ fontSize: '0.8rem' }}>
-                         {enquiry.message || '-'}
-                       </Typography>
-                     </TableCell>
-                     <TableCell sx={{ width: 100, minWidth: 100 }}>
-                       <Typography variant="body2" noWrap sx={{ fontSize: '0.8rem' }}>
-                         {formatDate(enquiry)}
-                       </Typography>
-                     </TableCell>
+                     <TableCell sx={{ width: `${columnWidths.email}px`, maxWidth: `${columnWidths.email}px`, minWidth: `${columnWidths.email}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.email || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.email || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.address}px`, maxWidth: `${columnWidths.address}px`, minWidth: `${columnWidths.address}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.address || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.address || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.reference}px`, maxWidth: `${columnWidths.reference}px`, minWidth: `${columnWidths.reference}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip label={enquiry.reference || '-'} size="small" sx={{ fontSize: '0.75rem', height: '24px', backgroundColor: '#fff3e0', color: '#ff6b35', fontWeight: 500 }} /></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.assignedTo || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.telecaller || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip label={getCenterName(enquiry.center)} size="small" sx={{ fontSize: '0.75rem', height: '24px', backgroundColor: '#e3f2fd', color: '#1976d2', fontWeight: 500 }} /></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip label={enquiry.visitStatus || 'enquiry'} size="small" sx={{ fontSize: '0.75rem', height: '24px', fontWeight: 500 }} color={enquiry.visitStatus === 'completed' ? 'success' : enquiry.visitStatus === 'visited' ? 'info' : enquiry.visitStatus === 'scheduled' ? 'warning' : 'default'} /></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.subject || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.subject || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.message || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.message || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555', fontWeight: 500 }}>{formatDate(enquiry)}</Typography></TableCell>
                      <TableCell 
                        sx={{ 
-                         width: 170,
-                         minWidth: 170,
-                         maxWidth: 170,
+                         width: `${columnWidths.actions}px`,
+                         maxWidth: `${columnWidths.actions}px`,
+                         minWidth: `${columnWidths.actions}px`,
                          position: 'sticky', 
                          right: 0, 
-                         backgroundColor: (index % 2 === 0 ? '#ffffff' : '#fafafa') + ' !important',
+                         backgroundColor: (index % 2 === 0 ? '#ffffff' : '#f8f9fa') + ' !important',
                          zIndex: 1000,
-                         boxShadow: '-4px 0 8px rgba(0,0,0,0.15)',
-                         borderLeft: '2px solid #e0e0e0'
+                         boxShadow: '-8px 0 16px rgba(255, 107, 53, 0.2)',
+                         borderLeft: '3px solid #ff5722',
+                         py: 2.5
                        }}
                      >
-                       <Box sx={{ display: 'flex', gap: 0.5 }}>
+                       <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center', alignItems: 'center' }}>
                     {userProfile?.role !== 'audiologist' && (
-                      <Tooltip title="View Details">
+                      <Tooltip title="View Details" arrow>
                              <IconButton 
                                size="small" 
                                onClick={() => handleOpenDetailDialog(enquiry)}
-                               sx={{ color: 'primary.main' }}
+                               sx={{ 
+                                 color: 'white',
+                                 background: 'linear-gradient(135deg, #1976d2 0%, #1565c0 100%)',
+                                 '&:hover': { 
+                                   background: 'linear-gradient(135deg, #1565c0 0%, #0d47a1 100%)',
+                                   transform: 'scale(1.15)',
+                                   boxShadow: '0 4px 12px rgba(25, 118, 210, 0.5)'
+                                 },
+                                 transition: 'all 0.2s ease-in-out',
+                                 width: 32,
+                                 height: 32
+                               }}
                              >
-                               <VisibilityIcon fontSize="small" />
+                               <VisibilityIcon sx={{ fontSize: '1rem' }} />
                         </IconButton>
                       </Tooltip>
                     )}
-                    <Tooltip title="Edit">
+                    <Tooltip title="Edit" arrow>
                            <IconButton 
                              size="small" 
                              onClick={() => handleEdit(enquiry)}
-                             sx={{ color: 'secondary.main' }}
+                             sx={{ 
+                               color: 'white',
+                               background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
+                               '&:hover': { 
+                                 background: 'linear-gradient(135deg, #ff5722 0%, #ff6b35 100%)',
+                                 transform: 'scale(1.15)',
+                                 boxShadow: '0 4px 12px rgba(255, 107, 53, 0.5)'
+                               },
+                               transition: 'all 0.2s ease-in-out',
+                               width: 32,
+                               height: 32
+                             }}
                            >
-                             <EditIcon fontSize="small" />
+                             <EditIcon sx={{ fontSize: '1rem' }} />
                       </IconButton>
                     </Tooltip>
                     {userProfile?.role !== 'audiologist' && (
-                      <Tooltip title="Convert to Visitor">
+                      <Tooltip title="Convert to Visitor" arrow>
                         <IconButton 
                                size="small"
                           onClick={() => handleOpenConvertDialog(enquiry)}
-                               sx={{ color: 'success.main' }}
+                               sx={{ 
+                                 color: 'white',
+                                 background: 'linear-gradient(135deg, #388e3c 0%, #2e7d32 100%)',
+                                 '&:hover': { 
+                                   background: 'linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%)',
+                                   transform: 'scale(1.15)',
+                                   boxShadow: '0 4px 12px rgba(56, 142, 60, 0.5)'
+                                 },
+                                 transition: 'all 0.2s ease-in-out',
+                                 width: 32,
+                                 height: 32,
+                                 '&:disabled': {
+                                   background: '#bdbdbd',
+                                   color: '#757575'
+                                 }
+                               }}
                           disabled={enquiry.status === 'converted'}
                         >
-                               <PersonAddIcon fontSize="small" />
+                               <PersonAddIcon sx={{ fontSize: '1rem' }} />
                         </IconButton>
                       </Tooltip>
                     )}
                     {userProfile?.role === 'admin' && (
-                      <Tooltip title="Delete">
+                      <Tooltip title="Delete" arrow>
                              <IconButton 
                                size="small" 
                                onClick={() => handleOpenDeleteDialog(enquiry)}
-                               sx={{ color: 'error.main' }}
+                               sx={{ 
+                                 color: 'white',
+                                 background: 'linear-gradient(135deg, #d32f2f 0%, #c62828 100%)',
+                                 '&:hover': { 
+                                   background: 'linear-gradient(135deg, #c62828 0%, #b71c1c 100%)',
+                                   transform: 'scale(1.15)',
+                                   boxShadow: '0 4px 12px rgba(211, 47, 47, 0.5)'
+                                 },
+                                 transition: 'all 0.2s ease-in-out',
+                                 width: 32,
+                                 height: 32
+                               }}
                              >
-                               <DeleteIcon fontSize="small" />
+                               <DeleteIcon sx={{ fontSize: '1rem' }} />
                         </IconButton>
                       </Tooltip>
                     )}
@@ -4401,9 +4731,22 @@ export default function EnquiriesPage() {
         onPageChange={handleChangePage}
         onRowsPerPageChange={handleChangeRowsPerPage}
         sx={{
-          borderTop: '1px solid',
-          borderColor: 'divider',
-          bgcolor: 'background.paper'
+          borderTop: '3px solid #ff6b35',
+          background: 'linear-gradient(to right, #fff5f0 0%, #ffffff 100%)',
+          fontWeight: 500,
+          '& .MuiTablePagination-toolbar': {
+            minHeight: 64
+          },
+          '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+            fontWeight: 500,
+            color: '#333'
+          },
+          '& .MuiTablePagination-actions button': {
+            color: '#ff6b35',
+            '&:hover': {
+              backgroundColor: '#fff3e0'
+            }
+          }
         }}
       />
        </Paper>
@@ -5938,7 +6281,7 @@ export default function EnquiriesPage() {
           {alert.message}
         </Alert>
       </Snackbar>
-      </Box>
+      </Stack>
     </Box>
   );
 } 

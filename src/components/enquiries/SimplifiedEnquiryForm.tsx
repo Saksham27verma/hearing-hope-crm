@@ -319,14 +319,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const [staffManagementOpen, setStaffManagementOpen] = useState(false);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffByRole, setStaffByRole] = useState<Record<string, StaffMember[]>>({});
-  const [selectedRoles, setSelectedRoles] = useState<Record<string, string[]>>({
-    telecaller: ['Telecaller', 'Customer Support'],
-    assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
-    testBy: ['Audiologist', 'Technician'], 
-    programmingBy: ['Audiologist', 'Technician'],
-    sales: ['Sales Executive', 'Manager'],
-    general: JOB_ROLES
-  });
+  
+  // Load selectedRoles from localStorage or use defaults
+  const getInitialSelectedRoles = () => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('enquiryStaffRoles');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error('Failed to parse saved roles:', e);
+        }
+      }
+    }
+    return {
+      telecaller: ['Telecaller', 'Customer Support'],
+      assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
+      testBy: ['Audiologist', 'Technician'], 
+      programmingBy: ['Audiologist', 'Technician'],
+      sales: ['Sales Executive', 'Manager'],
+      general: JOB_ROLES
+    };
+  };
+  
+  const [selectedRoles, setSelectedRoles] = useState<Record<string, string[]>>(getInitialSelectedRoles());
   const [currentField, setCurrentField] = useState<keyof typeof selectedRoles>('telecaller');
   const [products, setProducts] = useState<any[]>([]);
   const [hearingAidProducts, setHearingAidProducts] = useState<Product[]>([]);
@@ -945,7 +961,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         remarks: ''
       });
     }
-  }, [open, isEditMode, enquiry, reset]);
+  }, [open, isEditMode, enquiry?.id, reset]);
 
   // Handle visit changes (single field)
   const updateVisit = (visitIndex: number, field: string, value: any) => {
@@ -6168,21 +6184,32 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
           <Button
             onClick={() => {
-              setSelectedRoles({
+              const defaultRoles = {
                 telecaller: ['Telecaller', 'Customer Support'],
                 assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
                 testBy: ['Audiologist', 'Technician'], 
                 programmingBy: ['Audiologist', 'Technician'],
                 sales: ['Sales Executive', 'Manager'],
                 general: JOB_ROLES
-              });
+              };
+              setSelectedRoles(defaultRoles);
+              // Save to localStorage immediately
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('enquiryStaffRoles', JSON.stringify(defaultRoles));
+              }
             }}
             sx={{ color: '#666' }}
           >
             Reset to Default
           </Button>
           <Button
-            onClick={() => setStaffManagementOpen(false)}
+            onClick={() => {
+              // Save selectedRoles to localStorage
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('enquiryStaffRoles', JSON.stringify(selectedRoles));
+              }
+              setStaffManagementOpen(false);
+            }}
             variant="contained"
             sx={{
               bgcolor: '#ff6b35',

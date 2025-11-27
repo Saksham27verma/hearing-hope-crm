@@ -51,8 +51,11 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import DownloadIcon from '@mui/icons-material/Download';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import ImageIcon from '@mui/icons-material/Image';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { db } from '@/firebase/config';
-import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc, where } from 'firebase/firestore';
+import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc, where, updateDoc, deleteDoc } from 'firebase/firestore';
+import { useAuth } from '@/context/AuthContext';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
@@ -96,9 +99,12 @@ export default function AppointmentSchedulerPage() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isTablet = useMediaQuery(theme.breakpoints.down('md'));
+  const { userProfile } = useAuth();
   
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editingAppointmentId, setEditingAppointmentId] = useState<string | null>(null);
   const [openPreview, setOpenPreview] = useState(false);
   const [previewAppt, setPreviewAppt] = useState<Appointment | null>(null);
   const [previewPatientPhone, setPreviewPatientPhone] = useState<string>('');
@@ -117,6 +123,11 @@ export default function AppointmentSchedulerPage() {
   const [selectedCenter, setSelectedCenter] = useState<string>('all');
   const [selectedExecutive, setSelectedExecutive] = useState<string>('all');
   const [exportMenuAnchor, setExportMenuAnchor] = useState<null | HTMLElement>(null);
+  
+  // Role-based permissions
+  const isAdmin = userProfile?.role === 'admin';
+  const canEdit = isAdmin || userProfile?.role === 'staff';
+  const canDelete = isAdmin;
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -231,13 +242,16 @@ export default function AppointmentSchedulerPage() {
       if (!newAppt.patientName) throw new Error('Select a patient');
       if (newAppt.type === 'center' && !newAppt.centerId) throw new Error('Select a center');
       if (newAppt.type === 'home' && !newAppt.homeVisitorStaffId) throw new Error('Select staff for home visit');
-      if (newAppt.id) {
-        await addDoc(collection(db, 'appointments'), {
+      
+      if (isEditMode && editingAppointmentId) {
+        // Update existing appointment
+        await updateDoc(doc(db, 'appointments', editingAppointmentId), {
           ...newAppt,
-          createdAt: serverTimestamp(),
+          title: newAppt.patientName || newAppt.title || '',
           updatedAt: serverTimestamp(),
         });
       } else {
+        // Create new appointment
         await addDoc(collection(db, 'appointments'), {
           ...newAppt,
           title: newAppt.patientName || newAppt.title || '',
@@ -245,14 +259,45 @@ export default function AppointmentSchedulerPage() {
           updatedAt: serverTimestamp(),
         });
       }
+      
       const q = query(collection(db, 'appointments'), orderBy('start', 'asc'));
       const snap = await getDocs(q);
       setAppointments(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Appointment[]);
       setOpenDialog(false);
-    } catch (e) {
+      setIsEditMode(false);
+      setEditingAppointmentId(null);
+      setNewAppt(defaultNewAppointment);
+    } catch (e: any) {
       console.error(e);
+      alert(e.message || 'Failed to save appointment');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleEdit = () => {
+    if (!previewAppt || !previewAppt.id) return;
+    setNewAppt(previewAppt);
+    setIsEditMode(true);
+    setEditingAppointmentId(previewAppt.id);
+    setOpenPreview(false);
+    setOpenDialog(true);
+  };
+
+  const handleDelete = async () => {
+    if (!previewAppt || !previewAppt.id) return;
+    if (!confirm(`Are you sure you want to delete this appointment for ${previewAppt.patientName}?`)) return;
+    
+    try {
+      await deleteDoc(doc(db, 'appointments', previewAppt.id));
+      const q = query(collection(db, 'appointments'), orderBy('start', 'asc'));
+      const snap = await getDocs(q);
+      setAppointments(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Appointment[]);
+      setOpenPreview(false);
+      alert('Appointment deleted successfully');
+    } catch (e) {
+      console.error(e);
+      alert('Failed to delete appointment');
     }
   };
 
@@ -756,14 +801,39 @@ export default function AppointmentSchedulerPage() {
             <Typography>Loading...</Typography>
           )}
         </DialogContent>
-        <DialogActions sx={{ p: { xs: 1.5, sm: 2 } }}>
+        <DialogActions sx={{ p: { xs: 1.5, sm: 2 }, gap: 1, flexDirection: { xs: 'column-reverse', sm: 'row' } }}>
           <Button 
             onClick={() => setOpenPreview(false)}
-            variant="contained"
+            variant="outlined"
             fullWidth={isMobile}
           >
             Close
           </Button>
+          {canEdit && (
+            <Button 
+              onClick={handleEdit}
+              variant="contained"
+              startIcon={<EditIcon />}
+              fullWidth={isMobile}
+              sx={{ 
+                bgcolor: '#ff6b35',
+                '&:hover': { bgcolor: '#ff5722' }
+              }}
+            >
+              Edit
+            </Button>
+          )}
+          {canDelete && (
+            <Button 
+              onClick={handleDelete}
+              variant="contained"
+              color="error"
+              startIcon={<DeleteIcon />}
+              fullWidth={isMobile}
+            >
+              Delete
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 
@@ -897,7 +967,12 @@ export default function AppointmentSchedulerPage() {
       {/* New/Edit Appointment Dialog - Mobile Responsive */}
       <Dialog 
         open={openDialog} 
-        onClose={() => setOpenDialog(false)} 
+        onClose={() => {
+          setOpenDialog(false);
+          setIsEditMode(false);
+          setEditingAppointmentId(null);
+          setNewAppt(defaultNewAppointment);
+        }} 
         fullWidth 
         maxWidth="md"
             fullScreen={isMobile}
@@ -915,8 +990,8 @@ export default function AppointmentSchedulerPage() {
           fontSize: { xs: '1.1rem', sm: '1.25rem' },
           p: { xs: 2, sm: 3 }
         }}>
-          <EventAvailableIcon color="primary" sx={{ fontSize: { xs: '1.2rem', sm: '1.5rem' } }} /> 
-          {newAppt.id ? 'Edit Appointment' : 'New Appointment'}
+          {isEditMode ? <EditIcon color="primary" sx={{ fontSize: { xs: '1.2rem', sm: '1.5rem' } }} /> : <EventAvailableIcon color="primary" sx={{ fontSize: { xs: '1.2rem', sm: '1.5rem' } }} />}
+          {isEditMode ? 'Edit Appointment' : 'New Appointment'}
         </DialogTitle>
         <DialogContent dividers sx={{ pt: { xs: 2, sm: 3 }, pb: { xs: 2, sm: 3 }, px: { xs: 2, sm: 3 } }}>
           <LocalizationProvider dateAdapter={AdapterDateFns}>
