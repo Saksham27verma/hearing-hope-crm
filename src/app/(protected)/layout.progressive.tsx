@@ -86,7 +86,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       <div style={sidebarStyle}>
         <div style={{ padding: '20px 16px', borderBottom: '1px solid rgba(255,255,255,0.2)' }}>
           <h2 style={{ margin: 0, fontSize: sidebarOpen ? '18px' : '0px', overflow: 'hidden' }}>
-            {sidebarOpen ? 'Hope CRM' : ''}
+            {sidebarOpen ? 'Hearing Hope CRM' : ''}
           </h2>
         </div>
         <nav>
