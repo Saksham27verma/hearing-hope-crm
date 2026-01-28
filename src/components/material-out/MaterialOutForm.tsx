@@ -56,7 +56,7 @@ import {
 
 const Grid = MuiGrid;
 
-interface Product { id: string; name: string; type: string; company: string; mrp: number; dealerPrice?: number; gstApplicable?: boolean; quantityType?: 'piece' | 'pair'; }
+interface Product { id: string; name: string; type: string; company: string; mrp: number; dealerPrice?: number; gstApplicable?: boolean; quantityType?: 'piece' | 'pair'; hasSerialNumber?: boolean; }
 interface Party { id: string; name: string; category?: string; gstType?: string; phone?: string; email?: string; address?: string; }
 interface MaterialProduct { productId: string; name: string; type: string; serialNumbers: string[]; quantity: number; dealerPrice?: number; mrp?: number; discountPercent?: number; discountAmount?: number; finalPrice?: number; gstApplicable?: boolean; remarks?: string; quantityType?: 'piece' | 'pair'; condition?: string; }
 interface MaterialOutward { id?: string; challanNumber: string; recipient: { id: string; name: string; }; reason?: string; company: string; products: MaterialProduct[]; totalAmount: number; dispatchDate: Timestamp; notes?: string; createdAt?: Timestamp; updatedAt?: Timestamp; }
@@ -132,14 +132,32 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
   };
 
   const handleProductSelect = (product: Product | null) => {
-    setCurrentProduct(product);
-    if (product) { setMrp(product.mrp || 0); setDealerPrice(product.dealerPrice || 0); setSerialNumbers([]); setQuantity(1); }
-    else { setMrp(0); setDealerPrice(0); setSerialNumbers([]); setQuantity(1); }
+    const fullProduct = product ? (products.find(p => p.id === product.id) || product) : null;
+    setCurrentProduct(fullProduct);
+
+    if (fullProduct) {
+      setMrp(fullProduct.mrp || 0);
+      setDealerPrice(fullProduct.dealerPrice || 0);
+      setSerialNumbers([]);
+      setSerialNumber('');
+      setQuantity(1);
+    } else {
+      setMrp(0);
+      setDealerPrice(0);
+      setSerialNumbers([]);
+      setSerialNumber('');
+      setQuantity(1);
+    }
+
     // compute available serials and quantity from inventory for selected product
-    if (product) {
-      const serials = availableItems.filter(i => i.productId === product.id && i.isSerialTracked && i.serialNumber).map(i => i.serialNumber!)
+    if (fullProduct) {
+      const serials = availableItems
+        .filter(i => i.productId === fullProduct.id && i.isSerialTracked && i.serialNumber)
+        .map(i => i.serialNumber!);
       setAvailableSerials(serials);
-      const qty = availableItems.filter(i => i.productId === product.id && !i.isSerialTracked).reduce((s, i) => s + (i.quantity || 0), 0);
+      const qty = availableItems
+        .filter(i => i.productId === fullProduct.id && !i.isSerialTracked)
+        .reduce((s, i) => s + (i.quantity || 0), 0);
       setAvailableQty(qty);
     } else {
       setAvailableSerials([]);
@@ -147,10 +165,33 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
     }
   };
 
+  const isSerialRequiredForCurrent = useMemo(() => {
+    if (!currentProduct) return false;
+    return !!currentProduct.hasSerialNumber || availableSerials.length > 0;
+  }, [currentProduct, availableSerials.length]);
+
+  const addManualSerials = () => {
+    if (!serialNumber.trim()) return;
+    const parts = serialNumber
+      .split(/[\n,; ]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (!parts.length) return;
+    const next = Array.from(new Set([...serialNumbers, ...parts]));
+    setSerialNumbers(next);
+    setSerialNumber('');
+    setQuantity(next.length);
+    setErrors(prev => {
+      const out = { ...prev };
+      delete out.serialNumbers;
+      return out;
+    });
+  };
+
   const addProduct = () => {
     if (!currentProduct) { setErrors({ product: 'Please select a product' }); return; }
-    const isSerialTracked = availableSerials.length > 0;
-    if (isSerialTracked && serialNumbers.length === 0) { setErrors({ serialNumbers: 'Please select serial numbers from available inventory' }); return; }
+    const isSerialTracked = isSerialRequiredForCurrent;
+    if (isSerialTracked && serialNumbers.length === 0) { setErrors({ serialNumbers: 'Serial numbers are required for this product' }); return; }
     if (!isSerialTracked && quantity <= 0) { setErrors({ quantity: 'Quantity must be greater than 0' }); return; }
     if (isSerialTracked && quantity !== serialNumbers.length) { setErrors({ serialNumbers: `Serials (${serialNumbers.length}) do not match qty (${quantity})` }); return; }
     if (!isSerialTracked && availableQty > 0 && quantity > availableQty) { setErrors({ quantity: `Only ${availableQty} available in inventory` }); return; }
@@ -300,9 +341,11 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
               <Box>
                 <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2 }}>
                   <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
-                    <CalculateIcon fontSize="small" sx={{ mr: 1 }} /> Step 2: {availableSerials.length > 0 ? 'Select Serials' : 'Enter Quantity'}
+                    <CalculateIcon fontSize="small" sx={{ mr: 1 }} /> Step 2: {isSerialRequiredForCurrent ? 'Serial Numbers' : 'Enter Quantity'}
                   </Typography>
-                  {availableSerials.length > 0 ? (
+                  {isSerialRequiredForCurrent ? (
+                    <>
+                      {availableSerials.length > 0 ? (
                     <Autocomplete
                       multiple
                       options={availableSerials}
@@ -310,6 +353,44 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                       onChange={(_, vals) => { setSerialNumbers(vals); setQuantity(vals.length || 0); setErrors({}); }}
                       renderInput={(params) => <TextField {...params} label={`Select available serials (${availableSerials.length} available)`} placeholder="Type to search serials" />}
                     />
+                      ) : (
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                          <TextField
+                            label="Enter serial numbers"
+                            value={serialNumber}
+                            onChange={(e) => setSerialNumber(e.target.value)}
+                            placeholder="Type serials (comma/space separated) and click Add"
+                            error={!!errors.serialNumbers}
+                            helperText={errors.serialNumbers || 'Example: SN001, SN002'}
+                            fullWidth
+                          />
+                          <Button variant="outlined" onClick={addManualSerials} sx={{ mt: { xs: 1, sm: 0 } }}>
+                            Add
+                          </Button>
+                          {serialNumbers.length > 0 && (
+                            <Box sx={{ width: '100%' }}>
+                              <Typography variant="caption" color="text.secondary">
+                                Selected: {serialNumbers.length}
+                              </Typography>
+                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+                                {serialNumbers.map((sn) => (
+                                  <Chip
+                                    key={sn}
+                                    label={sn}
+                                    size="small"
+                                    onDelete={() => {
+                                      const next = serialNumbers.filter(s => s !== sn);
+                                      setSerialNumbers(next);
+                                      setQuantity(next.length);
+                                    }}
+                                  />
+                                ))}
+                              </Box>
+                            </Box>
+                          )}
+                        </Box>
+                      )}
+                    </>
                   ) : (
                     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
                       <TextField

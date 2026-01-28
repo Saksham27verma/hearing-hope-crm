@@ -295,9 +295,10 @@ const StockTransferPage = () => {
       
       materialsOutSnap.docs.forEach(docSnap => {
         const data: any = docSnap.data();
-        const status = data.status as string;
+        const status = (data.status as string) || 'dispatched';
         const notes = data.notes || '';
-        const isStockTransfer = notes.includes('Stock Transfer:');
+        const reason = data.reason || '';
+        const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
         
         (data.products || []).forEach((prod: any) => {
           (prod.serialNumbers || []).forEach((sn: string) => {
@@ -466,6 +467,8 @@ const StockTransferPage = () => {
         const companyLocation = data.company || '';
         const documentLocation = data.location || headOfficeId;
         const notes = data.notes || '';
+        const reason = data.reason || '';
+        const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
         
         (data.products || []).forEach((prod: any) => {
           const productId = prod.productId || prod.id;
@@ -475,7 +478,7 @@ const StockTransferPage = () => {
           const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
           
           if (!hasSerial && (!serials || serials.length === 0) && prod.quantity) {
-            if (notes.includes('Stock Transfer:')) {
+            if (isStockTransfer) {
               let shouldSkip = false;
               (data.products || []).forEach((p: any) => {
                 (p.serialNumbers || []).forEach((sn: string) => {

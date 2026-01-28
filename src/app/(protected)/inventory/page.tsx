@@ -85,7 +85,7 @@ interface InventoryItem {
   company: string;
   originalProductCompany?: string; // Original product company from products collection
   location: string;
-  status: 'In Stock' | 'Sold' | 'Damaged';
+  status: 'In Stock' | 'Sold' | 'Reserved' | 'Damaged';
   dealerPrice: number;
   mrp: number;
   purchaseDate: any;
@@ -226,7 +226,10 @@ export default function InventoryPage() {
           // Check if this is a stock transfer entry
           if (supplierName.includes('Stock Transfer from')) {
             (data.products || []).forEach((prod: any) => {
-              (prod.serialNumbers || []).forEach((sn: string) => {
+              const serialArray: string[] = Array.isArray(prod.serialNumbers)
+                ? prod.serialNumbers
+                : (prod.serialNumber ? [prod.serialNumber] : []);
+              serialArray.forEach((sn: string) => {
                 stockTransferInSerials.add(`${prod.productId || prod.id || ''}|${sn}`);
               });
             });
@@ -239,13 +242,17 @@ export default function InventoryPage() {
         const stockTransferOutSerials = new Map<string, string>(); // key: serial key, value: source location
         materialsOutSnap.docs.forEach(docSnap => {
           const data: any = docSnap.data();
-          const status = data.status as string;
+          const rawStatus = (data.status as string) || '';
           const notes = data.notes || '';
+          const reason = data.reason || '';
           const documentLocation = data.location || headOfficeId;
-          const isStockTransfer = notes.includes('Stock Transfer:');
+          const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
           
           (data.products || []).forEach((prod: any) => {
-            (prod.serialNumbers || []).forEach((sn: string) => {
+            const serialArray: string[] = Array.isArray(prod.serialNumbers)
+              ? prod.serialNumbers
+              : (prod.serialNumber ? [prod.serialNumber] : []);
+            serialArray.forEach((sn: string) => {
               const key = `${prod.productId || prod.id || ''}|${sn}`;
               
               // For stock transfers, track which location the serial was transferred from
@@ -256,19 +263,13 @@ export default function InventoryPage() {
                 }
                 // Track that this serial was transferred out from this location
                 stockTransferOutSerials.set(key, documentLocation);
-                // Remove from incomingMap if it exists at this location
-                const existingItem = Array.from(incomingMap.values()).find(
-                  item => item.productId === (prod.productId || prod.id) && 
-                          item.serialNumber === sn && 
-                          item.location === documentLocation
-                );
-                if (existingItem) {
-                  incomingMap.delete(`${prod.productId || prod.id || ''}|${sn}`);
-                }
               } else {
                 // Regular materials out (not stock transfers)
+                // If status is missing (older docs), treat as dispatched so inventory is reduced.
+                const status = rawStatus || 'dispatched';
+                if (status === 'returned') return;
                 if (status === 'pending') pendingOutSerials.add(key);
-                if (status === 'dispatched') dispatchedOutSerials.add(key);
+                else dispatchedOutSerials.add(key);
               }
             });
           });
@@ -378,11 +379,33 @@ export default function InventoryPage() {
             }
             serials.forEach((sn: string, idx: number) => {
               const key = `${productId}|${sn}`;
-              if (incomingMap.has(key)) return;
+              const isStockTransferIn = supplierName.includes('Stock Transfer from');
+              if (incomingMap.has(key)) {
+                // Stock transfer IN should override the current location/company (move item)
+                if (isStockTransferIn) {
+                  const existing = incomingMap.get(key)!;
+                  incomingMap.set(key, {
+                    ...existing,
+                    location: documentLocation,
+                    company,
+                    purchaseDate: receivedDate,
+                    purchaseInvoice: data.challanNumber || existing.purchaseInvoice,
+                    supplier: supplierName || existing.supplier,
+                    sourceType: 'materialIn',
+                    sourceDocId: docSnap.id,
+                    updatedAt: data.updatedAt || receivedDate,
+                  });
+                }
+                return;
+              }
               
-              // Determine status based on sales
+              // Exclude items that were dispatched out (not available in inventory)
+              if (dispatchedOutSerials.has(key)) return;
+              
+              // Determine status based on sales / pending out
               const isSold = soldSerials.has(key);
-              const status: InventoryItem['status'] = isSold ? 'Sold' : 'In Stock';
+              const isReserved = pendingOutSerials.has(key);
+              const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
               incomingMap.set(key, {
                 id: `mi-${docSnap.id}-${idx}`,
@@ -450,9 +473,13 @@ export default function InventoryPage() {
               const key = `${productId}|${sn}`;
               if (incomingMap.has(key)) return; // already from material in (converted)
               
-              // Determine status based on sales
+              // Exclude items that were dispatched out (not available in inventory)
+              if (dispatchedOutSerials.has(key)) return;
+              
+              // Determine status based on sales / pending out
               const isSold = soldSerials.has(key);
-              const status: InventoryItem['status'] = isSold ? 'Sold' : 'In Stock';
+              const isReserved = pendingOutSerials.has(key);
+              const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
               incomingMap.set(key, {
                 id: `po-${docSnap.id}-${idx}`,
@@ -877,6 +904,8 @@ export default function InventoryPage() {
         return 'success';
       case 'Sold':
         return 'warning';
+      case 'Reserved':
+        return 'info';
       case 'Damaged':
         return 'error';
       default:

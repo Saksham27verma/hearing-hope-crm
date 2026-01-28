@@ -125,6 +125,7 @@ interface MaterialOut {
   reference?: string;
   challanFile?: string;
   dispatchDate: Timestamp;
+  status?: 'pending' | 'dispatched' | 'returned';
   reason?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
@@ -258,11 +259,13 @@ export default function MaterialOutPage() {
   // Build available inventory (only items in stock)
   const loadAvailableInventory = async () => {
     try {
-      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap] = await Promise.all([
+      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap] = await Promise.all([
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'materialInward')),
         getDocs(collection(db, 'purchases')),
         getDocs(collection(db, 'materialsOut')),
+        getDocs(collection(db, 'sales')),
+        getDocs(collection(db, 'enquiries')),
       ]);
 
       const prodMap: Record<string, any> = {};
@@ -294,23 +297,104 @@ export default function MaterialOutPage() {
       addInbound(materialInSnap.docs);
       addInbound(purchasesSnap.docs);
 
-      // Subtract outflows from materialsOut
-      materialsOutSnap.docs.forEach(d => {
-        const data: any = d.data();
+      // Track stock-transfer IN serials so we don't subtract transfer OUT globally
+      const stockTransferInSerials = new Set<string>();
+      materialInSnap.docs.forEach(docSnap => {
+        const data: any = docSnap.data();
+        const supplierName = data.supplier?.name || '';
+        if (!supplierName.includes('Stock Transfer from')) return;
         (data.products || []).forEach((p: any) => {
           const productId = p.productId || p.id;
           if (!productId) return;
-          const serialArray: string[] = Array.isArray(p.serialNumbers) ? p.serialNumbers : [];
+          const serialArray: string[] = Array.isArray(p.serialNumbers)
+            ? p.serialNumbers
+            : (p.serialNumber ? [p.serialNumber] : []);
+          serialArray.forEach(sn => {
+            if (sn) stockTransferInSerials.add(`${productId}|${String(sn)}`);
+          });
+        });
+      });
+
+      // Subtract outflows from materialsOut (skip stock transfers; those should move location, not reduce global stock)
+      materialsOutSnap.docs.forEach(d => {
+        const data: any = d.data();
+        const notes = data.notes || '';
+        const reason = data.reason || '';
+        const rawStatus = (data.status as string) || '';
+        const status = rawStatus || 'dispatched';
+        if (status === 'returned') return;
+
+        const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
+        (data.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id;
+          if (!productId) return;
+          const serialArray: string[] = Array.isArray(p.serialNumbers)
+            ? p.serialNumbers
+            : (p.serialNumber ? [p.serialNumber] : []);
           if (serialArray.length > 0) {
             if (!serialsByProduct[productId]) serialsByProduct[productId] = new Set<string>();
             serialArray.forEach(sn => {
+              // If this was a stock transfer, don't reduce global inventory
+              if (isStockTransfer) return;
               if (sn && serialsByProduct[productId].has(String(sn))) serialsByProduct[productId].delete(String(sn));
             });
           } else {
+            if (isStockTransfer) return;
             const q = Number(p.quantity ?? 0);
             if (!qtyByProduct[productId]) qtyByProduct[productId] = 0;
             qtyByProduct[productId] = Math.max(0, qtyByProduct[productId] - (isNaN(q) ? 0 : q));
           }
+        });
+      });
+
+      // Subtract sold items (sales + enquiry-embedded sales)
+      const subtractSerial = (productId: string, sn: string) => {
+        if (!productId || !sn) return;
+        const set = serialsByProduct[productId];
+        if (set && set.has(String(sn))) set.delete(String(sn));
+      };
+      const subtractQty = (productId: string, q: number) => {
+        if (!productId) return;
+        const qty = isNaN(q) ? 0 : q;
+        if (!qtyByProduct[productId]) qtyByProduct[productId] = 0;
+        qtyByProduct[productId] = Math.max(0, qtyByProduct[productId] - qty);
+      };
+
+      salesSnap.docs.forEach(docSnap => {
+        const data: any = docSnap.data();
+        (data.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const serialNumber = p.serialNumber || '';
+          if (serialNumber && serialNumber !== '-') {
+            subtractSerial(productId, serialNumber);
+          } else {
+            subtractQty(productId, Number(p.quantity || 1));
+          }
+        });
+      });
+
+      enquiriesSnap.docs.forEach(docSnap => {
+        const data: any = docSnap.data();
+        const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
+        visits.forEach((visit: any) => {
+          const isSale = !!(
+            visit?.hearingAidSale ||
+            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
+            visit?.journeyStage === 'sale' ||
+            visit?.hearingAidStatus === 'sold' ||
+            (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+          );
+          if (!isSale) return;
+          const products: any[] = Array.isArray(visit.products) ? visit.products : [];
+          products.forEach((p: any) => {
+            const productId = p.productId || p.id || p.hearingAidProductId || '';
+            const serialNumber = p.serialNumber || p.trialSerialNumber || '';
+            if (serialNumber && serialNumber !== '-') {
+              subtractSerial(productId, serialNumber);
+            } else if (productId) {
+              subtractQty(productId, Number(p.quantity || 1));
+            }
+          });
         });
       });
 
@@ -578,7 +662,12 @@ export default function MaterialOutPage() {
         return value;
       };
 
-      const sanitized = pruneUndefined(material) as MaterialOut;
+      // Ensure status is always set so Inventory deductions work reliably
+      const withDefaultStatus: MaterialOut = {
+        ...material,
+        status: (material as any).status || 'dispatched',
+      };
+      const sanitized = pruneUndefined(withDefaultStatus) as MaterialOut;
       if (material.id) {
         // Update existing material
         await updateDoc(doc(db, 'materialsOut', material.id), {
