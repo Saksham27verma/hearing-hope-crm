@@ -347,7 +347,8 @@ export default function AppointmentSchedulerPage() {
                     </div>
                   </div>
                   <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
-                    ${apt.type === 'center' && center ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Center:</strong> ${center.name}</p>` : ''}
+                    ${center ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Enquiry Center:</strong> ${center.name}</p>` : ''}
+                    ${apt.reference ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Reference:</strong> ${apt.reference}</p>` : ''}
                     ${apt.type === 'home' && staff ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Executive:</strong> ${staff.name}</p>` : ''}
                     ${apt.type === 'home' && apt.address ? `<p style="margin: 5px 0; color: #555; font-size: 14px;"><strong>Address:</strong> ${apt.address}</p>` : ''}
                     ${apt.notes ? `<p style="margin: 10px 0 0 0; color: #666; font-size: 13px; font-style: italic;">${apt.notes}</p>` : ''}
@@ -470,8 +471,13 @@ export default function AppointmentSchedulerPage() {
           pdf.setFontSize(10);
           pdf.setTextColor(80, 80, 80);
           
-          if (apt.type === 'center' && center) {
-            pdf.text(`Center: ${center.name}`, margin + 5, yPos);
+          if (center) {
+            pdf.text(`Enquiry Center: ${center.name}`, margin + 5, yPos);
+            yPos += 5;
+          }
+
+          if (apt.reference) {
+            pdf.text(`Reference: ${apt.reference}`, margin + 5, yPos);
             yPos += 5;
           }
           
