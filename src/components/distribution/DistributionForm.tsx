@@ -40,14 +40,12 @@ import {
   FormControlLabel,
   Switch,
 } from '@mui/material';
-
-// Just use MuiGrid directly
-const Grid = MuiGrid;
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp, collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { getHeadOfficeId } from '@/utils/centerUtils';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
@@ -67,6 +65,9 @@ import {
   Business as BusinessIcon,
   Close as CloseIcon,
 } from '@mui/icons-material';
+
+// Alias Grid to avoid type issues with MUI Grid variants
+const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
 interface Product {
   id: string;
@@ -236,162 +237,387 @@ const DistributionForm: React.FC<Props> = ({ initialData, dealers, onSave, onCan
     setInventoryLoading(true);
     try {
       console.log('🚀 Starting to fetch available inventory for distribution...');
-      
-      // Get all products
-      const productsSnapshot = await getDocs(collection(db, 'products'));
-      const products = productsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+
+      // Align with Inventory module logic (stock transfers are moves, not removals)
+      const headOfficeId = await getHeadOfficeId();
+
+      // Fetch all needed collections
+      const [
+        productsSnapshot,
+        materialInwardSnapshot,
+        purchasesSnapshot,
+        materialsOutSnapshot,
+        salesSnapshot,
+        enquiriesSnapshot,
+        distributionsSnapshot,
+      ] = await Promise.all([
+        getDocs(collection(db, 'products')),
+        getDocs(collection(db, 'materialInward')),
+        getDocs(collection(db, 'purchases')),
+        getDocs(collection(db, 'materialsOut')),
+        getDocs(collection(db, 'sales')),
+        getDocs(collection(db, 'enquiries')),
+        getDocs(collection(db, 'distributions')),
+      ]);
+
+      const products = productsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
       console.log(`📦 Found ${products.length} products`);
-      
-      // Build product map
-      const prodMap = new Map<string, Product>();
-      products.forEach((product: any) => {
-        prodMap.set(product.id, product as Product);
-      });
-      
-      // Get all material inward entries
-      const materialInwardSnapshot = await getDocs(collection(db, 'materialInward'));
-      const materialInward = materialInwardSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as { id: string; products: any[] }));
-      console.log(`📥 Found ${materialInward.length} material inward entries`);
-      
-      // Get all purchases
-      const purchasesSnapshot = await getDocs(collection(db, 'purchases'));
-      const purchases = purchasesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as { id: string; products: any[] }));
-      console.log(`🛒 Found ${purchases.length} purchase entries`);
-      
-      // Get all material outward entries
-      const materialOutSnapshot = await getDocs(collection(db, 'materialsOut'));
-      const materialOut = materialOutSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as { id: string; products: any[] }));
-      console.log(`📤 Found ${materialOut.length} material outward entries`);
-      
-      // Get all distribution entries to exclude already distributed items
-      const distributionsSnapshot = await getDocs(collection(db, 'distributions'));
-      const distributions = distributionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as { id: string; products: any[] }));
-      console.log(`🚚 Found ${distributions.length} distribution entries`);
-      
-      // Track serials and quantities by product
-      const serialsByProduct = new Map();
-      const qtyByProduct = new Map();
-      
-      // Add from material inward
-      materialInward.forEach(entry => {
-        entry.products?.forEach((product: any) => {
-          const prodId = product.productId;
-          if (!serialsByProduct.has(prodId)) {
-            serialsByProduct.set(prodId, new Set());
-            qtyByProduct.set(prodId, 0);
-          }
-          
-          if (product.serialNumbers && product.serialNumbers.length > 0) {
-            product.serialNumbers.forEach((serial: string) => {
-              serialsByProduct.get(prodId).add(serial);
-            });
-          } else {
-            qtyByProduct.set(prodId, qtyByProduct.get(prodId) + (product.quantity || 0));
-          }
+
+      const productById = new Map<string, any>();
+      products.forEach((p: any) => productById.set(p.id, p));
+
+      const materialInwardDocs = materialInwardSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const purchasesDocs = purchasesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const materialsOutDocs = materialsOutSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const salesDocs = salesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const enquiriesDocs = enquiriesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const distributionsDocs = distributionsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+
+      console.log(`📥 Found ${materialInwardDocs.length} material inward entries`);
+      console.log(`🛒 Found ${purchasesDocs.length} purchase entries`);
+      console.log(`📤 Found ${materialsOutDocs.length} material outward entries`);
+      console.log(`💰 Found ${salesDocs.length} sales entries`);
+      console.log(`📋 Found ${enquiriesDocs.length} enquiries entries`);
+      console.log(`🚚 Found ${distributionsDocs.length} distribution entries`);
+
+      const toSerialArray = (prod: any): string[] => {
+        if (Array.isArray(prod?.serialNumbers)) return prod.serialNumbers.filter(Boolean);
+        if (typeof prod?.serialNumber === 'string' && prod.serialNumber.trim()) return [prod.serialNumber.trim()];
+        return [];
+      };
+
+      // Track serials that were received via stock transfer-in (move destination)
+      const stockTransferInSerials = new Set<string>();
+      materialInwardDocs.forEach((doc: any) => {
+        const supplierName = doc?.supplier?.name || '';
+        if (!supplierName.includes('Stock Transfer from')) return;
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          toSerialArray(p).forEach((sn) => stockTransferInSerials.add(`${productId}|${sn}`));
         });
       });
-      
-      // Add from purchases
-      purchases.forEach(purchase => {
-        purchase.products?.forEach((product: any) => {
-          const prodId = product.productId;
-          if (!serialsByProduct.has(prodId)) {
-            serialsByProduct.set(prodId, new Set());
-            qtyByProduct.set(prodId, 0);
-          }
-          
-          if (product.serialNumbers && product.serialNumbers.length > 0) {
-            product.serialNumbers.forEach((serial: string) => {
-              serialsByProduct.get(prodId).add(serial);
-            });
-          } else {
-            qtyByProduct.set(prodId, qtyByProduct.get(prodId) + (product.quantity || 0));
-          }
-        });
-      });
-      
-      // Remove from material outward
-      materialOut.forEach(entry => {
-        entry.products?.forEach((product: any) => {
-          const prodId = product.productId;
-          if (serialsByProduct.has(prodId)) {
-            if (product.serialNumbers && product.serialNumbers.length > 0) {
-              product.serialNumbers.forEach((serial: string) => {
-                serialsByProduct.get(prodId).delete(serial);
-              });
-            } else {
-              qtyByProduct.set(prodId, Math.max(0, qtyByProduct.get(prodId) - (product.quantity || 0)));
+
+      // Track outgoing serials (exclude stock transfers from deduction)
+      const pendingOutSerials = new Set<string>();
+      const dispatchedOutSerials = new Set<string>();
+      materialsOutDocs.forEach((doc: any) => {
+        const rawStatus = (doc.status as string) || '';
+        const status = rawStatus || 'dispatched';
+        const notes = doc.notes || '';
+        const reason = doc.reason || '';
+        const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
+
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          toSerialArray(p).forEach((sn) => {
+            const key = `${productId}|${sn}`;
+            if (isStockTransfer) {
+              // If transfer was received elsewhere, ignore it here (move handled by inbound override)
+              if (stockTransferInSerials.has(key)) return;
+              return; // Transfers should not remove global inventory
             }
+            if (status === 'returned') return;
+            if (status === 'pending') pendingOutSerials.add(key);
+            else dispatchedOutSerials.add(key);
+          });
+        });
+      });
+
+      // Track sold serials (sales collection + enquiry visit sales)
+      const soldSerials = new Set<string>();
+      salesDocs.forEach((doc: any) => {
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const serial = p.serialNumber || '';
+          if (productId && serial) soldSerials.add(`${productId}|${serial}`);
+        });
+      });
+      enquiriesDocs.forEach((doc: any) => {
+        const visits: any[] = Array.isArray(doc.visits) ? doc.visits : [];
+        visits.forEach((visit: any) => {
+          const isSale = !!(
+            visit?.hearingAidSale ||
+            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
+            visit?.journeyStage === 'sale' ||
+            visit?.hearingAidStatus === 'sold' ||
+            (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+          );
+          if (!isSale) return;
+          const productsInVisit: any[] = Array.isArray(visit.products) ? visit.products : [];
+          productsInVisit.forEach((p: any) => {
+            const productId = p.productId || p.id || p.hearingAidProductId || '';
+            const serial = p.serialNumber || p.trialSerialNumber || '';
+            if (productId && serial) soldSerials.add(`${productId}|${serial}`);
+          });
+        });
+      });
+
+      // Track serials already distributed so they can't be selected again
+      const distributedSerials = new Set<string>();
+      const distributedQtyByProduct = new Map<string, number>();
+      distributionsDocs.forEach((doc: any) => {
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const serials = Array.isArray(p.serialNumbers) ? p.serialNumbers.filter(Boolean) : [];
+          if (serials.length > 0) {
+            serials.forEach((sn: string) => distributedSerials.add(`${productId}|${sn}`));
+          } else {
+            distributedQtyByProduct.set(productId, (distributedQtyByProduct.get(productId) || 0) + (p.quantity || 0));
           }
         });
       });
-      
-      // Remove from distributions
-      distributions.forEach(distribution => {
-        distribution.products?.forEach((product: any) => {
-          const prodId = product.productId;
-          if (serialsByProduct.has(prodId)) {
-            if (product.serialNumbers && product.serialNumbers.length > 0) {
-              product.serialNumbers.forEach((serial: string) => {
-                serialsByProduct.get(prodId).delete(serial);
-              });
-            } else {
-              qtyByProduct.set(prodId, Math.max(0, qtyByProduct.get(prodId) - (product.quantity || 0)));
-            }
-          }
-        });
-      });
-      
-      // Build available items list
-      const items: AvailableItem[] = [];
-      
-      serialsByProduct.forEach((serials, productId) => {
-        const product = prodMap.get(productId);
-        if (!product) return;
-        
-        // Add serial-tracked items
-        serials.forEach((serial: string) => {
-          items.push({
+
+      // Build available serial items (latest location wins for stock transfer-in)
+      const availableSerialByKey = new Map<string, AvailableItem>();
+
+      const upsertSerial = (key: string, next: AvailableItem, nextTs: number) => {
+        const prev = availableSerialByKey.get(key) as any;
+        const prevTs = typeof prev?._ts === 'number' ? prev._ts : -1;
+        if (!prev || nextTs >= prevTs) {
+          availableSerialByKey.set(key, { ...(next as any), _ts: nextTs } as any);
+        }
+      };
+
+      // Material Inward (serials)
+      materialInwardDocs.forEach((doc: any) => {
+        const supplierName = doc?.supplier?.name || '';
+        const documentLocation = doc.location || headOfficeId;
+        const companyLocation = doc.company || '';
+        const receivedDate = doc.receivedDate;
+        const ts = receivedDate?.toMillis ? receivedDate.toMillis() : (receivedDate?.seconds || 0);
+
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const productRef = productById.get(productId) || {};
+          const serials = toSerialArray(p);
+          if (serials.length === 0) return;
+
+          const base: Omit<AvailableItem, 'serialNumber'> = {
             productId,
-            productName: product.name,
-            name: product.name,
-            type: product.type,
-            company: product.company,
-            serialNumber: serial,
+            productName: productRef.name || p.name || '',
+            name: productRef.name || p.name || '',
+            type: productRef.type || p.type || '',
+            company: companyLocation || productRef.company || '',
             isSerialTracked: true,
             quantity: 1,
-            mrp: Number(product.mrp) || 0,
-            dealerPrice: Number(product.dealerPrice) || 0,
-            gstApplicable: product.gstApplicable || false,
-            gstPercentage: Number(product.gstPercentage) || 18,
+            mrp: Number(p.mrp ?? productRef.mrp ?? 0) || 0,
+            dealerPrice: Number(p.dealerPrice ?? p.finalPrice ?? productRef.dealerPrice ?? 0) || 0,
+            gstApplicable: Boolean(productRef.gstApplicable ?? p.gstApplicable ?? false),
+            gstPercentage: Number(productRef.gstPercentage ?? p.gstPercentage ?? 18) || 18,
             status: 'In Stock',
-            location: 'Main Warehouse',
-            hsnCode: product.hsnCode || '',
+            location: documentLocation,
+            hsnCode: productRef.hsnCode || '',
+          };
+
+          const isStockTransferIn = supplierName.includes('Stock Transfer from');
+
+          serials.forEach((sn) => {
+            const key = `${productId}|${sn}`;
+
+            // Exclude not-available serials
+            if (dispatchedOutSerials.has(key)) return;
+            if (pendingOutSerials.has(key)) return; // reserved
+            if (soldSerials.has(key)) return;
+            if (distributedSerials.has(key)) return;
+
+            // Allow stock transfer-in to "move" the serial to its new location/company
+            upsertSerial(
+              key,
+              {
+                ...base,
+                serialNumber: sn,
+                // For non-transfer inbound, still a valid inbound record.
+                // For transfer inbound, we want this record to win (latest location).
+                location: documentLocation,
+                company: companyLocation || productRef.company || '',
+              },
+              isStockTransferIn ? ts + 1 : ts
+            );
           });
         });
-        
-        // Add quantity-based items
-        const availableQty = qtyByProduct.get(productId) || 0;
-        if (availableQty > 0) {
-          items.push({
-            productId,
-            productName: product.name,
-            name: product.name,
-            type: product.type,
-            company: product.company,
-            isSerialTracked: false,
-            quantity: availableQty,
-            mrp: Number(product.mrp) || 0,
-            dealerPrice: Number(product.dealerPrice) || 0,
-            gstApplicable: product.gstApplicable || false,
-            gstPercentage: Number(product.gstPercentage) || 18,
-            status: 'In Stock',
-            location: 'Main Warehouse',
-            hsnCode: product.hsnCode || '',
-          });
-        }
       });
-      
+
+      // Purchases (serials)
+      purchasesDocs.forEach((doc: any) => {
+        const documentLocation = doc.location || headOfficeId;
+        const companyLocation = doc.company || '';
+        const purchaseDate = doc.purchaseDate;
+        const ts = purchaseDate?.toMillis ? purchaseDate.toMillis() : (purchaseDate?.seconds || 0);
+
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const productRef = productById.get(productId) || {};
+          const serials = toSerialArray(p);
+          if (serials.length === 0) return;
+
+          const base: Omit<AvailableItem, 'serialNumber'> = {
+            productId,
+            productName: productRef.name || p.name || '',
+            name: productRef.name || p.name || '',
+            type: productRef.type || p.type || '',
+            company: companyLocation || productRef.company || '',
+            isSerialTracked: true,
+            quantity: 1,
+            mrp: Number(p.mrp ?? productRef.mrp ?? 0) || 0,
+            dealerPrice: Number(p.dealerPrice ?? p.finalPrice ?? productRef.dealerPrice ?? 0) || 0,
+            gstApplicable: Boolean(productRef.gstApplicable ?? p.gstApplicable ?? false),
+            gstPercentage: Number(productRef.gstPercentage ?? p.gstPercentage ?? 18) || 18,
+            status: 'In Stock',
+            location: documentLocation,
+            hsnCode: productRef.hsnCode || '',
+          };
+
+          serials.forEach((sn) => {
+            const key = `${productId}|${sn}`;
+
+            if (dispatchedOutSerials.has(key)) return;
+            if (pendingOutSerials.has(key)) return; // reserved
+            if (soldSerials.has(key)) return;
+            if (distributedSerials.has(key)) return;
+
+            upsertSerial(key, { ...base, serialNumber: sn }, ts);
+          });
+        });
+      });
+
+      // Build non-serial available quantities (simple aggregate; aligns with inventory module's global subtraction)
+      const nonSerialInByProduct = new Map<string, { qty: number; lastLocation?: string; mrp?: number; dealerPrice?: number }>();
+      const addNonSerialIn = (productId: string, qty: number, location: string | undefined, mrp?: number, dealerPrice?: number) => {
+        const prev = nonSerialInByProduct.get(productId) || { qty: 0, lastLocation: location, mrp, dealerPrice };
+        nonSerialInByProduct.set(productId, {
+          qty: prev.qty + qty,
+          lastLocation: location || prev.lastLocation,
+          mrp: mrp ?? prev.mrp,
+          dealerPrice: dealerPrice ?? prev.dealerPrice,
+        });
+      };
+
+      materialInwardDocs.forEach((doc: any) => {
+        const documentLocation = doc.location || headOfficeId;
+        const companyLocation = doc.company || '';
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const productRef = productById.get(productId) || {};
+          const serials = toSerialArray(p);
+          const isSerialTracked = !!productRef.hasSerialNumber;
+          if (serials.length > 0 || isSerialTracked) return;
+          addNonSerialIn(
+            productId,
+            Number(p.quantity || 0) || 0,
+            documentLocation,
+            Number(p.mrp ?? productRef.mrp ?? 0) || 0,
+            Number(p.dealerPrice ?? p.finalPrice ?? productRef.dealerPrice ?? 0) || 0
+          );
+        });
+      });
+
+      purchasesDocs.forEach((doc: any) => {
+        const documentLocation = doc.location || headOfficeId;
+        const companyLocation = doc.company || '';
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const productRef = productById.get(productId) || {};
+          const serials = toSerialArray(p);
+          const isSerialTracked = !!productRef.hasSerialNumber;
+          if (serials.length > 0 || isSerialTracked) return;
+          addNonSerialIn(
+            productId,
+            Number(p.quantity || 0) || 0,
+            documentLocation,
+            Number(p.mrp ?? productRef.mrp ?? 0) || 0,
+            Number(p.dealerPrice ?? p.finalPrice ?? productRef.dealerPrice ?? 0) || 0
+          );
+        });
+      });
+
+      const nonSerialOutByProduct = new Map<string, number>();
+      const addNonSerialOut = (productId: string, qty: number) => {
+        nonSerialOutByProduct.set(productId, (nonSerialOutByProduct.get(productId) || 0) + qty);
+      };
+
+      // Materials out (exclude stock transfers)
+      materialsOutDocs.forEach((doc: any) => {
+        const notes = doc.notes || '';
+        const reason = doc.reason || '';
+        const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
+        if (isStockTransfer) return;
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const serials = toSerialArray(p);
+          if (serials.length > 0) return;
+          addNonSerialOut(productId, Number(p.quantity || 0) || 0);
+        });
+      });
+
+      // Sales (non-serial)
+      salesDocs.forEach((doc: any) => {
+        (doc.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id || '';
+          const serial = p.serialNumber || '';
+          if (serial && serial !== '-') return;
+          addNonSerialOut(productId, Number(p.quantity || 1) || 1);
+        });
+      });
+
+      // Enquiry sales (non-serial)
+      enquiriesDocs.forEach((doc: any) => {
+        const visits: any[] = Array.isArray(doc.visits) ? doc.visits : [];
+        visits.forEach((visit: any) => {
+          const isSale = !!(
+            visit?.hearingAidSale ||
+            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
+            visit?.journeyStage === 'sale' ||
+            visit?.hearingAidStatus === 'sold' ||
+            (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+          );
+          if (!isSale) return;
+          const productsInVisit: any[] = Array.isArray(visit.products) ? visit.products : [];
+          productsInVisit.forEach((p: any) => {
+            const productId = p.productId || p.id || p.hearingAidProductId || '';
+            const serial = p.serialNumber || p.trialSerialNumber || '';
+            if (serial && serial !== '-') return;
+            addNonSerialOut(productId, Number(p.quantity || 1) || 1);
+          });
+        });
+      });
+
+      // Distributions (non-serial)
+      distributedQtyByProduct.forEach((qty, productId) => addNonSerialOut(productId, qty));
+
+      // Build final list
+      const items: AvailableItem[] = [];
+
+      // Serial items
+      Array.from(availableSerialByKey.values()).forEach((itm: any) => {
+        // strip internal timestamp helper
+        const { _ts, ...rest } = itm;
+        items.push(rest);
+      });
+
+      // Non-serial items
+      nonSerialInByProduct.forEach((inAgg, productId) => {
+        const outQty = nonSerialOutByProduct.get(productId) || 0;
+        const availableQty = Math.max(0, (inAgg.qty || 0) - outQty);
+        if (availableQty <= 0) return;
+        const productRef = productById.get(productId) || {};
+        items.push({
+          productId,
+          productName: productRef.name || '',
+          name: productRef.name || '',
+          type: productRef.type || '',
+          company: productRef.company || '',
+          isSerialTracked: false,
+          quantity: availableQty,
+          mrp: Number(inAgg.mrp ?? productRef.mrp ?? 0) || 0,
+          dealerPrice: Number(inAgg.dealerPrice ?? productRef.dealerPrice ?? 0) || 0,
+          gstApplicable: Boolean(productRef.gstApplicable ?? false),
+          gstPercentage: Number(productRef.gstPercentage ?? 18) || 18,
+          status: 'In Stock',
+          location: inAgg.lastLocation || headOfficeId,
+          hsnCode: productRef.hsnCode || '',
+        });
+      });
+
       console.log(`✅ Built ${items.length} available inventory items`);
       setAvailableInventory(items);
       

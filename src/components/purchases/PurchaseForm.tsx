@@ -66,6 +66,7 @@ interface Product {
   dealerPrice?: number;
   gstApplicable?: boolean;
   quantityType?: 'piece' | 'pair';
+  hasSerialNumber?: boolean;
 }
 
 interface Party {
@@ -227,6 +228,19 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     }
     return subtotal * (1 + purchaseData.gstPercentage / 100);
   }, [purchaseData.totalAmount, purchaseData.gstType, purchaseData.gstPercentage]);
+
+  const isSerialTrackedForCurrent = useMemo(() => {
+    // Backwards-compatible fallback: hearing aids are always serial-tracked in this system.
+    return Boolean(currentProduct?.hasSerialNumber || currentProduct?.type === 'Hearing Aid');
+  }, [currentProduct?.hasSerialNumber, currentProduct?.type]);
+
+  const requiredSerialCountForCurrent = useMemo(() => {
+    if (!currentProduct || !isSerialTrackedForCurrent) return 0;
+    if (currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair') {
+      return quantity * 2;
+    }
+    return quantity;
+  }, [currentProduct, isSerialTrackedForCurrent, quantity]);
   
   // Handle changing the step
   const handleNext = () => {
@@ -397,20 +411,16 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       validationErrors.push('Dealer price must be greater than zero');
     }
     
-    if (currentProduct.type === 'Hearing Aid' && serialNumbers.length === 0) {
-      validationErrors.push('At least one serial number is required for hearing aids');
+    if (isSerialTrackedForCurrent && serialNumbers.length === 0) {
+      validationErrors.push('At least one serial number is required for this product');
     }
     
-    if (currentProduct.type === 'Hearing Aid' && 
-        currentProduct.quantityType === 'pair' && 
-        quantity * 2 !== serialNumbers.length) {
-      validationErrors.push(`For pairs of hearing aids, you need ${quantity * 2} serial numbers (${quantity} pairs)`);
-    }
-    
-    if (currentProduct.type === 'Hearing Aid' && 
-        (!currentProduct.quantityType || currentProduct.quantityType === 'piece') && 
-        quantity !== serialNumbers.length) {
-      validationErrors.push(`Number of serial numbers (${serialNumbers.length}) must match quantity (${quantity})`);
+    if (isSerialTrackedForCurrent && requiredSerialCountForCurrent !== serialNumbers.length) {
+      if (currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair') {
+        validationErrors.push(`For pairs of hearing aids, you need ${requiredSerialCountForCurrent} serial numbers (${quantity} pairs)`);
+      } else {
+        validationErrors.push(`Number of serial numbers (${serialNumbers.length}) must match quantity (${quantity})`);
+      }
     }
     
     if (validationErrors.length > 0) {
@@ -496,9 +506,8 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   
   // Fix the barcode scanner handling logic
   useEffect(() => {
-    // Only enable scanner mode if we're on the product details step with a hearing aid selected
-    const isHearingAidSelected = currentProduct?.type === 'Hearing Aid';
-    const shouldEnableScanner = scannerMode && isHearingAidSelected && activeStep === 1;
+    // Only enable scanner mode if we're on the product details step with a serial-tracked product selected
+    const shouldEnableScanner = scannerMode && isSerialTrackedForCurrent && activeStep === 1;
 
     if (!shouldEnableScanner) return;
 
@@ -601,7 +610,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
         clearTimeout(scanTimeoutId);
       }
     };
-  }, [scannerMode, currentProduct, activeStep, serialNumbers]);
+  }, [scannerMode, currentProduct, activeStep, serialNumbers, isSerialTrackedForCurrent]);
 
   // Toggle scanner mode
   const toggleScannerMode = () => {
@@ -1048,16 +1057,16 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                 </Box>
               </Box>
 
-              {/* Step 3: Serial Numbers - Simplified for hearing aids */}
-              {currentProduct && currentProduct.type === 'Hearing Aid' && (
+              {/* Step 3: Serial Numbers - for any serial-tracked product */}
+              {currentProduct && isSerialTrackedForCurrent && (
                 <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, mb: 2 }}>
                   <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
                     <Typography variant="subtitle2" color="primary" sx={{ display: 'flex', alignItems: 'center' }}>
                       <BarcodeIcon fontSize="small" sx={{ mr: 1 }} />
                       Step 3: Add Serial Numbers
-                      {currentProduct.quantityType === 'pair' 
-                        ? ` (${quantity * 2} required for ${quantity} pairs)` 
-                        : ` (${quantity} required)`}
+                      {currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair'
+                        ? ` (${requiredSerialCountForCurrent} required for ${quantity} pairs)` 
+                        : ` (${requiredSerialCountForCurrent || quantity} required)`}
                     </Typography>
                     
                     {/* Scanner mode toggle */}
@@ -1108,7 +1117,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                           </InputAdornment>
                         ),
                       }}
-                      autoFocus={currentProduct.type === 'Hearing Aid'}
+                      autoFocus={isSerialTrackedForCurrent}
                       inputRef={serialInputRef}
                       sx={{
                         '& .MuiOutlinedInput-root': {
@@ -1175,13 +1184,13 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                     <Box sx={{ flexGrow: 1 }}>
                       <LinearProgress
                         variant="determinate"
-                        value={(serialNumbers.length / (currentProduct.quantityType === 'pair' ? quantity * 2 : quantity)) * 100}
-                        color={serialNumbers.length === (currentProduct.quantityType === 'pair' ? quantity * 2 : quantity) ? "success" : "primary"}
+                        value={requiredSerialCountForCurrent > 0 ? (serialNumbers.length / requiredSerialCountForCurrent) * 100 : 0}
+                        color={requiredSerialCountForCurrent > 0 && serialNumbers.length === requiredSerialCountForCurrent ? "success" : "primary"}
                         sx={{ height: 8, borderRadius: 1 }}
                       />
                     </Box>
                     <Typography variant="body2" color="text.secondary">
-                      {serialNumbers.length} / {currentProduct.quantityType === 'pair' ? quantity * 2 : quantity}
+                      {serialNumbers.length} / {requiredSerialCountForCurrent}
                     </Typography>
                   </Box>
                 </Box>
@@ -1242,8 +1251,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                   onClick={handleAddProductToPurchase}
                   disabled={
                     !currentProduct || 
-                    (currentProduct.type === 'Hearing Aid' && 
-                     serialNumbers.length !== (currentProduct.quantityType === 'pair' ? quantity * 2 : quantity))
+                    (isSerialTrackedForCurrent && serialNumbers.length !== requiredSerialCountForCurrent)
                   }
                   startIcon={<AddIcon />}
                   size="large"

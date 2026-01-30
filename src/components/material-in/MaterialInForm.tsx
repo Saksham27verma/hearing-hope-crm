@@ -83,6 +83,7 @@ interface Product {
   dealerPrice?: number;
   gstApplicable?: boolean;
   quantityType?: 'piece' | 'pair';
+  hasSerialNumber?: boolean;
 }
 
 // Define the interface for parties (suppliers)
@@ -226,6 +227,19 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     const subtotal = materialData.totalAmount;
     return subtotal;
   }, [materialData.totalAmount]);
+
+  const isSerialTrackedForCurrent = useMemo(() => {
+    // Backwards-compatible fallback: hearing aids are always serial-tracked in this system.
+    return Boolean(currentProduct?.hasSerialNumber || currentProduct?.type === 'Hearing Aid');
+  }, [currentProduct?.hasSerialNumber, currentProduct?.type]);
+
+  const requiredSerialCountForCurrent = useMemo(() => {
+    if (!currentProduct || !isSerialTrackedForCurrent) return 0;
+    if (currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair') {
+      return quantity * 2;
+    }
+    return quantity;
+  }, [currentProduct, isSerialTrackedForCurrent, quantity]);
 
   // Helper functions
   const formatCurrency = (amount: number) => {
@@ -406,8 +420,18 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   // Handle adding a serial number
   const handleAddSerialNumber = () => {
     if (serialNumber && !serialNumbers.includes(serialNumber)) {
-      setSerialNumbers([...serialNumbers, serialNumber]);
+      const next = [...serialNumbers, serialNumber];
+      setSerialNumbers(next);
       setSerialNumber('');
+
+      // Keep quantity aligned for serial-tracked items (quantity is counted in units here)
+      if (isSerialTrackedForCurrent) {
+        if (currentProduct?.type === 'Hearing Aid' && currentProduct?.quantityType === 'pair') {
+          setQuantity(Math.max(1, Math.ceil(next.length / 2)));
+        } else {
+          setQuantity(Math.max(1, next.length));
+        }
+      }
       
       // Auto-focus back to serial input in scanner mode
       if (scannerMode && serialInputRef.current) {
@@ -423,6 +447,15 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     const newSerialNumbers = [...serialNumbers];
     newSerialNumbers.splice(index, 1);
     setSerialNumbers(newSerialNumbers);
+
+    // Keep quantity aligned for serial-tracked items
+    if (isSerialTrackedForCurrent) {
+      if (currentProduct?.type === 'Hearing Aid' && currentProduct?.quantityType === 'pair') {
+        setQuantity(Math.max(1, Math.ceil(newSerialNumbers.length / 2)));
+      } else {
+        setQuantity(Math.max(1, newSerialNumbers.length));
+      }
+    }
   };
 
   // Handle adding product to material
@@ -432,8 +465,8 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       return;
     }
 
-    if (currentProduct.type === 'Hearing Aid' && serialNumbers.length === 0) {
-      setErrors({ serialNumbers: 'Serial numbers are required for hearing aids' });
+    if (isSerialTrackedForCurrent && serialNumbers.length === 0) {
+      setErrors({ serialNumbers: 'Serial numbers are required for this product' });
       return;
     }
 
@@ -442,11 +475,17 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       return;
     }
 
-    // For hearing aids, check if quantity matches serial numbers count
-    if (currentProduct.type === 'Hearing Aid' && quantity !== serialNumbers.length) {
-      setErrors({ 
-        serialNumbers: `Number of serial numbers (${serialNumbers.length}) does not match quantity (${quantity})`
-      });
+    // For serial-tracked products, quantity must match serial numbers count
+    if (isSerialTrackedForCurrent && requiredSerialCountForCurrent !== serialNumbers.length) {
+      if (currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair') {
+        setErrors({
+          serialNumbers: `For pairs of hearing aids, you need ${requiredSerialCountForCurrent} serial numbers (${quantity} pair${quantity === 1 ? '' : 's'})`
+        });
+      } else {
+        setErrors({ 
+          serialNumbers: `Number of serial numbers (${serialNumbers.length}) does not match quantity (${quantity})`
+        });
+      }
       return;
     }
 
@@ -960,7 +999,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                         onChange={(e) => setQuantity(parseInt(e.target.value) || 0)}
                         error={!!errors.quantity}
                         helperText={errors.quantity}
-                        disabled={currentProduct?.type === 'Hearing Aid' && serialNumbers.length > 0}
+                        disabled={isSerialTrackedForCurrent && serialNumbers.length > 0}
                         InputProps={{ 
                           inputProps: { min: 1 },
                           startAdornment: (
@@ -1065,13 +1104,13 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                 </Box>
               </Box>
 
-              {/* Step 3: Serial Numbers for Hearing Aids */}
-              {currentProduct?.type === 'Hearing Aid' && (
+              {/* Step 3: Serial Numbers for serial-tracked products */}
+              {isSerialTrackedForCurrent && (
                 <Box>
                   <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2, border: errors.serialNumbers ? '1px solid #d32f2f' : 'none' }}>
                     <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                       <BarcodeIcon fontSize="small" sx={{ mr: 1 }} />
-                      Step 3: Enter Serial Numbers {scannerMode && "(Scanner Mode Active)"}
+                      Step 3: Enter Serial Numbers ({requiredSerialCountForCurrent || quantity} required) {scannerMode && "(Scanner Mode Active)"}
                     </Typography>
                     
                     <Box sx={{ display: 'flex', mb: 2 }}>

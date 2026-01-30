@@ -4365,6 +4365,9 @@ export default function EnquiriesPage() {
        >
          <TableContainer sx={{ 
            flex: 1,
+           // Ensure the table scrolls inside this container so sticky headers work reliably
+           maxHeight: { xs: '55vh', sm: '65vh', md: '70vh' },
+           minHeight: 0,
            overflowX: 'auto',
            overflowY: 'auto',
            '&::-webkit-scrollbar': { height: '12px', width: '12px' },
@@ -4404,6 +4407,7 @@ export default function EnquiriesPage() {
                        maxWidth: `${columnWidths.name}px`,
                        minWidth: `${columnWidths.name}px`,
                        position: 'sticky',
+                       top: 0,
                        left: 0,
                        background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%) !important',
                        color: 'white',
@@ -4513,6 +4517,7 @@ export default function EnquiriesPage() {
                        fontSize: '0.85rem',
                        width: `${columnWidths.actions}px`,
                        position: 'sticky', 
+                       top: 0,
                        right: 0, 
                        background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%) !important',
                        color: 'white',
