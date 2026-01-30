@@ -269,6 +269,8 @@ interface FormData {
   email: string;
   address: string;
   reference: string;
+  // Quick scheduling before first call
+  followUpDate: string;
   assignedTo: string;
   telecaller: string;
   center: string;
@@ -449,6 +451,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       email: '',
       address: '',
       reference: '',
+      followUpDate: '',
       assignedTo: '',
       telecaller: '',
       center: '',
@@ -929,6 +932,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           email: enquiry.email || '',
           address: enquiry.address || '',
           reference: enquiry.reference || '',
+          followUpDate: enquiry.followUpDate || enquiry.nextFollowUpDate || '',
           assignedTo: enquiry.assignedTo || '',
           telecaller: enquiry.telecaller || '',
           center: enquiry.center || '',
@@ -1747,6 +1751,24 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             ))}
                           </Select>
                         </FormControl>
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Controller
+                      name="followUpDate"
+                      control={control}
+                      render={({ field }) => (
+                        <TextField
+                          {...field}
+                          fullWidth
+                          label="Follow-up Date"
+                          type="date"
+                          disabled={isAudiologist}
+                          helperText="Optional — set a follow-up date even before calling."
+                          InputLabelProps={{ shrink: true }}
+                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        />
                       )}
                     />
                   </Grid>
@@ -4209,7 +4231,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 </FormControl>
                                 <IconButton
                                   onClick={() => {
-                                    setSelectedCategory('programmingBy');
+                                    setCurrentField('programmingBy');
                                     setStaffManagementOpen(true);
                                   }}
                                   sx={{
@@ -4523,7 +4545,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </FormControl>
                         <IconButton
                           onClick={() => {
-                            setSelectedCategory('telecaller');
+                            setCurrentField('telecaller');
                             setStaffManagementOpen(true);
                           }}
                           sx={{

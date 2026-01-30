@@ -84,18 +84,11 @@ export default function ProfitReportTab() {
   const fetchProfitData = useCallback(async () => {
     try {
       setLoading(true);
-      
-      // Mock data for demo - In a real app, fetch from Firestore
-      setProfitSummary({
-        grossSales: 350000,
-        costOfGoods: 215000,
-        basicProfit: 135000,
-        manufacturerIncentives: 45000,
-        grossProfit: 180000,
-        employeeExpenses: 75000,
-        netProfit: 105000
-      });
-      
+
+      const monthStart = new Date(`${selectedMonth}-01T00:00:00`);
+      const monthEnd = new Date(monthStart);
+      monthEnd.setMonth(monthEnd.getMonth() + 1);
+
       // Fetch manufacturer incentives for the month
       const incentivesQuery = query(
         collection(db, 'manufacturerIncentives'), 
@@ -118,13 +111,98 @@ export default function ProfitReportTab() {
         ...doc.data()
       })) as EmployeeExpense[];
       
+      // Fetch sales from sales collection (timestamp range)
+      const salesSnapshot = await getDocs(
+        query(
+          collection(db, 'sales'),
+          where('saleDate', '>=', Timestamp.fromDate(monthStart)),
+          where('saleDate', '<', Timestamp.fromDate(monthEnd))
+        )
+      );
+
+      // Fetch enquiries and derive sales recorded in visits (client-side filter, visit dates are strings)
+      const enquiriesSnapshot = await getDocs(collection(db, 'enquiries'));
+
+      let grossSales = 0;
+      let costOfGoods = 0;
+
+      // Sales collection (grossSales is subtotal before GST in this schema)
+      salesSnapshot.docs.forEach((docSnap) => {
+        const s: any = docSnap.data();
+        const subtotal = Number(s.totalAmount || 0);
+        const netProfit = Number(s.netProfit || 0);
+        grossSales += subtotal;
+        // Cost of goods is derived from net profit (subtotal - profit)
+        costOfGoods += Math.max(0, subtotal - netProfit);
+      });
+
+      // Enquiry-derived sales
+      enquiriesSnapshot.docs.forEach((docSnap) => {
+        const e: any = docSnap.data();
+        const visits: any[] = Array.isArray(e.visits) ? e.visits : [];
+        visits.forEach((visit: any) => {
+          const isSale = !!(
+            visit?.hearingAidSale ||
+            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
+            visit?.journeyStage === 'sale' ||
+            visit?.hearingAidStatus === 'sold' ||
+            (Array.isArray(visit?.products) &&
+              visit.products.length > 0 &&
+              ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+          );
+          if (!isSale) return;
+
+          const dateStr: string = visit.purchaseDate || visit.hearingAidPurchaseDate || visit.visitDate || '';
+          const date = dateStr ? new Date(dateStr) : null;
+          if (!date || Number.isNaN(date.getTime())) return;
+          if (date < monthStart || date >= monthEnd) return;
+
+          const products: any[] = Array.isArray(visit.products) ? visit.products : [];
+          const subtotal =
+            Number(visit.grossSalesBeforeTax || 0) ||
+            products.reduce((sum, p) => sum + Number(p.sellingPrice || 0), 0);
+          const profit = products.reduce((sum, p) => {
+            const selling = Number(p.sellingPrice || 0);
+            const dealer = Number(p.dealerPrice || 0);
+            return sum + (selling - dealer);
+          }, 0);
+          grossSales += subtotal;
+          costOfGoods += Math.max(0, subtotal - profit);
+        });
+      });
+
       setIncentivesData(incentivesData);
       setEmployeeExpensesData(expensesData);
-      setLoading(false);
+
+      const manufacturerIncentives = incentivesData.reduce((sum, x) => sum + Number(x.amount || 0), 0);
+      const employeeExpenses = expensesData.reduce((sum, x) => sum + Number(x.amount || 0), 0);
+
+      const basicProfit = grossSales - costOfGoods;
+      const grossProfit = basicProfit + manufacturerIncentives;
+      const netProfit = grossProfit - employeeExpenses;
+
+      setProfitSummary({
+        grossSales,
+        costOfGoods,
+        basicProfit,
+        manufacturerIncentives,
+        grossProfit,
+        employeeExpenses,
+        netProfit,
+      });
     } catch (error) {
       console.error('Error fetching profit data:', error);
-      setLoading(false);
+      setProfitSummary({
+        grossSales: 0,
+        costOfGoods: 0,
+        basicProfit: 0,
+        manufacturerIncentives: 0,
+        grossProfit: 0,
+        employeeExpenses: 0,
+        netProfit: 0,
+      });
     }
+    setLoading(false);
   }, [selectedMonth]);
 
   useEffect(() => {

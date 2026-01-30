@@ -371,6 +371,16 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
               </Box>
               <Typography variant="body1">{enquiry.reference || 'Not provided'}</Typography>
             </Grid>
+
+            {(enquiry.followUpDate || enquiry.nextFollowUpDate) && (
+              <Grid item xs={12} md={6}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <EventNoteIcon fontSize="small" color="action" />
+                  <Typography variant="subtitle2">Follow-up Date</Typography>
+                </Box>
+                <Typography variant="body1">{enquiry.followUpDate || enquiry.nextFollowUpDate}</Typography>
+              </Grid>
+            )}
             
             {enquiry.address && (
               <Grid item xs={12}>

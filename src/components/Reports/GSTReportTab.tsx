@@ -88,61 +88,143 @@ export default function GSTReportTab() {
   const fetchGSTData = useCallback(async () => {
     setLoading(true);
     try {
-      // Simulate API call
-      setTimeout(() => {
-        // Sample data
-        const mockSalesGST: SalesGSTItem[] = [
-          {
-            id: 'INV-2023-001',
-            date: new Date('2023-12-10'),
-            customerName: 'Rahul Sharma',
-            subtotal: 38000,
-            gstPercentage: 18,
-            gstAmount: 6840,
-            total: 44840
-          },
-          {
-            id: 'INV-2023-002',
-            date: new Date('2023-12-18'),
-            customerName: 'Priya Patel',
-            subtotal: 52000,
-            gstPercentage: 18,
-            gstAmount: 9360,
-            total: 61360
-          }
-        ];
-        
-        const mockPurchaseGST: PurchaseGSTItem[] = [
-          {
-            id: 'PUR-2023-001',
-            date: new Date('2023-12-05'),
-            vendorName: 'Siemens Hearing Solutions',
-            subtotal: 85000,
-            gstPercentage: 18,
-            gstAmount: 15300,
-            total: 100300
-          }
-        ];
-        
-        const totalCollected = mockSalesGST.reduce((sum, item) => sum + item.gstAmount, 0);
-        const totalPaid = mockPurchaseGST.reduce((sum, item) => sum + item.gstAmount, 0);
-        
-        setGstData({
-          salesGST: mockSalesGST,
-          purchaseGST: mockPurchaseGST,
-          summary: {
-            totalCollected,
-            totalPaid,
-            netGST: totalCollected - totalPaid
-          }
+      // Month boundaries
+      const start = new Date(`${selectedMonth}-01T00:00:00`);
+      const end = new Date(start);
+      end.setMonth(end.getMonth() + 1);
+
+      // Fetch sales + purchases within month
+      const [salesSnap, purchasesSnap, enquiriesSnap] = await Promise.all([
+        getDocs(
+          query(
+            collection(db, 'sales'),
+            where('saleDate', '>=', Timestamp.fromDate(start)),
+            where('saleDate', '<', Timestamp.fromDate(end))
+          )
+        ),
+        getDocs(
+          query(
+            collection(db, 'purchases'),
+            where('purchaseDate', '>=', Timestamp.fromDate(start)),
+            where('purchaseDate', '<', Timestamp.fromDate(end))
+          )
+        ),
+        // Enquiry sale dates are stored as strings in visits, so we fetch and filter client-side
+        getDocs(collection(db, 'enquiries')),
+      ]);
+
+      const salesGST: SalesGSTItem[] = [];
+
+      // Sales collection
+      salesSnap.docs.forEach((docSnap) => {
+        const data: any = docSnap.data();
+        const ts: Timestamp | undefined = data.saleDate;
+        const date = ts?.toDate ? ts.toDate() : start;
+        const subtotal = Number(data.totalAmount || 0);
+        const gstAmount = Number(data.gstAmount || 0);
+        const total = subtotal + gstAmount;
+        const gstPercentage = Number(data.gstPercentage || (subtotal ? (gstAmount * 100) / subtotal : 0));
+        salesGST.push({
+          id: docSnap.id,
+          date,
+          customerName: (data.patientName || '—').toString(),
+          subtotal,
+          gstPercentage,
+          gstAmount,
+          total,
         });
-        
-        setLoading(false);
-      }, 1000);
+      });
+
+      // Enquiries (sales recorded in visits)
+      enquiriesSnap.docs.forEach((docSnap) => {
+        const e: any = docSnap.data();
+        const visits: any[] = Array.isArray(e.visits) ? e.visits : [];
+        const customerName = (e.name || e.patientName || e.fullName || '—').toString();
+        visits.forEach((visit: any, idx: number) => {
+          const isSale = !!(
+            visit?.hearingAidSale ||
+            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
+            visit?.journeyStage === 'sale' ||
+            visit?.hearingAidStatus === 'sold' ||
+            (Array.isArray(visit?.products) &&
+              visit.products.length > 0 &&
+              ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+          );
+          if (!isSale) return;
+
+          const dateStr: string = visit.purchaseDate || visit.hearingAidPurchaseDate || visit.visitDate || '';
+          const date = dateStr ? new Date(dateStr) : (e.updatedAt?.toDate ? e.updatedAt.toDate() : start);
+          if (Number.isNaN(date.getTime())) return;
+          if (date < start || date >= end) return;
+
+          const products: any[] = Array.isArray(visit.products) ? visit.products : [];
+          const subtotal =
+            Number(visit.grossSalesBeforeTax || 0) ||
+            products.reduce((sum, p) => sum + Number(p.sellingPrice || 0), 0);
+          const gstAmount =
+            Number(visit.taxAmount || 0) ||
+            products.reduce((sum, p) => sum + Number(p.gstAmount || 0), 0);
+          const total =
+            Number(visit.salesAfterTax || 0) ||
+            products.reduce((sum, p) => sum + Number(p.finalAmount || 0), 0);
+          const gstPercentage = subtotal ? (gstAmount * 100) / subtotal : 0;
+
+          salesGST.push({
+            id: `ENQ-${docSnap.id}-V${visit.id || idx}`,
+            date,
+            customerName,
+            subtotal,
+            gstPercentage,
+            gstAmount,
+            total,
+          });
+        });
+      });
+
+      salesGST.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+      // Purchases (Input tax)
+      const purchaseGST: PurchaseGSTItem[] = purchasesSnap.docs.map((docSnap) => {
+        const data: any = docSnap.data();
+        const ts: Timestamp | undefined = data.purchaseDate;
+        const date = ts?.toDate ? ts.toDate() : start;
+        const subtotal = Number(data.totalAmount || 0);
+        const gstType = (data.gstType || '').toString();
+        const gstPercentage = gstType === 'GST Exempted' ? 0 : Number(data.gstPercentage || 0);
+        const gstAmount = gstType === 'GST Exempted' ? 0 : (subtotal * gstPercentage) / 100;
+        const total = subtotal + gstAmount;
+        return {
+          id: data.invoiceNo || docSnap.id,
+          date,
+          vendorName: (data.party?.name || '—').toString(),
+          subtotal,
+          gstPercentage,
+          gstAmount,
+          total,
+        };
+      });
+
+      const totalCollected = salesGST.reduce((sum, item) => sum + item.gstAmount, 0);
+      const totalPaid = purchaseGST.reduce((sum, item) => sum + item.gstAmount, 0);
+
+      setGstData({
+        salesGST,
+        purchaseGST,
+        summary: {
+          totalCollected,
+          totalPaid,
+          netGST: totalCollected - totalPaid,
+        },
+      });
     } catch (error) {
       console.error('Error fetching GST data:', error);
-      setLoading(false);
+      setGstData({
+        salesGST: [],
+        purchaseGST: [],
+        summary: { totalCollected: 0, totalPaid: 0, netGST: 0 },
+      });
     }
+    setLoading(false);
   }, [selectedMonth]);
 
   useEffect(() => {

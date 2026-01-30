@@ -232,13 +232,14 @@ export default function ProductsPage() {
   
   // Filter state
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [maxMrp, setMaxMrp] = useState<number>(100000);
   const [filters, setFilters] = useState({
     productTypes: [] as string[],
     companies: [] as string[],
-    gstApplicable: null as boolean | null,
-    hasSerialNumber: null as boolean | null,
+    gstApplicable: 'all' as 'all' | 'yes' | 'no',
+    hasSerialNumber: 'all' as 'all' | 'yes' | 'no',
     priceRange: [0, 100000] as [number, number],
-    isFreeOfCost: null as boolean | null,
+    isFreeOfCost: 'all' as 'all' | 'yes' | 'no',
   });
   
   // Sort state
@@ -260,6 +261,20 @@ export default function ProductsPage() {
           id: doc.id,
           ...doc.data(),
         })) as Product[];
+
+        // Compute safe max MRP so default range doesn't hide expensive products
+        const computedMaxMrp = Math.max(
+          100000,
+          ...productsList
+            .map((p) => (typeof p.mrp === 'number' ? p.mrp : 0))
+            .filter((n) => Number.isFinite(n) && n > 0)
+        );
+        setMaxMrp(computedMaxMrp);
+        // Only auto-expand if the user hasn't changed it yet
+        setFilters((prev) => {
+          const isDefaultRange = prev.priceRange[0] === 0 && prev.priceRange[1] === 100000;
+          return isDefaultRange ? { ...prev, priceRange: [0, computedMaxMrp] } : prev;
+        });
         
         // Extract unique companies for filters
         const companies = new Set<string>();
@@ -459,6 +474,7 @@ export default function ProductsPage() {
   
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(e.target.value);
+    setPage(0);
   };
   
   const handleChangePage = (event: unknown, newPage: number) => {
@@ -522,25 +538,27 @@ export default function ProductsPage() {
     }
     
     // GST Applicable filter
-    if (filters.gstApplicable !== null && product.gstApplicable !== filters.gstApplicable) {
-      return false;
+    if (filters.gstApplicable !== 'all') {
+      const want = filters.gstApplicable === 'yes';
+      const actual = product.gstApplicable !== false;
+      if (actual !== want) return false;
     }
     
     // Serial number tracking filter
-    if (filters.hasSerialNumber !== null && product.hasSerialNumber !== filters.hasSerialNumber) {
-      return false;
+    if (filters.hasSerialNumber !== 'all') {
+      const want = filters.hasSerialNumber === 'yes';
+      if (!!product.hasSerialNumber !== want) return false;
     }
     
     // Free of cost filter
-    if (filters.isFreeOfCost !== null && product.isFreeOfCost !== filters.isFreeOfCost) {
-      return false;
+    if (filters.isFreeOfCost !== 'all') {
+      const want = filters.isFreeOfCost === 'yes';
+      if (!!product.isFreeOfCost !== want) return false;
     }
     
-    // Price range filter - only apply to products with an MRP and not FOC
-    if (!product.isFreeOfCost && product.mrp !== undefined) {
-      if (product.mrp < filters.priceRange[0] || product.mrp > filters.priceRange[1]) {
-        return false;
-      }
+    // Price range filter - only apply to products with a valid MRP and not FOC
+    if (!product.isFreeOfCost && typeof product.mrp === 'number' && Number.isFinite(product.mrp)) {
+      if (product.mrp < filters.priceRange[0] || product.mrp > filters.priceRange[1]) return false;
     }
     
     return true;
@@ -583,10 +601,10 @@ export default function ProductsPage() {
   const activeFilterCount = (
     (filters.productTypes.length > 0 ? 1 : 0) +
     (filters.companies.length > 0 ? 1 : 0) +
-    (filters.gstApplicable !== null ? 1 : 0) +
-    (filters.hasSerialNumber !== null ? 1 : 0) +
-    (filters.isFreeOfCost !== null ? 1 : 0) +
-    (filters.priceRange[0] > 0 || filters.priceRange[1] < 100000 ? 1 : 0)
+    (filters.gstApplicable !== 'all' ? 1 : 0) +
+    (filters.hasSerialNumber !== 'all' ? 1 : 0) +
+    (filters.isFreeOfCost !== 'all' ? 1 : 0) +
+    (filters.priceRange[0] > 0 || filters.priceRange[1] < maxMrp ? 1 : 0)
   );
   
   // Paginate products
@@ -954,6 +972,7 @@ export default function ProductsPage() {
       ...prev,
       [filterType]: value
     }));
+    setPage(0);
   };
   
   // Reset all filters
@@ -961,11 +980,12 @@ export default function ProductsPage() {
     setFilters({
       productTypes: [],
       companies: [],
-      gstApplicable: null,
-      hasSerialNumber: null,
-      priceRange: [0, 100000],
-      isFreeOfCost: null,
+      gstApplicable: 'all',
+      hasSerialNumber: 'all',
+      priceRange: [0, maxMrp],
+      isFreeOfCost: 'all',
     });
+    setPage(0);
   };
   
   // Update sort options
@@ -976,6 +996,7 @@ export default function ProductsPage() {
       setSortBy(field);
       setSortDirection('asc');
     }
+    setPage(0);
   };
   
   if (loading || isLoading) {
@@ -1097,40 +1118,40 @@ export default function ProductsPage() {
               />
             )}
             
-            {filters.gstApplicable !== null && (
+            {filters.gstApplicable !== 'all' && (
               <Chip
-                label={`GST: ${filters.gstApplicable ? 'Applicable' : 'Exempt'}`}
-                onDelete={() => handleFilterChange('gstApplicable', null)}
+                label={`GST: ${filters.gstApplicable === 'yes' ? 'Applicable' : 'Exempt'}`}
+                onDelete={() => handleFilterChange('gstApplicable', 'all')}
                 size="small"
                 color="primary"
                 variant="outlined"
               />
             )}
             
-            {filters.hasSerialNumber !== null && (
+            {filters.hasSerialNumber !== 'all' && (
               <Chip
-                label={`Serial Tracking: ${filters.hasSerialNumber ? 'Yes' : 'No'}`}
-                onDelete={() => handleFilterChange('hasSerialNumber', null)}
+                label={`Serial Tracking: ${filters.hasSerialNumber === 'yes' ? 'Yes' : 'No'}`}
+                onDelete={() => handleFilterChange('hasSerialNumber', 'all')}
                 size="small"
                 color="primary"
                 variant="outlined"
               />
             )}
             
-            {filters.isFreeOfCost !== null && (
+            {filters.isFreeOfCost !== 'all' && (
               <Chip
-                label={`FOC: ${filters.isFreeOfCost ? 'Yes' : 'No'}`}
-                onDelete={() => handleFilterChange('isFreeOfCost', null)}
+                label={`FOC: ${filters.isFreeOfCost === 'yes' ? 'Yes' : 'No'}`}
+                onDelete={() => handleFilterChange('isFreeOfCost', 'all')}
                 size="small"
                 color="primary"
                 variant="outlined"
               />
             )}
             
-            {(filters.priceRange[0] > 0 || filters.priceRange[1] < 100000) && (
+            {(filters.priceRange[0] > 0 || filters.priceRange[1] < maxMrp) && (
               <Chip
                 label={`MRP: ₹${filters.priceRange[0]} - ₹${filters.priceRange[1]}`}
-                onDelete={() => handleFilterChange('priceRange', [0, 100000])}
+                onDelete={() => handleFilterChange('priceRange', [0, maxMrp])}
                 size="small"
                 color="primary"
                 variant="outlined"
@@ -1488,17 +1509,17 @@ export default function ProductsPage() {
           <ToggleButtonGroup
             exclusive
             value={filters.gstApplicable}
-            onChange={(e, value) => handleFilterChange('gstApplicable', value !== null ? value : null)}
+            onChange={(e, value) => handleFilterChange('gstApplicable', value || 'all')}
             fullWidth
             size="small"
           >
-            <ToggleButton value={true}>
+            <ToggleButton value="yes">
               Applicable
             </ToggleButton>
-            <ToggleButton value={false}>
+            <ToggleButton value="no">
               Exempt
             </ToggleButton>
-            <ToggleButton value="">
+            <ToggleButton value="all">
               All
             </ToggleButton>
           </ToggleButtonGroup>
@@ -1511,17 +1532,17 @@ export default function ProductsPage() {
           <ToggleButtonGroup
             exclusive
             value={filters.hasSerialNumber}
-            onChange={(e, value) => handleFilterChange('hasSerialNumber', value !== null ? value : null)}
+            onChange={(e, value) => handleFilterChange('hasSerialNumber', value || 'all')}
             fullWidth
             size="small"
           >
-            <ToggleButton value={true}>
+            <ToggleButton value="yes">
               Yes
             </ToggleButton>
-            <ToggleButton value={false}>
+            <ToggleButton value="no">
               No
             </ToggleButton>
-            <ToggleButton value="">
+            <ToggleButton value="all">
               All
             </ToggleButton>
           </ToggleButtonGroup>
@@ -1534,17 +1555,17 @@ export default function ProductsPage() {
           <ToggleButtonGroup
             exclusive
             value={filters.isFreeOfCost}
-            onChange={(e, value) => handleFilterChange('isFreeOfCost', value !== null ? value : null)}
+            onChange={(e, value) => handleFilterChange('isFreeOfCost', value || 'all')}
             fullWidth
             size="small"
           >
-            <ToggleButton value={true}>
+            <ToggleButton value="yes">
               Yes
             </ToggleButton>
-            <ToggleButton value={false}>
+            <ToggleButton value="no">
               No
             </ToggleButton>
-            <ToggleButton value="">
+            <ToggleButton value="all">
               All
             </ToggleButton>
           </ToggleButtonGroup>
@@ -1571,7 +1592,7 @@ export default function ProductsPage() {
               label="Max"
               type="number"
               value={filters.priceRange[1]}
-              onChange={(e) => handleFilterChange('priceRange', [filters.priceRange[0], parseInt(e.target.value) || 100000])}
+              onChange={(e) => handleFilterChange('priceRange', [filters.priceRange[0], parseInt(e.target.value) || maxMrp])}
               InputProps={{
                 startAdornment: <InputAdornment position="start">₹</InputAdornment>,
               }}

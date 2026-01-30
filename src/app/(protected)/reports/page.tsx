@@ -21,6 +21,7 @@ import { useSnackbar } from 'notistack';
 import ProfitReportTab from '@/components/Reports/ProfitReportTab';
 import StockPositionTab from '@/components/Reports/StockPositionTab';
 import GSTReportTab from '@/components/Reports/GSTReportTab';
+import SalesReportsTab from '@/components/Reports/SalesReportsTab';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -79,12 +80,7 @@ export default function ReportsPage() {
       
       {/* Sales Report Tab */}
       <TabPanel value={tabValue} index={1}>
-        <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
-          <Typography variant="h6">Sales Report</Typography>
-          <Typography variant="body1">
-            Sales report content will be displayed here.
-          </Typography>
-        </Paper>
+        <SalesReportsTab />
       </TabPanel>
       
       {/* Stock Position Tab */}
