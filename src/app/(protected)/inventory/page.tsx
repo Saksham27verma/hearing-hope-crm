@@ -377,7 +377,7 @@ export default function InventoryPage() {
               });
               return;
             }
-            serials.forEach((sn: string, idx: number) => {
+            serials.forEach((sn: string) => {
               const key = `${productId}|${sn}`;
               const isStockTransferIn = supplierName.includes('Stock Transfer from');
               if (incomingMap.has(key)) {
@@ -408,7 +408,8 @@ export default function InventoryPage() {
               const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
               incomingMap.set(key, {
-                id: `mi-${docSnap.id}-${idx}`,
+                // Stable unique id per product+serial (avoids collisions across products in same challan)
+                id: `sn-${key}`,
                 productId,
                 productName,
                 serialNumber: sn,
@@ -469,7 +470,7 @@ export default function InventoryPage() {
               });
               return;
             }
-            serials.forEach((sn: string, idx: number) => {
+            serials.forEach((sn: string) => {
               const key = `${productId}|${sn}`;
               if (incomingMap.has(key)) return; // already from material in (converted)
               
@@ -482,7 +483,8 @@ export default function InventoryPage() {
               const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
               incomingMap.set(key, {
-                id: `po-${docSnap.id}-${idx}`,
+                // Same stable id strategy for purchases
+                id: `sn-${key}`,
                 productId,
                 productName,
                 serialNumber: sn,
@@ -514,7 +516,8 @@ export default function InventoryPage() {
           const data: any = docSnap.data();
           const documentLocation = data.location || headOfficeId;
           const notes = data.notes || '';
-          const isStockTransfer = notes.includes('Stock Transfer:');
+          const reason = data.reason || '';
+          const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
           
           (data.products || []).forEach((prod: any) => {
             const productId = prod.productId || prod.id;

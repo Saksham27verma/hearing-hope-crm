@@ -128,6 +128,18 @@ interface AvailableStockItem {
   quantity?: number;
 }
 
+interface SelectableStockProduct {
+  productId: string;
+  name: string;
+  type: string;
+  company?: string;
+  businessCompany?: string;
+  location: string;
+  isSerialTracked: boolean;
+  serialNumbers?: string[];
+  quantity?: number;
+}
+
 const emptyTransfer: Omit<StockTransfer, 'id'> = {
   transferNumber: '',
   transferType: 'intracompany',
@@ -149,7 +161,7 @@ const StockTransferPage = () => {
   const [centers, setCenters] = useState<Center[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [availableStock, setAvailableStock] = useState<AvailableStockItem[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<AvailableStockItem | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<SelectableStockProduct | null>(null);
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [selectedQuantity, setSelectedQuantity] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
@@ -255,14 +267,31 @@ const StockTransferPage = () => {
       console.log('🔍 Fetching available stock using inventory module logic...');
       
       const headOfficeId = await getHeadOfficeId();
+      // Use a fresh centers snapshot here so mapping works even if state hasn't loaded yet.
+      const centersSnap = await getDocs(collection(db, 'centers'));
+      const centersList: Center[] = centersSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as any;
+      if (!centers.length && centersList.length) {
+        // Keep UI state in sync for getCenterName() and dropdowns
+        setCenters(centersList as any);
+      }
+      const normalizeLocation = (loc: any): string => {
+        const raw = String(loc || '').trim();
+        if (!raw) return headOfficeId;
+        // Already an id?
+        if (centersList.some(c => c.id === raw)) return raw;
+        // Legacy data may store center name instead of id
+        const byName = centersList.find(c => String(c.name || '').trim() === raw);
+        return byName?.id || raw;
+      };
       
-      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap] = await Promise.all([
+      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, stockTransfersSnap] = await Promise.all([
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'materialInward')),
         getDocs(collection(db, 'purchases')),
         getDocs(collection(db, 'materialsOut')),
         getDocs(collection(db, 'sales')),
         getDocs(collection(db, 'enquiries')),
+        getDocs(collection(db, 'stockTransfers')),
       ]);
 
       const productById = new Map<string, any>();
@@ -275,8 +304,12 @@ const StockTransferPage = () => {
         const supplierName = data.supplier?.name || '';
         if (supplierName.includes('Stock Transfer from')) {
           (data.products || []).forEach((prod: any) => {
-            (prod.serialNumbers || []).forEach((sn: string) => {
-              stockTransferInSerials.add(`${prod.productId || prod.id || ''}|${sn}`);
+            const productId = prod.productId || prod.id || '';
+            const serialArray: string[] = Array.isArray(prod.serialNumbers)
+              ? prod.serialNumbers
+              : (prod.serialNumber ? [prod.serialNumber] : []);
+            serialArray.forEach((sn: string) => {
+              if (productId && sn) stockTransferInSerials.add(`${productId}|${sn}`);
             });
           });
         }
@@ -301,8 +334,12 @@ const StockTransferPage = () => {
         const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
         
         (data.products || []).forEach((prod: any) => {
-          (prod.serialNumbers || []).forEach((sn: string) => {
-            const key = `${prod.productId || prod.id || ''}|${sn}`;
+          const productId = prod.productId || prod.id || '';
+          const serialArray: string[] = Array.isArray(prod.serialNumbers)
+            ? prod.serialNumbers
+            : (prod.serialNumber ? [prod.serialNumber] : []);
+          serialArray.forEach((sn: string) => {
+            const key = `${productId}|${sn}`;
             
             // If this is a stock transfer AND the item was received elsewhere, don't subtract it
             if (isStockTransfer && stockTransferInSerials.has(key)) {
@@ -366,27 +403,90 @@ const StockTransferPage = () => {
       });
 
       // Build available stock from material inward and purchases
-      const serialAvailable: AvailableStockItem[] = [];
+      const serialAvailableByKey = new Map<string, { item: AvailableStockItem; ts: number }>();
       const nonSerialInByProductLoc = new Map<string, number>();
       
+      const getTs = (t: any): number => {
+        if (!t) return 0;
+        if (typeof t === 'number') return t;
+        if (t?.toMillis) return t.toMillis();
+        if (t?.seconds) return t.seconds * 1000;
+        const d = new Date(t);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      };
+
+      const upsertSerial = (key: string, next: AvailableStockItem, ts: number) => {
+        const existing = serialAvailableByKey.get(key);
+        if (!existing || ts >= existing.ts) {
+          serialAvailableByKey.set(key, { item: next, ts });
+        }
+      };
+
+      // Apply stockTransfers as authoritative "moves" by transferDate.
+      // This makes the Stock Transfer form match the Inventory module even if
+      // legacy movement docs (material in/out) are missing or inconsistent.
+      const applyStockTransferMoves = () => {
+        const transfers: any[] = stockTransfersSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        transfers.sort((a, b) => getTs(a.transferDate) - getTs(b.transferDate));
+        for (const tr of transfers) {
+          const toBranch = normalizeLocation(tr.toBranch);
+          const transferCompany =
+            tr.transferType === 'intercompany'
+              ? (tr.toCompany || tr.company || '')
+              : (tr.company || tr.toCompany || '');
+          (tr.products || []).forEach((p: any) => {
+            const productId = p.productId || p.id || '';
+            const serials: string[] = Array.isArray(p.serialNumbers)
+              ? p.serialNumbers
+              : (p.serialNumber ? [p.serialNumber] : []);
+            serials.forEach((sn) => {
+              const key = `${productId}|${sn}`;
+              const existing = serialAvailableByKey.get(key);
+              if (!existing) return;
+              // Move item to destination branch/company
+              const moved: AvailableStockItem = {
+                ...existing.item,
+                location: toBranch,
+                businessCompany: transferCompany || existing.item.businessCompany,
+              };
+              // Ensure the move wins over prior inbound timestamps
+              const moveTs = getTs(tr.transferDate) || (existing.ts + 1);
+              serialAvailableByKey.set(key, { item: moved, ts: Math.max(existing.ts, moveTs) });
+            });
+          });
+        }
+      };
+
       let materialInItemsCount = 0;
       let purchaseItemsCount = 0;
 
       // Process Material Inward
       console.log('📥 Processing Material Inward documents:', materialInSnap.size);
-      materialInSnap.docs.forEach(docSnap => {
+      // Sort so latest transfer-in wins deterministically
+      const materialInDocsSorted = [...materialInSnap.docs].sort((a, b) => {
+        const ad: any = a.data();
+        const bd: any = b.data();
+        return getTs(ad.receivedDate) - getTs(bd.receivedDate);
+      });
+      materialInDocsSorted.forEach(docSnap => {
         const data: any = docSnap.data();
+        const receivedTs = getTs(data.receivedDate);
+        const supplierName = data.supplier?.name || '';
+        const isStockTransferIn = supplierName.includes('Stock Transfer from');
         const companyLocation = data.company || '';
-        const documentLocation = data.location || headOfficeId;
+        const documentLocation = normalizeLocation(data.location || headOfficeId);
         
         (data.products || []).forEach((prod: any) => {
           const productId = prod.productId || prod.id;
           const productRef = productById.get(productId) || {};
           const name = prod.name || productRef.name || '';
           const type = prod.type || productRef.type || '';
-          const company = companyLocation || productRef.company || '';
+          // Align with Inventory module: business company from doc.company, fallback to product.company
+          const businessCompany = companyLocation || productRef.company || '';
           const manufacturerCompany = productRef.company || '';
-          const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+          const serials: string[] = Array.isArray(prod.serialNumbers)
+            ? prod.serialNumbers
+            : (prod.serialNumber ? [prod.serialNumber] : []);
           const hasSerial = serials.length > 0;
           
           if (hasSerial) {
@@ -396,20 +496,35 @@ const StockTransferPage = () => {
               const sold = soldSerials.has(key);
               
               if (!reserved && !sold) {
-                serialAvailable.push({
-                  productId,
-                  name,
-                  type,
-                  company: manufacturerCompany,
-                  businessCompany: company,
-                  location: documentLocation,
-                  isSerialTracked: true,
-                  serialNumber: sn
-                });
+                // Stock transfer IN should override location/company (move) if newer
+                if (isStockTransferIn) {
+                  upsertSerial(key, {
+                    productId,
+                    name,
+                    type,
+                    company: manufacturerCompany,
+                    businessCompany,
+                    location: documentLocation,
+                    isSerialTracked: true,
+                    serialNumber: sn
+                  }, receivedTs);
+                } else {
+                  // Normal inbound: only set if not already set by a newer movement
+                  upsertSerial(key, {
+                    productId,
+                    name,
+                    type,
+                    company: manufacturerCompany,
+                    businessCompany,
+                    location: documentLocation,
+                    isSerialTracked: true,
+                    serialNumber: sn
+                  }, receivedTs);
+                }
               }
             });
           } else if (prod.quantity && prod.quantity > 0) {
-            const k = `${productId}|${documentLocation}|${company}`;
+            const k = `${productId}|${documentLocation}|${businessCompany}`;
             nonSerialInByProductLoc.set(k, (nonSerialInByProductLoc.get(k) || 0) + prod.quantity);
             materialInItemsCount++;
           }
@@ -420,19 +535,27 @@ const StockTransferPage = () => {
 
       // Process Purchases
       console.log('📥 Processing Purchases documents:', purchasesSnap.size);
-      purchasesSnap.docs.forEach(docSnap => {
+      const purchaseDocsSorted = [...purchasesSnap.docs].sort((a, b) => {
+        const ad: any = a.data();
+        const bd: any = b.data();
+        return getTs(ad.purchaseDate) - getTs(bd.purchaseDate);
+      });
+      purchaseDocsSorted.forEach(docSnap => {
         const data: any = docSnap.data();
+        const purchaseTs = getTs(data.purchaseDate);
         const companyLocation = data.company || '';
-        const documentLocation = data.location || headOfficeId;
+        const documentLocation = normalizeLocation(data.location || headOfficeId);
         
         (data.products || []).forEach((prod: any) => {
           const productId = prod.productId || prod.id;
           const productRef = productById.get(productId) || {};
           const name = prod.name || productRef.name || '';
           const type = prod.type || productRef.type || '';
-          const company = companyLocation || productRef.company || '';
+          const businessCompany = companyLocation || productRef.company || '';
           const manufacturerCompany = productRef.company || '';
-          const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+          const serials: string[] = Array.isArray(prod.serialNumbers)
+            ? prod.serialNumbers
+            : (prod.serialNumber ? [prod.serialNumber] : []);
           const hasSerial = serials.length > 0;
           
           if (hasSerial) {
@@ -442,20 +565,20 @@ const StockTransferPage = () => {
               const sold = soldSerials.has(key);
               
               if (!reserved && !sold) {
-                serialAvailable.push({
+                upsertSerial(key, {
                   productId,
                   name,
                   type,
                   company: manufacturerCompany,
-                  businessCompany: company,
+                  businessCompany,
                   location: documentLocation,
                   isSerialTracked: true,
                   serialNumber: sn
-                });
+                }, purchaseTs);
               }
             });
           } else if (prod.quantity && prod.quantity > 0) {
-            const k = `${productId}|${documentLocation}|${company}`;
+            const k = `${productId}|${documentLocation}|${businessCompany}`;
             nonSerialInByProductLoc.set(k, (nonSerialInByProductLoc.get(k) || 0) + prod.quantity);
           }
         });
@@ -465,7 +588,7 @@ const StockTransferPage = () => {
       materialsOutSnap.docs.forEach(docSnap => {
         const data: any = docSnap.data();
         const companyLocation = data.company || '';
-        const documentLocation = data.location || headOfficeId;
+        const documentLocation = normalizeLocation(data.location || headOfficeId);
         const notes = data.notes || '';
         const reason = data.reason || '';
         const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
@@ -473,7 +596,7 @@ const StockTransferPage = () => {
         (data.products || []).forEach((prod: any) => {
           const productId = prod.productId || prod.id;
           const productRef = productById.get(productId) || {};
-          const company = companyLocation || productRef.company || '';
+          const businessCompany = companyLocation || productRef.company || '';
           const hasSerial = !!productRef.hasSerialNumber;
           const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
           
@@ -491,7 +614,7 @@ const StockTransferPage = () => {
               if (shouldSkip) return;
             }
             
-            const k = `${productId}|${documentLocation}|${company}`;
+            const k = `${productId}|${documentLocation}|${businessCompany}`;
             nonSerialInByProductLoc.set(k, Math.max(0, (nonSerialInByProductLoc.get(k) || 0) - prod.quantity));
           }
         });
@@ -515,17 +638,10 @@ const StockTransferPage = () => {
         });
       });
 
-      // Deduplicate serial numbers - keep only unique productId|serialNumber combinations
-      const uniqueSerialAvailable: AvailableStockItem[] = [];
-      const seenSerials = new Set<string>();
-      
-      serialAvailable.forEach(item => {
-        const key = `${item.productId}|${item.serialNumber}`;
-        if (!seenSerials.has(key)) {
-          seenSerials.add(key);
-          uniqueSerialAvailable.push(item);
-        }
-      });
+      // Final pass: apply stock transfer moves (authoritative)
+      applyStockTransferMoves();
+
+      const uniqueSerialAvailable: AvailableStockItem[] = Array.from(serialAvailableByKey.values()).map(v => v.item);
 
       const totalAvailable = [...uniqueSerialAvailable, ...nonSerialAvailable];
       
@@ -543,7 +659,9 @@ const StockTransferPage = () => {
         serialItems: uniqueSerialAvailable.length,
         nonSerialItems: nonSerialAvailable.length,
         totalItems: totalAvailable.length,
-        duplicatesRemoved: serialAvailable.length - uniqueSerialAvailable.length,
+        // We now de-duplicate via a map keyed by productId|serial, so "duplicates removed"
+        // isn't tracked as an array diff anymore.
+        duplicatesRemoved: 0,
         byLocation: totalAvailable.reduce((acc, item) => {
           const centerName = getCenterName(item.location);
           acc[centerName] = (acc[centerName] || 0) + 1;
@@ -650,6 +768,56 @@ const StockTransferPage = () => {
     
     return filtered;
   }, [availableStock, currentTransfer?.fromBranch, currentTransfer?.transferType, currentTransfer?.company, currentTransfer?.fromCompany]);
+
+  const selectableProducts = useMemo<SelectableStockProduct[]>(() => {
+    if (!filteredAvailableStock.length) return [];
+    const out: SelectableStockProduct[] = [];
+    const serialGroups = new Map<string, SelectableStockProduct>();
+    const qtyGroups = new Map<string, SelectableStockProduct>();
+
+    for (const item of filteredAvailableStock) {
+      if (item.isSerialTracked) {
+        const key = `${item.productId}|${item.businessCompany || ''}|${item.location}`;
+        const existing = serialGroups.get(key);
+        if (!existing) {
+          serialGroups.set(key, {
+            productId: item.productId,
+            name: item.name,
+            type: item.type,
+            company: item.company,
+            businessCompany: item.businessCompany,
+            location: item.location,
+            isSerialTracked: true,
+            serialNumbers: item.serialNumber ? [item.serialNumber] : [],
+          });
+        } else if (item.serialNumber) {
+          existing.serialNumbers = Array.from(new Set([...(existing.serialNumbers || []), item.serialNumber]));
+        }
+      } else {
+        const key = `${item.productId}|${item.businessCompany || ''}|${item.location}`;
+        const existing = qtyGroups.get(key);
+        if (!existing) {
+          qtyGroups.set(key, {
+            productId: item.productId,
+            name: item.name,
+            type: item.type,
+            company: item.company,
+            businessCompany: item.businessCompany,
+            location: item.location,
+            isSerialTracked: false,
+            quantity: item.quantity || 0,
+          });
+        } else {
+          existing.quantity = (existing.quantity || 0) + (item.quantity || 0);
+        }
+      }
+    }
+
+    serialGroups.forEach(v => out.push(v));
+    qtyGroups.forEach(v => out.push(v));
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }, [filteredAvailableStock]);
 
   const handleAddTransfer = async () => {
     const now = new Date();
@@ -1695,19 +1863,19 @@ const StockTransferPage = () => {
                       value={selectedProduct}
                       onChange={(_, newValue) => {
                         setSelectedProduct(newValue);
-                        // Auto-select serial number for serial-tracked items
-                        if (newValue && newValue.isSerialTracked && newValue.serialNumber) {
-                          setSelectedSerials([newValue.serialNumber]);
-                        } else {
-                          setSelectedSerials([]);
-                        }
+                        setSelectedSerials([]);
+                        setSelectedQuantity(1);
                       }}
-                      options={filteredAvailableStock}
-                      getOptionLabel={(option) => `${option.name} ${option.isSerialTracked ? `(SN: ${option.serialNumber})` : `(Qty: ${option.quantity})`}`}
+                      options={selectableProducts}
+                      getOptionLabel={(option) =>
+                        `${option.name} ${option.isSerialTracked
+                          ? `(Serials: ${(option.serialNumbers || []).length})`
+                          : `(Qty: ${option.quantity || 0})`}`
+                      }
                       renderInput={(params) => (
-                        <TextField 
-                          {...params} 
-                          label="Select Product" 
+                        <TextField
+                          {...params}
+                          label="Select Product"
                           placeholder="Search products..."
                         />
                       )}
@@ -1718,9 +1886,9 @@ const StockTransferPage = () => {
                               {option.name}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
-                              {option.isSerialTracked 
-                                ? `Serial: ${option.serialNumber}` 
-                                : `Available: ${option.quantity} units`
+                              {option.isSerialTracked
+                                ? `Select multiple serials`
+                                : `Available: ${option.quantity || 0} units`
                               } • {getCenterName(option.location)}
                             </Typography>
                           </Box>
@@ -1728,6 +1896,23 @@ const StockTransferPage = () => {
                       )}
                       fullWidth
                     />
+
+                    {selectedProduct && selectedProduct.isSerialTracked && (
+                      <Autocomplete
+                        multiple
+                        value={selectedSerials}
+                        onChange={(_, vals) => setSelectedSerials(vals)}
+                        options={selectedProduct.serialNumbers || []}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label={`Select serial numbers (${(selectedProduct.serialNumbers || []).length} available)`}
+                            placeholder="Type to search serials"
+                            sx={{ mt: 2 }}
+                          />
+                        )}
+                      />
+                    )}
 
                     {selectedProduct && !selectedProduct.isSerialTracked && (
                       <TextField
@@ -1739,14 +1924,6 @@ const StockTransferPage = () => {
                         inputProps={{ min: 1, max: selectedProduct.quantity || 1 }}
                         sx={{ mt: 2 }}
                       />
-                    )}
-
-                    {selectedProduct && selectedProduct.isSerialTracked && (
-                      <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', borderRadius: 1 }}>
-                        <Typography variant="body2" color="info.dark">
-                          Serial Number: <strong>{selectedProduct.serialNumber}</strong>
-                        </Typography>
-                      </Box>
                     )}
 
                     <Button
