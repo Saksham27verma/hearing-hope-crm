@@ -922,6 +922,91 @@ export default function InventoryPage() {
     return center ? center.name : locationId;
   };
 
+  const handleExportData = () => {
+    try {
+      if (!filteredInventory || filteredInventory.length === 0) {
+        setErrorMessage('No inventory items to export (try clearing filters).');
+        return;
+      }
+
+      const escapeCsv = (value: any) => {
+        const s = value === null || value === undefined ? '' : String(value);
+        return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+
+      const headersBase = [
+        'Product Name',
+        'Serial Number',
+        'Type',
+        'Company',
+        'Manufacturer',
+        'Location',
+        'Location ID',
+        'Status',
+        'Quantity',
+      ];
+
+      const headersFinance = [
+        'Dealer Price',
+        'MRP',
+        'Purchase Date',
+        'Purchase Invoice',
+        'Supplier',
+        'Source Type',
+      ];
+
+      const headers = isRestrictedUser ? headersBase : [...headersBase, ...headersFinance];
+
+      const rows = filteredInventory.map((item) => {
+        const base = [
+          item.productName || '',
+          item.serialNumber || '',
+          item.type || '',
+          item.company || '',
+          item.originalProductCompany || '',
+          getCenterName(item.location),
+          item.location || '',
+          item.status || '',
+          item.quantity ?? '',
+        ];
+
+        if (isRestrictedUser) return base;
+
+        const finance = [
+          item.dealerPrice ?? '',
+          item.mrp ?? '',
+          formatDate(item.purchaseDate),
+          item.purchaseInvoice || '',
+          item.supplier || '',
+          item.sourceType || '',
+        ];
+
+        return [...base, ...finance];
+      });
+
+      // Add UTF-8 BOM so Excel opens it correctly
+      const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(escapeCsv).join(',')).join('\n');
+
+      const today = new Date().toISOString().slice(0, 10);
+      const fileName = `inventory-export-${today}.csv`;
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setSuccessMessage(`Exported ${filteredInventory.length} inventory items.`);
+    } catch (err) {
+      console.error('Export failed:', err);
+      setErrorMessage('Export failed. Please try again.');
+    }
+  };
+
   // Filter inventory based on selected filters
   useEffect(() => {
     let filtered = inventory;
@@ -2154,6 +2239,7 @@ export default function InventoryPage() {
               size="small"
               startIcon={<VisibilityIcon />}
               sx={{ borderRadius: 1 }}
+              onClick={handleExportData}
             >
               Export Data
             </Button>

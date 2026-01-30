@@ -26,6 +26,10 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import {
   Lock as LockIcon,
@@ -36,6 +40,7 @@ import {
   Security as SecurityIcon,
   Email as EmailIcon,
   Person as PersonIcon,
+  Add as AddIcon,
 } from '@mui/icons-material';
 import { useAuth } from '@/context/AuthContext';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
@@ -45,7 +50,7 @@ interface User {
   uid: string;
   email: string;
   displayName?: string;
-  role: 'admin' | 'staff';
+  role: 'admin' | 'staff' | 'audiologist';
 }
 
 export default function PasswordManagementPage() {
@@ -75,6 +80,12 @@ export default function PasswordManagementPage() {
   const [userNewEmail, setUserNewEmail] = useState('');
   const [showUserPassword, setShowUserPassword] = useState(false);
   const [showUserConfirmPassword, setShowUserConfirmPassword] = useState(false);
+
+  // Admin: create user
+  const [createUserDialogOpen, setCreateUserDialogOpen] = useState(false);
+  const [createUserEmail, setCreateUserEmail] = useState('');
+  const [createUserName, setCreateUserName] = useState('');
+  const [createUserRole, setCreateUserRole] = useState<'admin' | 'staff' | 'audiologist'>('staff');
   
   // UI state
   const [loading, setLoading] = useState(false);
@@ -315,6 +326,64 @@ export default function PasswordManagementPage() {
   const handleCloseSnackbar = () => {
     setSuccessMsg('');
     setErrorMsg('');
+  };
+
+  const handleCreateUser = async () => {
+    try {
+      setErrorMsg('');
+      setSuccessMsg('');
+
+      const email = createUserEmail.trim().toLowerCase();
+      const displayName = createUserName.trim();
+      const role = createUserRole;
+
+      if (!email) {
+        setErrorMsg('Please enter an email address');
+        return;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        setErrorMsg('Invalid email format');
+        return;
+      }
+      if (!user) {
+        setErrorMsg('You must be signed in as admin');
+        return;
+      }
+
+      setLoading(true);
+      const token = await user.getIdToken();
+      const res = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ email, displayName, role }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        setErrorMsg(data?.error || 'Failed to create user');
+        setLoading(false);
+        return;
+      }
+
+      // Send password setup email (Firebase password reset)
+      await resetUserPassword(email);
+
+      setSuccessMsg(`User created: ${email}. Password setup email sent.`);
+      setCreateUserDialogOpen(false);
+      setCreateUserEmail('');
+      setCreateUserName('');
+      setCreateUserRole('staff');
+      await fetchUsers();
+      setLoading(false);
+    } catch (error: any) {
+      console.error('Error creating user:', error);
+      setErrorMsg(error?.message || 'Failed to create user');
+      setLoading(false);
+    }
   };
 
   if (authLoading || loading) {
@@ -579,6 +648,16 @@ export default function PasswordManagementPage() {
                 Change passwords and email addresses for admin and staff users.
               </Typography>
 
+              <Box sx={{ mb: 2 }}>
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => setCreateUserDialogOpen(true)}
+                >
+                  Add New User
+                </Button>
+              </Box>
+
               <Box sx={{ maxHeight: 500, overflow: 'auto' }}>
                 <List>
                   {users.map((u) => (
@@ -809,6 +888,51 @@ export default function PasswordManagementPage() {
             disabled={!userNewEmail || userNewEmail === selectedUser?.email}
           >
             Update Email
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Create User Dialog (Admin) */}
+      <Dialog open={createUserDialogOpen} onClose={() => setCreateUserDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Create New User</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              fullWidth
+              label="Email"
+              type="email"
+              value={createUserEmail}
+              onChange={(e) => setCreateUserEmail(e.target.value)}
+              placeholder="new.user@example.com"
+            />
+            <TextField
+              fullWidth
+              label="Display Name (optional)"
+              value={createUserName}
+              onChange={(e) => setCreateUserName(e.target.value)}
+              placeholder="New User"
+            />
+            <FormControl fullWidth>
+              <InputLabel>Role</InputLabel>
+              <Select
+                value={createUserRole}
+                label="Role"
+                onChange={(e) => setCreateUserRole(e.target.value as any)}
+              >
+                <MenuItem value="staff">Staff</MenuItem>
+                <MenuItem value="audiologist">Audiologist</MenuItem>
+                <MenuItem value="admin">Admin</MenuItem>
+              </Select>
+            </FormControl>
+            <Alert severity="info">
+              After creation, the user will receive a password setup email (password reset link).
+            </Alert>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateUserDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={handleCreateUser} disabled={loading || !createUserEmail.trim()}>
+            Create & Send Email
           </Button>
         </DialogActions>
       </Dialog>
