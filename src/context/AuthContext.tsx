@@ -24,6 +24,7 @@ interface AuthContextInterface {
   loading: boolean;
   error: string | null;
   signIn: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   createUser: (email: string, password: string, role: UserRole, displayName?: string, allowedModules?: string[], branchId?: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
@@ -42,6 +43,7 @@ const AuthContext = createContext<AuthContextInterface>({
   loading: true,
   error: null,
   signIn: async () => {},
+  signInWithGoogle: async () => {},
   signOut: async () => {},
   createUser: async () => {},
   changePassword: async () => {},
@@ -74,7 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Dynamic import to prevent bundling issues
         const firebaseModule = await import('../firebase/config');
         const { auth, db } = firebaseModule;
-        const { onAuthStateChanged } = await import('firebase/auth');
+        const { onAuthStateChanged, signOut: firebaseSignOut } = await import('firebase/auth');
         const { doc, getDoc, setDoc } = await import('firebase/firestore');
         
         if (!auth) {
@@ -87,31 +89,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         unsubscribe = onAuthStateChanged(auth, async (authUser) => {
           if (authUser) {
             setUser(authUser);
-            
-            // Create immediate temporary profile
-            const immediateProfile: UserProfile = {
-              uid: authUser.uid,
-              email: authUser.email!,
-              displayName: authUser.email?.split('@')[0] || 'User',
-              role: 'admin',
-              allowedModules: ['users', 'inventory', 'customers', 'sales', 'purchases', 'reports', 'settings', 'interaction', 'products', 'materials', 'parties', 'centers', 'stock', 'cash'],
-              createdAt: Date.now(),
-            };
-            setUserProfile(immediateProfile);
-            setLoading(false);
-            
-            // Fetch actual profile in background if db is available
-            if (db) {
-              try {
-                const userDoc = await getDoc(doc(db, 'users', authUser.uid));
-                if (userDoc.exists()) {
-                  setUserProfile(userDoc.data() as UserProfile);
-                } else {
-                  await setDoc(doc(db, 'users', authUser.uid), immediateProfile);
-                }
-              } catch (err) {
-                console.warn('Background profile fetch failed:', err);
+
+            // Security: ONLY allow users that already exist in Firestore `users/{uid}`.
+            // Never auto-create admin profiles (this was making every login an admin).
+            if (!db) {
+              await firebaseSignOut(auth);
+              setUser(null);
+              setUserProfile(null);
+              setError('Database not available. Please try again.');
+              setLoading(false);
+              router.push('/login');
+              return;
+            }
+
+            try {
+              const userDoc = await getDoc(doc(db, 'users', authUser.uid));
+              if (!userDoc.exists()) {
+                await firebaseSignOut(auth);
+                setUser(null);
+                setUserProfile(null);
+                setError('Not authorized. Ask admin to add your user first.');
+                setLoading(false);
+                router.push('/login');
+                return;
               }
+
+              setUserProfile(userDoc.data() as UserProfile);
+              setLoading(false);
+            } catch (err) {
+              console.warn('Profile fetch failed:', err);
+              await firebaseSignOut(auth);
+              setUser(null);
+              setUserProfile(null);
+              setError('Failed to load your access profile. Please try again.');
+              setLoading(false);
+              router.push('/login');
+              return;
             }
           } else {
             setUser(null);
@@ -150,6 +163,84 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Sign in error:', err);
       setError(err.message || 'Failed to sign in');
       setLoading(false);
+    }
+  };
+
+  // Google sign-in (restricted to users already present in Firestore `users` by email)
+  const signInWithGoogle = async () => {
+    try {
+      setError(null);
+      setLoading(true);
+
+      const { auth, db } = await import('../firebase/config');
+      const { GoogleAuthProvider, signInWithPopup, signOut: firebaseSignOut } = await import('firebase/auth');
+      const { collection, query, where, getDocs, doc, getDoc, setDoc } = await import('firebase/firestore');
+
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+
+      const cred = await signInWithPopup(auth, provider);
+      const authUser = cred.user;
+
+      const email = (authUser.email || '').toLowerCase().trim();
+      if (!email) {
+        await firebaseSignOut(auth);
+        throw new Error('Google account has no email. Please use email/password login.');
+      }
+
+      if (!db) {
+        // If DB isn't available we can't enforce allowlist safely.
+        await firebaseSignOut(auth);
+        throw new Error('Database not available. Please try again later.');
+      }
+
+      // If profile already exists for this UID, allow.
+      const byUidRef = doc(db, 'users', authUser.uid);
+      const byUidSnap = await getDoc(byUidRef);
+      if (!byUidSnap.exists()) {
+        // Otherwise, allow ONLY if a user record exists with this email (admin-created allowlist).
+        const q = query(collection(db, 'users'), where('email', '==', email));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          await firebaseSignOut(auth);
+          throw new Error('This Google account is not authorized. Ask admin to add you first.');
+        }
+
+        const existing = snap.docs[0];
+        const existingData: any = existing.data();
+
+        // Create a new profile for the Google UID, copying permissions from the allowlisted record.
+        const migratedProfile: UserProfile = {
+          uid: authUser.uid,
+          email,
+          displayName: authUser.displayName || existingData.displayName || email.split('@')[0],
+          role: existingData.role || 'staff',
+          allowedModules: existingData.allowedModules || [],
+          createdAt: existingData.createdAt || Date.now(),
+          branchId: existingData.branchId,
+        };
+
+        await setDoc(byUidRef, {
+          ...migratedProfile,
+          migratedFromUid: existing.id,
+          authProvider: 'google',
+          updatedAt: Date.now(),
+        } as any, { merge: true });
+
+        // Keep the old doc for history, but mark it as migrated.
+        await setDoc(doc(db, 'users', existing.id), {
+          migratedToUid: authUser.uid,
+          migratedAt: Date.now(),
+        } as any, { merge: true });
+      }
+
+      router.push('/dashboard');
+      setLoading(false);
+    } catch (err: any) {
+      console.error('Google sign-in error:', err);
+      setError(err.message || 'Failed to sign in with Google');
+      setLoading(false);
+      throw err;
     }
   };
 
@@ -412,6 +503,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       error,
       signIn,
+      signInWithGoogle,
       signOut,
       createUser,
       changePassword,
