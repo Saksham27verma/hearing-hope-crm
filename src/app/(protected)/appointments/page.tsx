@@ -359,7 +359,7 @@ export default function AppointmentSchedulerPage() {
           }
         </div>
         <div style="margin-top: 40px; padding-top: 20px; border-top: 2px solid #ddd; text-align: center; color: #999; font-size: 12px;">
-          <p style="margin: 0;">Hope Hearing CRM - Appointment Schedule</p>
+          <p style="margin: 0;"> - Appointment Schedule</p>
         </div>
       `;
       
@@ -510,7 +510,7 @@ export default function AppointmentSchedulerPage() {
         pdf.setPage(i);
         pdf.setFontSize(8);
         pdf.setTextColor(150, 150, 150);
-        pdf.text('Hope Hearing CRM - Appointment Schedule', pageWidth / 2, pageHeight - 10, { align: 'center' });
+        pdf.text('Hearing Hope CRM - Appointment Schedule', pageWidth / 2, pageHeight - 10, { align: 'center' });
       }
       
       pdf.save(`appointments-${now.toISOString().split('T')[0]}.pdf`);

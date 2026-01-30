@@ -583,7 +583,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         )}
         
         <h1 style={styles.appBarTitle}>
-          {shouldHideSidebar ? 'Hope Hearing CRM - Enquiry Form' : 'Hope Hearing CRM'}
+          {shouldHideSidebar ? 'Hearing Hope CRM - Enquiry Form' : 'Hearing Hope CRM'}
         </h1>
         
         <div style={styles.appBarActions}>

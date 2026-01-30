@@ -121,7 +121,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           ☰
         </button>
         <h1 style={{ margin: 0, fontSize: '20px' }}>
-          Hope Hearing CRM System
+          Hearing Hope CRM System
         </h1>
         <div style={{ marginLeft: 'auto' }}>
           <button
