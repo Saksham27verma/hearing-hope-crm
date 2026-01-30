@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Box, 
@@ -523,6 +523,7 @@ export default function EnquiriesPage() {
     id: string;
     name: string;
     filters: typeof filters;
+    advancedFilters?: typeof advancedFilters;
     isDefault?: boolean;
   }>>([]);
   
@@ -565,6 +566,22 @@ export default function EnquiriesPage() {
     { field: 'visitStatus', label: 'Visit Status', dataType: 'text' as const },
     { field: 'visitingCenter', label: 'Visiting Center', dataType: 'text' as const },
   ];
+
+  // Dynamic dropdown options (use real data instead of hardcoded lists)
+  const uniq = (values: Array<string | undefined | null>) =>
+    Array.from(new Set(values.map(v => (v || '').toString().trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+  const assignedToOptions = useMemo(() => uniq(enquiries.map(e => e.assignedTo)), [enquiries]);
+  const telecallerOptions = useMemo(() => uniq(enquiries.map(e => e.telecaller)), [enquiries]);
+  const visitorTypeOptions = useMemo(() => uniq(enquiries.map(e => e.visitorType)), [enquiries]);
+  const visitTypeOptions = useMemo(() => uniq(enquiries.map(e => e.visitType)), [enquiries]);
+  const visitStatusOptions = useMemo(() => uniq(enquiries.map(e => e.visitStatus)), [enquiries]);
+  const enquiryTypeOptions = useMemo(() => uniq(enquiries.map(e => e.enquiryType)), [enquiries]);
+  const activeFormTypeOptions = useMemo(() => {
+    const fromRoot = enquiries.flatMap(e => (Array.isArray((e as any).activeFormTypes) ? (e as any).activeFormTypes : []));
+    const fromVisits = enquiries.flatMap(e => (Array.isArray(e.visits) ? e.visits : []).flatMap(v => (Array.isArray((v as any).activeFormTypes) ? (v as any).activeFormTypes : [])));
+    return uniq([...fromRoot, ...fromVisits] as any);
+  }, [enquiries]);
 
   // Operators based on data type
   const operatorsByType = {
@@ -1177,6 +1194,33 @@ export default function EnquiriesPage() {
 
   const applyFilters = () => {
     let result = [...enquiries];
+
+    const asText = (v: any) => (v === null || v === undefined ? '' : String(v));
+    const norm = (v: any) => asText(v).toLowerCase().trim();
+    const hasValue = (v: any) => norm(v).length > 0;
+    const parseDateOnly = (v: any): Date | null => {
+      if (typeof v === 'string' && v.trim()) {
+        const d = new Date(v);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    };
+    const getCreatedDate = (enquiry: any): Date | null => {
+      const c = enquiry?.createdAt;
+      if (!c) return null;
+      if (typeof c?.toDate === 'function') return c.toDate();
+      if (typeof c?._seconds === 'number') return new Date(c._seconds * 1000);
+      if (typeof c?.seconds === 'number') return new Date(c.seconds * 1000);
+      return null;
+    };
+    const withinDateRange = (d: Date, from: Date | null, to: Date | null) => {
+      const day = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const fromDay = from ? new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime() : null;
+      const toDay = to ? new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime() : null;
+      if (fromDay !== null && day < fromDay) return false;
+      if (toDay !== null && day > toDay) return false;
+      return true;
+    };
     
     // Apply legacy basic filters first for backward compatibility
     if (filters.searchTerm || searchTerm) {
@@ -1200,6 +1244,110 @@ export default function EnquiriesPage() {
     if (filters.enquiryType !== 'all' || typeFilter !== 'all') {
       const type = filters.enquiryType !== 'all' ? filters.enquiryType : typeFilter;
       result = result.filter(enquiry => enquiry.enquiryType === type);
+    }
+
+    // Apply remaining "More" filters (these existed in the UI but previously did nothing)
+    if (filters.dateFrom || filters.dateTo) {
+      const from = parseDateOnly(filters.dateFrom);
+      const to = parseDateOnly(filters.dateTo);
+      result = result.filter(enquiry => {
+        const created = getCreatedDate(enquiry);
+        if (!created) return false;
+        return withinDateRange(created, from, to);
+      });
+    }
+
+    if (filters.hasEmail !== 'all') {
+      result = result.filter(e => (filters.hasEmail === 'yes' ? hasValue((e as any).email) : !hasValue((e as any).email)));
+    }
+    if (filters.hasPhone !== 'all') {
+      result = result.filter(e => (filters.hasPhone === 'yes' ? hasValue((e as any).phone) : !hasValue((e as any).phone)));
+    }
+
+    if (filters.assignedTo !== 'all') {
+      result = result.filter(e => norm((e as any).assignedTo) === norm(filters.assignedTo));
+    }
+    if (filters.telecaller !== 'all') {
+      result = result.filter(e => norm((e as any).telecaller) === norm(filters.telecaller));
+    }
+
+    // Center (support either `center` or `visitingCenter`)
+    if (filters.visitingCenter !== 'all') {
+      result = result.filter(e => (((e as any).center || (e as any).visitingCenter || '') === filters.visitingCenter));
+    }
+
+    if (filters.visitorType !== 'all') {
+      result = result.filter(e => norm((e as any).visitorType) === norm(filters.visitorType));
+    }
+    if (filters.visitType !== 'all') {
+      result = result.filter(e => norm((e as any).visitType) === norm(filters.visitType));
+    }
+    if (filters.visitStatus !== 'all') {
+      result = result.filter(e => norm(((e as any).visitStatus || 'enquiry')) === norm(filters.visitStatus));
+    }
+
+    if (filters.hasFollowUps !== 'all') {
+      result = result.filter(e => {
+        const count = Array.isArray((e as any).followUps) ? (e as any).followUps.length : 0;
+        return filters.hasFollowUps === 'yes' ? count > 0 : count === 0;
+      });
+    }
+
+    if (filters.hasTestResults !== 'all') {
+      const wantsResults = filters.hasTestResults === 'yes';
+      result = result.filter(e => {
+        const visitsArr: any[] = Array.isArray((e as any).visits) ? (e as any).visits : [];
+        const schedulesArr: any[] = Array.isArray((e as any).visitSchedules) ? (e as any).visitSchedules : [];
+        const hasResults =
+          visitsArr.some(v => !!(v?.testDetails?.testResults || v?.testDetails?.audiogramData || v?.hearingTestDetails?.audiogramData)) ||
+          schedulesArr.some(v => !!(v?.hearingTestDetails?.audiogramData));
+        return wantsResults ? hasResults : !hasResults;
+      });
+    }
+
+    if (filters.visitDateFrom || filters.visitDateTo) {
+      const from = parseDateOnly(filters.visitDateFrom);
+      const to = parseDateOnly(filters.visitDateTo);
+      result = result.filter(e => {
+        const visitsArr: any[] = Array.isArray((e as any).visits) ? (e as any).visits : [];
+        const schedulesArr: any[] = Array.isArray((e as any).visitSchedules) ? (e as any).visitSchedules : [];
+        const dates: Date[] = [];
+        visitsArr.forEach(v => {
+          const d = parseDateOnly(v?.date);
+          if (d) dates.push(d);
+        });
+        schedulesArr.forEach(v => {
+          const d = parseDateOnly(v?.visitDate);
+          if (d) dates.push(d);
+        });
+        if (dates.length === 0) return false;
+        return dates.some(d => withinDateRange(d, from, to));
+      });
+    }
+
+    if (filters.companyName) {
+      const t = norm(filters.companyName);
+      result = result.filter(e => norm((e as any).companyName).includes(t));
+    }
+    if (filters.purposeOfVisit) {
+      const t = norm(filters.purposeOfVisit);
+      result = result.filter(e => norm((e as any).purposeOfVisit).includes(t));
+    }
+    if (filters.reference) {
+      const t = norm(filters.reference);
+      result = result.filter(e => norm((e as any).reference).includes(t));
+    }
+
+    if (Array.isArray(filters.activeFormTypes) && filters.activeFormTypes.length > 0) {
+      const selected = (filters.activeFormTypes as any[]).map(x => String(x));
+      result = result.filter(e => {
+        const root = Array.isArray((e as any).activeFormTypes) ? (e as any).activeFormTypes : [];
+        const visitsArr: any[] = Array.isArray((e as any).visits) ? (e as any).visits : [];
+        const all = new Set<string>();
+        root.forEach((x: any) => all.add(String(x)));
+        visitsArr.forEach(v => (Array.isArray(v?.activeFormTypes) ? v.activeFormTypes : []).forEach((x: any) => all.add(String(x))));
+        return selected.some(x => all.has(x));
+      });
     }
 
     // Apply advanced filters with logical operators
@@ -1933,6 +2081,13 @@ export default function EnquiriesPage() {
     setStatusFilter('all');
     setTypeFilter('all');
     setDateFilter('');
+    setAdvancedFilters([]);
+    setFilterBuilder({
+      field: '',
+      operator: '',
+      value: '',
+      dataType: 'text'
+    });
     setFilters({
       searchTerm: '',
       status: 'all',
@@ -1970,7 +2125,8 @@ export default function EnquiriesPage() {
     const newPreset = {
       id: Date.now().toString(),
       name: presetName,
-      filters: { ...filters }
+      filters: { ...filters },
+      advancedFilters: [...advancedFilters]
     };
     
     setFilterPresets(prev => [...prev, newPreset]);
@@ -1987,6 +2143,7 @@ export default function EnquiriesPage() {
     const preset = filterPresets.find(p => p.id === presetId);
     if (preset) {
       setFilters(preset.filters);
+      setAdvancedFilters(preset.advancedFilters || []);
       setCurrentPreset(presetId);
       
       // Also update legacy filter states for backward compatibility
@@ -4088,10 +4245,9 @@ export default function EnquiriesPage() {
                     onChange={(e) => updateFilter('assignedTo', e.target.value)}
                   >
                     <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="Dr. Smith">Dr. Smith</MenuItem>
-                    <MenuItem value="Dr. Johnson">Dr. Johnson</MenuItem>
-                    <MenuItem value="Staff A">Staff A</MenuItem>
-                    <MenuItem value="Staff B">Staff B</MenuItem>
+                    {assignedToOptions.map((name) => (
+                      <MenuItem key={name} value={name}>{name}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -4105,9 +4261,9 @@ export default function EnquiriesPage() {
                     onChange={(e) => updateFilter('telecaller', e.target.value)}
                   >
                     <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="Telecaller 1">Telecaller 1</MenuItem>
-                    <MenuItem value="Telecaller 2">Telecaller 2</MenuItem>
-                    <MenuItem value="Telecaller 3">Telecaller 3</MenuItem>
+                    {telecallerOptions.map((name) => (
+                      <MenuItem key={name} value={name}>{name}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -4121,9 +4277,9 @@ export default function EnquiriesPage() {
                     onChange={(e) => updateFilter('visitingCenter', e.target.value)}
                   >
                     <MenuItem value="all">All Centers</MenuItem>
-                    <MenuItem value="main">Main Center</MenuItem>
-                    <MenuItem value="branch1">Branch 1</MenuItem>
-                    <MenuItem value="branch2">Branch 2</MenuItem>
+                    {centers.map((c: any) => (
+                      <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -4155,11 +4311,9 @@ export default function EnquiriesPage() {
                     onChange={(e) => updateFilter('visitType', e.target.value)}
                   >
                     <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="consultation">Consultation</MenuItem>
-                    <MenuItem value="test">Test</MenuItem>
-                    <MenuItem value="trial">Trial</MenuItem>
-                    <MenuItem value="fitting">Fitting</MenuItem>
-                    <MenuItem value="followup">Follow-up</MenuItem>
+                    {visitTypeOptions.map((v) => (
+                      <MenuItem key={v} value={v}>{v}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -4173,10 +4327,9 @@ export default function EnquiriesPage() {
                     onChange={(e) => updateFilter('visitStatus', e.target.value)}
                   >
                     <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="enquiry">Enquiry</MenuItem>
-                    <MenuItem value="scheduled">Scheduled</MenuItem>
-                    <MenuItem value="visited">Visited</MenuItem>
-                    <MenuItem value="completed">Completed</MenuItem>
+                    {visitStatusOptions.map((v) => (
+                      <MenuItem key={v} value={v}>{v}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -4278,10 +4431,9 @@ export default function EnquiriesPage() {
                     onChange={(e) => updateFilter('activeFormTypes', e.target.value)}
                     renderValue={(selected) => `${selected.length} selected`}
                   >
-                    <MenuItem value="audiometry">Audiometry</MenuItem>
-                    <MenuItem value="tympanometry">Tympanometry</MenuItem>
-                    <MenuItem value="hearing-aid">Hearing Aid</MenuItem>
-                    <MenuItem value="consultation">Consultation</MenuItem>
+                    {activeFormTypeOptions.map((t) => (
+                      <MenuItem key={t} value={t}>{t}</MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
