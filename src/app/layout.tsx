@@ -1,9 +1,18 @@
-'use client';
-
 import './globals.css';
-import { ThemeRegistry } from '../theme/ThemeRegistry';
-import { SnackbarProvider } from 'notistack';
-import { AuthProvider } from '../context/AuthContext';
+import type { Metadata } from 'next';
+import ClientProviders from './ClientProviders';
+
+const ICON_VERSION = '1';
+
+export const metadata: Metadata = {
+  title: 'Hearing Hope CRM & Inventory',
+  description: 'A comprehensive inventory and CRM system for Hearing Hope',
+  icons: {
+    icon: [{ url: `/favicon.png?v=${ICON_VERSION}`, type: 'image/png' }],
+    shortcut: [{ url: `/favicon.png?v=${ICON_VERSION}`, type: 'image/png' }],
+    apple: [{ url: `/favicon.png?v=${ICON_VERSION}` }],
+  },
+};
 
 export default function RootLayout({
   children,
@@ -12,19 +21,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <head>
-        {/* Favicon (place your file at: public/favicon.png) */}
-        <link rel="icon" href="/favicon.png" type="image/png" />
-        <link rel="apple-touch-icon" href="/favicon.png" />
-      </head>
       <body>
-        <ThemeRegistry>
-          <SnackbarProvider maxSnack={3} autoHideDuration={3000}>
-            <AuthProvider>
-              {children}
-            </AuthProvider>
-          </SnackbarProvider>
-        </ThemeRegistry>
+        <ClientProviders>{children}</ClientProviders>
       </body>
     </html>
   );
