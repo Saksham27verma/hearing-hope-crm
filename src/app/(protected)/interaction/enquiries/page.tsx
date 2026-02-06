@@ -1894,9 +1894,18 @@ export default function EnquiriesPage() {
       );
       
       handleCloseDeleteDialog();
+      setAlert({
+        open: true,
+        message: 'Enquiry and any linked visitor records deleted successfully.',
+        severity: 'success',
+      });
     } catch (error) {
       console.error('Error deleting enquiry and related records:', error);
-      // Show error notification (you can add a snackbar here if you have one)
+      setAlert({
+        open: true,
+        message: 'Failed to delete enquiry. You may not have permission or the record may be in use.',
+        severity: 'error',
+      });
     } finally {
       setLoading(false);
     }
@@ -4498,6 +4507,48 @@ export default function EnquiriesPage() {
         <DialogActions>
           <Button onClick={() => setShowPresetDialog(false)}>Cancel</Button>
           <Button onClick={saveFilterPreset} variant="contained">Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Enquiry Confirmation Dialog */}
+      <Dialog
+        open={openDeleteDialog}
+        onClose={handleCloseDeleteDialog}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 2 } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'error.main' }}>
+          <DeleteIcon /> Delete Enquiry
+        </DialogTitle>
+        <DialogContent>
+          {enquiryToDelete && (
+            <Typography>
+              Are you sure you want to delete this enquiry?
+              {enquiryToDelete.subject && (
+                <Box component="span" fontWeight="medium" display="block" sx={{ mt: 1 }}>
+                  &ldquo;{enquiryToDelete.subject}&rdquo;
+                </Box>
+              )}
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                This will also remove any linked visitor records. This action cannot be undone.
+              </Typography>
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={handleCloseDeleteDialog} disabled={loading}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleDeleteEnquiry}
+            disabled={loading || !enquiryToDelete}
+            startIcon={loading ? <CircularProgress size={18} color="inherit" /> : <DeleteIcon />}
+          >
+            {loading ? 'Deleting...' : 'Delete'}
+          </Button>
         </DialogActions>
       </Dialog>
 
