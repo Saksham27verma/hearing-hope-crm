@@ -36,6 +36,7 @@ import {
   Email as EmailIcon,
   Share as ShareIcon,
   Settings as SettingsIcon,
+  WhatsApp as WhatsAppIcon,
 } from '@mui/icons-material';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
@@ -75,6 +76,11 @@ const PDFInvoiceGenerator: React.FC<PDFInvoiceGeneratorProps> = ({
   const invoiceRef = useRef<HTMLDivElement>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [waOpen, setWaOpen] = useState(false);
+  const [waPhone, setWaPhone] = useState('');
+  const [waMessage, setWaMessage] = useState('');
+  const [waSending, setWaSending] = useState(false);
+  const [waError, setWaError] = useState<string | null>(null);
   const [pdfSettings, setPdfSettings] = useState<PDFSettings>({
     format: 'A4',
     orientation: 'portrait',
@@ -83,6 +89,52 @@ const PDFInvoiceGenerator: React.FC<PDFInvoiceGeneratorProps> = ({
     includeBackground: true,
     watermark: '',
   });
+
+  const normalizePhoneForWhatsApp = (raw: string) => {
+    const digits = (raw || '').toString().replace(/\D/g, '');
+    if (!digits) return '';
+    // If user entered 10-digit Indian number, assume +91
+    if (digits.length === 10) return `91${digits}`;
+    // Strip leading 0 if present (e.g., 0XXXXXXXXXX)
+    if (digits.length === 11 && digits.startsWith('0')) return `91${digits.slice(1)}`;
+    return digits;
+  };
+
+  const buildWhatsAppUrl = (phoneRaw: string, message: string) => {
+    const phone = normalizePhoneForWhatsApp(phoneRaw);
+    const text = encodeURIComponent(message || '');
+    return phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`;
+  };
+
+  const getDeviceSummary = () => {
+    const names = (invoiceData.items || [])
+      .map((i) => (i?.name || '').toString().trim())
+      .filter(Boolean);
+    if (names.length === 0) return 'your device';
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} & ${names[1]}`;
+    return `${names[0]} + ${names.length - 1} more`;
+  };
+
+  const canNativeShareFiles = () => {
+    const nav: any = navigator as any;
+    return typeof nav?.share === 'function' && typeof nav?.canShare === 'function';
+  };
+
+  const safeCanShareFiles = (file: File) => {
+    try {
+      const nav: any = navigator as any;
+      if (typeof nav?.canShare !== 'function') return false;
+      return !!nav.canShare({ files: [file] });
+    } catch {
+      return false;
+    }
+  };
+
+  const isMobileDevice = () => {
+    if (typeof navigator === 'undefined') return false;
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  };
 
   // Process HTML template with invoice data
   const processHTMLTemplate = (html: string): string => {
@@ -154,84 +206,191 @@ const PDFInvoiceGenerator: React.FC<PDFInvoiceGeneratorProps> = ({
     }).format(amount);
   };
 
+  const createPdfBlob = async (): Promise<{ blob: Blob; fileName: string }> => {
+    if (!invoiceRef.current) {
+      throw new Error('Invoice preview is not ready yet.');
+    }
+    // Create canvas from HTML
+    const canvas = await html2canvas(invoiceRef.current, {
+      scale: pdfSettings.quality,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: pdfSettings.includeBackground ? '#ffffff' : null,
+      width: invoiceRef.current.scrollWidth,
+      height: invoiceRef.current.scrollHeight,
+    });
+
+    // Calculate PDF dimensions
+    const imgWidth = pdfSettings.format === 'A4' ? 210 : pdfSettings.format === 'Letter' ? 216 : 148;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    // Create PDF
+    const pdf = new jsPDF({
+      orientation: pdfSettings.orientation,
+      unit: 'mm',
+      format: pdfSettings.format.toLowerCase() as any,
+    });
+
+    // Add watermark if specified
+    if (pdfSettings.watermark) {
+      pdf.setTextColor(200, 200, 200);
+      pdf.setFontSize(50);
+      pdf.text(pdfSettings.watermark, imgWidth / 2, imgHeight / 2, {
+        angle: 45,
+        align: 'center',
+      });
+    }
+
+    // Add image to PDF
+    const imgData = canvas.toDataURL('image/png');
+    pdf.addImage(
+      imgData,
+      'PNG',
+      pdfSettings.margin,
+      pdfSettings.margin,
+      imgWidth - (pdfSettings.margin * 2),
+      imgHeight - (pdfSettings.margin * 2)
+    );
+
+    const fileName = `invoice-${invoiceData.invoiceNumber}.pdf`;
+    const blob = pdf.output('blob');
+    return { blob, fileName };
+  };
+
   const generatePDF = async (action: 'download' | 'print' | 'share' = 'download') => {
     if (!invoiceRef.current) return;
 
     setIsGenerating(true);
-    
     try {
-      // Create canvas from HTML
-      const canvas = await html2canvas(invoiceRef.current, {
-        scale: pdfSettings.quality,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: pdfSettings.includeBackground ? '#ffffff' : null,
-        width: invoiceRef.current.scrollWidth,
-        height: invoiceRef.current.scrollHeight,
-      });
+      const { blob, fileName } = await createPdfBlob();
 
-      // Calculate PDF dimensions
-      const imgWidth = pdfSettings.format === 'A4' ? 210 : pdfSettings.format === 'Letter' ? 216 : 148;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      
-      // Create PDF
-      const pdf = new jsPDF({
-        orientation: pdfSettings.orientation,
-        unit: 'mm',
-        format: pdfSettings.format.toLowerCase() as any,
-      });
-
-      // Add watermark if specified
-      if (pdfSettings.watermark) {
-        pdf.setTextColor(200, 200, 200);
-        pdf.setFontSize(50);
-        pdf.text(pdfSettings.watermark, imgWidth / 2, imgHeight / 2, {
-          angle: 45,
-          align: 'center',
-        });
-      }
-
-      // Add image to PDF
-      const imgData = canvas.toDataURL('image/png');
-      pdf.addImage(
-        imgData,
-        'PNG',
-        pdfSettings.margin,
-        pdfSettings.margin,
-        imgWidth - (pdfSettings.margin * 2),
-        imgHeight - (pdfSettings.margin * 2)
-      );
-
-      // Handle different actions
-      const fileName = `invoice-${invoiceData.invoiceNumber}.pdf`;
-      
       switch (action) {
-        case 'download':
-          pdf.save(fileName);
+        case 'download': {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
           break;
-        case 'print':
-          pdf.autoPrint();
-          window.open(pdf.output('bloburl'), '_blank');
+        }
+        case 'print': {
+          const url = URL.createObjectURL(blob);
+          const w = window.open(url, '_blank');
+          // Best-effort: let browser handle printing
+          setTimeout(() => {
+            try {
+              w?.focus();
+              w?.print();
+            } catch {}
+          }, 500);
           break;
-        case 'share':
-          const blob = pdf.output('blob');
-          if (navigator.share) {
+        }
+        case 'share': {
+          if ((navigator as any).share) {
             const file = new File([blob], fileName, { type: 'application/pdf' });
-            await navigator.share({
+            await (navigator as any).share({
               title: `Invoice ${invoiceData.invoiceNumber}`,
               text: `Invoice for ${invoiceData.customerName}`,
               files: [file],
             });
           } else {
             // Fallback: download
-            pdf.save(fileName);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
           }
           break;
+        }
       }
     } catch (error) {
       console.error('Error generating PDF:', error);
       alert('Error generating PDF. Please try again.');
     } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const openWhatsAppDialog = () => {
+    setWaError(null);
+    setWaPhone(invoiceData.customerPhone || '');
+    const devices = getDeviceSummary();
+    setWaMessage(
+      `Hello ${invoiceData.customerName || 'Sir/Ma’am'},\n\n` +
+        `Thank you for visiting Hearing Hope.\n` +
+        `Please find your invoice PDF attached for: ${devices}.\n` +
+        `Invoice #: ${invoiceData.invoiceNumber}\n\n` +
+        `Regards,\nHearing Hope`
+    );
+    setWaOpen(true);
+  };
+
+  const handleSendWhatsApp = async () => {
+    setWaError(null);
+    try {
+      setWaSending(true);
+      setIsGenerating(true);
+
+      const { blob, fileName } = await createPdfBlob();
+
+      const finalMessage = (waMessage || '').trim();
+      const file = new File([blob], fileName, { type: 'application/pdf' });
+
+      // Best-possible: native share (sends PDF directly in WhatsApp on mobile)
+      const phone = normalizePhoneForWhatsApp(waPhone);
+      const openWhatsAppAndDownload = () => {
+        // Fallback: open WhatsApp with text; user attaches PDF manually (browser limitation)
+        const waUrl = buildWhatsAppUrl(phone, finalMessage);
+        window.open(waUrl, '_blank', 'noopener,noreferrer');
+
+        // Also download the PDF so it’s easy to attach
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      };
+
+      // IMPORTANT: On desktop, Web Share opens the OS share sheet (often without WhatsApp)
+      // and browsers can't auto-attach files to WhatsApp Web. So we only use native share on mobile.
+      if (isMobileDevice() && canNativeShareFiles() && safeCanShareFiles(file)) {
+        try {
+          await (navigator as any).share({
+            title: `Invoice ${invoiceData.invoiceNumber}`,
+            text: finalMessage,
+            files: [file],
+          });
+        } catch (err: any) {
+          // If user cancels share sheet, don't show an error
+          if (err?.name === 'AbortError') {
+            return;
+          }
+          // If WhatsApp share fails for any reason, fallback gracefully
+          openWhatsAppAndDownload();
+        }
+      } else {
+        openWhatsAppAndDownload();
+      }
+
+      setWaOpen(false);
+    } catch (err) {
+      console.error('WhatsApp send failed:', err);
+      const msg =
+        (err as any)?.message?.toString?.() ||
+        'Failed to prepare WhatsApp message. Please try again.';
+      setWaError(msg);
+    } finally {
+      setWaSending(false);
       setIsGenerating(false);
     }
   };
@@ -590,6 +749,15 @@ const PDFInvoiceGenerator: React.FC<PDFInvoiceGeneratorProps> = ({
             Share
           </Button>
           <Button
+            onClick={openWhatsAppDialog}
+            startIcon={<WhatsAppIcon />}
+            variant="outlined"
+            disabled={isGenerating}
+            sx={{ borderColor: '#25D366', color: '#25D366', '&:hover': { borderColor: '#1DA851', bgcolor: 'rgba(37, 211, 102, 0.04)' } }}
+          >
+            WhatsApp
+          </Button>
+          <Button
             onClick={() => generatePDF('print')}
             startIcon={<PrintIcon />}
             variant="outlined"
@@ -604,6 +772,55 @@ const PDFInvoiceGenerator: React.FC<PDFInvoiceGeneratorProps> = ({
             disabled={isGenerating}
           >
             {isGenerating ? 'Generating...' : 'Download PDF'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* WhatsApp Send Dialog */}
+      <Dialog open={waOpen} onClose={() => setWaOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Send Invoice on WhatsApp</DialogTitle>
+        <DialogContent dividers>
+          {waError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {waError}
+            </Alert>
+          )}
+          <TextField
+            label="WhatsApp Number"
+            value={waPhone}
+            onChange={(e) => setWaPhone(e.target.value)}
+            fullWidth
+            margin="normal"
+            placeholder="e.g. 9876543210 or +91 9876543210"
+            helperText="Optional. If you enter a 10-digit number, we’ll assume +91. (On desktop, this only helps open the right chat.)"
+          />
+          <TextField
+            label="Message"
+            value={waMessage}
+            onChange={(e) => setWaMessage(e.target.value)}
+            fullWidth
+            margin="normal"
+            multiline
+            minRows={6}
+            helperText={
+              isMobileDevice() && canNativeShareFiles()
+                ? 'On mobile, this will send the PDF directly via the share sheet.'
+                : 'On desktop browsers, WhatsApp cannot auto-attach files. We will open WhatsApp with this message and download the PDF so you can attach it.'
+            }
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setWaOpen(false)} disabled={waSending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSendWhatsApp}
+            variant="contained"
+            startIcon={waSending ? <CircularProgress size={20} /> : <WhatsAppIcon />}
+            disabled={waSending}
+            sx={{ bgcolor: '#25D366', '&:hover': { bgcolor: '#1DA851' } }}
+          >
+            {waSending ? 'Preparing…' : 'Send on WhatsApp'}
           </Button>
         </DialogActions>
       </Dialog>
