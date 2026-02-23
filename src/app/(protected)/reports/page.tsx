@@ -22,6 +22,7 @@ import ProfitReportTab from '@/components/Reports/ProfitReportTab';
 import StockPositionTab from '@/components/Reports/StockPositionTab';
 import GSTReportTab from '@/components/Reports/GSTReportTab';
 import SalesReportsTab from '@/components/Reports/SalesReportsTab';
+import AssignToReportTab from '@/components/Reports/AssignToReportTab';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -70,6 +71,7 @@ export default function ReportsPage() {
           <Tab label="Sales Report" icon={<SalesIcon />} iconPosition="start" />
           <Tab label="Stock Position" icon={<InventoryIcon />} iconPosition="start" />
           <Tab label="GST Report" icon={<ReceiptIcon />} iconPosition="start" />
+          <Tab label="Assign To Report" icon={<ReceiptIcon />} iconPosition="start" />
         </Tabs>
       </Box>
       
@@ -91,6 +93,11 @@ export default function ReportsPage() {
       {/* GST Report Tab */}
       <TabPanel value={tabValue} index={3}>
         <GSTReportTab />
+      </TabPanel>
+
+      {/* Assign To Report Tab */}
+      <TabPanel value={tabValue} index={4}>
+        <AssignToReportTab />
       </TabPanel>
     </Box>
   );

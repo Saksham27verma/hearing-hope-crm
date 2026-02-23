@@ -369,7 +369,25 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                 <ContactPageIcon fontSize="small" color="action" />
                 <Typography variant="subtitle2">Reference Source</Typography>
               </Box>
-              <Typography variant="body1">{enquiry.reference || 'Not provided'}</Typography>
+              {Array.isArray(enquiry.reference) ? (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {enquiry.reference.length > 0 ? (
+                    enquiry.reference.map((ref: string) => (
+                      <Chip
+                        key={ref}
+                        label={ref}
+                        size="small"
+                        color="default"
+                        sx={{ borderRadius: 1 }}
+                      />
+                    ))
+                  ) : (
+                    <Typography variant="body1">Not provided</Typography>
+                  )}
+                </Box>
+              ) : (
+                <Typography variant="body1">{enquiry.reference || 'Not provided'}</Typography>
+              )}
             </Grid>
 
             {(enquiry.followUpDate || enquiry.nextFollowUpDate) && (

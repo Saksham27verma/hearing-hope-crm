@@ -268,7 +268,7 @@ interface FormData {
   phone: string;
   email: string;
   address: string;
-  reference: string;
+  reference: string[];
   // Quick scheduling before first call
   followUpDate: string;
   assignedTo: string;
@@ -450,7 +450,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       phone: '',
       email: '',
       address: '',
-      reference: '',
+      reference: [],
       followUpDate: '',
       assignedTo: '',
       telecaller: '',
@@ -931,7 +931,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           phone: enquiry.phone || '',
           email: enquiry.email || '',
           address: enquiry.address || '',
-          reference: enquiry.reference || '',
+          reference: Array.isArray(enquiry.reference)
+            ? enquiry.reference
+            : (enquiry.reference ? [enquiry.reference] : []),
           followUpDate: enquiry.followUpDate || enquiry.nextFollowUpDate || '',
           assignedTo: enquiry.assignedTo || '',
           telecaller: enquiry.telecaller || '',
@@ -1734,18 +1736,42 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             {...field}
                             labelId="reference-label"
                             label="Reference Source"
+                            multiple
+                            value={field.value || []}
+                            onChange={(event) => {
+                              const value = event.target.value as string[] | string;
+                              field.onChange(
+                                Array.isArray(value) ? value : value ? [value] : []
+                              );
+                            }}
                             disabled={isAudiologist}
                             sx={{ borderRadius: 2, minWidth: '200px' }}
+                            renderValue={(selected) => (
+                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                {(selected as string[]).map((value) => (
+                                  <Chip
+                                    key={value}
+                                    label={value}
+                                    size="small"
+                                    sx={{ borderRadius: 1 }}
+                                  />
+                                ))}
+                              </Box>
+                            )}
                             MenuProps={{
                               PaperProps: {
                                 style: {
-                                  maxHeight: 300
+                                  maxHeight: 320
                                 }
                               }
                             }}
                           >
                             {referenceOptions.map(option => (
                               <MenuItem key={option} value={option}>
+                                <Checkbox
+                                  checked={Array.isArray(field.value) && field.value.includes(option)}
+                                  sx={{ mr: 1 }}
+                                />
                                 {option}
                               </MenuItem>
                             ))}
@@ -2466,33 +2492,124 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           {/* Product Selection (hidden when using trial device) */}
                           {!isUsingTrialDevice && (
                             <Box sx={{ mb: 3, p: 2, bgcolor: '#f3e5f5', borderRadius: 2 }}>
-                              <Typography variant="subtitle2" sx={{ mb: 2, color: 'secondary.dark' }}>Select from Products Database</Typography>
+                              <Typography variant="subtitle2" sx={{ mb: 2, color: 'secondary.dark' }}>
+                                Select Hearing Aids from Products Database
+                              </Typography>
                               <Grid container spacing={2}>
                                 <Grid item xs={12} md={8}>
                                   <FormControl fullWidth>
-                                    <InputLabel>Choose Hearing Aid Product</InputLabel>
+                                    <InputLabel>Choose Hearing Aid Product(s)</InputLabel>
                                     <Select 
-                                      value={currentVisit.hearingAidProductId || ''}
+                                      multiple
+                                      value={(currentVisit.products || [])
+                                        .filter(p => p.productId && hearingAidProducts.some(hp => hp.id === p.productId))
+                                        .map(p => p.productId)}
                                       onChange={(e) => {
-                                        const selectedProductId = e.target.value as string;
-                                        if (selectedProductId) {
-                                          const selectedProduct = hearingAidProducts.find(p => p.id === selectedProductId);
-                                          if (selectedProduct) {
-                                            updateVisit(activeVisit, 'hearingAidProductId', selectedProduct.id);
-                                            updateVisit(activeVisit, 'hearingAidBrand', selectedProduct.company || '');
-                                            updateVisit(activeVisit, 'hearingAidModel', selectedProduct.name || '');
-                                            updateVisit(activeVisit, 'hearingAidType', selectedProduct.type || '');
-                                            updateVisit(activeVisit, 'hearingAidPrice', selectedProduct.mrp || 0);
+                                        const value = e.target.value as string[] | string;
+                                        const selectedIds = Array.isArray(value) ? value : value ? [value] : [];
+
+                                        const currentVisits = getValues('visits');
+                                        const nextVisits = [...currentVisits];
+                                        const visit = { ...(nextVisits[activeVisit] || {}) } as Visit;
+
+                                        const manualProducts = (visit.products || []).filter(
+                                          p => !p.productId || !hearingAidProducts.some(hp => hp.id === p.productId)
+                                        );
+
+                                        const selectedProducts = hearingAidProducts.filter(p => selectedIds.includes(p.id));
+
+                                        const mappedProducts: HearingAidProduct[] = selectedProducts.map((p) => {
+                                          const mrp = p.mrp || 0;
+                                          const discountPercent = 0;
+                                          const discountAmount = 0;
+                                          const sellingPrice = mrp;
+                                          const gstPercent = p.gstPercentage ?? 18;
+                                          const gstAmount = gstPercent > 0 ? (sellingPrice * gstPercent) / 100 : 0;
+                                          const finalAmount = sellingPrice + gstAmount;
+
+                                          return {
+                                            id: `${p.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                                            inventoryId: '',
+                                            productId: p.id,
+                                            name: p.name,
+                                            hsnCode: p.hsnCode,
+                                            serialNumber: '',
+                                            unit: 'piece',
+                                            saleDate: new Date().toISOString().split('T')[0],
+                                            mrp,
+                                            dealerPrice: 0,
+                                            sellingPrice,
+                                            discountPercent,
+                                            discountAmount,
+                                            gstPercent,
+                                            gstAmount,
+                                            finalAmount,
+                                            gstApplicable: p.gstApplicable,
+                                            gstType: p.gstType ?? 'IGST',
+                                            warranty: '',
+                                            company: p.company,
+                                            location: ''
+                                          };
+                                        });
+
+                                        const updatedProducts = [...mappedProducts, ...manualProducts];
+
+                                        visit.products = updatedProducts;
+                                        visit.grossMRP = updatedProducts.reduce((sum, p) => sum + p.mrp, 0);
+                                        visit.grossSalesBeforeTax = updatedProducts.reduce((sum, p) => sum + p.sellingPrice, 0);
+                                        visit.taxAmount = updatedProducts.reduce((sum, p) => sum + p.gstAmount, 0);
+                                        visit.salesAfterTax = updatedProducts.reduce((sum, p) => sum + p.finalAmount, 0);
+
+                                        if (selectedProducts.length > 0) {
+                                          const first = selectedProducts[0];
+                                          visit.hearingAidProductId = first.id;
+                                          visit.hearingAidBrand = first.company || '';
+                                          visit.hearingAidModel = first.name || '';
+                                          visit.hearingAidType = first.type || '';
+                                          visit.hearingAidPrice = first.mrp || 0;
+                                        } else {
+                                          visit.hearingAidProductId = '';
+                                          visit.hearingAidBrand = '';
+                                          visit.hearingAidModel = '';
+                                          visit.hearingAidType = '';
+                                          visit.hearingAidPrice = 0;
+                                        }
+
+                                        nextVisits[activeVisit] = visit;
+                                        setValue('visits', nextVisits);
+                                      }}
+                                      label="Choose Hearing Aid Product(s)"
+                                      displayEmpty
+                                      sx={{ borderRadius: 2, minWidth: '200px' }}
+                                      renderValue={(selected) => (
+                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                          {(selected as string[]).map((id) => {
+                                            const p = hearingAidProducts.find(hp => hp.id === id);
+                                            return p ? (
+                                              <Chip
+                                                key={id}
+                                                label={`${p.company} ${p.name}`}
+                                                size="small"
+                                                sx={{ borderRadius: 1 }}
+                                              />
+                                            ) : null;
+                                          })}
+                                        </Box>
+                                      )}
+                                      MenuProps={{
+                                        PaperProps: {
+                                          style: {
+                                            maxHeight: 320
                                           }
                                         }
                                       }}
-                                      label="Choose Hearing Aid Product"
-                                      displayEmpty
-                                      sx={{ borderRadius: 2, minWidth: '200px' }}
                                     >
-                                      <MenuItem value="">Select a product...</MenuItem>
                                       {hearingAidProducts.map((product) => (
                                         <MenuItem key={product.id} value={product.id}>
+                                          <Checkbox
+                                            checked={(currentVisit.products || []).some(p => p.productId === product.id)}
+                                            sx={{ mr: 1 }}
+                                          />
                                           {product.company} {product.name} - ₹{(product.mrp || 0).toLocaleString()}
                                         </MenuItem>
                                       ))}
@@ -2504,12 +2621,28 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     variant="text"
                                     size="small"
                                     onClick={() => {
-                                      // Clear all fields
-                                      updateVisit(activeVisit, 'hearingAidProductId', '');
-                                      updateVisit(activeVisit, 'hearingAidBrand', '');
-                                      updateVisit(activeVisit, 'hearingAidModel', '');
-                                      updateVisit(activeVisit, 'hearingAidType', '');
-                                      updateVisit(activeVisit, 'hearingAidPrice', 0);
+                                      const currentVisits = getValues('visits');
+                                      const nextVisits = [...currentVisits];
+                                      const visit = { ...(nextVisits[activeVisit] || {}) } as Visit;
+
+                                      const manualProducts = (visit.products || []).filter(
+                                        p => !p.productId || !hearingAidProducts.some(hp => hp.id === p.productId)
+                                      );
+
+                                      visit.products = manualProducts;
+                                      visit.grossMRP = manualProducts.reduce((sum, p) => sum + p.mrp, 0);
+                                      visit.grossSalesBeforeTax = manualProducts.reduce((sum, p) => sum + p.sellingPrice, 0);
+                                      visit.taxAmount = manualProducts.reduce((sum, p) => sum + p.gstAmount, 0);
+                                      visit.salesAfterTax = manualProducts.reduce((sum, p) => sum + p.finalAmount, 0);
+
+                                      visit.hearingAidProductId = '';
+                                      visit.hearingAidBrand = '';
+                                      visit.hearingAidModel = '';
+                                      visit.hearingAidType = '';
+                                      visit.hearingAidPrice = 0;
+
+                                      nextVisits[activeVisit] = visit;
+                                      setValue('visits', nextVisits);
                                     }}
                                     sx={{ height: 'fit-content', mt: 1 }}
                                   >
@@ -5084,7 +5217,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 <Grid item xs={12} md={6}>
                   <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
                     <Typography variant="body2" color="text.secondary">Reference</Typography>
-                    <Typography variant="body1" sx={{ fontWeight: 500 }}>{watch('reference') || 'Not specified'}</Typography>
+                    <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                      {(watch('reference') || []).length > 0 ? (
+                        (watch('reference') as string[]).map((ref) => (
+                          <Chip
+                            key={ref}
+                            label={ref}
+                            size="small"
+                            sx={{ borderRadius: 1 }}
+                          />
+                        ))
+                      ) : (
+                        <Typography variant="body1" sx={{ fontWeight: 500 }}>
+                          Not specified
+                        </Typography>
+                      )}
+                    </Box>
                   </Box>
                 </Grid>
                 <Grid item xs={12}>
