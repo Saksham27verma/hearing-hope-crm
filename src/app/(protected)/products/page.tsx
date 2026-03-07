@@ -61,6 +61,7 @@ import {
   Sort as SortIcon,
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
+  FileDownload as FileDownloadIcon,
 } from '@mui/icons-material';
 
 import { useAuth } from '@/context/AuthContext';
@@ -1039,6 +1040,57 @@ export default function ProductsPage() {
     }
     setPage(0);
   };
+
+  const escapeCsvCell = (value: string | number | boolean | undefined | null): string => {
+    if (value === undefined || value === null) return '';
+    const s = String(value);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const handleExportProducts = () => {
+    const rows = sortedProducts;
+    const headers = [
+      'Name',
+      'Type',
+      'Company',
+      'MRP',
+      'GST Applicable',
+      'GST Type',
+      'GST %',
+      'HSN Code',
+      'Serial Number Tracking',
+      'Quantity Type',
+      'Free of Cost',
+    ];
+    const csvRows = [
+      headers.join(','),
+      ...rows.map((p) =>
+        [
+          escapeCsvCell(p.name),
+          escapeCsvCell(p.type),
+          escapeCsvCell(p.company),
+          escapeCsvCell(p.mrp),
+          escapeCsvCell(p.gstApplicable !== false ? 'Yes' : 'No'),
+          escapeCsvCell(p.gstType),
+          escapeCsvCell(p.gstPercentage),
+          escapeCsvCell(p.hsnCode),
+          escapeCsvCell(p.hasSerialNumber ? 'Yes' : 'No'),
+          escapeCsvCell(p.quantityType || 'piece'),
+          escapeCsvCell(p.isFreeOfCost ? 'Yes' : 'No'),
+        ].join(',')
+      ),
+    ];
+    const csv = csvRows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `products-export-${new Date().toISOString().slice(0, 10)}.csv`);
+    link.click();
+    URL.revokeObjectURL(url);
+    setSuccessMessage(`Exported ${rows.length} product(s) to CSV`);
+  };
   
   if (loading || isLoading) {
     return <LoadingScreen />;
@@ -1076,7 +1128,16 @@ export default function ProductsPage() {
             size="small"
           />
           
-          <Box display="flex" gap={2}>
+          <Box display="flex" gap={2} flexWrap="wrap">
+            <Button
+              variant="outlined"
+              color="primary"
+              startIcon={<FileDownloadIcon />}
+              onClick={handleExportProducts}
+              sx={{ borderRadius: 1.5 }}
+            >
+              Export
+            </Button>
             <Button 
               variant="outlined" 
               color="primary" 
