@@ -1215,7 +1215,11 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                       <BarcodeIcon fontSize="small" sx={{ mr: 1 }} />
                       Step 3: Enter Serial Numbers ({requiredSerialCountForCurrent || quantity} required) {scannerMode && "(Scanner Mode Active)"}
                     </Typography>
-                    
+                    {currentProduct?.type === 'Hearing Aid' && currentProduct?.quantityType === 'pair' && (
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                        Add serials in pair order: first 2 = Pair 1 (left & right), next 2 = Pair 2, and so on. Use comma, space or slash to add multiple at once.
+                      </Typography>
+                    )}
                     <Box sx={{ display: 'flex', mb: 2 }}>
                       <TextField
                         label="Serial Number"
@@ -1253,21 +1257,54 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                     
                     {serialNumbers.length > 0 && (
                       <Box sx={{ mb: 2 }}>
-                        <Typography variant="body2" color="textSecondary" gutterBottom>
-                          Added Serial Numbers: {serialNumbers.length}
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                          {serialNumbers.map((sn, index) => (
-                            <Chip
-                              key={index}
-                              label={sn}
-                              onDelete={() => handleRemoveSerialNumber(index)}
-                              color="primary"
-                              variant="outlined"
-                              sx={{ m: 0.5 }}
-                            />
-                          ))}
-                        </Box>
+                        {currentProduct?.type === 'Hearing Aid' && currentProduct?.quantityType === 'pair' ? (
+                          <>
+                            <Typography variant="body2" color="text.secondary" gutterBottom>
+                              Added Serial Numbers by Pair ({serialNumbers.length} total)
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {Array.from({ length: Math.ceil(serialNumbers.length / 2) }, (_, pairIndex) => {
+                                const start = pairIndex * 2;
+                                const pairSerials = serialNumbers.slice(start, start + 2);
+                                return (
+                                  <Box key={pairIndex} sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                                    <Typography variant="body2" fontWeight="medium" color="primary" sx={{ minWidth: 56 }}>
+                                      Pair {pairIndex + 1}:
+                                    </Typography>
+                                    {pairSerials.map((sn, i) => (
+                                      <Chip
+                                        key={start + i}
+                                        label={sn}
+                                        onDelete={() => handleRemoveSerialNumber(start + i)}
+                                        color="primary"
+                                        variant="outlined"
+                                        size="small"
+                                      />
+                                    ))}
+                                  </Box>
+                                );
+                              })}
+                            </Box>
+                          </>
+                        ) : (
+                          <>
+                            <Typography variant="body2" color="textSecondary" gutterBottom>
+                              Added Serial Numbers: {serialNumbers.length}
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                              {serialNumbers.map((sn, index) => (
+                                <Chip
+                                  key={index}
+                                  label={sn}
+                                  onDelete={() => handleRemoveSerialNumber(index)}
+                                  color="primary"
+                                  variant="outlined"
+                                  sx={{ m: 0.5 }}
+                                />
+                              ))}
+                            </Box>
+                          </>
+                        )}
                       </Box>
                     )}
                   </Box>

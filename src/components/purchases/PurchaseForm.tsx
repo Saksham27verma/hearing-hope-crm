@@ -1187,7 +1187,6 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                         ? ` (${requiredSerialCountForCurrent} required for ${quantity} pairs)` 
                         : ` (${requiredSerialCountForCurrent || quantity} required)`}
                     </Typography>
-                    
                     {/* Scanner mode toggle */}
                     <Button
                       variant={scannerMode ? "contained" : "outlined"}
@@ -1200,7 +1199,11 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                       {scannerMode ? "Scanner Active" : "Enable Scanner"}
                     </Button>
                   </Box>
-                  
+                  {currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair' && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                      Add serials in pair order: first 2 = Pair 1 (left & right), next 2 = Pair 2, and so on. Use comma, space or slash to add multiple at once.
+                    </Typography>
+                  )}
                   {/* Scanner mode instructions */}
                   {scannerMode && (
                     <Alert 
@@ -1271,8 +1274,8 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                   {/* Display progress of scanned serial numbers */}
                   <Box sx={{ 
                     display: 'flex', 
-                    flexWrap: 'wrap', 
-                    gap: 1, 
+                    flexDirection: 'column',
+                    gap: 1.5, 
                     p: 2, 
                     bgcolor: 'background.paper', 
                     borderRadius: 1,
@@ -1281,16 +1284,47 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                     minHeight: '60px'
                   }}>
                     {serialNumbers.length > 0 ? (
-                      serialNumbers.map((sn, index) => (
-                        <Chip
-                          key={index}
-                          label={sn}
-                          onDelete={() => handleRemoveSerialNumber(index)}
-                          color="primary"
-                          size="small"
-                          sx={{ '& .MuiChip-label': { fontSize: '0.85rem' } }}
-                        />
-                      ))
+                      currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair' ? (
+                        <>
+                          <Typography variant="body2" color="text.secondary" gutterBottom>
+                            By pair ({serialNumbers.length} total)
+                          </Typography>
+                          {Array.from({ length: Math.ceil(serialNumbers.length / 2) }, (_, pairIndex) => {
+                            const start = pairIndex * 2;
+                            const pairSerials = serialNumbers.slice(start, start + 2);
+                            return (
+                              <Box key={pairIndex} sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+                                <Typography variant="body2" fontWeight="medium" color="primary" sx={{ minWidth: 52 }}>
+                                  Pair {pairIndex + 1}:
+                                </Typography>
+                                {pairSerials.map((sn, i) => (
+                                  <Chip
+                                    key={start + i}
+                                    label={sn}
+                                    onDelete={() => handleRemoveSerialNumber(start + i)}
+                                    color="primary"
+                                    size="small"
+                                    sx={{ '& .MuiChip-label': { fontSize: '0.85rem' } }}
+                                  />
+                                ))}
+                              </Box>
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {serialNumbers.map((sn, index) => (
+                            <Chip
+                              key={index}
+                              label={sn}
+                              onDelete={() => handleRemoveSerialNumber(index)}
+                              color="primary"
+                              size="small"
+                              sx={{ '& .MuiChip-label': { fontSize: '0.85rem' } }}
+                            />
+                          ))}
+                        </Box>
+                      )
                     ) : (
                       <Typography variant="body2" color="text.secondary" sx={{ width: '100%', textAlign: 'center' }}>
                         {scannerMode ? 'Ready to scan barcodes' : 'No serial numbers added yet'}
