@@ -394,7 +394,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
 
   const parseSerialInput = (input: string): string[] => {
     return input
-      .split(/[,/]+/)
+      .split(/[\s,/]+/)
       .map((s) => cleanSerialPart(s))
       .filter(Boolean);
   };

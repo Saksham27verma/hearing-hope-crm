@@ -435,10 +435,10 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     }
   };
 
-  // Parse input: allow multiple serials separated by comma or slash
+  // Parse input: allow multiple serials separated by comma, slash, or space
   const parseSerialInput = (input: string): string[] => {
     return input
-      .split(/[,/]+/)
+      .split(/[\s,/]+/)
       .map((s) => s.trim())
       .filter(Boolean);
   };
@@ -486,14 +486,6 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
         return nextErr;
       });
 
-      if (isSerialTrackedForCurrent) {
-        if (currentProduct?.type === 'Hearing Aid' && currentProduct?.quantityType === 'pair') {
-          setQuantity(Math.max(1, Math.ceil(next.length / 2)));
-        } else {
-          setQuantity(Math.max(1, next.length));
-        }
-      }
-
       if (scannerMode && serialInputRef.current) {
         setTimeout(() => serialInputRef.current?.focus(), 100);
       }
@@ -507,20 +499,11 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     }
   };
 
-  // Handle removing a serial number
+  // Handle removing a serial number (quantity is not auto-updated; user controls it)
   const handleRemoveSerialNumber = (index: number) => {
     const newSerialNumbers = [...serialNumbers];
     newSerialNumbers.splice(index, 1);
     setSerialNumbers(newSerialNumbers);
-
-    // Keep quantity aligned for serial-tracked items
-    if (isSerialTrackedForCurrent) {
-      if (currentProduct?.type === 'Hearing Aid' && currentProduct?.quantityType === 'pair') {
-        setQuantity(Math.max(1, Math.ceil(newSerialNumbers.length / 2)));
-      } else {
-        setQuantity(Math.max(1, newSerialNumbers.length));
-      }
-    }
   };
 
   // Handle adding product to material
