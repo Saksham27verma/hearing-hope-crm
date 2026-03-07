@@ -81,6 +81,7 @@ interface InventoryItem {
   productId: string;
   productName: string;
   serialNumber: string;
+  serialNumbers?: string[]; // For pair items or multi-serial tracking
   type: string;
   company: string;
   originalProductCompany?: string; // Original product company from products collection
@@ -580,7 +581,7 @@ export default function InventoryPage() {
         });
 
         // Finalize serial items (ensure source links exist even if missing)
-        const serialItems = Array.from(incomingMap.values()).map((itm) => {
+        const finalizedSerialItems = Array.from(incomingMap.values()).map((itm) => {
           if ((!itm.sourceType || !itm.sourceDocId) && itm.purchaseInvoice) {
             if (challanByNumber.has(itm.purchaseInvoice)) {
               return { ...itm, sourceType: 'materialIn' as const, sourceDocId: challanByNumber.get(itm.purchaseInvoice)! };
@@ -591,6 +592,71 @@ export default function InventoryPage() {
           }
           return itm;
         });
+
+        // Group serial items for products that are sold in pairs
+        const serialItems: InventoryItem[] = (() => {
+          // Helper to group serial-tracked pair products into single rows with multiple serials
+          const pairGroups = new Map<string, InventoryItem[]>();
+          const singles: InventoryItem[] = [];
+
+          finalizedSerialItems.forEach((item) => {
+            const productRef = productById.get(item.productId) || {};
+            const quantityType = productRef.quantityType || productRef.quantityTypeLegacy;
+            const isPairProduct = quantityType === 'pair';
+
+            // If not a pair product or missing serial, keep as single-item entry
+            if (!isPairProduct || !item.serialNumber || item.serialNumber === '-') {
+              singles.push({
+                ...item,
+                quantity: item.quantity ?? 1,
+                serialNumbers: item.serialNumber && item.serialNumber !== '-' ? [item.serialNumber] : [],
+              });
+              return;
+            }
+
+            const groupKey = [
+              item.productId,
+              item.location,
+              item.company,
+              item.status,
+              item.purchaseInvoice,
+              item.supplier,
+            ].join('|');
+
+            if (!pairGroups.has(groupKey)) {
+              pairGroups.set(groupKey, []);
+            }
+            pairGroups.get(groupKey)!.push(item);
+          });
+
+          const groupedPairs: InventoryItem[] = [];
+
+          pairGroups.forEach((itemsForKey) => {
+            const sorted = [...itemsForKey].sort((a, b) =>
+              (a.serialNumber || '').localeCompare(b.serialNumber || '')
+            );
+
+            for (let i = 0; i < sorted.length; i += 2) {
+              const chunk = sorted.slice(i, i + 2);
+              const base = chunk[0];
+              const serials = chunk
+                .map((it) => it.serialNumber)
+                .filter((sn): sn is string => !!sn && sn !== '-');
+
+              const idSuffix = serials.join('-');
+
+              groupedPairs.push({
+                ...base,
+                id: `${base.id}-pair-${idSuffix}`,
+                serialNumber: serials.join(', '),
+                serialNumbers: serials,
+                quantity: 1, // 1 pair = 1 inventory item
+              });
+            }
+          });
+
+          return [...singles, ...groupedPairs];
+        })();
 
         // Build non-serial items per product and location with remaining quantity
         // Aggregate incoming by product + location (populate the map declared above)
