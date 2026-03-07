@@ -389,66 +389,64 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     }
   };
   
-  // Handle adding a serial number
+  const cleanSerialPart = (s: string) =>
+    s.replace(/Shift/gi, '').replace(/[^\w\d-]/g, '').trim();
+
+  const parseSerialInput = (input: string): string[] => {
+    return input
+      .split(/[,/]+/)
+      .map((s) => cleanSerialPart(s))
+      .filter(Boolean);
+  };
+
+  // Handle adding serial number(s) — supports "SN1, SN2" or "SN1/SN2"
   const handleAddSerialNumber = () => {
-    if (serialNumber && !serialNumbers.includes(serialNumber)) {
-      // Clean the serial number to remove any potential special characters
-      const cleanedSerial = serialNumber
-        .replace(/Shift/gi, '')
-        .replace(/[^\w\d-]/g, '')
-        .trim();
+    const raw = (serialNumber || '').trim();
+    if (!raw) return;
 
-      if (!cleanedSerial) {
-        return;
-      }
+    const parts = parseSerialInput(raw);
+    const toAdd: string[] = [];
+    const duplicateInPurchase: string[] = [];
+    const duplicateInInventory: string[] = [];
 
-      // Prevent duplicates within the current product entry
-      if (serialNumbers.includes(cleanedSerial)) {
-        return;
-      }
-
-      // Prevent duplicates within this purchase (other products)
-      const existsInCurrentPurchaseProducts: { productName: string; serial: string }[] = [];
-      purchaseData.products.forEach((p) => {
-        (p.serialNumbers || []).forEach((sn) => {
-          const trimmed = String(sn ?? '').trim();
-          if (trimmed === cleanedSerial) {
-            existsInCurrentPurchaseProducts.push({
-              productName: p.name || 'Unknown product',
-              serial: trimmed,
-            });
-          }
-        });
+    const existingInPurchase = new Set<string>();
+    purchaseData.products.forEach((p) => {
+      (p.serialNumbers || []).forEach((sn) => {
+        const t = String(sn ?? '').trim();
+        if (t) existingInPurchase.add(t);
       });
+    });
 
-      if (existsInCurrentPurchaseProducts.length > 0) {
-        const details = existsInCurrentPurchaseProducts
-          .map((entry) => `${entry.serial} (in: ${entry.productName})`)
-          .join(', ');
-        setErrors({
-          ...errors,
-          productEntry: `This serial number is already added in this purchase: ${details}`,
-        });
+    parts.forEach((part) => {
+      const cleaned = cleanSerialPart(part);
+      if (!cleaned) return;
+      if (serialNumbers.includes(cleaned) || toAdd.includes(cleaned)) return;
+      if (existingInPurchase.has(cleaned)) {
+        duplicateInPurchase.push(cleaned);
         return;
       }
-
-      // Prevent serials that already exist anywhere in the system
-      if (existingSerials && existingSerials.size > 0 && existingSerials.has(cleanedSerial)) {
-        const entry = existingSerials.get(cleanedSerial);
-        const products = entry?.products || [];
-        const label =
-          products.length > 0
-            ? `${cleanedSerial} (in: ${products.join(' / ')})`
-            : cleanedSerial;
-        setErrors({
-          ...errors,
-          productEntry: `Serial number already exists in inventory: ${label}`,
-        });
+      if (existingSerials && existingSerials.size > 0 && existingSerials.has(cleaned)) {
+        duplicateInInventory.push(cleaned);
         return;
       }
+      toAdd.push(cleaned);
+    });
 
-      setSerialNumbers([...serialNumbers, cleanedSerial]);
+    if (toAdd.length > 0) {
+      setSerialNumbers([...serialNumbers, ...toAdd]);
       setSerialNumber('');
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next.productEntry;
+        return next;
+      });
+    }
+
+    if (duplicateInPurchase.length > 0 || duplicateInInventory.length > 0) {
+      const msgs: string[] = [];
+      if (duplicateInPurchase.length > 0) msgs.push(`Already in this purchase: ${duplicateInPurchase.join(', ')}`);
+      if (duplicateInInventory.length > 0) msgs.push(`Already in inventory: ${duplicateInInventory.join(', ')}`);
+      setErrors((prev) => ({ ...prev, productEntry: msgs.join('. ') }));
     }
   };
   

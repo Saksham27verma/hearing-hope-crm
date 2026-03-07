@@ -435,14 +435,57 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     }
   };
 
-  // Handle adding a serial number
+  // Parse input: allow multiple serials separated by comma or slash
+  const parseSerialInput = (input: string): string[] => {
+    return input
+      .split(/[,/]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+
+  // Handle adding serial number(s) — supports "SN1, SN2" or "SN1/SN2"
   const handleAddSerialNumber = () => {
-    if (serialNumber && !serialNumbers.includes(serialNumber)) {
-      const next = [...serialNumbers, serialNumber];
+    const raw = (serialNumber || '').trim();
+    if (!raw) return;
+
+    const parts = parseSerialInput(raw);
+    const toAdd: string[] = [];
+    const duplicatesInDoc: string[] = [];
+    const duplicatesInInventory: string[] = [];
+
+    const alreadyInThisMaterial = new Set<string>();
+    materialData.products.forEach((p) => {
+      (p.serialNumbers || []).forEach((sn) => {
+        const t = String(sn ?? '').trim();
+        if (t) alreadyInThisMaterial.add(t);
+      });
+    });
+
+    parts.forEach((part) => {
+      const trimmed = part.trim();
+      if (!trimmed) return;
+      if (serialNumbers.includes(trimmed) || toAdd.includes(trimmed)) return;
+      if (alreadyInThisMaterial.has(trimmed)) {
+        duplicatesInDoc.push(trimmed);
+        return;
+      }
+      if (existingSerials && existingSerials.size > 0 && existingSerials.has(trimmed)) {
+        duplicatesInInventory.push(trimmed);
+        return;
+      }
+      toAdd.push(trimmed);
+    });
+
+    if (toAdd.length > 0) {
+      const next = [...serialNumbers, ...toAdd];
       setSerialNumbers(next);
       setSerialNumber('');
+      setErrors((prev) => {
+        const nextErr = { ...prev };
+        delete nextErr.serialNumbers;
+        return nextErr;
+      });
 
-      // Keep quantity aligned for serial-tracked items (quantity is counted in units here)
       if (isSerialTrackedForCurrent) {
         if (currentProduct?.type === 'Hearing Aid' && currentProduct?.quantityType === 'pair') {
           setQuantity(Math.max(1, Math.ceil(next.length / 2)));
@@ -450,13 +493,17 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
           setQuantity(Math.max(1, next.length));
         }
       }
-      
-      // Auto-focus back to serial input in scanner mode
+
       if (scannerMode && serialInputRef.current) {
-        setTimeout(() => {
-          serialInputRef.current?.focus();
-        }, 100);
+        setTimeout(() => serialInputRef.current?.focus(), 100);
       }
+    }
+
+    if (duplicatesInDoc.length > 0 || duplicatesInInventory.length > 0) {
+      const msgs: string[] = [];
+      if (duplicatesInDoc.length > 0) msgs.push(`Already in this material in: ${duplicatesInDoc.join(', ')}`);
+      if (duplicatesInInventory.length > 0) msgs.push(`Already in inventory: ${duplicatesInInventory.join(', ')}`);
+      setErrors((prev) => ({ ...prev, serialNumbers: msgs.join('. ') }));
     }
   };
 
