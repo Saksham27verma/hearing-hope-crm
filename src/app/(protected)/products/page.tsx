@@ -179,6 +179,33 @@ const PRODUCT_CATEGORIES = [
 // Add GST percentage options constant
 const GST_PERCENTAGES = [5, 12, 18, 28];
 
+/** Build a sorted list of canonical company names from products (one per case-insensitive name, most frequent variant). */
+function buildCanonicalCompanies(products: { company?: string }[]): string[] {
+  const byKey = new Map<string, string[]>();
+  products.forEach((p) => {
+    const raw = (p.company || '').trim();
+    if (!raw) return;
+    const key = raw.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key)!.push(raw);
+  });
+  const canonical: string[] = [];
+  byKey.forEach((variants) => {
+    const counts = new Map<string, number>();
+    variants.forEach((v) => counts.set(v, (counts.get(v) || 0) + 1));
+    let best = variants[0];
+    let maxCount = 0;
+    counts.forEach((count, variant) => {
+      if (count > maxCount) {
+        maxCount = count;
+        best = variant;
+      }
+    });
+    canonical.push(best);
+  });
+  return canonical.sort((a, b) => a.localeCompare(b));
+}
+
 interface Product {
   id: string;
   name: string;
@@ -246,8 +273,17 @@ export default function ProductsPage() {
   const [sortBy, setSortBy] = useState('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
-  // For populating the company filter
+  // For populating the company filter and form options (canonical list)
   const [uniqueCompanies, setUniqueCompanies] = useState<string[]>([]);
+
+  /** Resolve display/save value: match existing company case-insensitively, else return trimmed input. */
+  const getCanonicalCompany = (company: string): string => {
+    const raw = (company || '').trim();
+    if (!raw) return raw;
+    const key = raw.toLowerCase();
+    const found = uniqueCompanies.find((c) => c.toLowerCase() === key);
+    return found ?? raw;
+  };
   
   useEffect(() => {
     const fetchProducts = async () => {
@@ -276,15 +312,8 @@ export default function ProductsPage() {
           return isDefaultRange ? { ...prev, priceRange: [0, computedMaxMrp] } : prev;
         });
         
-        // Extract unique companies for filters
-        const companies = new Set<string>();
-        productsList.forEach(product => {
-          if (product.company) {
-            companies.add(product.company);
-          }
-        });
-        
-        setUniqueCompanies(Array.from(companies).sort());
+        // Extract unique companies (canonical: same name with different casing → one option, most frequent variant)
+        setUniqueCompanies(buildCanonicalCompanies(productsList));
         setProducts(productsList);
       } catch (error) {
         console.error('Error fetching products:', error);
@@ -311,7 +340,7 @@ export default function ProductsPage() {
       setFormData({
         name: product.name,
         type: product.type,
-        company: product.company || '',
+        company: getCanonicalCompany(product.company || ''),
         hasSerialNumber: product.hasSerialNumber || false,
         mrp: product.mrp,
         isFreeOfCost: product.isFreeOfCost || false,
@@ -361,20 +390,30 @@ export default function ProductsPage() {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
+
+  const handleCompanyChange = (_e: unknown, newValue: string | null) => {
+    setFormData((prev) => ({ ...prev, company: (typeof newValue === 'string' ? newValue : newValue ?? '').trim() }));
+  };
+  const handleCompanyInputChange = (_e: unknown, inputValue: string) => {
+    setFormData((prev) => ({ ...prev, company: inputValue ?? '' }));
+  };
   
   const handleSubmit = async () => {
     try {
+      const companyNormalized = getCanonicalCompany(formData.company);
+      const formDataToSave = { ...formData, company: companyNormalized };
+
       // Form validation
       const validationErrors = [];
       
-      if (!formData.name) validationErrors.push('Product name is required');
-      if (!formData.type) validationErrors.push('Product type is required');
+      if (!formDataToSave.name) validationErrors.push('Product name is required');
+      if (!formDataToSave.type) validationErrors.push('Product type is required');
       
-      if ((formData.type === 'Hearing Aid' || formData.type === 'Charger') && !formData.company) {
+      if ((formDataToSave.type === 'Hearing Aid' || formDataToSave.type === 'Charger') && !formDataToSave.company) {
         validationErrors.push('Company is required');
       }
       
-      if (!formData.isFreeOfCost && (formData.mrp || 0) <= 0) {
+      if (!formDataToSave.isFreeOfCost && (formDataToSave.mrp || 0) <= 0) {
         validationErrors.push('Please enter a valid MRP');
       }
       
@@ -387,22 +426,22 @@ export default function ProductsPage() {
         // Update existing product
         const productRef = doc(db, 'products', editingProduct.id);
         await updateDoc(productRef, {
-          ...formData,
+          ...formDataToSave,
           // Ensure no undefined values are passed to Firebase
-          mrp: formData.mrp || 0,
-          gstPercentage: formData.gstPercentage || 0,
-          hsnCode: formData.hsnCode || '',
-          quantityType: formData.quantityType || 'piece',
+          mrp: formDataToSave.mrp || 0,
+          gstPercentage: formDataToSave.gstPercentage || 0,
+          hsnCode: formDataToSave.hsnCode || '',
+          quantityType: formDataToSave.quantityType || 'piece',
           updatedAt: serverTimestamp(),
         });
         
         // Update local state
         const cleanedData = {
-          ...formData,
-          mrp: formData.mrp || 0,
-          gstPercentage: formData.gstPercentage || 0,
-          hsnCode: formData.hsnCode || '',
-          quantityType: formData.quantityType || 'piece',
+          ...formDataToSave,
+          mrp: formDataToSave.mrp || 0,
+          gstPercentage: formDataToSave.gstPercentage || 0,
+          hsnCode: formDataToSave.hsnCode || '',
+          quantityType: formDataToSave.quantityType || 'piece',
         };
         setProducts(prev => 
           prev.map(p => p.id === editingProduct.id 
@@ -415,12 +454,12 @@ export default function ProductsPage() {
       } else {
         // Add new product
         const newProduct = {
-          ...formData,
+          ...formDataToSave,
           // Ensure no undefined values are passed to Firebase
-          mrp: formData.mrp || 0,
-          gstPercentage: formData.gstPercentage || 0,
-          hsnCode: formData.hsnCode || '',
-          quantityType: formData.quantityType || 'piece',
+          mrp: formDataToSave.mrp || 0,
+          gstPercentage: formDataToSave.gstPercentage || 0,
+          hsnCode: formDataToSave.hsnCode || '',
+          quantityType: formDataToSave.quantityType || 'piece',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         };
@@ -430,11 +469,11 @@ export default function ProductsPage() {
         // Update local state
         const now = new Date();
         const cleanedData = {
-          ...formData,
-          mrp: formData.mrp || 0,
-          gstPercentage: formData.gstPercentage || 0,
-          hsnCode: formData.hsnCode || '',
-          quantityType: formData.quantityType || 'piece',
+          ...formDataToSave,
+          mrp: formDataToSave.mrp || 0,
+          gstPercentage: formDataToSave.gstPercentage || 0,
+          hsnCode: formDataToSave.hsnCode || '',
+          quantityType: formDataToSave.quantityType || 'piece',
         };
         setProducts(prev => [
           ...prev, 
@@ -532,9 +571,11 @@ export default function ProductsPage() {
       return false;
     }
     
-    // Company filter
-    if (filters.companies.length > 0 && !filters.companies.includes(product.company)) {
-      return false;
+    // Company filter (case-insensitive: match canonical options to product company)
+    if (filters.companies.length > 0) {
+      const productCompanyKey = (product.company || '').trim().toLowerCase();
+      const selectedKeys = new Set(filters.companies.map((c) => c.toLowerCase()));
+      if (!selectedKeys.has(productCompanyKey)) return false;
     }
     
     // GST Applicable filter
@@ -853,7 +894,7 @@ export default function ProductsPage() {
               Company
             </Typography>
             <Typography variant="body1" fontWeight="medium">
-              {product.company || 'Not specified'}
+              {getCanonicalCompany(product.company || '') || 'Not specified'}
             </Typography>
           </Paper>
           
@@ -1277,7 +1318,7 @@ export default function ProductsPage() {
                         );
                       })()}
                     </TableCell>
-                    <TableCell>{product.company || '-'}</TableCell>
+                    <TableCell>{getCanonicalCompany(product.company || '') || '-'}</TableCell>
                     <TableCell>{product.hsnCode || '-'}</TableCell>
                     <TableCell align="center">
                       {product.hasSerialNumber ? (
@@ -1698,13 +1739,15 @@ export default function ProductsPage() {
                   required
                 />
                 
-                <TextField
-                  name="company"
-                  label="Company"
+                <Autocomplete
+                  freeSolo
+                  options={uniqueCompanies}
                   value={formData.company}
-                  onChange={handleInputChange}
-                  fullWidth
-                  required
+                  onInputChange={handleCompanyInputChange}
+                  onChange={handleCompanyChange}
+                  renderInput={(params) => (
+                    <TextField {...params} name="company" label="Company" required fullWidth />
+                  )}
                 />
                 
                 <FormControl fullWidth>
@@ -1782,13 +1825,15 @@ export default function ProductsPage() {
                   required
                 />
                 
-                <TextField
-                  name="company"
-                  label="Company"
+                <Autocomplete
+                  freeSolo
+                  options={uniqueCompanies}
                   value={formData.company}
-                  onChange={handleInputChange}
-                  fullWidth
-                  required
+                  onInputChange={handleCompanyInputChange}
+                  onChange={handleCompanyChange}
+                  renderInput={(params) => (
+                    <TextField {...params} name="company" label="Company" required fullWidth />
+                  )}
                 />
                 
                 <Box sx={{ 
@@ -1955,13 +2000,15 @@ export default function ProductsPage() {
                   required
                 />
                 
-                <TextField
-                  name="company"
-                  label="Company"
+                <Autocomplete
+                  freeSolo
+                  options={uniqueCompanies}
                   value={formData.company}
-                  onChange={handleInputChange}
-                  fullWidth
-                  required
+                  onInputChange={handleCompanyInputChange}
+                  onChange={handleCompanyChange}
+                  renderInput={(params) => (
+                    <TextField {...params} name="company" label="Company" required fullWidth />
+                  )}
                 />
                 
                 <FormControl fullWidth>
@@ -2021,12 +2068,15 @@ export default function ProductsPage() {
                   required
                 />
                 
-                <TextField
-                  name="company"
-                  label="Company"
+                <Autocomplete
+                  freeSolo
+                  options={uniqueCompanies}
                   value={formData.company}
-                  onChange={handleInputChange}
-                  fullWidth
+                  onInputChange={handleCompanyInputChange}
+                  onChange={handleCompanyChange}
+                  renderInput={(params) => (
+                    <TextField {...params} name="company" label="Company" fullWidth />
+                  )}
                 />
                 
                 <TextField
