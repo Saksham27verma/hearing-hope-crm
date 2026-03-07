@@ -37,6 +37,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
+import { fetchExistingSerialNumbers, SerialIndex } from '@/utils/serialUtils';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
@@ -203,6 +204,9 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   const [discountPercent, setDiscountPercent] = useState(0);
 
   const [remarks, setRemarks] = useState('');
+
+  // All serial numbers that already exist anywhere in the system
+  const [existingSerials, setExistingSerials] = useState<SerialIndex | null>(null);
   
   // Add a state variable for barcode scanner mode 
   const [scannerMode, setScannerMode] = useState(false);
@@ -221,6 +225,20 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     // Initialize filtered products
     setFilteredProducts(products);
   }, [initialData, products]);
+
+  // Load all existing serial numbers once so we can prevent duplicates
+  useEffect(() => {
+    const loadSerials = async () => {
+      try {
+        const index = await fetchExistingSerialNumbers();
+        setExistingSerials(index);
+      } catch (error) {
+        console.error('Failed to load existing serial numbers for Material In:', error);
+      }
+    };
+
+    loadSerials();
+  }, []);
 
   // Calculate grand total including GST
   const calculateGrandTotal = useMemo(() => {
@@ -487,6 +505,61 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
         });
       }
       return;
+    }
+
+    // Prevent duplicate serial numbers within this challan
+    if (isSerialTrackedForCurrent && serialNumbers.length > 0) {
+      // Build an index of serial -> product names already present in this challan
+      const serialToProducts = new Map<string, Set<string>>();
+      materialData.products.forEach((p) => {
+        const productName = p.name || 'Unknown product';
+        (p.serialNumbers || []).forEach((sn) => {
+          const trimmed = String(sn ?? '').trim();
+          if (!trimmed) return;
+          if (!serialToProducts.has(trimmed)) {
+            serialToProducts.set(trimmed, new Set<string>());
+          }
+          serialToProducts.get(trimmed)!.add(productName);
+        });
+      });
+
+      const duplicatesWithinDoc = serialNumbers
+        .map((sn) => sn.trim())
+        .filter((sn) => sn && serialToProducts.has(sn))
+        .map((sn) => {
+          const products = Array.from(serialToProducts.get(sn) || []);
+          return products.length
+            ? `${sn} (in: ${products.join(' / ')})`
+            : sn;
+        });
+
+      if (duplicatesWithinDoc.length > 0) {
+        setErrors({
+          serialNumbers: `These serial numbers are already added in this material in: ${duplicatesWithinDoc.join(', ')}`,
+        });
+        return;
+      }
+
+      // Prevent serial numbers that already exist anywhere in the system
+      if (existingSerials && existingSerials.size > 0) {
+        const duplicatesInInventory = serialNumbers
+          .map((sn) => sn.trim())
+          .filter((sn) => sn && existingSerials.has(sn))
+          .map((sn) => {
+            const entry = existingSerials.get(sn);
+            const products = entry?.products || [];
+            return products.length
+              ? `${sn} (in: ${products.join(' / ')})`
+              : sn;
+          });
+
+        if (duplicatesInInventory.length > 0) {
+          setErrors({
+            serialNumbers: `These serial numbers already exist in inventory: ${duplicatesInInventory.join(', ')}`,
+          });
+          return;
+        }
+      }
     }
 
     // Calculate discount amount and final price

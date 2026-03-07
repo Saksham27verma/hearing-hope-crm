@@ -37,6 +37,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
+import { fetchExistingSerialNumbers, SerialIndex } from '@/utils/serialUtils';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { 
   Delete as DeleteIcon, 
@@ -171,6 +172,9 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   const [dealerPrice, setDealerPrice] = useState(0);
   const [mrp, setMrp] = useState(0);
   const [discountPercent, setDiscountPercent] = useState(0);
+
+  // All serial numbers that already exist anywhere in the system
+  const [existingSerials, setExistingSerials] = useState<SerialIndex | null>(null);
   
   // Add a state variable for barcode scanner mode 
   const [scannerMode, setScannerMode] = useState(false);
@@ -190,6 +194,20 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
 
     setHeadOfficeLocation();
   }, [initialData, purchaseData.location]);
+
+  // Load all existing serial numbers once so we can prevent duplicates
+  useEffect(() => {
+    const loadSerials = async () => {
+      try {
+        const index = await fetchExistingSerialNumbers();
+        setExistingSerials(index);
+      } catch (error) {
+        console.error('Failed to load existing serial numbers for Purchase:', error);
+      }
+    };
+
+    loadSerials();
+  }, []);
 
   // Helper functions
   const formatCurrency = (amount: number) => {
@@ -379,11 +397,58 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
         .replace(/Shift/gi, '')
         .replace(/[^\w\d-]/g, '')
         .trim();
-        
-      if (cleanedSerial.length > 0) {
-        setSerialNumbers([...serialNumbers, cleanedSerial]);
-        setSerialNumber('');
+
+      if (!cleanedSerial) {
+        return;
       }
+
+      // Prevent duplicates within the current product entry
+      if (serialNumbers.includes(cleanedSerial)) {
+        return;
+      }
+
+      // Prevent duplicates within this purchase (other products)
+      const existsInCurrentPurchaseProducts: { productName: string; serial: string }[] = [];
+      purchaseData.products.forEach((p) => {
+        (p.serialNumbers || []).forEach((sn) => {
+          const trimmed = String(sn ?? '').trim();
+          if (trimmed === cleanedSerial) {
+            existsInCurrentPurchaseProducts.push({
+              productName: p.name || 'Unknown product',
+              serial: trimmed,
+            });
+          }
+        });
+      });
+
+      if (existsInCurrentPurchaseProducts.length > 0) {
+        const details = existsInCurrentPurchaseProducts
+          .map((entry) => `${entry.serial} (in: ${entry.productName})`)
+          .join(', ');
+        setErrors({
+          ...errors,
+          productEntry: `This serial number is already added in this purchase: ${details}`,
+        });
+        return;
+      }
+
+      // Prevent serials that already exist anywhere in the system
+      if (existingSerials && existingSerials.size > 0 && existingSerials.has(cleanedSerial)) {
+        const entry = existingSerials.get(cleanedSerial);
+        const products = entry?.products || [];
+        const label =
+          products.length > 0
+            ? `${cleanedSerial} (in: ${products.join(' / ')})`
+            : cleanedSerial;
+        setErrors({
+          ...errors,
+          productEntry: `Serial number already exists in inventory: ${label}`,
+        });
+        return;
+      }
+
+      setSerialNumbers([...serialNumbers, cleanedSerial]);
+      setSerialNumber('');
     }
   };
   
@@ -429,6 +494,62 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
         productEntry: validationErrors.join(', ')
       });
       return;
+    }
+
+    // Final safety: prevent duplicate serial numbers within this purchase and in inventory
+    if (isSerialTrackedForCurrent && serialNumbers.length > 0) {
+      // Build an index of serial -> product names already on this purchase (other products)
+      const serialToProducts = new Map<string, Set<string>>();
+      purchaseData.products.forEach((p) => {
+        const productName = p.name || 'Unknown product';
+        (p.serialNumbers || []).forEach((sn) => {
+          const trimmed = String(sn ?? '').trim();
+          if (!trimmed) return;
+          if (!serialToProducts.has(trimmed)) {
+            serialToProducts.set(trimmed, new Set<string>());
+          }
+          serialToProducts.get(trimmed)!.add(productName);
+        });
+      });
+
+      const duplicatesWithinDoc = serialNumbers
+        .map((sn) => sn.trim())
+        .filter((sn) => sn && serialToProducts.has(sn))
+        .map((sn) => {
+          const products = Array.from(serialToProducts.get(sn) || []);
+          return products.length
+            ? `${sn} (in: ${products.join(' / ')})`
+            : sn;
+        });
+
+      if (duplicatesWithinDoc.length > 0) {
+        setErrors({
+          ...errors,
+          productEntry: `These serial numbers are already added in this purchase: ${duplicatesWithinDoc.join(', ')}`,
+        });
+        return;
+      }
+
+      if (existingSerials && existingSerials.size > 0) {
+        const duplicatesInInventory = serialNumbers
+          .map((sn) => sn.trim())
+          .filter((sn) => sn && existingSerials.has(sn))
+          .map((sn) => {
+            const entry = existingSerials.get(sn);
+            const products = entry?.products || [];
+            return products.length
+              ? `${sn} (in: ${products.join(' / ')})`
+              : sn;
+          });
+
+        if (duplicatesInInventory.length > 0) {
+          setErrors({
+            ...errors,
+            productEntry: `These serial numbers already exist in inventory: ${duplicatesInInventory.join(', ')}`,
+          });
+          return;
+        }
+      }
     }
 
     // Calculate discount amount and final price
