@@ -343,6 +343,11 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                   <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                     <CalculateIcon fontSize="small" sx={{ mr: 1 }} /> Step 2: {isSerialRequiredForCurrent ? 'Serial Numbers' : 'Enter Quantity'}
                   </Typography>
+                  {currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair' && isSerialRequiredForCurrent && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                      You can dispatch one device or both from a pair — select only the serial number(s) you are dispatching.
+                    </Typography>
+                  )}
                   {isSerialRequiredForCurrent ? (
                     <>
                       {availableSerials.length > 0 ? (

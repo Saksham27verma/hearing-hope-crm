@@ -70,6 +70,7 @@ interface Product {
   company: string;
   mrp: number;
   dealerPrice?: number;
+  quantityType?: 'piece' | 'pair';
 }
 
 interface ProductWithSerialNumber extends Product {
@@ -1106,6 +1107,9 @@ const SalesPage = () => {
               {/* Selected Products List */}
               {currentSale?.products.length ? (
                 <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1, px: 1 }}>
+                    For hearing aids sold in pairs, you can sell one device by entering a single serial, or both by adding two product lines with the two serials.
+                  </Typography>
                   <Table size="small">
                     <TableHead>
                       <TableRow>
