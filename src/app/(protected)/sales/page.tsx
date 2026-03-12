@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
@@ -29,6 +29,19 @@ import {
   InputAdornment,
   Autocomplete,
   Stack,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Card,
+  CardContent,
+  Tooltip,
+  Switch,
+  FormControlLabel,
+  ToggleButton,
+  ToggleButtonGroup,
+  useTheme,
+  alpha,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -38,17 +51,28 @@ import {
   Search as SearchIcon,
   Person as PersonIcon,
   LocalHospital as DoctorIcon,
+  Phone as PhoneIcon,
+  Email as EmailIcon,
+  Home as HomeIcon,
+  ShoppingCart as CartIcon,
+  Receipt as ReceiptIcon,
   CalendarToday as CalendarIcon,
+  Store as StoreIcon,
+  Payment as PaymentIcon,
+  Badge as BadgeIcon,
+  Inventory as InventoryIcon,
+  Notes as NotesIcon,
+  OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
-import { 
-  collection, 
-  getDocs, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp, 
-  query, 
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+  query,
   orderBy,
   where,
   Timestamp,
@@ -62,7 +86,8 @@ import PDFInvoiceGenerator from '@/components/invoices/PDFInvoiceGenerator';
 import { convertSaleToInvoiceData } from '@/services/invoiceService';
 import TemplateSelector from '@/components/invoices/TemplateSelector';
 
-// Types
+// ─── Types ───
+
 interface Product {
   id: string;
   name: string;
@@ -71,13 +96,21 @@ interface Product {
   mrp: number;
   dealerPrice?: number;
   quantityType?: 'piece' | 'pair';
+  hasSerialNumber?: boolean;
+  gstApplicable?: boolean;
+  gstType?: 'CGST' | 'IGST';
+  gstPercentage?: number;
+  hsnCode?: string;
 }
 
-interface ProductWithSerialNumber extends Product {
+interface SaleProduct extends Product {
   serialNumber: string;
   sellingPrice: number;
   discount: number;
   discountPercent: number;
+  gstPercent: number;
+  gstAmount: number;
+  totalWithGst: number;
 }
 
 interface Accessory {
@@ -90,32 +123,89 @@ interface Accessory {
 
 interface Sale {
   id?: string;
+  invoiceNumber?: string;
   patientId?: string;
   patientName: string;
-  products: ProductWithSerialNumber[];
+  phone?: string;
+  email?: string;
+  address?: string;
+  products: SaleProduct[];
   accessories: Accessory[];
-  referenceDoctor?: {
-    id?: string;
-    name: string;
-  };
-  salesperson: {
-    id: string;
-    name: string;
-  };
+  referenceDoctor?: { id?: string; name: string };
+  salesperson: { id: string; name: string };
   totalAmount: number;
   gstAmount: number;
   gstPercentage: number;
+  grandTotal: number;
   netProfit: number;
   branch: string;
+  centerId?: string;
+  paymentMethod?: string;
+  notes?: string;
   saleDate: Timestamp;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
 
-// Component
+interface Center {
+  id: string;
+  name: string;
+  isHeadOffice?: boolean;
+}
+
+// ─── Constants ───
+
+const PAYMENT_METHODS = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'card', label: 'Card' },
+  { value: 'upi', label: 'UPI' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+  { value: 'cheque', label: 'Cheque' },
+  { value: 'emi', label: 'EMI' },
+  { value: 'mixed', label: 'Mixed' },
+];
+
+const formatCurrency = (amount: number) =>
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
+
+const formatDate = (timestamp: Timestamp) =>
+  new Date(timestamp.seconds * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+const generateInvoiceNumber = () => {
+  const now = new Date();
+  const y = now.getFullYear().toString().slice(-2);
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `INV-${y}${m}${d}-${rand}`;
+};
+
+// ─── Section Header component ───
+
+const SectionHeader = ({ icon, title, count, color = 'primary' }: { icon: React.ReactNode; title: string; count?: number; color?: string }) => {
+  const theme = useTheme();
+  const mainColor = color === 'primary' ? theme.palette.primary.main : color === 'success' ? theme.palette.success.main : color === 'warning' ? theme.palette.warning.main : color === 'info' ? theme.palette.info.main : theme.palette.primary.main;
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2.5 }}>
+      <Box sx={{ width: 36, height: 36, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', bgcolor: alpha(mainColor, 0.1), color: mainColor }}>
+        {icon}
+      </Box>
+      <Typography variant="subtitle1" fontWeight={700} sx={{ color: mainColor }}>{title}</Typography>
+      {count !== undefined && count > 0 && (
+        <Chip label={count} size="small" sx={{ bgcolor: alpha(mainColor, 0.1), color: mainColor, fontWeight: 700, minWidth: 28 }} />
+      )}
+    </Box>
+  );
+};
+
+// ─── Main Component ───
+
 const SalesPage = () => {
   const { user, userProfile, loading: authLoading } = useAuth();
   const router = useRouter();
+  const theme = useTheme();
+  const isAdmin = userProfile?.role === 'admin';
+
   const [sales, setSales] = useState<Sale[]>([]);
   const [filteredSales, setFilteredSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -127,1230 +217,901 @@ const SalesPage = () => {
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
-  const [visitors, setVisitors] = useState<any[]>([]);
+  const [centers, setCenters] = useState<Center[]>([]);
   const [enquirySales, setEnquirySales] = useState<any[]>([]);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [invoiceSale, setInvoiceSale] = useState<any | null>(null);
   const [templateSelectorOpen, setTemplateSelectorOpen] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [selectedTemplateData, setSelectedTemplateData] = useState<any>(null);
-  const [doctors, setDoctors] = useState<any[]>([]);
   const [salesPersons, setSalesPersons] = useState<any[]>([]);
   const [dateFilter, setDateFilter] = useState<Date | null>(null);
+
+  // Product add form state
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [selectedProductQuantity, setSelectedProductQuantity] = useState<number>(1);
+  const [selectedProductSerialPrimary, setSelectedProductSerialPrimary] = useState('');
+  const [selectedProductSerialSecondary, setSelectedProductSerialSecondary] = useState('');
+  const [selectedPairSaleMode, setSelectedPairSaleMode] = useState<'single' | 'pair'>('pair');
   const [selectedProductDiscount, setSelectedProductDiscount] = useState<number>(0);
-  
-  // Initialize empty sale
+  const [selectedProductSellingPrice, setSelectedProductSellingPrice] = useState<number>(0);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
+
   const emptySale: Sale = {
+    invoiceNumber: generateInvoiceNumber(),
     patientName: '',
+    phone: '',
+    email: '',
+    address: '',
     products: [],
     accessories: [],
-    referenceDoctor: {
-      name: '',
-    },
-    salesperson: {
-      id: '',
-      name: '',
-    },
+    referenceDoctor: { name: '' },
+    salesperson: { id: '', name: '' },
     totalAmount: 0,
     gstAmount: 0,
-    gstPercentage: 5, // Default GST percentage
+    gstPercentage: 0,
+    grandTotal: 0,
     netProfit: 0,
     branch: '',
+    centerId: '',
+    paymentMethod: 'cash',
+    notes: '',
     saleDate: Timestamp.now(),
   };
 
-  // Branch options (these could be fetched from Firestore)
-  const branches = ['Main Branch', 'North Branch', 'South Branch', 'West Branch', 'East Branch'];
+  // ─── Data loading ───
 
   useEffect(() => {
     if (authLoading) return;
-    
-    if (!user) {
-      router.push('/login');
-      return;
-    }
-    
-    // Fetch sales data
+    if (!user) { router.push('/login'); return; }
     fetchSales();
-    
-    // Fetch products for reference
     fetchProducts();
-    
-    // Fetch visitors for patient selection
+    fetchCenters();
     fetchVisitors();
-    // Fetch enquiries directly for sales-from-enquiries table
     fetchEnquirySales();
-    
-    // Fetch salespeople (users with staff role)
     fetchSalesPeople();
-    
   }, [user, authLoading, router]);
 
-  // Filter sales when search term or date filter changes
   useEffect(() => {
-    if (sales.length === 0) {
-      setFilteredSales([]);
-      return;
-    }
-    
     let filtered = [...sales];
-    
-    // Apply search filter
     if (searchTerm) {
-      const searchLower = searchTerm.toLowerCase();
-      filtered = filtered.filter(sale => 
-        sale.patientName.toLowerCase().includes(searchLower) ||
-        (sale.referenceDoctor?.name && sale.referenceDoctor.name.toLowerCase().includes(searchLower))
+      const q = searchTerm.toLowerCase();
+      filtered = filtered.filter(
+        (s) =>
+          s.patientName.toLowerCase().includes(q) ||
+          (s.phone && s.phone.includes(q)) ||
+          (s.invoiceNumber && s.invoiceNumber.toLowerCase().includes(q)) ||
+          (s.referenceDoctor?.name && s.referenceDoctor.name.toLowerCase().includes(q))
       );
     }
-    
-    // Apply date filter
     if (dateFilter) {
-      const filterDate = new Date(dateFilter);
-      filtered = filtered.filter(sale => {
-        const saleDate = new Date(sale.saleDate.seconds * 1000);
-        return (
-          saleDate.getDate() === filterDate.getDate() &&
-          saleDate.getMonth() === filterDate.getMonth() &&
-          saleDate.getFullYear() === filterDate.getFullYear()
-        );
+      filtered = filtered.filter((s) => {
+        const d = new Date(s.saleDate.seconds * 1000);
+        return d.getDate() === dateFilter.getDate() && d.getMonth() === dateFilter.getMonth() && d.getFullYear() === dateFilter.getFullYear();
       });
     }
-    
     setFilteredSales(filtered);
   }, [sales, searchTerm, dateFilter]);
 
   const fetchSales = async () => {
     try {
       setLoading(true);
-      const salesQuery = query(collection(db, 'sales'), orderBy('saleDate', 'desc'));
-      const snapshot = await getDocs(salesQuery);
-      
-      const salesData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Sale[];
-      
-      setSales(salesData);
-      setFilteredSales(salesData);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching sales:', error);
+      const snap = await getDocs(query(collection(db, 'sales'), orderBy('saleDate', 'desc')));
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Sale[];
+      setSales(data);
+      setFilteredSales(data);
+    } catch (e) {
+      console.error('Error fetching sales:', e);
       setErrorMsg('Failed to load sales data');
+    } finally {
       setLoading(false);
     }
   };
 
   const fetchProducts = async () => {
     try {
-      const productsSnapshot = await getDocs(collection(db, 'products'));
-      const productsData = productsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Product[];
-      setProducts(productsData);
-    } catch (error) {
-      console.error('Error fetching products:', error);
-    }
+      const snap = await getDocs(collection(db, 'products'));
+      setProducts(snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Product[]);
+    } catch (e) { console.error('Error fetching products:', e); }
+  };
+
+  const fetchCenters = async () => {
+    try {
+      const snap = await getDocs(query(collection(db, 'centers'), orderBy('name')));
+      setCenters(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Center[]);
+    } catch (e) { console.error('Error fetching centers:', e); }
   };
 
   const fetchVisitors = async () => {
     try {
-      const visitorsSnapshot = await getDocs(collection(db, 'visitors'));
-      const visitorsData = visitorsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setVisitors(visitorsData);
-      
-      // For doctors, in a real app you'd fetch from a 'doctors' collection
-      // This is a placeholder
-      setDoctors([
-        { id: '1', name: 'Dr. Smith' },
-        { id: '2', name: 'Dr. Johnson' },
-        { id: '3', name: 'Dr. Williams' },
-      ]);
-
-      // Also derive sales from enquiries' visits (hearingAidSale)
-      const derived: any[] = [];
-      visitorsData.forEach((v: any) => {
-        const name = v.name || v.patientName || v.fullName || 'Unknown';
-        const phone = v.phone || v.mobile || '';
-        const address = v.address || v.location || '';
-        const visits: any[] = Array.isArray(v.visits) ? v.visits : [];
-        visits.forEach((visit: any, idx: number) => {
-          const isSale = !!(
-            visit?.hearingAidSale ||
-            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
-            visit?.journeyStage === 'sale' ||
-            visit?.hearingAidStatus === 'sold' ||
-            (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
-          );
-          if (!isSale) return;
-          const products: any[] = Array.isArray(visit.products) ? visit.products : [];
-          const saleDateStr: string = visit.visitDate || visit.purchaseDate || visit.hearingAidPurchaseDate || '';
-          const saleDateTs = saleDateStr ? Timestamp.fromDate(new Date(saleDateStr)) : (v.updatedAt || Timestamp.now());
-          const totalAmount = products.reduce((sum, p) => sum + (p.finalAmount || p.sellingPrice || 0), 0);
-          derived.push({
-            id: `${v.id}-${idx}`,
-            visitorId: v.id,
-            patientName: name,
-            visitIndex: idx,
-            visitDate: saleDateTs,
-            products,
-            totalAmount,
-            phone,
-            address,
-          });
-        });
-      });
-      derived.sort((a, b) => (b.visitDate?.seconds || 0) - (a.visitDate?.seconds || 0));
-      // Merge with currently loaded enquiry-based sales later
-      setEnquirySales((prev) => {
-        const merged = [...prev, ...derived];
-        // Deduplicate by id
-        const uniq = new Map<string, any>();
-        merged.forEach((x) => uniq.set(x.id, x));
-        return Array.from(uniq.values()).sort((a, b) => (b.visitDate?.seconds || 0) - (a.visitDate?.seconds || 0));
-      });
-    } catch (error) {
-      console.error('Error fetching visitors:', error);
-    }
+      const snap = await getDocs(collection(db, 'visitors'));
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      deriveEnquirySales(list, 'visitor');
+    } catch (e) { console.error('Error fetching visitors:', e); }
   };
 
-  // Fetch sales from enquiries collection directly
   const fetchEnquirySales = async () => {
     try {
       const snap = await getDocs(collection(db, 'enquiries'));
-      const docs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-      const derived: any[] = [];
-      docs.forEach((e: any) => {
-        const name = e.name || e.patientName || e.fullName || 'Unknown';
-        const phone = e.phone || e.mobile || '';
-        const address = e.address || e.location || '';
-        const visits: any[] = Array.isArray(e.visits) ? e.visits : [];
-        visits.forEach((visit: any, idx: number) => {
-          const isSale = !!(
-            visit?.hearingAidSale ||
-            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
-            visit?.journeyStage === 'sale' ||
-            visit?.hearingAidStatus === 'sold' ||
-            (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
-          );
-          if (!isSale) return;
-          const products: any[] = Array.isArray(visit.products) ? visit.products : [];
-          const dateStr: string = visit.visitDate || visit.purchaseDate || visit.hearingAidPurchaseDate || '';
-          const ts = dateStr ? Timestamp.fromDate(new Date(dateStr)) : (e.updatedAt || Timestamp.now());
-          const totalAmount = products.reduce((sum, p) => sum + (p.finalAmount || p.sellingPrice || 0), 0);
-          derived.push({
-            id: `${e.id}-${idx}`,
-            enquiryId: e.id,
-            patientName: name,
-            visitIndex: idx,
-            visitDate: ts,
-            products,
-            totalAmount,
-            phone,
-            address,
-          });
+      const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      deriveEnquirySales(list, 'enquiry');
+    } catch (e) { console.error('Error fetching enquiry sales:', e); }
+  };
+
+  const deriveEnquirySales = (docs: any[], source: 'visitor' | 'enquiry') => {
+    const derived: any[] = [];
+    docs.forEach((rec: any) => {
+      const name = rec.name || rec.patientName || rec.fullName || 'Unknown';
+      const phone = rec.phone || rec.mobile || '';
+      const address = rec.address || rec.location || '';
+      const visits: any[] = Array.isArray(rec.visits) ? rec.visits : [];
+      visits.forEach((visit: any, idx: number) => {
+        const isSale = !!(
+          visit?.hearingAidSale ||
+          (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
+          visit?.journeyStage === 'sale' ||
+          visit?.hearingAidStatus === 'sold' ||
+          (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+        );
+        if (!isSale) return;
+        const prods: any[] = Array.isArray(visit.products) ? visit.products : [];
+        const dateStr: string = visit.visitDate || visit.purchaseDate || visit.hearingAidPurchaseDate || '';
+        const ts = dateStr ? Timestamp.fromDate(new Date(dateStr)) : rec.updatedAt || Timestamp.now();
+        const totalAmount = prods.reduce((sum: number, p: any) => sum + (p.finalAmount || p.sellingPrice || 0), 0);
+        derived.push({
+          id: `${rec.id}-${idx}`,
+          [source === 'visitor' ? 'visitorId' : 'enquiryId']: rec.id,
+          patientName: name, visitIndex: idx, visitDate: ts, products: prods, totalAmount, phone, address,
         });
       });
-      derived.sort((a, b) => (b.visitDate?.seconds || 0) - (a.visitDate?.seconds || 0));
-      setEnquirySales((prev) => {
-        const merged = [...prev, ...derived];
-        const uniq = new Map<string, any>();
-        merged.forEach((x) => uniq.set(x.id, x));
-        return Array.from(uniq.values()).sort((a, b) => (b.visitDate?.seconds || 0) - (a.visitDate?.seconds || 0));
-      });
-    } catch (error) {
-      console.error('Error fetching enquiry sales:', error);
-    }
+    });
+    derived.sort((a, b) => (b.visitDate?.seconds || 0) - (a.visitDate?.seconds || 0));
+    setEnquirySales((prev) => {
+      const merged = [...prev, ...derived];
+      const uniq = new Map<string, any>();
+      merged.forEach((x) => uniq.set(x.id, x));
+      return Array.from(uniq.values()).sort((a, b) => (b.visitDate?.seconds || 0) - (a.visitDate?.seconds || 0));
+    });
   };
 
   const fetchSalesPeople = async () => {
     try {
-      // Fetch users with staff role who can be salespeople
-      const usersSnapshot = await getDocs(
-        query(collection(db, 'users'), where('role', 'in', ['admin', 'staff']))
-      );
-      const usersData = usersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        name: doc.data().displayName || doc.data().email,
-        ...doc.data(),
-      }));
-      setSalesPersons(usersData);
-    } catch (error) {
-      console.error('Error fetching salespeople:', error);
-    }
+      const snap = await getDocs(query(collection(db, 'users'), where('role', 'in', ['admin', 'staff'])));
+      setSalesPersons(snap.docs.map((d) => ({ id: d.id, name: d.data().displayName || d.data().email, ...d.data() })));
+    } catch (e) { console.error('Error fetching salespeople:', e); }
   };
+
+  // ─── Totals calculation (per-product GST) ───
+
+  const recalcTotals = (prods: SaleProduct[]) => {
+    const totalAmount = prods.reduce((s, p) => s + p.sellingPrice, 0);
+    const gstAmount = prods.reduce((s, p) => s + p.gstAmount, 0);
+    const grandTotal = totalAmount + gstAmount;
+    const netProfit = prods.reduce((s, p) => s + (p.sellingPrice - (p.dealerPrice || p.mrp * 0.7)), 0);
+    return { totalAmount, gstAmount, grandTotal, netProfit, gstPercentage: 0 };
+  };
+
+  const buildSaleProduct = (product: Product, serialNumber: string, sellingPrice: number, discountPercent: number): SaleProduct => {
+    const discount = Math.round((product.mrp * discountPercent) / 100);
+    const gstPercent = product.gstApplicable !== false ? (product.gstPercentage || 0) : 0;
+    const gstAmount = Math.round((sellingPrice * gstPercent) / 100);
+    return {
+      ...product,
+      serialNumber,
+      sellingPrice,
+      discount,
+      discountPercent,
+      gstPercent,
+      gstAmount,
+      totalWithGst: sellingPrice + gstAmount,
+    };
+  };
+
+  // Sync selling price with discount for the "add product" form
+  useEffect(() => {
+    if (selectedProduct) {
+      const sp = selectedProduct.mrp - (selectedProduct.mrp * selectedProductDiscount) / 100;
+      setSelectedProductSellingPrice(Math.round(sp));
+    }
+  }, [selectedProduct, selectedProductDiscount]);
+
+  // ─── Sale CRUD ───
 
   const handleAddSale = () => {
     setCurrentSale({
       ...emptySale,
-      // Set default salesperson to current user if they're staff
-      salesperson: {
-        id: user?.uid || '',
-        name: userProfile?.displayName || user?.email || '',
-      },
-      // Set default branch if user has a branchId
-      branch: userProfile?.branchId ? 
-        branches.find(b => b.toLowerCase().includes(userProfile.branchId?.toLowerCase() || '')) || branches[0] : 
-        branches[0],
+      salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
     });
+    resetProductForm();
     setOpenDialog(true);
   };
 
   const handleEditSale = (sale: Sale) => {
     setCurrentSale(sale);
+    resetProductForm();
     setOpenDialog(true);
   };
 
   const handleDeleteSale = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this sale?')) return;
-    
     try {
       await deleteDoc(doc(db, 'sales', id));
-      setSales(prevSales => prevSales.filter(sale => sale.id !== id));
+      setSales((prev) => prev.filter((s) => s.id !== id));
       setSuccessMsg('Sale deleted successfully');
-    } catch (error) {
-      console.error('Error deleting sale:', error);
+    } catch (e) {
+      console.error('Error deleting sale:', e);
       setErrorMsg('Failed to delete sale');
     }
   };
 
-  const handleCloseDialog = () => {
-    setOpenDialog(false);
-    setCurrentSale(null);
-  };
-
   const handleSaveSale = async () => {
     if (!currentSale) return;
-    
+    if (!currentSale.patientName.trim()) { setErrorMsg('Patient name is required'); return; }
+    if (currentSale.products.length === 0) { setErrorMsg('Add at least one product'); return; }
+
     try {
+      const { id, ...saveData } = currentSale as any;
       if (currentSale.id) {
-        // Update existing sale
-        const saleRef = doc(db, 'sales', currentSale.id);
-        await updateDoc(saleRef, {
-          ...currentSale,
-          updatedAt: serverTimestamp(),
-        });
-        
-        // Update in state
-        setSales(prevSales => 
-          prevSales.map(sale => 
-            sale.id === currentSale.id ? {...currentSale, updatedAt: Timestamp.now()} : sale
-          )
-        );
-        
-        setSuccessMsg('Sale updated successfully');
+        await updateDoc(doc(db, 'sales', currentSale.id), { ...saveData, updatedAt: serverTimestamp() });
+        setSales((prev) => prev.map((s) => (s.id === currentSale.id ? { ...currentSale, updatedAt: Timestamp.now() } : s)));
+        setSuccessMsg('Sale updated');
       } else {
-        // Add new sale
-        const newSaleData = {
-          ...currentSale,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        };
-        
-        const docRef = await addDoc(collection(db, 'sales'), newSaleData);
-        
-        // Add to state with the new ID
-        const newSale = {
-          ...currentSale,
-          id: docRef.id,
-          createdAt: Timestamp.now(),
-          updatedAt: Timestamp.now(),
-        };
-        
-        setSales(prevSales => [newSale, ...prevSales]);
-        setSuccessMsg('Sale added successfully');
+        const docRef = await addDoc(collection(db, 'sales'), { ...saveData, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+        setSales((prev) => [{ ...currentSale, id: docRef.id, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }, ...prev]);
+        setSuccessMsg('Sale created');
       }
-      
       setOpenDialog(false);
-    } catch (error) {
-      console.error('Error saving sale:', error);
+      setCurrentSale(null);
+    } catch (e) {
+      console.error('Error saving sale:', e);
       setErrorMsg('Failed to save sale');
     }
   };
 
-  const handleChangePage = (_: unknown, newPage: number) => {
-    setPage(newPage);
+  // ─── Product helpers ───
+
+  const resetProductForm = () => {
+    setSelectedProduct(null);
+    setSelectedProductSerialPrimary('');
+    setSelectedProductSerialSecondary('');
+    setSelectedPairSaleMode('pair');
+    setSelectedProductDiscount(0);
+    setSelectedProductSellingPrice(0);
   };
 
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
+  const filteredProductsForPicker = useMemo(() => {
+    const term = productSearch.trim().toLowerCase();
+    if (!term) return products;
+    return products.filter((p) =>
+      p.name.toLowerCase().includes(term) ||
+      p.company.toLowerCase().includes(term) ||
+      p.type.toLowerCase().includes(term) ||
+      (p.hsnCode || '').toLowerCase().includes(term)
+    );
+  }, [products, productSearch]);
+
+  const handlePickProduct = (product: Product) => {
+    setSelectedProduct(product);
+    setSelectedProductDiscount(0);
+    setSelectedProductSerialPrimary('');
+    setSelectedProductSerialSecondary('');
+    setSelectedPairSaleMode(product.quantityType === 'pair' ? 'pair' : 'single');
+    setSelectedProductSellingPrice(product.mrp);
+    setProductPickerOpen(false);
   };
 
-  const handleCloseSnackbar = () => {
-    setSuccessMsg('');
-    setErrorMsg('');
-  };
-
-  const formatDate = (timestamp: Timestamp) => {
-    return new Date(timestamp.seconds * 1000).toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    });
-  };
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
-
-  // Calculate discount amount based on MRP and discount percentage
-  const calculateDiscount = (mrp: number, discountPercent: number): number => {
-    return (mrp * discountPercent) / 100;
-  };
-
-  // Calculate selling price after discount
-  const calculateSellingPrice = (mrp: number, discountPercent: number): number => {
-    const discountAmount = calculateDiscount(mrp, discountPercent);
-    return mrp - discountAmount;
-  };
-
-  // Calculate GST amount based on selling price and GST percentage
-  const calculateGST = (sellingPrice: number, gstPercent: number): number => {
-    return (sellingPrice * gstPercent) / 100;
-  };
-
-  // Calculate net profit based on selling price and dealer price
-  const calculateNetProfit = (sellingPrice: number, dealerPrice: number): number => {
-    return sellingPrice - dealerPrice;
-  };
-
-  // Function to handle adding a product to the sale
   const handleAddProduct = () => {
     if (!selectedProduct || !currentSale) return;
-    
-    const discountAmount = calculateDiscount(selectedProduct.mrp, selectedProductDiscount);
-    const sellingPrice = calculateSellingPrice(selectedProduct.mrp, selectedProductDiscount);
-    const dealerPrice = selectedProduct.dealerPrice || (selectedProduct.mrp * 0.7); // Default 30% margin if dealer price not available
-    
-    const productToAdd: ProductWithSerialNumber = {
-      ...selectedProduct,
-      serialNumber: '', // This would be selected from inventory in a real implementation
-      sellingPrice: sellingPrice,
-      discount: discountAmount,
-      discountPercent: selectedProductDiscount,
-    };
-    
-    // Calculate new totals
-    const updatedProducts = [...currentSale.products, productToAdd];
-    const newTotalAmount = updatedProducts.reduce((sum, p) => sum + p.sellingPrice, 0) + 
-                           currentSale.accessories.reduce((sum, a) => a.isFree ? sum : sum + (a.price * a.quantity), 0);
-    const newGstAmount = calculateGST(newTotalAmount, currentSale.gstPercentage);
-    const newNetProfit = updatedProducts.reduce((sum, p) => {
-      const productDealerPrice = p.dealerPrice || (p.mrp * 0.7);
-      return sum + calculateNetProfit(p.sellingPrice, productDealerPrice);
-    }, 0);
-    
-    setCurrentSale({
-      ...currentSale,
-      products: updatedProducts,
-      totalAmount: newTotalAmount,
-      gstAmount: newGstAmount,
-      netProfit: newNetProfit,
-    });
-    
-    // Reset selected product fields
-    setSelectedProduct(null);
-    setSelectedProductQuantity(1);
-    setSelectedProductDiscount(0);
+    const serialOne = selectedProductSerialPrimary.trim();
+    const serialTwo = selectedProductSerialSecondary.trim();
+
+    if (selectedProduct.hasSerialNumber !== false) {
+      if (!serialOne) {
+        setErrorMsg('Please enter serial number');
+        return;
+      }
+      if (selectedProduct.quantityType === 'pair' && selectedPairSaleMode === 'pair' && !serialTwo) {
+        setErrorMsg('Please enter both serial numbers for pair sale');
+        return;
+      }
+    }
+
+    const finalSerial =
+      selectedProduct.quantityType === 'pair' && selectedPairSaleMode === 'pair'
+        ? `${serialOne}, ${serialTwo}`.trim()
+        : serialOne;
+
+    const sp = buildSaleProduct(selectedProduct, finalSerial, selectedProductSellingPrice, selectedProductDiscount);
+    const updatedProducts = [...currentSale.products, sp];
+    setCurrentSale({ ...currentSale, products: updatedProducts, ...recalcTotals(updatedProducts) });
+    resetProductForm();
   };
 
-  // Function to handle removing a product from the sale
   const handleRemoveProduct = (index: number) => {
     if (!currentSale) return;
-    
-    const updatedProducts = [...currentSale.products];
-    updatedProducts.splice(index, 1);
-    
-    const newTotalAmount = updatedProducts.reduce((sum, p) => sum + p.sellingPrice, 0) + 
-                           currentSale.accessories.reduce((sum, a) => a.isFree ? sum : sum + (a.price * a.quantity), 0);
-    const newGstAmount = calculateGST(newTotalAmount, currentSale.gstPercentage);
-    const newNetProfit = updatedProducts.reduce((sum, p) => {
-      const productDealerPrice = p.dealerPrice || (p.mrp * 0.7);
-      return sum + calculateNetProfit(p.sellingPrice, productDealerPrice);
-    }, 0);
-    
-    setCurrentSale({
-      ...currentSale,
-      products: updatedProducts,
-      totalAmount: newTotalAmount,
-      gstAmount: newGstAmount,
-      netProfit: newNetProfit,
-    });
+    const updatedProducts = currentSale.products.filter((_, i) => i !== index);
+    setCurrentSale({ ...currentSale, products: updatedProducts, ...recalcTotals(updatedProducts) });
   };
 
-  // Function to handle adding an accessory to the sale
-  const handleAddAccessory = (accessory: Accessory) => {
+  const updateProductField = (index: number, field: string, value: any) => {
     if (!currentSale) return;
-    
-    const updatedAccessories = [...currentSale.accessories, accessory];
-    const newTotalAmount = currentSale.products.reduce((sum, p) => sum + p.sellingPrice, 0) + 
-                           updatedAccessories.reduce((sum, a) => a.isFree ? sum : sum + (a.price * a.quantity), 0);
-    const newGstAmount = calculateGST(newTotalAmount, currentSale.gstPercentage);
-    
-    setCurrentSale({
-      ...currentSale,
-      accessories: updatedAccessories,
-      totalAmount: newTotalAmount,
-      gstAmount: newGstAmount,
-    });
+    const prods = [...currentSale.products];
+    const p = { ...prods[index] };
+
+    if (field === 'sellingPrice') {
+      p.sellingPrice = value;
+      p.discount = p.mrp - value;
+      p.discountPercent = p.mrp > 0 ? Math.round(((p.mrp - value) / p.mrp) * 100) : 0;
+      p.gstAmount = Math.round((p.sellingPrice * p.gstPercent) / 100);
+      p.totalWithGst = p.sellingPrice + p.gstAmount;
+    } else if (field === 'gstPercent') {
+      p.gstPercent = value;
+      p.gstAmount = Math.round((p.sellingPrice * value) / 100);
+      p.totalWithGst = p.sellingPrice + p.gstAmount;
+    } else {
+      (p as any)[field] = value;
+    }
+
+    prods[index] = p;
+    setCurrentSale({ ...currentSale, products: prods, ...recalcTotals(prods) });
   };
 
-  // Function to handle removing an accessory from the sale
-  const handleRemoveAccessory = (index: number) => {
+  const updateSaleField = (field: string, value: any) => {
     if (!currentSale) return;
-    
-    const updatedAccessories = [...currentSale.accessories];
-    updatedAccessories.splice(index, 1);
-    
-    const newTotalAmount = currentSale.products.reduce((sum, p) => sum + p.sellingPrice, 0) + 
-                           updatedAccessories.reduce((sum, a) => a.isFree ? sum : sum + (a.price * a.quantity), 0);
-    const newGstAmount = calculateGST(newTotalAmount, currentSale.gstPercentage);
-    
-    setCurrentSale({
-      ...currentSale,
-      accessories: updatedAccessories,
-      totalAmount: newTotalAmount,
-      gstAmount: newGstAmount,
-    });
+    setCurrentSale({ ...currentSale, [field]: value });
   };
 
-  // Function to handle GST percentage change
-  const handleGstPercentageChange = (newGstPercentage: number) => {
-    if (!currentSale) return;
-    
-    const newGstAmount = calculateGST(currentSale.totalAmount, newGstPercentage);
-    
-    setCurrentSale({
-      ...currentSale,
-      gstPercentage: newGstPercentage,
-      gstAmount: newGstAmount,
-    });
-  };
+  // ─── Render ───
 
   if (authLoading || loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-        <CircularProgress color="primary" />
-      </Box>
-    );
+    return <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh"><CircularProgress /></Box>;
   }
 
   return (
     <Box p={3}>
-      <Typography variant="h4" fontWeight="bold" color="primary" mb={1}>
-        Sales Management
-      </Typography>
-      <Typography variant="body1" color="text.secondary" mb={4}>
-        Track and manage all product sales transactions
-      </Typography>
+      <Typography variant="h4" fontWeight="bold" color="primary" mb={1}>Sales Management</Typography>
+      <Typography variant="body1" color="text.secondary" mb={4}>Track and manage all product sales transactions</Typography>
 
-      {/* Sales from Enquiries (Hearing Aid Sale) */}
+      {/* ── Enquiry Sales ── */}
       <Paper elevation={0} variant="outlined" sx={{ mb: 4, borderRadius: 2 }}>
-        <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', bgcolor: '#f8f9fa' }}>
+        <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}>
           <Typography variant="h6">
             Sales from Enquiries
-            {enquirySales.length > 0 && (
-              <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
-                ({enquirySales.length} {enquirySales.length === 1 ? 'record' : 'records'})
-              </Typography>
-            )}
+            {enquirySales.length > 0 && <Chip label={enquirySales.length} size="small" sx={{ ml: 1 }} />}
           </Typography>
         </Box>
         <TableContainer>
           <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Date</TableCell>
-                <TableCell>Patient</TableCell>
-                <TableCell>Products</TableCell>
-                <TableCell align="right">Amount</TableCell>
-                <TableCell align="right">Invoice</TableCell>
-              </TableRow>
-            </TableHead>
+            <TableHead><TableRow><TableCell>Date</TableCell><TableCell>Patient</TableCell><TableCell>Products</TableCell><TableCell align="right">Amount</TableCell><TableCell align="right">Invoice</TableCell></TableRow></TableHead>
             <TableBody>
-              {enquirySales.length > 0 ? (
-                enquirySales.map((sale) => (
-                  <TableRow key={sale.id} hover>
-                    <TableCell>{formatDate(sale.visitDate)}</TableCell>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight="medium">{sale.patientName}</Typography>
-                      {sale.phone && (
-                        <Typography variant="caption" color="text.secondary">{sale.phone}</Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {sale.products?.length > 0 ? (
-                        <>
-                          {sale.products[0].name}
-                          {sale.products.length > 1 && ` +${sale.products.length - 1} more`}
-                        </>
-                      ) : '—'}
-                    </TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 'medium' }}>{formatCurrency(sale.totalAmount || 0)}</TableCell>
-                    <TableCell align="right">
-                      <IconButton 
-                        size="small" 
-                        color="primary" 
-                        onClick={() => { 
-                          setInvoiceSale(sale); 
-                          setTemplateSelectorOpen(true); 
-                        }}
-                      >
-                        <PrintIcon fontSize="small" />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
-                    No hearing aid sale records from enquiries
+              {enquirySales.length > 0 ? enquirySales.map((s) => (
+                <TableRow key={s.id} hover>
+                  <TableCell>{formatDate(s.visitDate)}</TableCell>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={500}>{s.patientName}</Typography>
+                    {s.phone && <Typography variant="caption" color="text.secondary">{s.phone}</Typography>}
+                  </TableCell>
+                  <TableCell>{s.products?.length > 0 ? <>{s.products[0].name}{s.products.length > 1 && ` +${s.products.length - 1}`}</> : '—'}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 500 }}>{formatCurrency(s.totalAmount || 0)}</TableCell>
+                  <TableCell align="right">
+                    <IconButton size="small" color="primary" onClick={() => { setInvoiceSale(s); setTemplateSelectorOpen(true); }}><PrintIcon fontSize="small" /></IconButton>
                   </TableCell>
                 </TableRow>
+              )) : (
+                <TableRow><TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary' }}>No sale records from enquiries</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
         </TableContainer>
       </Paper>
-      
-      {/* Filters and Actions */}
+
+      {/* ── Filters + New Sale button ── */}
       <Box mb={3} display="flex" flexDirection={{ xs: 'column', md: 'row' }} gap={2} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between">
         <Box display="flex" gap={2} flexWrap="wrap">
-          <TextField
-            placeholder="Search patient or doctor..."
-            variant="outlined"
-            size="small"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
-            }}
-            sx={{ width: { xs: '100%', sm: 220 } }}
-          />
-          
+          <TextField placeholder="Search name, phone, invoice..." variant="outlined" size="small" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon /></InputAdornment> }} sx={{ width: { xs: '100%', sm: 260 } }} />
           <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <DatePicker
-              label="Filter by date"
-              value={dateFilter}
-              onChange={(newValue) => {
-                setDateFilter(newValue);
-              }}
-              slotProps={{ 
-                textField: { 
-                  size: 'small',
-                  sx: { width: { xs: '100%', sm: 180 } }
-                } 
-              }}
-            />
+            <DatePicker label="Filter by date" value={dateFilter} onChange={setDateFilter} slotProps={{ textField: { size: 'small', sx: { width: { xs: '100%', sm: 180 } } } }} />
           </LocalizationProvider>
-          
-          {dateFilter && (
-            <Button 
-              variant="outlined" 
-              size="small"
-              onClick={() => setDateFilter(null)}
-            >
-              Clear Date
-            </Button>
-          )}
+          {dateFilter && <Button variant="outlined" size="small" onClick={() => setDateFilter(null)}>Clear</Button>}
         </Box>
-        
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<AddIcon />}
-          onClick={handleAddSale}
-        >
-          New Sale
-        </Button>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={handleAddSale} sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, px: 3 }}>New Sale</Button>
       </Box>
-      
-      {/* Sales Table */}
-      <Paper elevation={0} variant="outlined">
+
+      {/* ── Sales Table ── */}
+      <Paper elevation={0} variant="outlined" sx={{ borderRadius: 2 }}>
         <TableContainer>
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell>Date</TableCell>
-                <TableCell>Patient</TableCell>
-                <TableCell>Product</TableCell>
-                <TableCell>Branch</TableCell>
-                <TableCell align="right">Amount</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                <TableCell>Invoice</TableCell><TableCell>Date</TableCell><TableCell>Patient</TableCell><TableCell>Products</TableCell><TableCell>Center</TableCell><TableCell align="right">Total</TableCell><TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredSales.length > 0 ? (
-                filteredSales
-                  .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                  .map((sale) => (
-                    <TableRow key={sale.id} hover>
-                      <TableCell>{formatDate(sale.saleDate)}</TableCell>
-                      <TableCell>
-                        <Box display="flex" alignItems="center">
-                          <PersonIcon fontSize="small" color="action" sx={{ mr: 1 }} />
-                          {sale.patientName}
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        {sale.products.length > 0 ? (
-                          <>
-                            {sale.products[0].name}
-                            {sale.products.length > 1 && ` +${sale.products.length - 1} more`}
-                          </>
-                        ) : 'No products'}
-                      </TableCell>
-                      <TableCell>{sale.branch}</TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 'medium' }}>
-                        {formatCurrency(sale.totalAmount)}
-                      </TableCell>
-                      <TableCell align="right">
-                        <IconButton 
-                          size="small" 
-                          color="primary"
-                          onClick={() => handleEditSale(sale)}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                        {userProfile?.role === 'admin' && (
-                          <IconButton 
-                            size="small" 
-                            color="error" 
-                            onClick={() => sale.id && handleDeleteSale(sale.id)}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        )}
-                        <IconButton 
-                          size="small" 
-                          color="default"
-                          onClick={() => {
-                            setInvoiceSale(sale);
-                            setTemplateSelectorOpen(true);
-                          }}
-                          title="Print Invoice"
-                        >
-                          <PrintIcon fontSize="small" />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
-                    {loading ? (
-                      <CircularProgress size={24} />
-                    ) : (
-                      'No sales records found'
-                    )}
+              {filteredSales.length > 0 ? filteredSales.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage).map((sale) => (
+                <TableRow key={sale.id} hover>
+                  <TableCell><Typography variant="body2" fontWeight={500} sx={{ fontFamily: 'monospace' }}>{sale.invoiceNumber || '—'}</Typography></TableCell>
+                  <TableCell>{formatDate(sale.saleDate)}</TableCell>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={500}>{sale.patientName}</Typography>
+                    {sale.phone && <Typography variant="caption" color="text.secondary" display="block">{sale.phone}</Typography>}
+                  </TableCell>
+                  <TableCell>
+                    {sale.products?.length > 0 ? (
+                      <Box>
+                        <Typography variant="body2">{sale.products[0].name}</Typography>
+                        {sale.products.length > 1 && <Chip label={`+${sale.products.length - 1} more`} size="small" variant="outlined" sx={{ ml: 0.5, height: 20, fontSize: '0.7rem' }} />}
+                      </Box>
+                    ) : 'No products'}
+                  </TableCell>
+                  <TableCell>{sale.branch || '—'}</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 600 }}>{formatCurrency((sale.grandTotal || sale.totalAmount + (sale.gstAmount || 0)))}</TableCell>
+                  <TableCell align="right">
+                    <IconButton size="small" color="primary" onClick={() => handleEditSale(sale)}><EditIcon fontSize="small" /></IconButton>
+                    {isAdmin && <IconButton size="small" color="error" onClick={() => sale.id && handleDeleteSale(sale.id)}><DeleteIcon fontSize="small" /></IconButton>}
+                    <IconButton size="small" onClick={() => { setInvoiceSale(sale); setTemplateSelectorOpen(true); }} title="Print Invoice"><PrintIcon fontSize="small" /></IconButton>
                   </TableCell>
                 </TableRow>
+              )) : (
+                <TableRow><TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>No sales records found</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
         </TableContainer>
-        
-        <TablePagination
-          rowsPerPageOptions={[5, 10, 25, 50]}
-          component="div"
-          count={filteredSales.length}
-          rowsPerPage={rowsPerPage}
-          page={page}
-          onPageChange={handleChangePage}
-          onRowsPerPageChange={handleChangeRowsPerPage}
-        />
+        <TablePagination rowsPerPageOptions={[5, 10, 25, 50]} component="div" count={filteredSales.length} rowsPerPage={rowsPerPage} page={page} onPageChange={(_, p) => setPage(p)} onRowsPerPageChange={(e) => { setRowsPerPage(parseInt(e.target.value, 10)); setPage(0); }} />
       </Paper>
-      
-      {/* Sale Dialog */}
-      <Dialog 
-        open={openDialog} 
-        onClose={handleCloseDialog}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          {currentSale?.id ? 'Edit Sale' : 'New Sale'}
-        </DialogTitle>
-        
-        <DialogContent dividers>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <Grid container spacing={2}>
-              <Grid sx={{ gridColumn: { xs: 'span 12', md: 'span 6' } }}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Basic Information
-                </Typography>
-                
-                <Stack spacing={2}>
-                  <LocalizationProvider dateAdapter={AdapterDateFns}>
-                    <DatePicker
-                      label="Sale Date"
-                      value={
-                        currentSale?.saleDate 
-                          ? new Date(currentSale.saleDate.seconds * 1000) 
-                          : new Date()
-                      }
-                      onChange={(newValue) => {
-                        if (currentSale && newValue) {
-                          setCurrentSale({
-                            ...currentSale,
-                            saleDate: Timestamp.fromDate(newValue),
-                          });
-                        }
-                      }}
-                      slotProps={{ textField: { fullWidth: true, size: 'small' } }}
-                    />
-                  </LocalizationProvider>
-                  
-                  <Autocomplete
-                    options={branches}
-                    value={currentSale?.branch || ''}
-                    onChange={(_, newValue) => {
-                      if (currentSale && newValue) {
-                        setCurrentSale({
-                          ...currentSale,
-                          branch: newValue,
-                        });
-                      }
-                    }}
-                    renderInput={(params) => (
-                      <TextField {...params} label="Branch" size="small" fullWidth />
-                    )}
-                  />
-                  
-                  <Autocomplete
-                    options={
-                      salesPersons.map(sp => ({
-                        id: sp.id,
-                        name: sp.name || sp.email || 'Unknown',
-                      }))
-                    }
-                    getOptionLabel={(option) => option.name}
-                    value={currentSale?.salesperson || null}
-                    onChange={(_, newValue) => {
-                      if (currentSale && newValue) {
-                        setCurrentSale({
-                          ...currentSale,
-                          salesperson: newValue,
-                        });
-                      }
-                    }}
-                    renderInput={(params) => (
-                      <TextField {...params} label="Salesperson" size="small" fullWidth />
-                    )}
-                  />
-                </Stack>
-              </Grid>
-              
-              <Grid sx={{ gridColumn: { xs: 'span 12', md: 'span 6' } }}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Patient & Referral
-                </Typography>
-                
-                <Stack spacing={2}>
-                  <TextField
-                    label="Patient Name"
-                    variant="outlined"
-                    size="small"
-                    fullWidth
-                    value={currentSale?.patientName || ''}
-                    onChange={(e) => {
-                      if (currentSale) {
-                        setCurrentSale({
-                          ...currentSale,
-                          patientName: e.target.value,
-                        });
-                      }
-                    }}
-                    required
-                  />
-                  
-                  <TextField
-                    label="Doctor Referral"
-                    variant="outlined"
-                    size="small"
-                    fullWidth
-                    value={currentSale?.referenceDoctor?.name || ''}
-                    onChange={(e) => {
-                      if (currentSale) {
-                        setCurrentSale({
-                          ...currentSale,
-                          referenceDoctor: {
-                            ...currentSale.referenceDoctor,
-                            name: e.target.value,
-                          },
-                        });
-                      }
-                    }}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <DoctorIcon fontSize="small" />
-                        </InputAdornment>
-                      ),
-                    }}
-                  />
-                  
-                  <TextField
-                    label="GST Percentage"
-                    variant="outlined"
-                    size="small"
-                    fullWidth
-                    type="number"
-                    value={currentSale?.gstPercentage || 5}
-                    onChange={(e) => {
-                      if (currentSale) {
-                        setCurrentSale({
-                          ...currentSale,
-                          gstPercentage: Number(e.target.value),
-                        });
-                      }
-                    }}
-                    InputProps={{
-                      endAdornment: <InputAdornment position="end">%</InputAdornment>,
-                    }}
-                  />
-                </Stack>
-              </Grid>
-            </Grid>
-            
-            {/* Product Selection Section - In a real implementation, this would be more complex */}
-            <Box mt={2}>
-              <Typography variant="subtitle2" gutterBottom>
-                Products
-              </Typography>
-              
-              <Box sx={{ backgroundColor: 'background.paper', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1, mb: 3 }}>
-                <Grid container spacing={2} alignItems="flex-end">
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
-                    <Autocomplete
-                      options={products}
-                      getOptionLabel={(option) => `${option.name} (${option.company})`}
-                      value={selectedProduct}
-                      onChange={(_, newValue) => setSelectedProduct(newValue)}
-                      renderInput={(params) => (
-                        <TextField {...params} label="Select Product" size="small" fullWidth />
-                      )}
-                    />
-                  </Grid>
-                  
-                  <Grid sx={{ gridColumn: { xs: 'span 6', sm: 'span 3', md: 'span 2' } }}>
-                    <TextField
-                      label="Quantity"
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      type="number"
-                      value={selectedProductQuantity}
-                      onChange={(e) => setSelectedProductQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                      inputProps={{ min: 1 }}
-                    />
-                  </Grid>
-                  
-                  <Grid sx={{ gridColumn: { xs: 'span 6', sm: 'span 3', md: 'span 2' } }}>
-                    <TextField
-                      label="Discount %"
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      type="number"
-                      value={selectedProductDiscount}
-                      onChange={(e) => setSelectedProductDiscount(Math.max(0, Math.min(100, parseInt(e.target.value) || 0)))}
-                      inputProps={{ min: 0, max: 100 }}
-                      InputProps={{
-                        endAdornment: <InputAdornment position="end">%</InputAdornment>,
-                      }}
-                    />
-                  </Grid>
 
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 2' } }}>
-                    {selectedProduct && (
-                      <Box>
-                        <Typography variant="caption" display="block" color="text.secondary">
-                          MRP: {formatCurrency(selectedProduct.mrp)}
-                        </Typography>
-                        <Typography variant="caption" display="block" color="text.secondary">
-                          After Discount: {formatCurrency(calculateSellingPrice(selectedProduct.mrp, selectedProductDiscount))}
-                        </Typography>
-                      </Box>
-                    )}
-                  </Grid>
-                  
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 12', md: 'span 2' } }}>
-                    <Button
-                      variant="outlined"
-                      color="primary"
-                      fullWidth
-                      onClick={handleAddProduct}
-                      disabled={!selectedProduct}
-                    >
-                      Add
-                    </Button>
-                  </Grid>
-                </Grid>
-              </Box>
-              
-              {/* Selected Products List */}
-              {currentSale?.products.length ? (
-                <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1, px: 1 }}>
-                    For hearing aids sold in pairs, you can sell one device by entering a single serial, or both by adding two product lines with the two serials.
-                  </Typography>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Product</TableCell>
-                        <TableCell>Serial #</TableCell>
-                        <TableCell align="right">MRP</TableCell>
-                        <TableCell align="right">Discount</TableCell>
-                        <TableCell align="right">Price</TableCell>
-                        <TableCell align="right">Actions</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {currentSale.products.map((product, index) => (
-                        <TableRow key={index}>
-                          <TableCell>
-                            {product.name} ({product.company})
-                          </TableCell>
-                          <TableCell>
-                            <TextField
-                              variant="outlined"
-                              size="small"
-                              placeholder="S/N"
-                              value={product.serialNumber || ''}
-                              onChange={(e) => {
-                                if (currentSale) {
-                                  const updatedProducts = [...currentSale.products];
-                                  updatedProducts[index].serialNumber = e.target.value;
-                                  setCurrentSale({
-                                    ...currentSale,
-                                    products: updatedProducts,
-                                  });
-                                }
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell align="right">
-                            {formatCurrency(product.mrp)}
-                          </TableCell>
-                          <TableCell align="right">
-                            {product.discountPercent}% ({formatCurrency(product.discount)})
-                          </TableCell>
-                          <TableCell align="right">
-                            {formatCurrency(product.sellingPrice)}
-                          </TableCell>
-                          <TableCell align="right">
-                            <IconButton 
-                              size="small" 
-                              color="error"
-                              onClick={() => handleRemoveProduct(index)}
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              ) : (
-                <Typography variant="body2" color="text.secondary" align="center" sx={{ mb: 3 }}>
-                  No products added yet
-                </Typography>
-              )}
-              
-              {/* Accessories Section */}
-              <Typography variant="subtitle2" gutterBottom>
-                Accessories
-              </Typography>
-              
-              {/* Accessory input form would go here */}
-              
-              <Divider sx={{ my: 2 }} />
-              
-              <Box mt={3}>
-                <Typography variant="subtitle2" gutterBottom>
-                  Invoice Summary
-                </Typography>
-                
-                <Grid container spacing={2} mt={1}>
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
-                    <TextField
-                      label="Subtotal"
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      type="number"
-                      value={currentSale?.totalAmount || 0}
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                        readOnly: true,
-                      }}
-                    />
-                  </Grid>
-                  
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
-                    <TextField
-                      label="GST Percentage"
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      type="number"
-                      value={currentSale?.gstPercentage || 5}
-                      onChange={(e) => {
-                        const newGstPercentage = Math.max(0, Math.min(28, parseInt(e.target.value) || 0));
-                        handleGstPercentageChange(newGstPercentage);
-                      }}
-                      InputProps={{
-                        endAdornment: <InputAdornment position="end">%</InputAdornment>,
-                      }}
-                      inputProps={{ min: 0, max: 28 }}
-                    />
-                  </Grid>
-                  
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
-                    <TextField
-                      label="GST Amount"
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      type="number"
-                      value={currentSale?.gstAmount || 0}
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                        readOnly: true,
-                      }}
-                    />
-                  </Grid>
-                  
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
-                    <TextField
-                      label="Total Amount"
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      type="number"
-                      value={(currentSale?.totalAmount || 0) + (currentSale?.gstAmount || 0)}
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                        readOnly: true,
-                      }}
-                    />
-                  </Grid>
-                  
-                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
-                    <TextField
-                      label="Net Profit"
-                      variant="outlined"
-                      size="small"
-                      fullWidth
-                      type="number"
-                      value={currentSale?.netProfit || 0}
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                        readOnly: true,
-                      }}
-                    />
-                  </Grid>
-                </Grid>
-              </Box>
+      {/* ════════════════════════ SALE DIALOG ════════════════════════ */}
+      <Dialog open={openDialog} onClose={() => { setOpenDialog(false); setCurrentSale(null); }} maxWidth="lg" fullWidth PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden' } }}>
+        {/* Dialog header with gradient */}
+        <Box sx={{ background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`, color: 'white', px: 3, py: 2.5 }}>
+          <Box display="flex" justifyContent="space-between" alignItems="center">
+            <Box>
+              <Typography variant="h5" fontWeight={700}>{currentSale?.id ? 'Edit Sale' : 'Create New Sale'}</Typography>
+              <Typography variant="body2" sx={{ opacity: 0.85, mt: 0.5 }}>Fill in the details to create a sale and generate an invoice</Typography>
             </Box>
+            {currentSale?.invoiceNumber && (
+              <Chip label={currentSale.invoiceNumber} size="medium" sx={{ fontFamily: 'monospace', bgcolor: 'rgba(255,255,255,0.2)', color: 'white', fontWeight: 600, fontSize: '0.85rem' }} />
+            )}
           </Box>
+        </Box>
+
+        <DialogContent sx={{ p: 3, bgcolor: 'grey.50' }}>
+          {currentSale && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+
+              {/* ──── SECTION 1: Customer Details ──── */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                <SectionHeader icon={<PersonIcon fontSize="small" />} title="Customer Details" />
+                <Grid container spacing={2}>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
+                    <TextField label="Customer / Patient Name" size="small" fullWidth required value={currentSale.patientName} onChange={(e) => updateSaleField('patientName', e.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><PersonIcon fontSize="small" color="action" /></InputAdornment> }} />
+                  </Grid>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
+                    <TextField label="Phone Number" size="small" fullWidth value={currentSale.phone || ''} onChange={(e) => updateSaleField('phone', e.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><PhoneIcon fontSize="small" color="action" /></InputAdornment> }} />
+                  </Grid>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
+                    <TextField label="Email" size="small" fullWidth type="email" value={currentSale.email || ''} onChange={(e) => updateSaleField('email', e.target.value)} InputProps={{ startAdornment: <InputAdornment position="start"><EmailIcon fontSize="small" color="action" /></InputAdornment> }} />
+                  </Grid>
+                  <Grid sx={{ gridColumn: 'span 12' }}>
+                    <TextField label="Address" size="small" fullWidth multiline minRows={2} value={currentSale.address || ''} onChange={(e) => updateSaleField('address', e.target.value)} />
+                  </Grid>
+                </Grid>
+              </Paper>
+
+              {/* ──── SECTION 2: Sale Details ──── */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                <SectionHeader icon={<ReceiptIcon fontSize="small" />} title="Sale Details" color="info" />
+                <Grid container spacing={2}>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
+                    <LocalizationProvider dateAdapter={AdapterDateFns}>
+                      <DatePicker label="Sale Date" value={new Date(currentSale.saleDate.seconds * 1000)} onChange={(d) => d && updateSaleField('saleDate', Timestamp.fromDate(d))} slotProps={{ textField: { fullWidth: true, size: 'small' } }} />
+                    </LocalizationProvider>
+                  </Grid>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
+                    <Autocomplete options={centers} getOptionLabel={(o) => o.name} value={centers.find((c) => c.id === currentSale.centerId) || null} onChange={(_, v) => { updateSaleField('centerId', v?.id || ''); updateSaleField('branch', v?.name || ''); }} renderInput={(params) => <TextField {...params} label="Center / Branch" size="small" fullWidth />} />
+                  </Grid>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
+                    <Autocomplete options={salesPersons.map((sp) => ({ id: sp.id, name: sp.name || sp.email || 'Unknown' }))} getOptionLabel={(o) => o.name} value={currentSale.salesperson?.id ? currentSale.salesperson : null} isOptionEqualToValue={(o, v) => o.id === v.id} onChange={(_, v) => updateSaleField('salesperson', v || { id: '', name: '' })} renderInput={(params) => <TextField {...params} label="Salesperson" size="small" fullWidth />} />
+                  </Grid>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>Payment Method</InputLabel>
+                      <Select value={currentSale.paymentMethod || 'cash'} label="Payment Method" onChange={(e) => updateSaleField('paymentMethod', e.target.value)}>
+                        {PAYMENT_METHODS.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
+                    <TextField label="Doctor Referral" size="small" fullWidth value={currentSale.referenceDoctor?.name || ''} onChange={(e) => updateSaleField('referenceDoctor', { ...currentSale.referenceDoctor, name: e.target.value })} InputProps={{ startAdornment: <InputAdornment position="start"><DoctorIcon fontSize="small" color="action" /></InputAdornment> }} />
+                  </Grid>
+                  <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
+                    <TextField label="Invoice Number" size="small" fullWidth value={currentSale.invoiceNumber || ''} onChange={(e) => updateSaleField('invoiceNumber', e.target.value)} InputProps={{ sx: { fontFamily: 'monospace' } }} />
+                  </Grid>
+                </Grid>
+              </Paper>
+
+              {/* ──── SECTION 3: Products ──── */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                <SectionHeader icon={<InventoryIcon fontSize="small" />} title="Products / Hearing Aids" count={currentSale.products.length} color="success" />
+
+                {/* Add product card */}
+                <Box sx={{ bgcolor: alpha(theme.palette.success.main, 0.04), p: 2.5, borderRadius: 2, border: '2px dashed', borderColor: alpha(theme.palette.success.main, 0.3), mb: 2.5 }}>
+                  <Typography variant="body2" fontWeight={600} color="success.dark" mb={2}>Add a Product</Typography>
+                  <Grid container spacing={2} alignItems="flex-end">
+                    <Grid sx={{ gridColumn: { xs: 'span 12', md: 'span 5' } }}>
+                      <TextField
+                        label="Select Product"
+                        size="medium"
+                        fullWidth
+                        value={selectedProduct ? `${selectedProduct.name} (${selectedProduct.company})` : ''}
+                        placeholder="Open product list and select"
+                        InputProps={{ readOnly: true }}
+                        sx={{
+                          '& .MuiInputBase-root': { borderRadius: 2 },
+                          '& .MuiOutlinedInput-input': { py: 1.25 },
+                        }}
+                      />
+                    </Grid>
+                    <Grid sx={{ gridColumn: { xs: 'span 12', md: 'span 1' } }}>
+                      <Button
+                        variant="outlined"
+                        fullWidth
+                        onClick={() => setProductPickerOpen(true)}
+                        startIcon={<OpenInNewIcon />}
+                        sx={{ textTransform: 'none', fontWeight: 600, borderRadius: 1.5 }}
+                      >
+                        Browse
+                      </Button>
+                    </Grid>
+                    <Grid sx={{ gridColumn: { xs: 'span 12', md: 'span 2.5' } }}>
+                      {selectedProduct?.quantityType === 'pair' ? (
+                        <Stack spacing={1}>
+                          <ToggleButtonGroup
+                            exclusive
+                            size="small"
+                            value={selectedPairSaleMode}
+                            onChange={(_, value) => {
+                              if (value) setSelectedPairSaleMode(value);
+                            }}
+                            fullWidth
+                          >
+                            <ToggleButton value="single">Sell 1 device</ToggleButton>
+                            <ToggleButton value="pair">Sell both</ToggleButton>
+                          </ToggleButtonGroup>
+                          <TextField
+                            label={selectedPairSaleMode === 'pair' ? 'Serial 1 (Left/Right)' : 'Serial Number'}
+                            size="small"
+                            fullWidth
+                            value={selectedProductSerialPrimary}
+                            onChange={(e) => setSelectedProductSerialPrimary(e.target.value)}
+                            placeholder="S/N 1"
+                          />
+                          {selectedPairSaleMode === 'pair' && (
+                            <TextField
+                              label="Serial 2 (Right/Left)"
+                              size="small"
+                              fullWidth
+                              value={selectedProductSerialSecondary}
+                              onChange={(e) => setSelectedProductSerialSecondary(e.target.value)}
+                              placeholder="S/N 2"
+                            />
+                          )}
+                        </Stack>
+                      ) : (
+                        <TextField
+                          label="Serial Number"
+                          size="small"
+                          fullWidth
+                          value={selectedProductSerialPrimary}
+                          onChange={(e) => setSelectedProductSerialPrimary(e.target.value)}
+                          placeholder="S/N"
+                        />
+                      )}
+                    </Grid>
+                    <Grid sx={{ gridColumn: { xs: 'span 6', sm: 'span 3', md: 'span 1.5' } }}>
+                      <TextField label="Disc %" size="small" fullWidth type="number" value={selectedProductDiscount} onChange={(e) => setSelectedProductDiscount(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }} />
+                    </Grid>
+                    <Grid sx={{ gridColumn: { xs: 'span 6', sm: 'span 3', md: 'span 2' } }}>
+                      <TextField label="Selling Price" size="small" fullWidth type="number" value={selectedProductSellingPrice}
+                        onChange={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          setSelectedProductSellingPrice(v);
+                          if (selectedProduct && selectedProduct.mrp > 0) setSelectedProductDiscount(Math.round(((selectedProduct.mrp - v) / selectedProduct.mrp) * 100));
+                        }}
+                        InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
+                      />
+                    </Grid>
+                    <Grid sx={{ gridColumn: { xs: 'span 12', md: 'span 1.5' } }}>
+                      <Button variant="contained" color="success" fullWidth onClick={handleAddProduct} disabled={!selectedProduct} startIcon={<AddIcon />} sx={{ borderRadius: 1.5, textTransform: 'none', fontWeight: 600 }}>
+                        Add
+                      </Button>
+                    </Grid>
+                  </Grid>
+                  {selectedProduct && (
+                    <Box sx={{ mt: 1.5, p: 1.5, bgcolor: 'white', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                      <Stack direction="row" spacing={2} flexWrap="wrap" alignItems="center">
+                        <Typography variant="caption"><b>MRP:</b> {formatCurrency(selectedProduct.mrp)}</Typography>
+                        <Typography variant="caption"><b>Type:</b> {selectedProduct.type}</Typography>
+                        <Typography variant="caption"><b>Company:</b> {selectedProduct.company}</Typography>
+                        {selectedProduct.quantityType === 'pair' && <Chip label="Pair" size="small" color="secondary" variant="outlined" sx={{ height: 20 }} />}
+                        {selectedProduct.gstApplicable !== false
+                          ? <Chip label={`GST: ${selectedProduct.gstType || 'CGST'} @ ${selectedProduct.gstPercentage || 0}%`} size="small" color="info" variant="outlined" sx={{ height: 20 }} />
+                          : <Chip label="GST Exempt" size="small" color="default" variant="outlined" sx={{ height: 20 }} />
+                        }
+                        {selectedProduct.hsnCode && <Typography variant="caption"><b>HSN:</b> {selectedProduct.hsnCode}</Typography>}
+                      </Stack>
+                      {selectedProduct.quantityType === 'pair' ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                          This product is configured as <b>pair</b>. Choose <b>Sell both</b> to enter 2 serial numbers, or <b>Sell 1 device</b> for partial pair sales.
+                        </Typography>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                          This product is configured as <b>piece</b>. Enter one serial number.
+                        </Typography>
+                      )}
+                    </Box>
+                  )}
+                </Box>
+
+                {/* Products table */}
+                {currentSale.products.length > 0 ? (
+                  <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
+                    <TableContainer>
+                      <Table size="small">
+                        <TableHead sx={{ bgcolor: 'grey.50' }}>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 700 }}>#</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
+                            <TableCell sx={{ fontWeight: 700 }}>Serial #</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>MRP</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Disc %</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Selling Price</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>GST</TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 700 }}>Total</TableCell>
+                            <TableCell width={50}></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {currentSale.products.map((p, idx) => (
+                            <TableRow key={idx} sx={{ '&:last-child td': { borderBottom: 0 }, '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.02) } }}>
+                              <TableCell>
+                                <Box sx={{ width: 24, height: 24, borderRadius: '50%', bgcolor: alpha(theme.palette.primary.main, 0.1), color: 'primary.main', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
+                                  {idx + 1}
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" fontWeight={600}>{p.name}</Typography>
+                                <Stack direction="row" spacing={0.5} alignItems="center" mt={0.25}>
+                                  <Typography variant="caption" color="text.secondary">{p.company} • {p.type}</Typography>
+                                  {p.gstPercent > 0
+                                    ? <Chip label={`${p.gstPercent}% GST`} size="small" color="info" variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                                    : <Chip label="No GST" size="small" sx={{ height: 18, fontSize: '0.6rem' }} />
+                                  }
+                                </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <TextField size="small" variant="standard" placeholder="S/N" value={p.serialNumber || ''} onChange={(e) => updateProductField(idx, 'serialNumber', e.target.value)} sx={{ width: 120 }} />
+                              </TableCell>
+                              <TableCell align="right"><Typography variant="body2" color="text.secondary">{formatCurrency(p.mrp)}</Typography></TableCell>
+                              <TableCell align="right"><Typography variant="body2" color="text.secondary">{p.discountPercent}%</Typography></TableCell>
+                              <TableCell align="right">
+                                <TextField size="small" variant="standard" type="number" value={p.sellingPrice} onChange={(e) => updateProductField(idx, 'sellingPrice', Number(e.target.value) || 0)} sx={{ width: 90 }} InputProps={{ startAdornment: <InputAdornment position="start" sx={{ mr: 0 }}>₹</InputAdornment> }} />
+                              </TableCell>
+                              <TableCell align="right">
+                                {p.gstPercent > 0 ? (
+                                  <Tooltip title={`${p.gstPercent}% on ${formatCurrency(p.sellingPrice)}`}>
+                                    <Typography variant="body2" color="info.main" fontWeight={500}>{formatCurrency(p.gstAmount)}</Typography>
+                                  </Tooltip>
+                                ) : (
+                                  <Typography variant="caption" color="text.disabled">—</Typography>
+                                )}
+                              </TableCell>
+                              <TableCell align="right"><Typography variant="body2" fontWeight={600}>{formatCurrency(p.totalWithGst)}</Typography></TableCell>
+                              <TableCell>
+                                <IconButton size="small" color="error" onClick={() => handleRemoveProduct(idx)}><DeleteIcon fontSize="small" /></IconButton>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Box>
+                ) : (
+                  <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
+                    <InventoryIcon sx={{ fontSize: 48, mb: 1, opacity: 0.3 }} />
+                    <Typography variant="body2">No products added yet. Use the form above to add products.</Typography>
+                  </Box>
+                )}
+
+                {currentSale.products.length > 0 && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+                    GST is calculated per product based on product settings. Products marked as GST exempt will have no GST applied. You can edit the selling price inline.
+                  </Typography>
+                )}
+              </Paper>
+
+              {/* ──── SECTION 4: Invoice Summary ──── */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                <SectionHeader icon={<CartIcon fontSize="small" />} title="Invoice Summary" color="warning" />
+
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                  <Card variant="outlined" sx={{ flex: '1 1 160px', borderRadius: 2 }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Typography variant="caption" color="text.secondary">Subtotal</Typography>
+                      <Typography variant="h6" fontWeight={600}>{formatCurrency(currentSale.totalAmount)}</Typography>
+                    </CardContent>
+                  </Card>
+                  <Card variant="outlined" sx={{ flex: '1 1 160px', borderRadius: 2, borderColor: 'info.light' }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Typography variant="caption" color="info.main">GST Amount</Typography>
+                      <Typography variant="h6" fontWeight={600} color="info.main">{formatCurrency(currentSale.gstAmount)}</Typography>
+                      {currentSale.products.length > 0 && (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {currentSale.products.filter(p => p.gstPercent > 0).length} of {currentSale.products.length} items taxable
+                        </Typography>
+                      )}
+                    </CardContent>
+                  </Card>
+                  <Card variant="outlined" sx={{ flex: '1 1 180px', borderRadius: 2, borderColor: 'success.light', bgcolor: alpha(theme.palette.success.main, 0.03) }}>
+                    <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                      <Typography variant="caption" color="success.main">Grand Total</Typography>
+                      <Typography variant="h5" fontWeight={700} color="success.dark">{formatCurrency(currentSale.grandTotal)}</Typography>
+                    </CardContent>
+                  </Card>
+                  {isAdmin && (
+                    <Card variant="outlined" sx={{ flex: '1 1 160px', borderRadius: 2 }}>
+                      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography variant="caption" color="text.secondary">Net Profit</Typography>
+                        <Typography variant="h6" fontWeight={600} color={currentSale.netProfit >= 0 ? 'success.main' : 'error.main'}>{formatCurrency(Math.round(currentSale.netProfit))}</Typography>
+                      </CardContent>
+                    </Card>
+                  )}
+                </Box>
+              </Paper>
+
+              {/* ──── SECTION 5: Notes ──── */}
+              <Paper elevation={0} sx={{ p: 2.5, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+                <SectionHeader icon={<NotesIcon fontSize="small" />} title="Notes / Remarks" />
+                <TextField fullWidth size="small" multiline minRows={2} placeholder="Add any additional notes about this sale..." value={currentSale.notes || ''} onChange={(e) => updateSaleField('notes', e.target.value)} />
+              </Paper>
+            </Box>
+          )}
         </DialogContent>
-        
-        <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button 
-            variant="contained" 
-            color="primary" 
+
+        <DialogActions sx={{ px: 3, py: 2, bgcolor: 'grey.50', borderTop: '1px solid', borderColor: 'divider' }}>
+          <Button onClick={() => { setOpenDialog(false); setCurrentSale(null); }} sx={{ textTransform: 'none' }}>Cancel</Button>
+          <Button
+            variant="contained"
             onClick={handleSaveSale}
+            disabled={!currentSale?.patientName?.trim() || (currentSale?.products?.length || 0) === 0}
+            sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, px: 4 }}
+            startIcon={<ReceiptIcon />}
           >
-            Save
+            {currentSale?.id ? 'Update Sale' : 'Save Sale & Create Invoice'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Template Selector */}
+      <Dialog
+        open={productPickerOpen}
+        onClose={() => setProductPickerOpen(false)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>Select Product</DialogTitle>
+        <DialogContent dividers>
+          <TextField
+            size="small"
+            fullWidth
+            placeholder="Search by name, company, type, or HSN..."
+            value={productSearch}
+            onChange={(e) => setProductSearch(e.target.value)}
+            sx={{ mb: 2 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <TableContainer sx={{ maxHeight: 500, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Product</TableCell>
+                  <TableCell>Company</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell align="right">MRP</TableCell>
+                  <TableCell align="center">GST</TableCell>
+                  <TableCell>HSN</TableCell>
+                  <TableCell align="center">Qty Type</TableCell>
+                  <TableCell align="right">Action</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filteredProductsForPicker.length > 0 ? (
+                  filteredProductsForPicker.map((p) => (
+                    <TableRow key={p.id} hover>
+                      <TableCell>
+                        <Typography variant="body2" fontWeight={600}>{p.name}</Typography>
+                      </TableCell>
+                      <TableCell>{p.company}</TableCell>
+                      <TableCell>{p.type}</TableCell>
+                      <TableCell align="right">{formatCurrency(p.mrp || 0)}</TableCell>
+                      <TableCell align="center">
+                        {p.gstApplicable !== false ? (
+                          <Chip size="small" color="info" variant="outlined" label={`${p.gstType || 'CGST'} ${p.gstPercentage || 0}%`} />
+                        ) : (
+                          <Chip size="small" variant="outlined" label="Exempt" />
+                        )}
+                      </TableCell>
+                      <TableCell>{p.hsnCode || '-'}</TableCell>
+                      <TableCell align="center">{p.quantityType || 'piece'}</TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => handlePickProduct(p)}
+                        >
+                          Select
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={8} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                      No products found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setProductPickerOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Template Selector ── */}
       <TemplateSelector
         open={templateSelectorOpen}
-        onClose={() => {
-          setTemplateSelectorOpen(false);
-          setInvoiceSale(null);
-        }}
+        onClose={() => { setTemplateSelectorOpen(false); setInvoiceSale(null); }}
         onSelect={async (templateId, template) => {
           setSelectedTemplateId(templateId);
-          
-          // Fetch full template data from Firestore if it's an HTML template
           if (template.templateType === 'html') {
             try {
-              const templateDoc = await getDocs(collection(db, 'invoiceTemplates'));
-              const fullTemplate = templateDoc.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .find(t => t.id === templateId);
-              
-              if (fullTemplate) {
-                setSelectedTemplateData({
-                  id: fullTemplate.id,
-                  htmlContent: fullTemplate.htmlContent,
-                  images: fullTemplate.images || [],
-                });
-              }
-            } catch (error) {
-              console.error('Error fetching template:', error);
-            }
-          } else {
-            setSelectedTemplateData(null);
-          }
-          
+              const snap = await getDocs(collection(db, 'invoiceTemplates'));
+              const full = snap.docs.map((d) => ({ id: d.id, ...d.data() })).find((t) => t.id === templateId);
+              if (full) setSelectedTemplateData({ id: full.id, htmlContent: (full as any).htmlContent, images: (full as any).images || [] });
+            } catch (e) { console.error('Error fetching template:', e); }
+          } else { setSelectedTemplateData(null); }
           setTemplateSelectorOpen(false);
           setInvoiceOpen(true);
         }}
         selectedTemplateId={selectedTemplateId}
       />
 
-      {/* Invoice Preview with PDF Generation */}
       {invoiceSale && (
         <PDFInvoiceGenerator
           open={invoiceOpen}
-          onClose={() => {
-            setInvoiceOpen(false);
-            setInvoiceSale(null);
-          }}
+          onClose={() => { setInvoiceOpen(false); setInvoiceSale(null); }}
           invoiceData={convertSaleToInvoiceData(invoiceSale)}
           template="modern"
           customTemplate={selectedTemplateData}
         />
       )}
-      
-      {/* Success/Error messages */}
-      <Snackbar open={!!successMsg} autoHideDuration={6000} onClose={handleCloseSnackbar}>
-        <Alert onClose={handleCloseSnackbar} severity="success" variant="filled">
-          {successMsg}
-        </Alert>
+
+      <Snackbar open={!!successMsg} autoHideDuration={5000} onClose={() => setSuccessMsg('')}>
+        <Alert onClose={() => setSuccessMsg('')} severity="success" variant="filled">{successMsg}</Alert>
       </Snackbar>
-      
-      <Snackbar open={!!errorMsg} autoHideDuration={6000} onClose={handleCloseSnackbar}>
-        <Alert onClose={handleCloseSnackbar} severity="error" variant="filled">
-          {errorMsg}
-        </Alert>
+      <Snackbar open={!!errorMsg} autoHideDuration={5000} onClose={() => setErrorMsg('')}>
+        <Alert onClose={() => setErrorMsg('')} severity="error" variant="filled">{errorMsg}</Alert>
       </Snackbar>
     </Box>
   );
 };
 
-export default SalesPage; 
+export default SalesPage;
