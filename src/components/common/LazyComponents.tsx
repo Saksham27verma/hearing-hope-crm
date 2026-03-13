@@ -66,6 +66,11 @@ export const LazyUniversalSearch = dynamic(() => import('@/components/universal-
   ssr: false
 });
 
+export const LazyHopeAIDrawer = dynamic(() => import('@/components/hope-ai/HopeAIDrawer'), {
+  loading: () => null,
+  ssr: false,
+});
+
 // Error Boundary Component
 export const ErrorBoundary = ({ children, fallback }: { children: React.ReactNode; fallback?: React.ReactNode }) => {
   return (

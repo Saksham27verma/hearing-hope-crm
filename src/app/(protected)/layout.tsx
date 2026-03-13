@@ -6,6 +6,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
 import UniversalSearch from '@/components/universal-search/UniversalSearch';
+import { LazyHopeAIDrawer } from '@/components/common/LazyComponents';
 
 interface NavItem {
   text: string;
@@ -27,6 +28,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [searchOpen, setSearchOpen] = useState(false);
+  const [hopeAiOpen, setHopeAiOpen] = useState(false);
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<null | HTMLElement>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const hasRedirectedRef = useRef<string | null>(null);
@@ -222,6 +224,17 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       borderRadius: '4px',
       transition: 'background 0.2s ease',
     },
+    aiButton: {
+      background: 'rgba(255,255,255,0.12)',
+      border: '1px solid rgba(255,255,255,0.25)',
+      color: 'white',
+      fontSize: '14px',
+      fontWeight: 600,
+      cursor: 'pointer',
+      padding: '8px 14px',
+      borderRadius: '999px',
+      transition: 'all 0.2s ease',
+    },
     profileButton: {
       background: 'rgba(255,255,255,0.1)',
       border: 'none',
@@ -270,6 +283,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       }
       if (event.key === 'Escape') {
         setSearchOpen(false);
+        setHopeAiOpen(false);
         setProfileMenuAnchor(null);
       }
     };
@@ -597,6 +611,15 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           </button>
           
           <button
+            style={styles.aiButton}
+            onClick={() => setHopeAiOpen(true)}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.12)'}
+          >
+            Hope AI
+          </button>
+
+          <button
             style={styles.profileButton}
             onClick={handleProfileClick}
             onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.2)'}
@@ -673,6 +696,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
       {/* Universal Search Modal */}
       <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <LazyHopeAIDrawer open={hopeAiOpen} onClose={() => setHopeAiOpen(false)} />
 
       {/* Main Content */}
       <main style={styles.content}>
