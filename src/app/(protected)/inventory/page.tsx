@@ -101,6 +101,34 @@ interface InventoryItem {
   updatedAt: any;
 }
 
+interface JourneyEvent {
+  id: string;
+  serialNumber: string;
+  productId: string;
+  productName: string;
+  eventType:
+    | 'purchase'
+    | 'material-in'
+    | 'stock-transfer-in'
+    | 'stock-transfer-out'
+    | 'material-out'
+    | 'trial'
+    | 'booking'
+    | 'sale'
+    | 'sale-return'
+    | 'visit-update';
+  title: string;
+  description: string;
+  date: any;
+  sortOrder: number;
+  location?: string;
+  counterparty?: string;
+  referenceNo?: string;
+  notes?: string;
+  sourceLabel?: string;
+  sourcePath?: string;
+}
+
 // Helper function to format currency
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -113,17 +141,67 @@ const formatCurrency = (amount: number) => {
 // Helper function to format date
 const formatDate = (timestamp: any) => {
   if (!timestamp) return '-';
-  
-  const date = timestamp.toDate ? 
-    timestamp.toDate() : 
-    new Date(timestamp.seconds * 1000);
-  
+
+  let date: Date | null = null;
+  if (typeof timestamp === 'string') {
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) date = parsed;
+  } else if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (timestamp.toDate) {
+    date = timestamp.toDate();
+  } else if (timestamp.seconds) {
+    date = new Date(timestamp.seconds * 1000);
+  }
+
+  if (!date) return '-';
+
   return new Intl.DateTimeFormat('en-IN', {
     day: '2-digit',
     month: 'short',
     year: 'numeric'
   }).format(date);
 };
+
+const formatDateTime = (timestamp: any) => {
+  if (!timestamp) return '-';
+
+  let date: Date | null = null;
+  if (typeof timestamp === 'string') {
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) date = parsed;
+  } else if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (timestamp.toDate) {
+    date = timestamp.toDate();
+  } else if (timestamp.seconds) {
+    date = new Date(timestamp.seconds * 1000);
+  }
+
+  if (!date) return typeof timestamp === 'string' ? timestamp : '-';
+
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
+};
+
+const getTimestampValue = (timestamp: any) => {
+  if (!timestamp) return 0;
+  if (typeof timestamp === 'string') {
+    const parsed = new Date(timestamp).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (timestamp instanceof Date) return timestamp.getTime();
+  if (timestamp.toDate) return timestamp.toDate().getTime();
+  if (timestamp.seconds) return timestamp.seconds * 1000;
+  return 0;
+};
+
+const normalizeSerialNumber = (serialNumber: string) => serialNumber.trim().toUpperCase();
 
 export default function InventoryPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
@@ -165,6 +243,10 @@ export default function InventoryPage() {
   const [serialsDialogTitle, setSerialsDialogTitle] = useState('');
   const [serialsDialogRows, setSerialsDialogRows] = useState<InventoryItem[]>([]);
   const [serialsSearch, setSerialsSearch] = useState('');
+  const [journeySerialInput, setJourneySerialInput] = useState('');
+  const [journeySearchSerial, setJourneySearchSerial] = useState('');
+  const [journeyDialogOpen, setJourneyDialogOpen] = useState(false);
+  const [journeyBySerial, setJourneyBySerial] = useState<Record<string, JourneyEvent[]>>({});
   
   // Notification state
   const [successMessage, setSuccessMessage] = useState('');
@@ -218,6 +300,314 @@ export default function InventoryPage() {
         setProducts(productsList);
         const productById = new Map<string, any>();
         productsList.forEach(p => productById.set(p.id, p));
+
+        const journeyMap = new Map<string, JourneyEvent[]>();
+        const addJourneyEvent = (serialNumber: string, event: Omit<JourneyEvent, 'serialNumber' | 'sortOrder'>) => {
+          const normalizedSerial = normalizeSerialNumber(serialNumber || '');
+          if (!normalizedSerial) return;
+
+          const events = journeyMap.get(normalizedSerial) || [];
+          events.push({
+            ...event,
+            serialNumber: serialNumber.trim(),
+            sortOrder: getTimestampValue(event.date),
+          });
+          journeyMap.set(normalizedSerial, events);
+        };
+
+        const getJourneyProductInfo = (prod: any) => {
+          const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
+          const productRef = productById.get(productId) || {};
+          return {
+            productId,
+            productName: prod.name || productRef.name || 'Unknown Product',
+          };
+        };
+
+        materialInSnap.docs.forEach(docSnap => {
+          const data: any = docSnap.data();
+          const supplierName = data.supplier?.name || '';
+          const location = data.location || headOfficeId;
+          const isStockTransferIn = supplierName.includes('Stock Transfer from');
+
+          (data.products || []).forEach((prod: any) => {
+            const serialArray: string[] = Array.isArray(prod.serialNumbers)
+              ? prod.serialNumbers
+              : (prod.serialNumber ? [prod.serialNumber] : []);
+            const { productId, productName } = getJourneyProductInfo(prod);
+
+            serialArray.forEach((serialNumber: string) => {
+              addJourneyEvent(serialNumber, {
+                id: `material-in-${docSnap.id}-${serialNumber}`,
+                productId,
+                productName,
+                eventType: isStockTransferIn ? 'stock-transfer-in' : 'material-in',
+                title: isStockTransferIn ? 'Stock Transfer In' : 'Material In',
+                description: isStockTransferIn
+                  ? `Received via transfer from ${supplierName || 'another center'}`
+                  : `Received from ${supplierName || 'supplier'}`,
+                date: data.receivedDate || data.createdAt,
+                location,
+                counterparty: supplierName || undefined,
+                referenceNo: data.challanNumber || '',
+                notes: [data.status, data.notes].filter(Boolean).join(' • '),
+                sourceLabel: 'Material In',
+                sourcePath: `/material-in#id=${docSnap.id}`,
+              });
+            });
+          });
+        });
+
+        purchasesSnap.docs.forEach(docSnap => {
+          const data: any = docSnap.data();
+          const supplierName = data.party?.name || '';
+          const location = data.location || headOfficeId;
+
+          (data.products || []).forEach((prod: any) => {
+            const serialArray: string[] = Array.isArray(prod.serialNumbers)
+              ? prod.serialNumbers
+              : (prod.serialNumber ? [prod.serialNumber] : []);
+            const { productId, productName } = getJourneyProductInfo(prod);
+
+            serialArray.forEach((serialNumber: string) => {
+              addJourneyEvent(serialNumber, {
+                id: `purchase-${docSnap.id}-${serialNumber}`,
+                productId,
+                productName,
+                eventType: 'purchase',
+                title: 'Purchased',
+                description: `Purchased from ${supplierName || 'supplier'}`,
+                date: data.purchaseDate || data.createdAt,
+                location,
+                counterparty: supplierName || undefined,
+                referenceNo: data.invoiceNo || '',
+                notes: data.reference || '',
+                sourceLabel: 'Purchase',
+                sourcePath: `/purchase-management#id=${docSnap.id}`,
+              });
+            });
+          });
+        });
+
+        materialsOutSnap.docs.forEach(docSnap => {
+          const data: any = docSnap.data();
+          const recipientName = data.recipient?.name || '';
+          const location = data.location || headOfficeId;
+          const reason = data.reason || '';
+          const notes = data.notes || '';
+          const status = data.status || 'dispatched';
+          const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
+          const isTrial = /trial/i.test(reason) || /trial/i.test(notes);
+
+          (data.products || []).forEach((prod: any) => {
+            const serialArray: string[] = Array.isArray(prod.serialNumbers)
+              ? prod.serialNumbers
+              : (prod.serialNumber ? [prod.serialNumber] : []);
+            const { productId, productName } = getJourneyProductInfo(prod);
+
+            serialArray.forEach((serialNumber: string) => {
+              addJourneyEvent(serialNumber, {
+                id: `material-out-${docSnap.id}-${serialNumber}`,
+                productId,
+                productName,
+                eventType: isStockTransfer ? 'stock-transfer-out' : isTrial ? 'trial' : 'material-out',
+                title: isStockTransfer
+                  ? 'Stock Transfer Out'
+                  : isTrial
+                    ? 'Material Out for Trial'
+                    : status === 'pending'
+                      ? 'Material Out Pending'
+                      : 'Material Out',
+                description: recipientName
+                  ? `Sent to ${recipientName}`
+                  : 'Product moved out from inventory',
+                date: data.dispatchDate || data.createdAt,
+                location,
+                counterparty: recipientName || undefined,
+                referenceNo: data.challanNumber || '',
+                notes: [status, reason, notes].filter(Boolean).join(' • '),
+                sourceLabel: 'Material Out',
+                sourcePath: `/material-out#id=${docSnap.id}`,
+              });
+            });
+          });
+        });
+
+        salesSnap.docs.forEach(docSnap => {
+          const data: any = docSnap.data();
+          const patientName = data.patientName || 'Unknown patient';
+          const location = data.centerId || data.branch || '';
+
+          (data.products || []).forEach((prod: any) => {
+            const serialArray: string[] = Array.isArray(prod.serialNumbers)
+              ? prod.serialNumbers
+              : (prod.serialNumber ? [prod.serialNumber] : []);
+            const { productId, productName } = getJourneyProductInfo(prod);
+
+            serialArray.forEach((serialNumber: string) => {
+              addJourneyEvent(serialNumber, {
+                id: `sale-${docSnap.id}-${serialNumber}`,
+                productId,
+                productName,
+                eventType: 'sale',
+                title: 'Sold',
+                description: `Sold to ${patientName}`,
+                date: data.saleDate || data.createdAt,
+                location,
+                counterparty: patientName,
+                referenceNo: data.invoiceNumber || '',
+                notes: data.notes || '',
+                sourceLabel: 'Sales',
+                sourcePath: '/sales',
+              });
+            });
+          });
+        });
+
+        enquiriesSnap.docs.forEach(docSnap => {
+          const data: any = docSnap.data();
+          const patientName = data.name || 'Unknown patient';
+          const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
+
+          visits.forEach((visit: any, visitIndex: number) => {
+            const products: any[] = Array.isArray(visit.products) ? visit.products : [];
+            const medicalServices: string[] = Array.isArray(visit.medicalServices) ? visit.medicalServices : [];
+            const visitDate = visit.visitDate || data.updatedAt || data.createdAt;
+            const isSaleVisit = !!(
+              visit?.hearingAidSale ||
+              medicalServices.includes('hearing_aid_sale') ||
+              visit?.journeyStage === 'sale' ||
+              visit?.hearingAidStatus === 'sold' ||
+              (products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+            );
+
+            products.forEach((prod: any) => {
+              const { productId, productName } = getJourneyProductInfo(prod);
+              const serialCandidates = Array.from(
+                new Set([prod.serialNumber, prod.trialSerialNumber].filter(Boolean))
+              ) as string[];
+              const location = prod.location || data.center || '';
+
+              serialCandidates.forEach((serialNumber: string) => {
+                let addedSpecificEvent = false;
+
+                if (visit?.hearingAidTrial || medicalServices.includes('hearing_aid_trial') || serialNumber === prod.trialSerialNumber) {
+                  addedSpecificEvent = true;
+                  addJourneyEvent(serialNumber, {
+                    id: `trial-${docSnap.id}-${visit.id || visitIndex}-${serialNumber}`,
+                    productId,
+                    productName,
+                    eventType: 'trial',
+                    title: 'Trial Update',
+                    description: `Trial recorded for ${patientName}`,
+                    date: visit.trialStartDate || visitDate,
+                    location,
+                    counterparty: patientName,
+                    referenceNo: visit.id || '',
+                    notes: [
+                      visit.trialStartDate ? `Start: ${visit.trialStartDate}` : '',
+                      visit.trialEndDate ? `End: ${visit.trialEndDate}` : '',
+                      visit.trialResult ? `Result: ${visit.trialResult}` : '',
+                      visit.trialNotes || visit.visitNotes || '',
+                    ].filter(Boolean).join(' • '),
+                    sourceLabel: 'Enquiry',
+                    sourcePath: `/interaction/enquiries/${docSnap.id}`,
+                  });
+                }
+
+                if (visit?.hearingAidBooked || medicalServices.includes('hearing_aid_booked')) {
+                  addedSpecificEvent = true;
+                  addJourneyEvent(serialNumber, {
+                    id: `booking-${docSnap.id}-${visit.id || visitIndex}-${serialNumber}`,
+                    productId,
+                    productName,
+                    eventType: 'booking',
+                    title: 'Booking Recorded',
+                    description: `Product booked for ${patientName}`,
+                    date: visit.bookingDate || visitDate,
+                    location,
+                    counterparty: patientName,
+                    referenceNo: visit.id || '',
+                    notes: [
+                      visit.bookingAmount ? `Booking Amount: ${formatCurrency(visit.bookingAmount)}` : '',
+                      visit.visitNotes || '',
+                    ].filter(Boolean).join(' • '),
+                    sourceLabel: 'Enquiry',
+                    sourcePath: `/interaction/enquiries/${docSnap.id}`,
+                  });
+                }
+
+                if (isSaleVisit) {
+                  addedSpecificEvent = true;
+                  addJourneyEvent(serialNumber, {
+                    id: `enquiry-sale-${docSnap.id}-${visit.id || visitIndex}-${serialNumber}`,
+                    productId,
+                    productName,
+                    eventType: 'sale',
+                    title: 'Sale Marked in Enquiry',
+                    description: `Sale noted for ${patientName}`,
+                    date: prod.saleDate || visitDate,
+                    location,
+                    counterparty: patientName,
+                    referenceNo: visit.id || '',
+                    notes: [
+                      visit.salesAfterTax ? `Amount: ${formatCurrency(visit.salesAfterTax)}` : '',
+                      visit.visitNotes || '',
+                    ].filter(Boolean).join(' • '),
+                    sourceLabel: 'Enquiry',
+                    sourcePath: `/interaction/enquiries/${docSnap.id}`,
+                  });
+                }
+
+                if (!addedSpecificEvent && (visit.visitNotes || visit.hearingAidStatus || visit.journeyStage)) {
+                  addJourneyEvent(serialNumber, {
+                    id: `visit-update-${docSnap.id}-${visit.id || visitIndex}-${serialNumber}`,
+                    productId,
+                    productName,
+                    eventType: 'visit-update',
+                    title: 'Journey Update',
+                    description: `Visit update for ${patientName}`,
+                    date: visitDate,
+                    location,
+                    counterparty: patientName,
+                    referenceNo: visit.id || '',
+                    notes: [visit.hearingAidStatus, visit.journeyStage, visit.visitNotes].filter(Boolean).join(' • '),
+                    sourceLabel: 'Enquiry',
+                    sourcePath: `/interaction/enquiries/${docSnap.id}`,
+                  });
+                }
+              });
+            });
+
+            if (visit.salesReturn && visit.returnSerialNumber) {
+              const matchedProduct = products.find((prod: any) =>
+                [prod.serialNumber, prod.trialSerialNumber].includes(visit.returnSerialNumber)
+              );
+              const { productId, productName } = matchedProduct
+                ? getJourneyProductInfo(matchedProduct)
+                : { productId: '', productName: 'Unknown Product' };
+              addJourneyEvent(visit.returnSerialNumber, {
+                id: `sale-return-${docSnap.id}-${visit.id || visitIndex}-${visit.returnSerialNumber}`,
+                productId,
+                productName,
+                eventType: 'sale-return',
+                title: 'Sales Return',
+                description: `Return recorded for ${patientName}`,
+                date: visit.returnDate || visitDate,
+                location: matchedProduct?.location || data.center || '',
+                counterparty: patientName,
+                referenceNo: visit.id || visit.returnOriginalSaleVisitId || '',
+                notes: [
+                  visit.returnReason || '',
+                  visit.returnCondition || '',
+                  visit.returnNotes || '',
+                ].filter(Boolean).join(' • '),
+                sourceLabel: 'Enquiry',
+                sourcePath: `/interaction/enquiries/${docSnap.id}`,
+              });
+            }
+          });
+        });
 
         // Incoming serials for stock transfer tracking
         const stockTransferInSerials = new Set<string>();
@@ -847,6 +1237,14 @@ export default function InventoryPage() {
 
         setInventory(items);
         setFilteredInventory(items);
+        const serializedJourneyMap: Record<string, JourneyEvent[]> = {};
+        journeyMap.forEach((events, serialKey) => {
+          serializedJourneyMap[serialKey] = [...events].sort((a, b) => {
+            if (a.sortOrder === b.sortOrder) return a.title.localeCompare(b.title);
+            return a.sortOrder - b.sortOrder;
+          });
+        });
+        setJourneyBySerial(serializedJourneyMap);
         setStats({
           totalItems: items.length,
           inStock,
@@ -986,6 +1384,95 @@ export default function InventoryPage() {
   const getCenterName = (locationId: string) => {
     const center = centers.find(c => c.id === locationId);
     return center ? center.name : locationId;
+  };
+
+  const getJourneyEventColor = (eventType: JourneyEvent['eventType']) => {
+    switch (eventType) {
+      case 'purchase':
+        return 'info.main';
+      case 'material-in':
+        return 'success.main';
+      case 'stock-transfer-in':
+        return 'primary.main';
+      case 'stock-transfer-out':
+        return 'warning.main';
+      case 'material-out':
+        return 'warning.dark';
+      case 'trial':
+        return 'secondary.main';
+      case 'booking':
+        return 'primary.dark';
+      case 'sale':
+        return 'success.dark';
+      case 'sale-return':
+        return 'error.main';
+      case 'visit-update':
+      default:
+        return 'text.secondary';
+    }
+  };
+
+  const getJourneyEventIcon = (eventType: JourneyEvent['eventType']) => {
+    switch (eventType) {
+      case 'purchase':
+        return <ShoppingCartIcon fontSize="small" />;
+      case 'material-in':
+        return <InventoryIcon fontSize="small" />;
+      case 'stock-transfer-in':
+      case 'stock-transfer-out':
+        return <LocalShippingIcon fontSize="small" />;
+      case 'material-out':
+        return <TrendingDownIcon fontSize="small" />;
+      case 'trial':
+        return <InfoIcon fontSize="small" />;
+      case 'booking':
+        return <AssignmentIcon fontSize="small" />;
+      case 'sale':
+        return <CheckCircleIcon fontSize="small" />;
+      case 'sale-return':
+        return <WarningIcon fontSize="small" />;
+      case 'visit-update':
+      default:
+        return <DateRangeIcon fontSize="small" />;
+    }
+  };
+
+  const selectedJourney = useMemo(() => {
+    const normalizedSerial = normalizeSerialNumber(journeySearchSerial || '');
+    const events = normalizedSerial ? (journeyBySerial[normalizedSerial] || []) : [];
+    const inventoryItem = normalizedSerial
+      ? inventory.find(item =>
+          normalizeSerialNumber(item.serialNumber || '') === normalizedSerial ||
+          (Array.isArray(item.serialNumbers) && item.serialNumbers.some(sn => normalizeSerialNumber(sn || '') === normalizedSerial))
+        ) || null
+      : null;
+    const latestEvent = events.length ? [...events].sort((a, b) => b.sortOrder - a.sortOrder)[0] : null;
+
+    return {
+      normalizedSerial,
+      events,
+      inventoryItem,
+      latestEvent,
+      productName: inventoryItem?.productName || latestEvent?.productName || 'Unknown Product',
+      displaySerial: events[0]?.serialNumber || journeySearchSerial.trim(),
+    };
+  }, [journeySearchSerial, journeyBySerial, inventory]);
+
+  const handleOpenJourney = () => {
+    const serial = journeySerialInput.trim();
+    if (!serial) {
+      setErrorMessage('Enter a serial number to view the product journey');
+      return;
+    }
+
+    const normalizedSerial = normalizeSerialNumber(serial);
+    if (!journeyBySerial[normalizedSerial]?.length) {
+      setErrorMessage(`No journey found for serial number ${serial}`);
+      return;
+    }
+
+    setJourneySearchSerial(serial);
+    setJourneyDialogOpen(true);
   };
 
   const handleExportData = () => {
@@ -1448,6 +1935,50 @@ export default function InventoryPage() {
                 Add New Item
               </Button>
             )}
+          </Box>
+        </Box>
+      </Paper>
+
+      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
+        <Box display="flex" alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between" gap={2} flexDirection={{ xs: 'column', md: 'row' }}>
+          <Box>
+            <Box display="flex" alignItems="center" mb={1}>
+              <AssignmentIcon color="primary" sx={{ mr: 1.5 }} />
+              <Typography variant="h6" fontWeight={700}>Product Journey</Typography>
+            </Box>
+            <Typography variant="body2" color="text.secondary">
+              Enter a serial number to see the full timeline across purchase, material in, stock transfers, trials, material out, sales, and enquiry updates.
+            </Typography>
+          </Box>
+          <Box display="flex" gap={1.5} width={{ xs: '100%', md: 520 }}>
+            <TextField
+              fullWidth
+              size="small"
+              label="Serial Number"
+              placeholder="Enter product serial number"
+              value={journeySerialInput}
+              onChange={(e) => setJourneySerialInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleOpenJourney();
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                )
+              }}
+            />
+            <Button
+              variant="contained"
+              onClick={handleOpenJourney}
+              disabled={loading}
+              sx={{ borderRadius: 2, minWidth: 140 }}
+            >
+              View Journey
+            </Button>
           </Box>
         </Box>
       </Paper>
@@ -2028,7 +2559,6 @@ export default function InventoryPage() {
                   <TableHead>
                     <TableRow>
                       <TableCell>Product</TableCell>
-                      <TableCell>Company</TableCell>
                       <TableCell align="right">In Stock</TableCell>
                       <TableCell align="right">Actions</TableCell>
                     </TableRow>
@@ -2037,7 +2567,6 @@ export default function InventoryPage() {
                     {group.products.map(p => (
                       <TableRow key={p.productName} hover>
                         <TableCell>{p.productName}</TableCell>
-                        <TableCell>{p.company || '-'}</TableCell>
                         <TableCell align="right">
                           <Chip label={p.count} size="small" color="success" variant="outlined" />
                         </TableCell>
@@ -2048,7 +2577,7 @@ export default function InventoryPage() {
                     ))}
                     {group.products.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={4} align="center" sx={{ py: 2, color: 'text.secondary' }}>No products in stock</TableCell>
+                        <TableCell colSpan={3} align="center" sx={{ py: 2, color: 'text.secondary' }}>No products in stock</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
@@ -2639,7 +3168,7 @@ export default function InventoryPage() {
                   <TableCell>{formatDate(r.purchaseDate)}</TableCell>
                   <TableCell>{r.purchaseInvoice || '-'}</TableCell>
                   <TableCell>{r.supplier || '-'}</TableCell>
-                  <TableCell>{r.location || '-'}</TableCell>
+                  <TableCell>{getCenterName(r.location || '') || '-'}</TableCell>
                   <TableCell align="right">
                     {r.sourceType && r.sourceDocId ? (
                       <Button
@@ -2668,6 +3197,123 @@ export default function InventoryPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSerialsDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={journeyDialogOpen} onClose={() => setJourneyDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>{`Product Journey${selectedJourney.displaySerial ? ` • ${selectedJourney.displaySerial}` : ''}`}</DialogTitle>
+        <DialogContent dividers>
+          {selectedJourney.events.length === 0 ? (
+            <Typography color="text.secondary">No journey found for this serial number.</Typography>
+          ) : (
+            <Stack spacing={2.5}>
+              <Paper elevation={0} sx={{ p: 2, borderRadius: 2, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider' }}>
+                <Box display="flex" justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }} gap={2} flexDirection={{ xs: 'column', md: 'row' }}>
+                  <Box>
+                    <Typography variant="h6" fontWeight={700}>{selectedJourney.productName}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Serial Number: {selectedJourney.displaySerial}
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    <Chip label={`${selectedJourney.events.length} events`} size="small" variant="outlined" />
+                    {selectedJourney.inventoryItem?.status && (
+                      <Chip label={`Current Status: ${selectedJourney.inventoryItem.status}`} size="small" color={getStatusColor(selectedJourney.inventoryItem.status)} />
+                    )}
+                    {(selectedJourney.inventoryItem?.location || selectedJourney.latestEvent?.location) && (
+                      <Chip
+                        label={`Latest Location: ${getCenterName(selectedJourney.inventoryItem?.location || selectedJourney.latestEvent?.location || '')}`}
+                        size="small"
+                        variant="outlined"
+                      />
+                    )}
+                  </Stack>
+                </Box>
+              </Paper>
+
+              <Stack spacing={0}>
+                {selectedJourney.events.map((event, index) => (
+                  <Box key={event.id} display="flex" gap={2}>
+                    <Box display="flex" flexDirection="column" alignItems="center" sx={{ pt: 1, minWidth: 24 }}>
+                      <Box
+                        sx={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: '50%',
+                          bgcolor: getJourneyEventColor(event.eventType),
+                          border: '3px solid',
+                          borderColor: 'background.paper',
+                          boxShadow: 1,
+                        }}
+                      />
+                      {index < selectedJourney.events.length - 1 && (
+                        <Box sx={{ width: 2, flex: 1, bgcolor: 'divider', minHeight: 56 }} />
+                      )}
+                    </Box>
+
+                    <Paper
+                      elevation={0}
+                      sx={{
+                        flex: 1,
+                        p: 2,
+                        mb: index < selectedJourney.events.length - 1 ? 1.5 : 0,
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderLeftWidth: 4,
+                        borderLeftColor: getJourneyEventColor(event.eventType),
+                      }}
+                    >
+                      <Box display="flex" justifyContent="space-between" gap={2} alignItems={{ xs: 'flex-start', md: 'center' }} flexDirection={{ xs: 'column', md: 'row' }}>
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <Box sx={{ color: getJourneyEventColor(event.eventType), display: 'flex', alignItems: 'center' }}>
+                            {getJourneyEventIcon(event.eventType)}
+                          </Box>
+                          <Box>
+                            <Typography fontWeight={700}>{event.title}</Typography>
+                            <Typography variant="body2" color="text.secondary">{event.description}</Typography>
+                          </Box>
+                        </Box>
+                        <Chip label={formatDateTime(event.date)} size="small" variant="outlined" />
+                      </Box>
+
+                      <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
+                        {event.location && (
+                          <Chip size="small" label={`Location: ${getCenterName(event.location)}`} />
+                        )}
+                        {event.counterparty && (
+                          <Chip size="small" label={event.counterparty} variant="outlined" />
+                        )}
+                        {event.referenceNo && (
+                          <Chip size="small" label={`Ref: ${event.referenceNo}`} variant="outlined" />
+                        )}
+                        {event.sourceLabel && (
+                          <Chip size="small" label={event.sourceLabel} variant="outlined" />
+                        )}
+                      </Stack>
+
+                      {event.notes && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+                          {event.notes}
+                        </Typography>
+                      )}
+
+                      {event.sourcePath && (
+                        <Box sx={{ mt: 1.5 }}>
+                          <Button size="small" variant="outlined" onClick={() => window.open(event.sourcePath, '_blank')}>
+                            Open Source Record
+                          </Button>
+                        </Box>
+                      )}
+                    </Paper>
+                  </Box>
+                ))}
+              </Stack>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setJourneyDialogOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
       
