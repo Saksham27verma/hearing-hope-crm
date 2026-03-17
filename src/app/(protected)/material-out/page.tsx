@@ -68,6 +68,7 @@ import {
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import MaterialOutForm from '@/components/material-out/MaterialOutForm';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
@@ -140,6 +141,7 @@ export default function MaterialOutPage() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [openDialog, setOpenDialog] = useState(false);
   const [currentMaterial, setCurrentMaterial] = useState<MaterialOut | null>(null);
+  const [savingMaterial, setSavingMaterial] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<Date | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -150,6 +152,7 @@ export default function MaterialOutPage() {
   const [availableInventory, setAvailableInventory] = useState<any[]>([]);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   
   // Home trial tracking states
   const [activeHomeTrials, setActiveHomeTrials] = useState<any[]>([]);
@@ -524,6 +527,23 @@ export default function MaterialOutPage() {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await Promise.all([
+        fetchMaterials(),
+        fetchProducts(),
+        loadAvailableInventory(),
+        fetchParties(),
+        fetchCenters(),
+        fetchActiveHomeTrials(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   // Handle creating material out entry for home trial
   const handleTrialMaterialOut = async (trial: any) => {
     const challanNumber = generateChallanNumber();
@@ -646,7 +666,9 @@ export default function MaterialOutPage() {
 
   // Handle saving material (create or update)
   const handleSaveMaterial = async (material: MaterialOut) => {
+    if (savingMaterial) return;
     try {
+      setSavingMaterial(true);
       const pruneUndefined = (value: any): any => {
         if (value === undefined) return undefined;
         if (value === null) return null;
@@ -705,6 +727,8 @@ export default function MaterialOutPage() {
     } catch (error) {
       console.error('Error saving material:', error);
       setErrorMsg('Failed to save material');
+    } finally {
+      setSavingMaterial(false);
     }
   };
 
@@ -816,15 +840,18 @@ export default function MaterialOutPage() {
             Track and manage outgoing materials to customers or branches
           </Typography>
         </Box>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<AddIcon />}
-          onClick={handleAddMaterial}
-          sx={{ borderRadius: 2 }}
-        >
-          New Material Out
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} sx={{ borderRadius: 2 }} />
+          <Button 
+            variant="contained" 
+            color="primary" 
+            startIcon={<AddIcon />}
+            onClick={handleAddMaterial}
+            sx={{ borderRadius: 2 }}
+          >
+            New Material Out
+          </Button>
+        </Box>
       </Box>
 
       {/* Home Trial Actions */}
@@ -1076,6 +1103,7 @@ export default function MaterialOutPage() {
               availableItems={availableInventory as any}
               onCancel={handleCloseDialog}
               onSave={(mat: any) => handleSaveMaterial(mat as any)}
+              isSaving={savingMaterial}
             />
           )}
         </DialogContent>

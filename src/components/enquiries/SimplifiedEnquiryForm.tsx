@@ -7,6 +7,7 @@ import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { useAuth } from '@/context/AuthContext';
 import PureToneAudiogram from './PureToneAudiogram';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import {
   TextField, Button, Typography, Box, Paper,
   FormControl, InputLabel, Select, MenuItem,
@@ -142,9 +143,10 @@ interface HearingAidProduct {
   inventoryId?: string;
   productId: string;
   name: string;
-  hsnCode: string;
+  hsnCode?: string;
   serialNumber: string;
   unit: 'piece' | 'pair' | 'quantity';
+  quantity?: number;
   saleDate: string;
   mrp: number;
   dealerPrice?: number;
@@ -229,6 +231,8 @@ interface Visit {
   bookingAdvanceAmount: number;
   bookingDate: string;
   bookingFromVisitId: string; // Which visit this booking relates to
+  bookingSellingPrice: number;
+  bookingQuantity: number;
   // Purchase related fields
   purchaseFromTrial: boolean;
   purchaseDate: string;
@@ -289,10 +293,11 @@ interface FormData {
 interface Props {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: any) => void;
+  onSubmit: (data: any) => Promise<void> | void;
   enquiry?: any;
   isEditMode?: boolean;
   fullPage?: boolean;
+  isSubmitting?: boolean;
 }
 
 const SimplifiedEnquiryForm: React.FC<Props> = ({
@@ -301,7 +306,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   onSubmit,
   enquiry,
   isEditMode = false,
-  fullPage = true // Always full page now
+  fullPage = true, // Always full page now
+  isSubmitting = false
 }) => {
   const { userProfile } = useAuth();
   const isAdmin = userProfile?.role === 'admin';
@@ -441,7 +447,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     watch,
     setValue,
     getValues,
-    formState: { errors, isValid },
+    formState: { errors, isValid, isSubmitting: formSubmitting },
     reset
   } = useForm<FormData>({
     mode: 'onChange',
@@ -903,6 +909,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           bookingAdvanceAmount: visit.hearingAidDetails?.bookingAdvanceAmount || 0,
           bookingDate: visit.hearingAidDetails?.bookingDate || '',
           bookingFromVisitId: visit.hearingAidDetails?.bookingFromVisitId || '',
+          bookingSellingPrice: visit.hearingAidDetails?.bookingSellingPrice || visit.hearingAidDetails?.grossSalesBeforeTax || 0,
+          bookingQuantity: visit.hearingAidDetails?.bookingQuantity || 1,
           // Purchase related fields
           purchaseFromTrial: visit.hearingAidDetails?.purchaseFromTrial || false,
           purchaseDate: visit.hearingAidDetails?.purchaseDate || '',
@@ -1037,6 +1045,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       bookingAdvanceAmount: 0,
       bookingDate: '',
       bookingFromVisitId: '',
+      bookingSellingPrice: 0,
+      bookingQuantity: 1,
       // Purchase related fields
       purchaseFromTrial: false,
       purchaseDate: '',
@@ -1265,8 +1275,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         total += visit.testPrice;
       }
       
-      // Add hearing aid products total
-                if ((visit.hearingAidTrial || visit.hearingAidBooked || visit.hearingAidSale) && visit.products) {
+      // Booking should use selling price x quantity, not GST-based totals
+      if (visit.hearingAidBooked && !visit.hearingAidSale) {
+        total += (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1);
+      } else if (visit.hearingAidSale && visit.products) {
         total += visit.salesAfterTax || 0;
       }
       
@@ -1307,7 +1319,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         });
       }
 
-              if ((visit.hearingAidTrial || visit.hearingAidBooked || visit.hearingAidSale) && visit.salesAfterTax > 0) {
+      if (visit.hearingAidBooked && !visit.hearingAidSale && ((Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1)) > 0) {
+        options.push({
+          value: 'hearing_aid',
+          label: 'Hearing Aid',
+          amount: (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1),
+          description: `Booked device x ${Number(visit.bookingQuantity) || 1}`
+        });
+      } else if (visit.hearingAidSale && visit.salesAfterTax > 0) {
         options.push({
           value: 'hearing_aid',
           label: 'Hearing Aid',
@@ -1377,21 +1396,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
   const calculateTotalPaid = () => {
     const payments = getValues('payments');
-    const paymentsTotal = payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
-
-    // Include booking advances recorded in visits (without double counting
-    // payments already recorded as booking_advance in the payments list)
-    const visits = getValues('visits');
-    const plannedBookingAdvance = visits.reduce((sum, v) => {
-      return sum + ((v.hearingAidBooked && v.bookingAdvanceAmount > 0) ? v.bookingAdvanceAmount : 0);
-    }, 0);
-    const recordedBookingAdvance = payments
-      .filter(p => p.paymentFor === 'booking_advance')
-      .reduce((sum, p) => sum + (p.amount || 0), 0);
-
-    const unrecordedBookingAdvance = Math.max(0, plannedBookingAdvance - recordedBookingAdvance);
-
-    return paymentsTotal + unrecordedBookingAdvance;
+    // Count only actual entries added in the Payments section.
+    return payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
   };
 
   const calculateOutstanding = () => {
@@ -1449,7 +1455,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     return obj;
   };
 
-  const onFormSubmit = (data: FormData) => {
+  const submitLoading = isSubmitting || formSubmitting;
+
+  const onFormSubmit = async (data: FormData) => {
     const totalDue = calculateTotalDue();
     const totalPaid = calculateTotalPaid();
     const outstanding = calculateOutstanding();
@@ -1535,6 +1543,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           bookingAdvanceAmount: visit.bookingAdvanceAmount,
           bookingDate: visit.bookingDate,
           bookingFromVisitId: visit.bookingFromVisitId,
+          bookingSellingPrice: visit.bookingSellingPrice,
+          bookingQuantity: visit.bookingQuantity,
           // Persist purchase fields
           purchaseFromTrial: visit.purchaseFromTrial,
           purchaseDate: visit.purchaseDate,
@@ -1561,7 +1571,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     
     // Remove all undefined values from the entire data structure before submitting
     const cleanedData = removeUndefined(formattedData);
-    onSubmit(cleanedData);
+    await onSubmit(cleanedData);
   };
 
   const stepTitles = ['Patient Information & Services', 'Review & Submit'];
@@ -2937,15 +2947,57 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 InputLabelProps={{ shrink: true }}
                               />
                             </Grid>
+                            <Grid item xs={12} md={6}>
+                              <TextField
+                                fullWidth
+                                label="Selling Price"
+                                type="number"
+                                value={currentVisit.bookingSellingPrice || ''}
+                                onChange={(e) => updateVisit(activeVisit, 'bookingSellingPrice', parseFloat(e.target.value) || 0)}
+                                InputProps={{
+                                  startAdornment: <InputAdornment position="start">₹</InputAdornment>
+                                }}
+                                helperText="Used for booking total and balance calculation"
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                              <TextField
+                                fullWidth
+                                label="Quantity"
+                                type="number"
+                                value={currentVisit.bookingQuantity || 1}
+                                onChange={(e) => updateVisit(activeVisit, 'bookingQuantity', Math.max(1, parseInt(e.target.value || '1', 10) || 1))}
+                                inputProps={{ min: 1 }}
+                              />
+                            </Grid>
                           </Grid>
 
-                          {/* Read-only display of MRP for reference */}
-                          <Box sx={{ mt: 2 }}>
-                            <Typography variant="body2" color="text.secondary">MRP</Typography>
-                            <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                              ₹ {Number(currentVisit.hearingAidPrice || 0).toLocaleString()}
-                            </Typography>
-                          </Box>
+                          <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                            <Grid item xs={12} md={4}>
+                              <Box sx={{ mt: 2 }}>
+                                <Typography variant="body2" color="text.secondary">MRP</Typography>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                  ₹ {Number(currentVisit.hearingAidPrice || 0).toLocaleString()}
+                                </Typography>
+                              </Box>
+                            </Grid>
+                            <Grid item xs={12} md={4}>
+                              <Box sx={{ mt: 2 }}>
+                                <Typography variant="body2" color="text.secondary">Booking Total</Typography>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                  ₹ {((Number(currentVisit.bookingSellingPrice) || 0) * (Number(currentVisit.bookingQuantity) || 1)).toLocaleString()}
+                                </Typography>
+                              </Box>
+                            </Grid>
+                            <Grid item xs={12} md={4}>
+                              <Box sx={{ mt: 2 }}>
+                                <Typography variant="body2" color="text.secondary">Balance Amount</Typography>
+                                <Typography variant="body1" sx={{ fontWeight: 700, color: 'warning.dark' }}>
+                                  ₹ {Math.max(((Number(currentVisit.bookingSellingPrice) || 0) * (Number(currentVisit.bookingQuantity) || 1)) - (Number(currentVisit.bookingAdvanceAmount) || 0), 0).toLocaleString()}
+                                </Typography>
+                              </Box>
+                            </Grid>
+                          </Grid>
                         </CardContent>
                       </Card>
                     )}
@@ -3088,6 +3140,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       hearingAidType: trialVisit.hearingAidType || '',
                                       whichEar: trialVisit.whichEar || 'both',
                                       hearingAidPrice: typeof trialVisit.hearingAidPrice === 'number' ? (trialVisit.hearingAidPrice || 0) : 0,
+                                      bookingSellingPrice: trialVisit.grossSalesBeforeTax || 0,
+                                      bookingQuantity: Math.max(1, (products || []).reduce((sum, p) => sum + (Number(p.quantity) || 1), 0)),
                                       products,
                                       ...totals
                                     });
@@ -3115,6 +3169,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       hearingAidType: bookingVisit.hearingAidType || '',
                                       whichEar: bookingVisit.whichEar || 'both',
                                       hearingAidPrice: bookingVisit.hearingAidPrice || 0,
+                                      bookingSellingPrice: bookingVisit.bookingSellingPrice || bookingVisit.grossSalesBeforeTax || 0,
+                                      bookingQuantity: bookingVisit.bookingQuantity || Math.max(1, (products || []).reduce((sum, p) => sum + (Number(p.quantity) || 1), 0)),
                                       products,
                                       grossMRP: bookingVisit.grossMRP || products.reduce((s, p) => s + (p.mrp || 0), 0),
                                       grossSalesBeforeTax: bookingVisit.grossSalesBeforeTax || products.reduce((s, p) => s + (p.sellingPrice || 0), 0),
@@ -5696,15 +5752,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 Review
               </Button>
             ) : (
-              <Button
+              <AsyncActionButton
                 variant="contained"
                 onClick={handleSubmit(onFormSubmit)}
                 startIcon={<SaveIcon />}
                 size="large"
                 sx={{ borderRadius: 2, px: 4 }}
+                loading={submitLoading}
+                loadingText={isEditMode ? 'Updating Enquiry...' : 'Saving Enquiry...'}
               >
-                Save Enquiry
-              </Button>
+                {isEditMode ? 'Update Enquiry' : 'Save Enquiry'}
+              </AsyncActionButton>
             )}
           </Box>
         </Box>

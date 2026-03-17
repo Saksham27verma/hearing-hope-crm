@@ -54,6 +54,7 @@ import ImageIcon from '@mui/icons-material/Image';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PhoneIcon from '@mui/icons-material/Phone';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { db } from '@/firebase/config';
 import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc, where, updateDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
@@ -114,6 +115,7 @@ export default function AppointmentSchedulerPage() {
   const [previewCenterName, setPreviewCenterName] = useState<string>('');
   const [previewHomeVisitorName, setPreviewHomeVisitorName] = useState<string>('');
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [newAppt, setNewAppt] = useState<Appointment>(defaultNewAppointment);
   const [centers, setCenters] = useState<any[]>([]);
   const [openPatientPicker, setOpenPatientPicker] = useState(false);
@@ -132,20 +134,31 @@ export default function AppointmentSchedulerPage() {
   const canEdit = isAdmin || userProfile?.role === 'staff';
   const canDelete = isAdmin;
 
+  const fetchAllData = async () => {
+    const q = query(collection(db, 'appointments'), orderBy('start', 'asc'));
+    const snap = await getDocs(q);
+    const appts = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Appointment[];
+    setAppointments(appts);
+    const [centersSnap, staffSnap] = await Promise.all([
+      getDocs(collection(db, 'centers')),
+      getDocs(collection(db, 'staff')),
+    ]);
+    setCenters(centersSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+    setStaffList(staffSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })).filter((s: any) => !!s.name));
+  };
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await fetchAllData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchAll = async () => {
-      const q = query(collection(db, 'appointments'), orderBy('start', 'asc'));
-      const snap = await getDocs(q);
-      const appts = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Appointment[];
-      setAppointments(appts);
-      const [centersSnap, staffSnap] = await Promise.all([
-        getDocs(collection(db, 'centers')),
-        getDocs(collection(db, 'staff')),
-      ]);
-      setCenters(centersSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-      setStaffList(staffSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) })).filter((s: any) => !!s.name));
-    };
-    fetchAll();
+    fetchAllData();
   }, []);
 
   // Load all enquiries when patient picker opens and filter locally
@@ -263,9 +276,7 @@ export default function AppointmentSchedulerPage() {
         });
       }
       
-      const q = query(collection(db, 'appointments'), orderBy('start', 'asc'));
-      const snap = await getDocs(q);
-      setAppointments(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Appointment[]);
+      await fetchAllData();
       setOpenDialog(false);
       setIsEditMode(false);
       setEditingAppointmentId(null);
@@ -613,7 +624,14 @@ export default function AppointmentSchedulerPage() {
             </MenuItem>
           </Menu>
           
-          {/* New Appointment Button - Full width on mobile */}
+          <RefreshDataButton
+            onClick={handleRefresh}
+            loading={refreshing}
+            sx={{ 
+              width: { xs: '100%', sm: 'auto' },
+              minWidth: { xs: '100%', sm: 'auto' }
+            }}
+          />
           <Button 
             variant="contained" 
             startIcon={<AddIcon />} 

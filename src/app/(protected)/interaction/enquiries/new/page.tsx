@@ -144,6 +144,7 @@ export default function NewEnquiryPage() {
   };
 
   const handleSubmit = async (data: any) => {
+    if (saving) return;
     try {
       setSaving(true);
       
@@ -250,6 +251,7 @@ export default function NewEnquiryPage() {
           onSubmit={handleSubmit}
           enquiry={null}
           isEditMode={false}
+          isSubmitting={saving}
           fullPage={true}
         />
       </Box>

@@ -63,6 +63,7 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import MaterialForm from '@/components/materials/MaterialForm';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 
 // Types
 interface Product {
@@ -135,12 +136,14 @@ export default function MaterialManagementPage() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [openDialog, setOpenDialog] = useState(false);
   const [currentMaterial, setCurrentMaterial] = useState<Material | null>(null);
+  const [savingMaterial, setSavingMaterial] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<Date | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   
   // Preview dialog state
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -262,6 +265,16 @@ export default function MaterialManagementPage() {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await Promise.all([fetchMaterials(), fetchProducts(), fetchParties()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   // Handle pagination page change
   const handleChangePage = (event: unknown, newPage: number) => {
     setPage(newPage);
@@ -330,7 +343,9 @@ export default function MaterialManagementPage() {
 
   // Handle saving material (create or update)
   const handleSaveMaterial = async (material: Material) => {
+    if (savingMaterial) return;
     try {
+      setSavingMaterial(true);
       if (material.id) {
         // Update existing material
         await updateDoc(doc(db, 'materials', material.id), {
@@ -368,6 +383,8 @@ export default function MaterialManagementPage() {
     } catch (error) {
       console.error('Error saving material:', error);
       setErrorMsg('Failed to save material');
+    } finally {
+      setSavingMaterial(false);
     }
   };
 
@@ -536,15 +553,18 @@ export default function MaterialManagementPage() {
             Track and manage delivery challans from suppliers
           </Typography>
         </Box>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<AddIcon />}
-          onClick={handleAddMaterial}
-          sx={{ borderRadius: 2 }}
-        >
-          New Material In
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} sx={{ borderRadius: 2 }} />
+          <Button 
+            variant="contained" 
+            color="primary" 
+            startIcon={<AddIcon />}
+            onClick={handleAddMaterial}
+            sx={{ borderRadius: 2 }}
+          >
+            New Material In
+          </Button>
+        </Box>
       </Box>
       
       {/* Search and filters */}
@@ -739,6 +759,7 @@ export default function MaterialManagementPage() {
             products={products}
             parties={parties}
             onSave={handleSaveMaterial}
+            isSaving={savingMaterial}
             onCancel={handleCloseDialog}
           />
         </DialogContent>

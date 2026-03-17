@@ -32,6 +32,8 @@ import {
   Stack,
   Divider,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -90,10 +92,12 @@ const CompaniesPage = () => {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [openDialog, setOpenDialog] = useState(false);
   const [currentCompany, setCurrentCompany] = useState<Company | null>(null);
+  const [savingCompany, setSavingCompany] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [centersCount, setCentersCount] = useState<Record<string, number>>({});
+  const [refreshing, setRefreshing] = useState(false);
 
   // Initialize empty company
   const emptyCompany: Company = {
@@ -255,6 +259,16 @@ const CompaniesPage = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await Promise.all([fetchCompanies(), fetchCentersCount()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleAddCompany = () => {
     setCurrentCompany(emptyCompany);
     setOpenDialog(true);
@@ -291,7 +305,7 @@ const CompaniesPage = () => {
   };
 
   const handleSaveCompany = async () => {
-    if (!currentCompany) return;
+    if (!currentCompany || savingCompany) return;
     
     // Validate required fields
     if (!currentCompany.name || !currentCompany.type) {
@@ -300,6 +314,7 @@ const CompaniesPage = () => {
     }
     
     try {
+      setSavingCompany(true);
       if (currentCompany.id) {
         // Update existing company
         const companyRef = doc(db, 'companies', currentCompany.id);
@@ -343,6 +358,8 @@ const CompaniesPage = () => {
     } catch (error) {
       console.error('Error saving company:', error);
       setErrorMsg('Failed to save company');
+    } finally {
+      setSavingCompany(false);
     }
   };
 
@@ -442,14 +459,17 @@ const CompaniesPage = () => {
           sx={{ width: { xs: '100%', sm: 300 } }}
         />
         
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<AddIcon />}
-          onClick={handleAddCompany}
-        >
-          Add Company
-        </Button>
+        <Box display="flex" gap={1.5} flexWrap="wrap">
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} />
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={handleAddCompany}
+          >
+            Add Company
+          </Button>
+        </Box>
       </Box>
       
       {/* Companies Table */}
@@ -859,17 +879,19 @@ const CompaniesPage = () => {
         </DialogContent>
         
         <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={handleCloseDialog} color="inherit">
+          <Button onClick={handleCloseDialog} color="inherit" disabled={savingCompany}>
             Cancel
           </Button>
-          <Button 
+          <AsyncActionButton 
             variant="contained" 
             color="primary" 
             onClick={handleSaveCompany}
             startIcon={currentCompany?.id ? <EditIcon /> : <AddIcon />}
+            loading={savingCompany}
+            loadingText={currentCompany?.id ? 'Updating Company...' : 'Saving Company...'}
           >
             {currentCompany?.id ? 'Update Company' : 'Add Company'}
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
       

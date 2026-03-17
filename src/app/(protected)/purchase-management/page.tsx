@@ -30,6 +30,7 @@ import {
   CardContent,
   Tooltip,
 } from '@mui/material';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -121,6 +122,8 @@ export default function PurchaseManagement() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [openDialog, setOpenDialog] = useState(false);
   const [currentPurchase, setCurrentPurchase] = useState<Purchase | null>(null);
+  const [savingPurchase, setSavingPurchase] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<Date | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -270,6 +273,16 @@ export default function PurchaseManagement() {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await Promise.all([fetchPurchases(), fetchProducts(), fetchParties()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   // Handle adding a new purchase
   const handleAddPurchase = () => {
     setCurrentPurchase(null);
@@ -314,8 +327,9 @@ export default function PurchaseManagement() {
 
   // Handle saving a purchase
   const handleSavePurchase = async (purchaseData: Purchase) => {
+    if (savingPurchase) return;
     try {
-      setLoading(true);
+      setSavingPurchase(true);
       
       if (currentPurchase?.id) {
         // Update existing purchase
@@ -377,7 +391,7 @@ export default function PurchaseManagement() {
         severity: 'error'
       });
     } finally {
-      setLoading(false);
+      setSavingPurchase(false);
     }
   };
 
@@ -479,15 +493,18 @@ export default function PurchaseManagement() {
             Track and manage product purchases from suppliers
           </Typography>
         </Box>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<AddIcon />}
-          onClick={handleAddPurchase}
-          sx={{ borderRadius: 2 }}
-        >
-          New Purchase
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} sx={{ borderRadius: 2 }} />
+          <Button 
+            variant="contained" 
+            color="primary" 
+            startIcon={<AddIcon />}
+            onClick={handleAddPurchase}
+            sx={{ borderRadius: 2 }}
+          >
+            New Purchase
+          </Button>
+        </Box>
       </Box>
       
       {/* Search and filters */}
@@ -718,6 +735,7 @@ export default function PurchaseManagement() {
             products={products}
             parties={parties}
             onSave={handleSavePurchase}
+            isSaving={savingPurchase}
             onCancel={handleCloseDialog}
           />
         </DialogContent>

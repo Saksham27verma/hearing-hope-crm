@@ -36,6 +36,8 @@ import {
   Tooltip,
   InputAdornment,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -136,11 +138,13 @@ export default function PartiesPage() {
   const [parties, setParties] = useState<Party[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState(false);
+  const [savingParty, setSavingParty] = useState(false);
   const [dialogTitle, setDialogTitle] = useState('Add New Party');
   const [editingParty, setEditingParty] = useState<Party | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   const [previewParty, setPreviewParty] = useState<Party | null>(null);
   const [openPreviewDialog, setOpenPreviewDialog] = useState(false);
@@ -172,30 +176,39 @@ export default function PartiesPage() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   
-  useEffect(() => {
-    const fetchParties = async () => {
-      if (!user) return;
-      
-      try {
-        const partiesCollection = collection(db, 'parties');
-        const partiesSnapshot = await getDocs(partiesCollection);
-        
-        const partiesList = partiesSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Party[];
-        
-        // After getting parties, calculate transaction amounts
-        const partiesWithTransactions = await calculateTransactions(partiesList);
-        setParties(partiesWithTransactions);
-      } catch (error) {
-        console.error('Error fetching parties:', error);
-        setErrorMessage('Failed to load parties');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  const fetchParties = async () => {
+    if (!user) return;
     
+    try {
+      const partiesCollection = collection(db, 'parties');
+      const partiesSnapshot = await getDocs(partiesCollection);
+      
+      const partiesList = partiesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Party[];
+      
+      const partiesWithTransactions = await calculateTransactions(partiesList);
+      setParties(partiesWithTransactions);
+    } catch (error) {
+      console.error('Error fetching parties:', error);
+      setErrorMessage('Failed to load parties');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await fetchParties();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
     if (user && !loading) {
       if (isAllowedModule('parties')) {
         fetchParties();
@@ -369,11 +382,13 @@ export default function PartiesPage() {
   };
   
   const handleSubmit = async () => {
+    if (savingParty) return;
     if (!validateForm()) {
       return;
     }
     
     try {
+      setSavingParty(true);
       if (editingParty) {
         // Update existing party
         const partyRef = doc(db, 'parties', editingParty.id);
@@ -420,6 +435,8 @@ export default function PartiesPage() {
     } catch (error) {
       console.error('Error saving party:', error);
       setErrorMessage('Failed to save party');
+    } finally {
+      setSavingParty(false);
     }
   };
   
@@ -828,15 +845,18 @@ export default function PartiesPage() {
     <>
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="h4">Party Management</Typography>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-          sx={{ borderRadius: 1.5, boxShadow: 2 }}
-        >
-          Add Party
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} sx={{ borderRadius: 1.5 }} />
+          <Button 
+            variant="contained" 
+            color="primary" 
+            startIcon={<AddIcon />}
+            onClick={() => handleOpenDialog()}
+            sx={{ borderRadius: 1.5, boxShadow: 2 }}
+          >
+            Add Party
+          </Button>
+        </Box>
       </Box>
       
       <Paper sx={{ mb: 4, p: 3, borderRadius: 2, boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
@@ -1304,10 +1324,10 @@ export default function PartiesPage() {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button onClick={handleSubmit} variant="contained" color="primary">
+          <Button onClick={handleCloseDialog} disabled={savingParty}>Cancel</Button>
+          <AsyncActionButton onClick={handleSubmit} variant="contained" color="primary" loading={savingParty} loadingText={editingParty ? 'Updating Party...' : 'Saving Party...'}>
             {editingParty ? 'Update' : 'Add'}
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
       

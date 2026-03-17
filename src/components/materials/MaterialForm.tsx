@@ -31,6 +31,7 @@ import {
   Alert,
   Tooltip,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
@@ -127,8 +128,9 @@ interface MaterialFormProps {
   initialData?: Material;
   products: Product[];
   parties: Party[];
-  onSave: (material: Material) => void;
+  onSave: (material: Material) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
 // Define a Grid component that works with our props
@@ -140,6 +142,7 @@ const MaterialForm: React.FC<MaterialFormProps> = ({
   parties,
   onSave,
   onCancel,
+  isSaving = false,
 }) => {
   // Steps for the form
   const steps = ['Challan Details', 'Product Details', 'Review & Summary'];
@@ -1460,6 +1463,7 @@ const MaterialForm: React.FC<MaterialFormProps> = ({
               variant="outlined"
               onClick={onCancel}
               sx={{ display: activeStep === 0 ? 'inline-flex' : 'none' }}
+              disabled={isSaving}
             >
               Cancel
             </Button>
@@ -1474,14 +1478,16 @@ const MaterialForm: React.FC<MaterialFormProps> = ({
             
             <Box>
               {activeStep === steps.length - 1 ? (
-                <Button 
+                <AsyncActionButton 
                   variant="contained" 
                   color="primary"
                   onClick={handleSubmit}
                   startIcon={<SaveIcon />}
+                  loading={isSaving}
+                  loadingText="Saving Challan..."
                 >
                   Save Challan
-                </Button>
+                </AsyncActionButton>
               ) : (
                 <Button 
                   variant="contained" 

@@ -15,6 +15,7 @@ import {
   Stack,
   Alert,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -60,11 +61,12 @@ interface Payment {
 interface PaymentFormProps {
   staff: Staff;
   loan: LoanAdvance;
-  onSave: (data: Payment) => void;
+  onSave: (data: Payment) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
-export default function PaymentForm({ staff, loan, onSave, onCancel }: PaymentFormProps) {
+export default function PaymentForm({ staff, loan, onSave, onCancel, isSaving = false }: PaymentFormProps) {
   // Get current month in YYYY-MM format
   const getCurrentMonth = () => {
     return format(new Date(), 'yyyy-MM');
@@ -271,18 +273,21 @@ export default function PaymentForm({ staff, loan, onSave, onCancel }: PaymentFo
           variant="outlined"
           onClick={onCancel}
           sx={{ borderRadius: 1.5, px: 3 }}
+          disabled={isSaving}
         >
           Cancel
         </Button>
         
-        <Button
+        <AsyncActionButton
           variant="contained"
           color="primary"
           type="submit"
           sx={{ borderRadius: 1.5, px: 4 }}
+          loading={isSaving}
+          loadingText="Recording Payment..."
         >
           Record Payment
-        </Button>
+        </AsyncActionButton>
       </Box>
     </Box>
   );

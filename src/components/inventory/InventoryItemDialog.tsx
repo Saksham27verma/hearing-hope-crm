@@ -21,6 +21,7 @@ import {
   Divider,
   Autocomplete,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -64,10 +65,11 @@ interface InventoryItem {
 interface InventoryItemDialogProps {
   open: boolean;
   onClose: () => void;
-  onSave: (item: InventoryItem) => void;
+  onSave: (item: InventoryItem) => Promise<void> | void;
   item?: InventoryItem;
   isEditing: boolean;
   products: { id: string; name: string; type: string; company: string; mrp: number }[];
+  isSaving?: boolean;
 }
 
 const defaultItem: InventoryItem = {
@@ -93,6 +95,7 @@ export default function InventoryItemDialog({
   item,
   isEditing,
   products,
+  isSaving = false,
 }: InventoryItemDialogProps) {
   const [formData, setFormData] = useState<InventoryItem>(defaultItem);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -281,6 +284,7 @@ export default function InventoryItemDialog({
 
   // Handle form submission
   const handleSubmit = () => {
+    if (isSaving) return;
     if (validateForm()) {
       onSave({
         ...formData,
@@ -592,17 +596,19 @@ export default function InventoryItemDialog({
       </DialogContent>
       
       <DialogActions sx={{ px: 3, py: 2 }}>
-        <Button onClick={onClose} variant="outlined" color="primary">
+        <Button onClick={onClose} variant="outlined" color="primary" disabled={isSaving}>
           Cancel
         </Button>
-        <Button 
+        <AsyncActionButton 
           onClick={handleSubmit} 
           variant="contained" 
           color="primary"
           sx={{ px: 3 }}
+          loading={isSaving}
+          loadingText={isEditing ? 'Updating Item...' : 'Saving Item...'}
         >
           {isEditing ? 'Update' : 'Add'} Item
-        </Button>
+        </AsyncActionButton>
       </DialogActions>
     </Dialog>
   );

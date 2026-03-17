@@ -32,6 +32,7 @@ import {
   TableFooter,
   Stack,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { Grid as MuiGrid } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -142,8 +143,9 @@ interface MaterialInFormProps {
   initialData?: MaterialInward;
   products: Product[];
   parties: Party[];
-  onSave: (material: MaterialInward) => void;
+  onSave: (material: MaterialInward) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
 // Define a Grid component that works with our props
@@ -155,6 +157,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   parties,
   onSave,
   onCancel,
+  isSaving = false,
 }) => {
   // Console logging to debug
   console.log("MaterialInForm received parties:", parties);
@@ -1883,18 +1886,21 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                 variant="outlined" 
                 onClick={onCancel} 
                 sx={{ mr: 1 }}
+                disabled={isSaving}
               >
                 Cancel
               </Button>
               {activeStep === steps.length - 1 ? (
-                <Button 
+                <AsyncActionButton 
                   variant="contained" 
                   color="primary" 
                   onClick={handleSubmit}
                   startIcon={<ReceiptIcon />}
+                  loading={isSaving}
+                  loadingText="Saving Material..."
                 >
                   Complete Material
-                </Button>
+                </AsyncActionButton>
               ) : (
                 <Button 
                   variant="contained" 

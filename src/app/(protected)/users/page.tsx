@@ -36,6 +36,8 @@ import {
   Switch,
   FormControlLabel,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -99,6 +101,8 @@ const UsersPage = () => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [openDialog, setOpenDialog] = useState(false);
+  const [savingUser, setSavingUser] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -236,6 +240,16 @@ const UsersPage = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await fetchUsers();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleAddUser = () => {
     setCurrentUser(emptyUser);
     setPassword('');
@@ -284,6 +298,7 @@ const UsersPage = () => {
   };
 
   const handleSaveUser = async () => {
+    if (savingUser) return;
     if (!currentUser) return;
     
     // Validate user data
@@ -300,6 +315,7 @@ const UsersPage = () => {
     }
     
     try {
+      setSavingUser(true);
       if (currentUser.id) {
         // Update existing user
         const userRef = doc(db, 'users', currentUser.id);
@@ -373,6 +389,8 @@ const UsersPage = () => {
     } catch (error) {
       console.error('Error saving user:', error);
       setErrorMsg('Failed to save user');
+    } finally {
+      setSavingUser(false);
     }
   };
 
@@ -514,14 +532,17 @@ const UsersPage = () => {
           )}
         </Box>
         
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<AddIcon />}
-          onClick={handleAddUser}
-        >
-          Add Staff
-        </Button>
+        <Box display="flex" gap={1.5} flexWrap="wrap">
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} />
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={handleAddUser}
+          >
+            Add Staff
+          </Button>
+        </Box>
       </Box>
       
       {/* Users Table */}
@@ -859,14 +880,16 @@ const UsersPage = () => {
         </DialogContent>
         
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button 
+          <Button onClick={handleCloseDialog} disabled={savingUser}>Cancel</Button>
+          <AsyncActionButton 
             variant="contained" 
             color="primary" 
             onClick={handleSaveUser}
+            loading={savingUser}
+            loadingText={currentUser?.id ? 'Updating User...' : 'Saving User...'}
           >
             Save
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
       

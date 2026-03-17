@@ -237,6 +237,7 @@ export default function InventoryPage() {
   // Dialog state
   const [openDialog, setOpenDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [savingItem, setSavingItem] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
   const [centers, setCenters] = useState<any[]>([]);
   const [serialsDialogOpen, setSerialsDialogOpen] = useState(false);
@@ -1705,7 +1706,9 @@ export default function InventoryPage() {
   
   // Save inventory item (add or update)
   const handleSaveItem = async (item: any) => {
+    if (savingItem) return;
     try {
+      setSavingItem(true);
       // In a real app, this would save to Firestore
       
       if (item.id) {
@@ -1789,6 +1792,8 @@ export default function InventoryPage() {
     } catch (error) {
       console.error('Error saving inventory item:', error);
       setErrorMessage('Failed to save inventory item');
+    } finally {
+      setSavingItem(false);
     }
   };
   
@@ -3320,11 +3325,14 @@ export default function InventoryPage() {
       {/* Dialog for adding/editing inventory items */}
       <InventoryItemDialog 
         open={openDialog}
-        onClose={handleCloseDialog}
+        onClose={() => {
+          if (!savingItem) handleCloseDialog();
+        }}
         onSave={handleSaveItem}
         item={editingItem || undefined}
         isEditing={!!editingItem}
         products={products}
+        isSaving={savingItem}
       />
       
       {/* Snackbars for success/error messages */}

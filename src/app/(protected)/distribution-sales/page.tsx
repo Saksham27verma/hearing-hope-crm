@@ -185,6 +185,7 @@ export default function DistributionSalesPage() {
   const [selectedDealer, setSelectedDealer] = useState<Dealer | null>(null);
   const [dealerDetailsOpen, setDealerDetailsOpen] = useState(false);
   const [distributionFormOpen, setDistributionFormOpen] = useState(false);
+  const [savingDistribution, setSavingDistribution] = useState(false);
   const [selectedDistribution, setSelectedDistribution] = useState<Distribution | null>(null);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -314,7 +315,9 @@ export default function DistributionSalesPage() {
   };
 
   const handleSaveDistribution = async (distributionData: Distribution) => {
+    if (savingDistribution) return;
     try {
+      setSavingDistribution(true);
       if (selectedDistribution?.id) {
         // Update existing distribution
         await updateDoc(doc(db, 'distributions', selectedDistribution.id), {
@@ -339,6 +342,8 @@ export default function DistributionSalesPage() {
     } catch (error) {
       console.error('Error saving distribution:', error);
       setSnackbar({ open: true, message: 'Error saving distribution', severity: 'error' });
+    } finally {
+      setSavingDistribution(false);
     }
   };
 
@@ -717,7 +722,9 @@ export default function DistributionSalesPage() {
               initialData={selectedDistribution || undefined}
               dealers={dealers}
               onSave={handleSaveDistribution}
+              isSaving={savingDistribution}
               onCancel={() => {
+                if (savingDistribution) return;
                 setDistributionFormOpen(false);
                 setSelectedDistribution(null);
               }}

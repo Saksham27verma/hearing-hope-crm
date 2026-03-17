@@ -28,6 +28,7 @@ import {
   ListItemIcon,
   ListItemText,
 } from '@mui/material';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -108,6 +109,9 @@ export default function StaffPage() {
   const [openStaffDialog, setOpenStaffDialog] = useState(false);
   const [openSalaryDialog, setOpenSalaryDialog] = useState(false);
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
+  const [savingStaff, setSavingStaff] = useState(false);
+  const [savingSalary, setSavingSalary] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -170,6 +174,16 @@ export default function StaffPage() {
       console.error('Error fetching staff:', error);
       setErrorMsg('Failed to load staff data');
       setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await fetchStaff();
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -252,7 +266,9 @@ export default function StaffPage() {
 
   // Handle saving staff member
   const handleSaveStaff = async (staffData: Staff) => {
+    if (savingStaff) return;
     try {
+      setSavingStaff(true);
       if (currentStaff?.id) {
         // Update existing staff
         const staffRef = doc(db, 'staff', currentStaff.id);
@@ -300,12 +316,16 @@ export default function StaffPage() {
     } catch (error) {
       console.error('Error saving staff member:', error);
       setErrorMsg('Failed to save staff member');
+    } finally {
+      setSavingStaff(false);
     }
   };
 
   // Handle saving salary
   const handleSaveSalary = async (salaryData: Salary) => {
+    if (savingSalary) return;
     try {
+      setSavingSalary(true);
       // Check if a salary record for this month already exists
       const salaryCollection = collection(db, 'salaries');
       const salaryQuery = query(
@@ -346,6 +366,8 @@ export default function StaffPage() {
     } catch (error) {
       console.error('Error saving salary:', error);
       setErrorMsg('Failed to save salary');
+    } finally {
+      setSavingSalary(false);
     }
   };
 
@@ -434,15 +456,18 @@ export default function StaffPage() {
           />
         </Box>
         
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<AddIcon />}
-          onClick={handleAddStaff}
-          sx={{ borderRadius: 1.5 }}
-        >
-          Add New Staff
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} sx={{ borderRadius: 1.5 }} />
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={handleAddStaff}
+            sx={{ borderRadius: 1.5 }}
+          >
+            Add New Staff
+          </Button>
+        </Box>
       </Box>
       
       {/* Staff Table */}
@@ -555,6 +580,7 @@ export default function StaffPage() {
           <StaffForm
             initialData={currentStaff || undefined}
             onSave={handleSaveStaff}
+            isSaving={savingStaff}
             onCancel={handleCloseStaffDialog}
           />
         </DialogContent>
@@ -578,6 +604,7 @@ export default function StaffPage() {
             <SalaryForm
               staff={currentStaff}
               onSave={handleSaveSalary}
+              isSaving={savingSalary}
               onCancel={handleCloseSalaryDialog}
             />
           )}

@@ -46,6 +46,8 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -228,7 +230,9 @@ export default function ProductsPage() {
   const { user, userProfile, loading, isAllowedModule } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
+  const [savingProduct, setSavingProduct] = useState(false);
   const [dialogTitle, setDialogTitle] = useState('Add New Product');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -286,44 +290,51 @@ export default function ProductsPage() {
     return found ?? raw;
   };
   
-  useEffect(() => {
-    const fetchProducts = async () => {
-      if (!user) return;
-      
-      try {
-        const productsCollection = collection(db, 'products');
-        const productsSnapshot = await getDocs(productsCollection);
-        
-        const productsList = productsSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Product[];
-
-        // Compute safe max MRP so default range doesn't hide expensive products
-        const computedMaxMrp = Math.max(
-          100000,
-          ...productsList
-            .map((p) => (typeof p.mrp === 'number' ? p.mrp : 0))
-            .filter((n) => Number.isFinite(n) && n > 0)
-        );
-        setMaxMrp(computedMaxMrp);
-        // Only auto-expand if the user hasn't changed it yet
-        setFilters((prev) => {
-          const isDefaultRange = prev.priceRange[0] === 0 && prev.priceRange[1] === 100000;
-          return isDefaultRange ? { ...prev, priceRange: [0, computedMaxMrp] } : prev;
-        });
-        
-        // Extract unique companies (canonical: same name with different casing → one option, most frequent variant)
-        setUniqueCompanies(buildCanonicalCompanies(productsList));
-        setProducts(productsList);
-      } catch (error) {
-        console.error('Error fetching products:', error);
-        setErrorMessage('Failed to load products');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  const fetchProducts = async () => {
+    if (!user) return;
     
+    try {
+      const productsCollection = collection(db, 'products');
+      const productsSnapshot = await getDocs(productsCollection);
+      
+      const productsList = productsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Product[];
+
+      const computedMaxMrp = Math.max(
+        100000,
+        ...productsList
+          .map((p) => (typeof p.mrp === 'number' ? p.mrp : 0))
+          .filter((n) => Number.isFinite(n) && n > 0)
+      );
+      setMaxMrp(computedMaxMrp);
+      setFilters((prev) => {
+        const isDefaultRange = prev.priceRange[0] === 0 && prev.priceRange[1] === 100000;
+        return isDefaultRange ? { ...prev, priceRange: [0, computedMaxMrp] } : prev;
+      });
+      
+      setUniqueCompanies(buildCanonicalCompanies(productsList));
+      setProducts(productsList);
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      setErrorMessage('Failed to load products');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await fetchProducts();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
     if (user && !loading) {
       if (isAllowedModule('products')) {
         fetchProducts();
@@ -400,7 +411,9 @@ export default function ProductsPage() {
   };
   
   const handleSubmit = async () => {
+    if (savingProduct) return;
     try {
+      setSavingProduct(true);
       const companyNormalized = getCanonicalCompany(formData.company);
       const formDataToSave = { ...formData, company: companyNormalized };
 
@@ -493,6 +506,8 @@ export default function ProductsPage() {
     } catch (error) {
       console.error('Error saving product:', error);
       setErrorMessage('Failed to save product');
+    } finally {
+      setSavingProduct(false);
     }
   };
   
@@ -1100,16 +1115,19 @@ export default function ProductsPage() {
     <>
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="h4">Product Management</Typography>
-        {userProfile?.role !== 'audiologist' && (
-          <Button 
-            variant="contained" 
-            color="primary" 
-            startIcon={<AddIcon />}
-            onClick={() => handleOpenDialog()}
-          >
-            Add Product
-          </Button>
-        )}
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} />
+          {userProfile?.role !== 'audiologist' && (
+            <Button 
+              variant="contained" 
+              color="primary" 
+              startIcon={<AddIcon />}
+              onClick={() => handleOpenDialog()}
+            >
+              Add Product
+            </Button>
+          )}
+        </Box>
       </Box>
       
       <Paper sx={{ mb: 4, p: 3, borderRadius: 2, boxShadow: '0 4px 20px rgba(0,0,0,0.05)' }}>
@@ -2167,10 +2185,10 @@ export default function ProductsPage() {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button onClick={handleSubmit} variant="contained" color="primary">
+          <Button onClick={handleCloseDialog} disabled={savingProduct}>Cancel</Button>
+          <AsyncActionButton onClick={handleSubmit} variant="contained" color="primary" loading={savingProduct} loadingText={editingProduct ? 'Updating Product...' : 'Saving Product...'}>
             {editingProduct ? 'Update' : 'Add'}
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
       

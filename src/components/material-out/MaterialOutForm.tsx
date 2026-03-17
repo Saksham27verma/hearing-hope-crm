@@ -35,6 +35,7 @@ import {
 } from '@mui/material';
 import { Grid as MuiGrid } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
@@ -67,13 +68,14 @@ interface Props {
   products: Product[];
   parties: Party[];
   availableItems?: AvailableItem[];
-  onSave: (material: MaterialOutward) => void;
+  onSave: (material: MaterialOutward) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
 const steps = ['Challan Details', 'Product Details', 'Review & Summary'];
 
-const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, availableItems = [], onSave, onCancel }) => {
+const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, availableItems = [], onSave, onCancel, isSaving = false }) => {
   const [activeStep, setActiveStep] = useState(0);
   const [materialData, setMaterialData] = useState<MaterialOutward>(
     initialData || {
@@ -549,9 +551,9 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
       <Box sx={{ display: 'flex', justifyContent: 'space-between', pt: 2 }}>
         <Button variant="outlined" disabled={activeStep === 0} onClick={handleBack} sx={{ mr: 1 }}>Back</Button>
         <Box>
-          <Button variant="outlined" onClick={onCancel} sx={{ mr: 1 }}>Cancel</Button>
+          <Button variant="outlined" onClick={onCancel} sx={{ mr: 1 }} disabled={isSaving}>Cancel</Button>
           {activeStep === steps.length - 1 ? (
-            <Button variant="contained" color="primary" onClick={handleSubmit} startIcon={<ReceiptIcon />}>Submit</Button>
+            <AsyncActionButton variant="contained" color="primary" onClick={handleSubmit} startIcon={<ReceiptIcon />} loading={isSaving} loadingText="Saving Material...">Submit</AsyncActionButton>
           ) : (
             <Button variant="contained" color="primary" onClick={handleNext}>Next</Button>
           )}

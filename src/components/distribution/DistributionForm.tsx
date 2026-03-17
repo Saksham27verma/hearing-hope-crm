@@ -65,6 +65,7 @@ import {
   Business as BusinessIcon,
   Close as CloseIcon,
 } from '@mui/icons-material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 
 // Alias Grid to avoid type issues with MUI Grid variants
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
@@ -163,13 +164,14 @@ interface AvailableItem {
 interface Props {
   initialData?: Distribution;
   dealers: Dealer[];
-  onSave: (distribution: Distribution) => void;
+  onSave: (distribution: Distribution) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
 const steps = ['Distribution Details', 'Product Selection', 'Pricing & GST', 'Review & Summary'];
 
-const DistributionForm: React.FC<Props> = ({ initialData, dealers, onSave, onCancel }) => {
+const DistributionForm: React.FC<Props> = ({ initialData, dealers, onSave, onCancel, isSaving = false }) => {
   const [activeStep, setActiveStep] = useState(0);
   const [distributionData, setDistributionData] = useState<Distribution>(
     initialData || {
@@ -1456,9 +1458,9 @@ const DistributionForm: React.FC<Props> = ({ initialData, dealers, onSave, onCan
               Next
             </Button>
           ) : (
-            <Button variant="contained" onClick={handleSave}>
+            <AsyncActionButton variant="contained" onClick={handleSave} loading={isSaving} loadingText="Saving Distribution...">
               Save Distribution
-            </Button>
+            </AsyncActionButton>
           )}
         </Box>
       </Box>

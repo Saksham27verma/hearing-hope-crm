@@ -104,6 +104,7 @@ import { db } from '@/firebase/config';
 import { v4 as uuidv4 } from 'uuid';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { useAuth } from '@/context/AuthContext';
+import { ENQUIRY_STATUS_OPTIONS, getEnquiryStatusMeta } from '@/utils/enquiryStatus';
 
 // Create a Grid component that doesn't have TypeScript errors
 const Grid = (props: any) => <MuiGrid {...props} />;
@@ -428,7 +429,7 @@ export default function EnquiriesPage() {
     assignedTo: 140,
     telecaller: 140,
     center: 150,
-    status: 120,
+    status: 150,
     subject: 150,
     message: 200,
     date: 130,
@@ -543,7 +544,7 @@ export default function EnquiriesPage() {
     { field: 'phone', label: 'Phone', dataType: 'text' as const },
     { field: 'email', label: 'Email', dataType: 'text' as const },
     { field: 'reference', label: 'Reference', dataType: 'text' as const },
-    { field: 'status', label: 'Status', dataType: 'text' as const },
+    { field: 'status', label: 'Journey Status', dataType: 'text' as const },
     { field: 'enquiryType', label: 'Enquiry Type', dataType: 'text' as const },
     { field: 'assignedTo', label: 'Assigned To', dataType: 'text' as const },
     { field: 'telecaller', label: 'Telecaller', dataType: 'text' as const },
@@ -1235,10 +1236,10 @@ export default function EnquiriesPage() {
       );
     }
     
-    // Apply legacy status and type filters
+    // Apply derived journey status filter
     if (filters.status !== 'all' || statusFilter !== 'all') {
       const status = filters.status !== 'all' ? filters.status : statusFilter;
-      result = result.filter(enquiry => enquiry.status === status);
+      result = result.filter(enquiry => getEnquiryStatusMeta(enquiry).key === status);
     }
     
     if (filters.enquiryType !== 'all' || typeFilter !== 'all') {
@@ -2458,6 +2459,8 @@ export default function EnquiriesPage() {
         return enquiry.telecaller || '';
       case 'visitingCenter':
         return enquiry.visitingCenter || '';
+      case 'status':
+        return getEnquiryStatusMeta(enquiry).label;
       case 'visitStatus':
         return enquiry.visitStatus || '';
       case 'subject':
@@ -2480,28 +2483,6 @@ export default function EnquiriesPage() {
       .join('')
       .toUpperCase()
       .substring(0, 2);
-  };
-  
-  // Get status chip component
-  const getStatusChip = (status: string) => {
-    let color: 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning' = 'default';
-    
-    switch (status) {
-      case 'new':
-        color = 'info';
-        break;
-      case 'in-progress':
-        color = 'primary';
-        break;
-      case 'resolved':
-        color = 'success';
-        break;
-      case 'closed':
-        color = 'secondary';
-        break;
-    }
-    
-    return <Chip label={status} size="small" color={color} />;
   };
   
   // Open detail dialog - navigate to details page
@@ -4145,10 +4126,11 @@ export default function EnquiriesPage() {
                 onChange={(e) => updateFilter('status', e.target.value)}
               >
                 <MenuItem value="all">All Statuses</MenuItem>
-                <MenuItem value="open">Open</MenuItem>
-                <MenuItem value="in-progress">In Progress</MenuItem>
-                <MenuItem value="resolved">Resolved</MenuItem>
-                <MenuItem value="closed">Closed</MenuItem>
+                {ENQUIRY_STATUS_OPTIONS.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
@@ -4710,7 +4692,9 @@ export default function EnquiriesPage() {
                    <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>👔 Assigned To<Box onMouseDown={(e) => handleMouseDown('assignedTo', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'assignedTo' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
                    <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📱 Telecaller<Box onMouseDown={(e) => handleMouseDown('telecaller', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'telecaller' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
                    <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏢 Center<Box onMouseDown={(e) => handleMouseDown('center', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'center' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📊 Status<Box onMouseDown={(e) => handleMouseDown('status', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'status' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   {visibleColumns.includes('status') && (
+                     <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📊 Status<Box onMouseDown={(e) => handleMouseDown('status', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'status' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                   )}
                    <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📝 Subject<Box onMouseDown={(e) => handleMouseDown('subject', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'subject' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
                    <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>💬 Message<Box onMouseDown={(e) => handleMouseDown('message', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'message' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
                    <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📅 Date<Box onMouseDown={(e) => handleMouseDown('date', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'date' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
@@ -4784,7 +4768,7 @@ export default function EnquiriesPage() {
                        overflow: 'hidden',
                        textOverflow: 'ellipsis'
                      }}>
-                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
                          <Avatar sx={{ 
                            width: 36, 
                            height: 36, 
@@ -4796,9 +4780,22 @@ export default function EnquiriesPage() {
                          }}>
                         {getInitials(enquiry.name)}
                       </Avatar>
-                         <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', fontWeight: 500, color: '#333' }}>
-                           {enquiry.name || '-'}
-                         </Typography>
+                        <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                          <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', fontWeight: 600, color: '#333' }}>
+                            {enquiry.name || '-'}
+                          </Typography>
+                          {(() => {
+                            const derivedStatus = getEnquiryStatusMeta(enquiry);
+                            return (
+                              <Chip
+                                label={derivedStatus.label}
+                                size="small"
+                                color={derivedStatus.color}
+                                sx={{ fontSize: '0.72rem', height: '22px', fontWeight: 700, borderRadius: 99, width: 'fit-content' }}
+                              />
+                            );
+                          })()}
+                        </Box>
                     </Box>
                   </TableCell>
                      {userProfile?.role !== 'audiologist' && (
@@ -4810,7 +4807,21 @@ export default function EnquiriesPage() {
                      <TableCell sx={{ width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.assignedTo || '-'}</Typography></TableCell>
                      <TableCell sx={{ width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.telecaller || '-'}</Typography></TableCell>
                      <TableCell sx={{ width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip label={getCenterName(enquiry.center)} size="small" sx={{ fontSize: '0.75rem', height: '24px', backgroundColor: '#e3f2fd', color: '#1976d2', fontWeight: 500 }} /></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip label={enquiry.visitStatus || 'enquiry'} size="small" sx={{ fontSize: '0.75rem', height: '24px', fontWeight: 500 }} color={enquiry.visitStatus === 'completed' ? 'success' : enquiry.visitStatus === 'visited' ? 'info' : enquiry.visitStatus === 'scheduled' ? 'warning' : 'default'} /></TableCell>
+                    {visibleColumns.includes('status') && (
+                      <TableCell sx={{ width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                        {(() => {
+                          const derivedStatus = getEnquiryStatusMeta(enquiry);
+                          return (
+                            <Chip
+                              label={derivedStatus.label}
+                              size="small"
+                              color={derivedStatus.color}
+                              sx={{ fontSize: '0.75rem', height: '24px', fontWeight: 700, borderRadius: 99 }}
+                            />
+                          );
+                        })()}
+                      </TableCell>
+                    )}
                      <TableCell sx={{ width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.subject || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.subject || '-'}</Typography></TableCell>
                      <TableCell sx={{ width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.message || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.message || '-'}</Typography></TableCell>
                      <TableCell sx={{ width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555', fontWeight: 500 }}>{formatDate(enquiry)}</Typography></TableCell>

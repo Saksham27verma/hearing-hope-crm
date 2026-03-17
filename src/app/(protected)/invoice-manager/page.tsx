@@ -55,6 +55,12 @@ import { db } from '@/firebase/config';
 import InvoiceBuilder from '@/components/invoice-builder/InvoiceBuilder';
 import APIIntegrations from '@/components/invoice-integrations/APIIntegrations';
 import HTMLTemplateCreator, { HTMLTemplateData } from '@/components/invoices/HTMLTemplateCreator';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
+import {
+  getDocumentTypeLabel,
+  getTemplatePreviewHtml,
+  ManagedDocumentType,
+} from '@/utils/documentTemplateUtils';
 
 // Types
 interface InvoiceTemplate {
@@ -69,6 +75,7 @@ interface InvoiceTemplate {
   createdAt: any;
   updatedAt: any;
   templateType?: 'visual' | 'html'; // New field to distinguish template types
+  documentType?: ManagedDocumentType;
   htmlContent?: string; // For HTML templates
   images?: Array<{
     id: string;
@@ -136,6 +143,7 @@ const InvoiceManagerPage = () => {
   const { user, userProfile } = useAuth();
   const [templates, setTemplates] = useState<InvoiceTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedTab, setSelectedTab] = useState(0);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState('');
@@ -151,6 +159,7 @@ const InvoiceManagerPage = () => {
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [previewTemplate, setPreviewTemplate] = useState<InvoiceTemplate | null>(null);
   const [successMsg, setSuccessMsg] = useState('');
+  const [creatingDocumentType, setCreatingDocumentType] = useState<ManagedDocumentType>('invoice');
 
   // Default templates
   const defaultTemplates: Partial<InvoiceTemplate>[] = [
@@ -293,6 +302,16 @@ const InvoiceManagerPage = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await fetchTemplates();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleCreateTemplate = async () => {
     if (!user || !newTemplateName.trim()) return;
 
@@ -308,6 +327,7 @@ const InvoiceManagerPage = () => {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         templateType: 'visual',
+        documentType: 'invoice',
         config: {
           layout: 'modern',
           colors: { primary: '#2563EB', secondary: '#64748B', accent: '#F59E0B' },
@@ -349,9 +369,9 @@ const InvoiceManagerPage = () => {
         isDefault: false,
         isFavorite: false,
         createdBy: user.uid,
-        createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         templateType: 'html',
+        documentType: htmlTemplate.documentType,
         htmlContent: htmlTemplate.htmlContent,
         images: htmlTemplate.images,
         config: {
@@ -372,10 +392,30 @@ const InvoiceManagerPage = () => {
         },
       };
 
-      const docRef = await addDoc(collection(db, 'invoiceTemplates'), newTemplate);
-      
-      setTemplates(prev => [...prev, { id: docRef.id, ...newTemplate } as InvoiceTemplate]);
+      if (editingTemplate?.id) {
+        await updateDoc(doc(db, 'invoiceTemplates', editingTemplate.id), {
+          ...newTemplate,
+          updatedAt: serverTimestamp(),
+        });
+
+        setTemplates(prev => prev.map((template) =>
+          template.id === editingTemplate.id
+            ? { ...template, ...newTemplate }
+            : template
+        ));
+        setSuccessMsg(`${getDocumentTypeLabel(htmlTemplate.documentType)} template updated.`);
+      } else {
+        const docRef = await addDoc(collection(db, 'invoiceTemplates'), {
+          ...newTemplate,
+          createdAt: serverTimestamp(),
+        });
+
+        setTemplates(prev => [...prev, { id: docRef.id, ...newTemplate } as InvoiceTemplate]);
+        setSuccessMsg(`${getDocumentTypeLabel(htmlTemplate.documentType)} template created.`);
+      }
+
       setHtmlCreatorOpen(false);
+      setEditingTemplate(null);
     } catch (error) {
       console.error('Error saving HTML template:', error);
     }
@@ -450,11 +490,12 @@ const InvoiceManagerPage = () => {
                   Invoice Manager
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
-                  Create, customize, and manage your invoice templates
+                  Create, customize, and manage invoice, booking receipt, and trial receipt templates
                 </Typography>
               </Box>
             </Box>
-            <Box display="flex" gap={1}>
+            <Box display="flex" gap={1} flexWrap="wrap">
+              <RefreshDataButton onClick={handleRefresh} loading={refreshing} />
               <Button
                 variant="outlined"
                 startIcon={<ApiIcon />}
@@ -569,6 +610,17 @@ const InvoiceManagerPage = () => {
                           fontWeight: 'bold',
                         }}
                       />
+                      <Chip
+                        label={getDocumentTypeLabel(template.documentType || 'invoice')}
+                        size="small"
+                        variant="filled"
+                        sx={{
+                          ml: 1,
+                          bgcolor: 'rgba(15, 23, 42, 0.78)',
+                          color: 'white',
+                          fontWeight: 'bold',
+                        }}
+                      />
                     </Box>
                   </Box>
 
@@ -578,6 +630,11 @@ const InvoiceManagerPage = () => {
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                       {template.description}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                      {template.templateType === 'html'
+                        ? `${getDocumentTypeLabel(template.documentType || 'invoice')} HTML template`
+                        : 'Invoice visual template'}
                     </Typography>
                     <Box display="flex" alignItems="center" justifyContent="space-between">
                       <Box display="flex" alignItems="center">
@@ -609,6 +666,7 @@ const InvoiceManagerPage = () => {
                         if (template.templateType === 'html') {
                           // For HTML templates, open the HTML creator in edit mode
                           setEditingTemplate(template);
+                          setCreatingDocumentType(template.documentType || 'invoice');
                           setHtmlCreatorOpen(true);
                         } else {
                           setEditingTemplate(template);
@@ -683,7 +741,7 @@ const InvoiceManagerPage = () => {
         <DialogTitle>Choose Template Type</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Select how you want to create your invoice template
+            Select the document and editor you want to use
           </Typography>
           <Grid container spacing={2}>
             <Grid item xs={12} md={6}>
@@ -698,6 +756,7 @@ const InvoiceManagerPage = () => {
                   },
                 }}
                 onClick={() => {
+                  setCreatingDocumentType('invoice');
                   setTemplateTypeDialogOpen(false);
                   setCreateDialogOpen(true);
                 }}
@@ -705,10 +764,10 @@ const InvoiceManagerPage = () => {
                 <CardContent sx={{ textAlign: 'center', py: 4 }}>
                   <PaletteIcon sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
                   <Typography variant="h6" gutterBottom>
-                    Visual Builder
+                    Invoice Visual Builder
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Use our drag-and-drop visual editor to create templates easily
+                    Use the visual editor for standard invoice templates
                   </Typography>
                   <Chip label="Recommended for beginners" color="primary" size="small" />
                 </CardContent>
@@ -726,6 +785,7 @@ const InvoiceManagerPage = () => {
                   },
                 }}
                 onClick={() => {
+                  setCreatingDocumentType('invoice');
                   setTemplateTypeDialogOpen(false);
                   setHtmlCreatorOpen(true);
                 }}
@@ -733,12 +793,70 @@ const InvoiceManagerPage = () => {
                 <CardContent sx={{ textAlign: 'center', py: 4 }}>
                   <TemplateIcon sx={{ fontSize: 64, color: 'secondary.main', mb: 2 }} />
                   <Typography variant="h6" gutterBottom>
-                    HTML Template
+                    Invoice HTML Template
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    Write custom HTML code with full control and flexibility
+                    Write custom invoice HTML with full control and flexibility
                   </Typography>
                   <Chip label="For advanced users" color="secondary" size="small" />
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Card
+                sx={{
+                  cursor: 'pointer',
+                  border: 2,
+                  borderColor: 'divider',
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                    boxShadow: 3,
+                  },
+                }}
+                onClick={() => {
+                  setCreatingDocumentType('booking_receipt');
+                  setTemplateTypeDialogOpen(false);
+                  setHtmlCreatorOpen(true);
+                }}
+              >
+                <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                  <TemplateIcon sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Booking Receipt Template
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Edit the booking receipt layout that patient profiles use
+                  </Typography>
+                  <Chip label="Auto-used when marked favorite" color="primary" size="small" />
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Card
+                sx={{
+                  cursor: 'pointer',
+                  border: 2,
+                  borderColor: 'divider',
+                  '&:hover': {
+                    borderColor: 'warning.main',
+                    boxShadow: 3,
+                  },
+                }}
+                onClick={() => {
+                  setCreatingDocumentType('trial_receipt');
+                  setTemplateTypeDialogOpen(false);
+                  setHtmlCreatorOpen(true);
+                }}
+              >
+                <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                  <TemplateIcon sx={{ fontSize: 64, color: 'warning.main', mb: 2 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Trial Receipt Template
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Edit the trial receipt layout used for trial documents
+                  </Typography>
+                  <Chip label="Auto-used when marked favorite" color="warning" size="small" />
                 </CardContent>
               </Card>
             </Grid>
@@ -802,7 +920,12 @@ const InvoiceManagerPage = () => {
         <MenuItem onClick={() => {
           if (selectedTemplate) {
             setEditingTemplate(selectedTemplate);
-            setBuilderOpen(true);
+            if (selectedTemplate.templateType === 'html') {
+              setCreatingDocumentType(selectedTemplate.documentType || 'invoice');
+              setHtmlCreatorOpen(true);
+            } else {
+              setBuilderOpen(true);
+            }
           }
           handleMenuClose();
         }}>
@@ -873,12 +996,14 @@ const InvoiceManagerPage = () => {
           setEditingTemplate(null);
         }}
         onSave={handleSaveHTMLTemplate}
+        documentType={editingTemplate?.documentType || creatingDocumentType}
         initialTemplate={editingTemplate?.templateType === 'html' ? {
           name: editingTemplate.name,
           description: editingTemplate.description,
           htmlContent: editingTemplate.htmlContent || '',
           images: editingTemplate.images || [],
           category: editingTemplate.category,
+          documentType: editingTemplate.documentType || 'invoice',
         } : undefined}
       />
 
@@ -898,6 +1023,7 @@ const InvoiceManagerPage = () => {
           <Box display="flex" alignItems="center" justifyContent="space-between">
             <Typography variant="h6">
               Preview: {previewTemplate?.name}
+              {previewTemplate ? ` (${getDocumentTypeLabel(previewTemplate.documentType || 'invoice')})` : ''}
             </Typography>
             <IconButton onClick={() => {
               setPreviewDialogOpen(false);
@@ -919,26 +1045,11 @@ const InvoiceManagerPage = () => {
                     p: 2,
                   }}
                   dangerouslySetInnerHTML={{
-                    __html: previewTemplate.htmlContent.replace(
-                      /\{\{(\w+)_PLACEHOLDER\}\}/g,
-                      (match, type) => {
-                        const img = previewTemplate.images?.find(i => i.placeholder.includes(type));
-                        return img?.url || match;
-                      }
-                    ).replace(/\{\{CUSTOMER_NAME\}\}/g, 'John Doe')
-                      .replace(/\{\{INVOICE_NUMBER\}\}/g, 'INV-2024-001')
-                      .replace(/\{\{INVOICE_DATE\}\}/g, new Date().toLocaleDateString())
-                      .replace(/\{\{TOTAL\}\}/g, '₹50,000')
-                      .replace(/\{\{SUBTOTAL\}\}/g, '₹47,619')
-                      .replace(/\{\{TAX_AMOUNT\}\}/g, '₹2,381')
-                      .replace(/\{\{ITEMS_PLACEHOLDER\}\}/g, `
-                        <tr>
-                          <td>Hearing Aid - Premium Model</td>
-                          <td>1</td>
-                          <td>₹50,000</td>
-                          <td>₹50,000</td>
-                        </tr>
-                      `)
+                    __html: getTemplatePreviewHtml(
+                      previewTemplate.documentType || 'invoice',
+                      previewTemplate.htmlContent,
+                      previewTemplate.images || []
+                    )
                   }}
                 />
               ) : (

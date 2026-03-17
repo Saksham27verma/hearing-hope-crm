@@ -20,6 +20,7 @@ import {
   Slider,
   Alert,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -72,11 +73,12 @@ interface LoanFormProps {
   staff: Staff[];
   initialData?: LoanAdvance;
   selectedStaff?: Staff | null;
-  onSave: (data: LoanAdvance) => void;
+  onSave: (data: LoanAdvance) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
-export default function LoanForm({ staff, initialData, selectedStaff, onSave, onCancel }: LoanFormProps) {
+export default function LoanForm({ staff, initialData, selectedStaff, onSave, onCancel, isSaving = false }: LoanFormProps) {
   // Initialize form state with initial data or default values
   const [formData, setFormData] = useState<LoanAdvance>({
     id: initialData?.id,
@@ -515,18 +517,21 @@ export default function LoanForm({ staff, initialData, selectedStaff, onSave, on
           variant="outlined"
           onClick={onCancel}
           sx={{ borderRadius: 1.5, px: 3 }}
+          disabled={isSaving}
         >
           Cancel
         </Button>
 
-        <Button
+        <AsyncActionButton
           variant="contained"
           color="primary"
           type="submit"
           sx={{ borderRadius: 1.5, px: 4 }}
+          loading={isSaving}
+          loadingText={initialData?.id ? 'Updating...' : 'Saving...'}
         >
           {initialData?.id ? 'Update' : 'Save'}
-        </Button>
+        </AsyncActionButton>
       </Box>
     </Box>
   );

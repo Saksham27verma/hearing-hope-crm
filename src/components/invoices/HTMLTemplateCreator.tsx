@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, ChangeEvent } from 'react';
+import React, { useState, useRef, ChangeEvent, useEffect, useMemo } from 'react';
 import {
   Box,
   Paper,
@@ -40,12 +40,20 @@ import {
 } from '@mui/icons-material';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '@/firebase/config';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
+import {
+  DOCUMENT_TEMPLATE_META,
+  getDocumentTypeLabel,
+  getTemplatePreviewHtml,
+  ManagedDocumentType,
+} from '@/utils/documentTemplateUtils';
 
 interface HTMLTemplateCreatorProps {
   open: boolean;
   onClose: () => void;
-  onSave: (template: HTMLTemplateData) => void;
+  onSave: (template: HTMLTemplateData) => Promise<void> | void;
   initialTemplate?: HTMLTemplateData;
+  documentType?: ManagedDocumentType;
 }
 
 interface UploadedImage {
@@ -62,6 +70,7 @@ export interface HTMLTemplateData {
   htmlContent: string;
   images: UploadedImage[];
   category: 'business' | 'medical' | 'retail' | 'service' | 'custom';
+  documentType: ManagedDocumentType;
 }
 
 const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
@@ -69,6 +78,7 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
   onClose,
   onSave,
   initialTemplate,
+  documentType = 'invoice',
 }) => {
   const [activeTab, setActiveTab] = useState(0);
   const [templateName, setTemplateName] = useState(initialTemplate?.name || '');
@@ -77,205 +87,21 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
   const [images, setImages] = useState<UploadedImage[]>(initialTemplate?.images || []);
   const [category, setCategory] = useState<HTMLTemplateData['category']>(initialTemplate?.category || 'custom');
   const [uploading, setUploading] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const templateMeta = useMemo(() => DOCUMENT_TEMPLATE_META[documentType], [documentType]);
 
-  // Sample HTML template for users to start with
-  const sampleTemplate = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 20px;
-      background-color: #f5f5f5;
-    }
-    .invoice-container {
-      max-width: 800px;
-      margin: 0 auto;
-      background: white;
-      padding: 40px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.1);
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 30px;
-      border-bottom: 3px solid #2563EB;
-      padding-bottom: 20px;
-    }
-    .logo {
-      max-width: 200px;
-      max-height: 80px;
-    }
-    .company-info {
-      text-align: right;
-    }
-    .invoice-title {
-      font-size: 32px;
-      font-weight: bold;
-      color: #2563EB;
-      margin: 20px 0;
-    }
-    .info-section {
-      display: flex;
-      justify-content: space-between;
-      margin: 30px 0;
-    }
-    .info-box {
-      width: 48%;
-    }
-    .info-label {
-      font-weight: bold;
-      color: #666;
-      margin-bottom: 5px;
-    }
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin: 30px 0;
-    }
-    .items-table th {
-      background-color: #2563EB;
-      color: white;
-      padding: 12px;
-      text-align: left;
-    }
-    .items-table td {
-      padding: 10px 12px;
-      border-bottom: 1px solid #ddd;
-    }
-    .items-table tr:hover {
-      background-color: #f9f9f9;
-    }
-    .totals {
-      text-align: right;
-      margin-top: 20px;
-    }
-    .total-row {
-      display: flex;
-      justify-content: flex-end;
-      margin: 8px 0;
-      font-size: 16px;
-    }
-    .total-label {
-      width: 150px;
-      font-weight: bold;
-    }
-    .total-value {
-      width: 120px;
-      text-align: right;
-    }
-    .grand-total {
-      font-size: 20px;
-      color: #2563EB;
-      border-top: 2px solid #2563EB;
-      padding-top: 10px;
-      margin-top: 10px;
-    }
-    .footer {
-      margin-top: 50px;
-      padding-top: 20px;
-      border-top: 2px solid #eee;
-      text-align: center;
-    }
-    .signature {
-      max-width: 200px;
-      margin: 20px auto;
-    }
-    .terms {
-      font-size: 12px;
-      color: #666;
-      margin-top: 20px;
-      line-height: 1.5;
-    }
-  </style>
-</head>
-<body>
-  <div class="invoice-container">
-    <!-- Header with Logo -->
-    <div class="header">
-      <div>
-        <img src="{{LOGO_PLACEHOLDER}}" alt="Company Logo" class="logo">
-      </div>
-      <div class="company-info">
-        <h3>Your Company Name</h3>
-        <p>123 Business Street<br>City, State 12345<br>Phone: (123) 456-7890<br>Email: info@company.com</p>
-      </div>
-    </div>
-
-    <!-- Invoice Title -->
-    <div class="invoice-title">INVOICE</div>
-
-    <!-- Invoice and Customer Info -->
-    <div class="info-section">
-      <div class="info-box">
-        <div class="info-label">Bill To:</div>
-        <p><strong>{{CUSTOMER_NAME}}</strong><br>
-        {{CUSTOMER_ADDRESS}}<br>
-        {{CUSTOMER_PHONE}}<br>
-        {{CUSTOMER_EMAIL}}</p>
-      </div>
-      <div class="info-box">
-        <div class="info-label">Invoice Details:</div>
-        <p><strong>Invoice #:</strong> {{INVOICE_NUMBER}}<br>
-        <strong>Date:</strong> {{INVOICE_DATE}}<br>
-        <strong>Due Date:</strong> {{DUE_DATE}}<br>
-        <strong>Payment Terms:</strong> Net 30</p>
-      </div>
-    </div>
-
-    <!-- Items Table -->
-    <table class="items-table">
-      <thead>
-        <tr>
-          <th>Item Description</th>
-          <th>Quantity</th>
-          <th>Unit Price</th>
-          <th>Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        <!-- Dynamic items will be inserted here -->
-        {{ITEMS_PLACEHOLDER}}
-      </tbody>
-    </table>
-
-    <!-- Totals -->
-    <div class="totals">
-      <div class="total-row">
-        <div class="total-label">Subtotal:</div>
-        <div class="total-value">{{SUBTOTAL}}</div>
-      </div>
-      <div class="total-row">
-        <div class="total-label">Tax ({{TAX_RATE}}%):</div>
-        <div class="total-value">{{TAX_AMOUNT}}</div>
-      </div>
-      <div class="total-row grand-total">
-        <div class="total-label">Total:</div>
-        <div class="total-value">{{TOTAL}}</div>
-      </div>
-    </div>
-
-    <!-- Footer with Signature -->
-    <div class="footer">
-      <div class="signature">
-        <img src="{{SIGNATURE_PLACEHOLDER}}" alt="Signature">
-        <p><strong>Authorized Signature</strong></p>
-      </div>
-      
-      <div class="terms">
-        <strong>Terms & Conditions:</strong><br>
-        Payment is due within 30 days. Please make checks payable to Your Company Name.
-        Late payments may incur additional charges. Thank you for your business!
-      </div>
-    </div>
-  </div>
-</body>
-</html>`;
+  useEffect(() => {
+    if (!open) return;
+    setTemplateName(initialTemplate?.name || '');
+    setTemplateDescription(initialTemplate?.description || '');
+    setHtmlContent(initialTemplate?.htmlContent || '');
+    setImages(initialTemplate?.images || []);
+    setCategory(initialTemplate?.category || 'custom');
+    setPreviewMode(false);
+    setActiveTab(0);
+  }, [open, initialTemplate]);
 
   const handleImageUpload = async (event: ChangeEvent<HTMLInputElement>, imageType: 'logo' | 'signature' | 'custom') => {
     const file = event.target.files?.[0];
@@ -346,10 +172,11 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
     if (htmlContent && !confirm('This will replace your current HTML. Continue?')) {
       return;
     }
-    setHtmlContent(sampleTemplate);
+    setHtmlContent(templateMeta.sampleHtml);
   };
 
   const handleSave = () => {
+    if (savingTemplate) return;
     if (!templateName.trim()) {
       alert('Please enter a template name');
       return;
@@ -365,19 +192,24 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
       htmlContent: htmlContent,
       images: images,
       category: category,
+      documentType,
     };
 
-    onSave(templateData);
+    try {
+      setSavingTemplate(true);
+      const maybePromise = onSave(templateData);
+      if (maybePromise && typeof (maybePromise as Promise<void>).finally === 'function') {
+        (maybePromise as Promise<void>).finally(() => setSavingTemplate(false));
+        return;
+      }
+      setSavingTemplate(false);
+    } catch (error) {
+      setSavingTemplate(false);
+      throw error;
+    }
   };
 
   const renderPreview = () => {
-    let processedHTML = htmlContent;
-    
-    // Replace image placeholders with actual URLs
-    images.forEach(img => {
-      processedHTML = processedHTML.replace(new RegExp(img.placeholder, 'g'), img.url);
-    });
-
     return (
       <Box
         sx={{
@@ -388,7 +220,7 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
           border: '1px solid',
           borderColor: 'divider',
         }}
-        dangerouslySetInnerHTML={{ __html: processedHTML }}
+        dangerouslySetInnerHTML={{ __html: getTemplatePreviewHtml(documentType, htmlContent, images) }}
       />
     );
   };
@@ -407,7 +239,7 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
         <Box display="flex" alignItems="center" justifyContent="space-between">
           <Box display="flex" alignItems="center" gap={1}>
             <CodeIcon color="primary" />
-            <Typography variant="h6">HTML Invoice Template Creator</Typography>
+            <Typography variant="h6">{getDocumentTypeLabel(documentType)} HTML Template Creator</Typography>
           </Box>
           <Box display="flex" gap={1}>
             <Button
@@ -462,12 +294,12 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
                     variant="outlined"
                     onClick={handleLoadSample}
                   >
-                    Load Sample Template
+                    Load Sample {getDocumentTypeLabel(documentType)} Template
                   </Button>
                 </Box>
 
                 <Alert severity="info" sx={{ mb: 2 }}>
-                  Use placeholders like {`{{LOGO_PLACEHOLDER}}`}, {`{{SIGNATURE_PLACEHOLDER}}`}, {`{{CUSTOMER_NAME}}`}, {`{{INVOICE_NUMBER}}`}, etc.
+                  Use the placeholders for the selected {getDocumentTypeLabel(documentType).toLowerCase()} template.
                   Upload images from the right panel and insert their placeholders.
                 </Alert>
 
@@ -668,38 +500,19 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
 
                 {/* Common Placeholders */}
                 <Typography variant="subtitle2" gutterBottom color="text.secondary">
-                  Available Placeholders:
+                  Available Placeholders for {getDocumentTypeLabel(documentType)}:
                 </Typography>
                 <Box sx={{ fontSize: '10px', fontFamily: 'monospace', color: 'text.secondary', maxHeight: '200px', overflow: 'auto' }}>
-                  <Typography variant="caption" fontWeight="bold" display="block" sx={{ mt: 1 }}>Customer Info:</Typography>
-                  <div>• {`{{CUSTOMER_NAME}}`}</div>
-                  <div>• {`{{CUSTOMER_ADDRESS}}`}</div>
-                  <div>• {`{{CUSTOMER_PHONE}}`}</div>
-                  <div>• {`{{CUSTOMER_EMAIL}}`}</div>
-                  <div>• {`{{CUSTOMER_GSTIN}}`}</div>
-                  
-                  <Typography variant="caption" fontWeight="bold" display="block" sx={{ mt: 1 }}>Invoice Info:</Typography>
-                  <div>• {`{{INVOICE_NUMBER}}`}</div>
-                  <div>• {`{{INVOICE_DATE}}`}</div>
-                  <div>• {`{{DUE_DATE}}`}</div>
-                  <div>• {`{{PAYMENT_MODE}}`}</div>
-                  
-                  <Typography variant="caption" fontWeight="bold" display="block" sx={{ mt: 1 }}>Product Specific:</Typography>
-                  <div>• {`{{WARRANTY_PERIOD}}`}</div>
-                  <div>• {`{{TRIAL_PERIOD}}`}</div>
-                  
-                  <Typography variant="caption" fontWeight="bold" display="block" sx={{ mt: 1 }}>Amounts:</Typography>
-                  <div>• {`{{SUBTOTAL}}`}</div>
-                  <div>• {`{{TAX_RATE}}`}</div>
-                  <div>• {`{{TAX_AMOUNT}}`}</div>
-                  <div>• {`{{TOTAL}}`}</div>
-                  
-                  <Typography variant="caption" fontWeight="bold" display="block" sx={{ mt: 1 }}>Items Table:</Typography>
-                  <div>• {`{{ITEMS_PLACEHOLDER}}`}</div>
-                  
-                  <Typography variant="caption" fontWeight="bold" display="block" sx={{ mt: 1 }}>Images:</Typography>
-                  <div>• {`{{LOGO_PLACEHOLDER}}`}</div>
-                  <div>• {`{{SIGNATURE_PLACEHOLDER}}`}</div>
+                  {templateMeta.placeholderSections.map((section) => (
+                    <Box key={section.title}>
+                      <Typography variant="caption" fontWeight="bold" display="block" sx={{ mt: 1 }}>
+                        {section.title}:
+                      </Typography>
+                      {section.tokens.map((token) => (
+                        <div key={token}>• {token}</div>
+                      ))}
+                    </Box>
+                  ))}
                 </Box>
               </Paper>
             </Grid>
@@ -713,16 +526,18 @@ const HTMLTemplateCreator: React.FC<HTMLTemplateCreatorProps> = ({
       </DialogContent>
 
       <DialogActions>
-        <Button onClick={onClose}>
+        <Button onClick={onClose} disabled={savingTemplate}>
           Cancel
         </Button>
-        <Button
+        <AsyncActionButton
           variant="contained"
           startIcon={<SaveIcon />}
           onClick={handleSave}
+          loading={savingTemplate}
+          loadingText="Saving Template..."
         >
           Save Template
-        </Button>
+        </AsyncActionButton>
       </DialogActions>
     </Dialog>
   );

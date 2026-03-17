@@ -118,6 +118,8 @@ export default function LoansAdvancesPage() {
   // Dialog states
   const [openLoanDialog, setOpenLoanDialog] = useState(false);
   const [openPaymentDialog, setOpenPaymentDialog] = useState(false);
+  const [savingLoan, setSavingLoan] = useState(false);
+  const [savingPayment, setSavingPayment] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState<LoanAdvance | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
   
@@ -257,8 +259,9 @@ export default function LoansAdvancesPage() {
   
   // Save handlers
   const handleSaveLoan = async (loanData: LoanAdvance) => {
+    if (savingLoan) return;
     try {
-      setLoading(true);
+      setSavingLoan(true);
       
       if (loanData.id) {
         // Update existing loan
@@ -278,18 +281,19 @@ export default function LoansAdvancesPage() {
       // Refresh data
       await fetchLoans();
       setOpenLoanDialog(false);
-      setLoading(false);
     } catch (error) {
       console.error('Error saving loan:', error);
-      setLoading(false);
+    } finally {
+      setSavingLoan(false);
     }
   };
   
   const handleSavePayment = async (paymentData: Payment) => {
+    if (savingPayment) return;
     try {
       if (!selectedLoan || !selectedLoan.id) return;
       
-      setLoading(true);
+      setSavingPayment(true);
       
       // Add payment record
       await addDoc(collection(db, 'loan_payments'), {
@@ -310,10 +314,10 @@ export default function LoansAdvancesPage() {
       // Refresh data
       await Promise.all([fetchLoans(), fetchPayments()]);
       setOpenPaymentDialog(false);
-      setLoading(false);
     } catch (error) {
       console.error('Error recording payment:', error);
-      setLoading(false);
+    } finally {
+      setSavingPayment(false);
     }
   };
   
@@ -582,6 +586,7 @@ export default function LoansAdvancesPage() {
             initialData={selectedLoan || undefined}
             selectedStaff={selectedStaff}
             onSave={handleSaveLoan}
+            isSaving={savingLoan}
             onCancel={handleCloseLoanDialog}
           />
         </DialogContent>
@@ -606,6 +611,7 @@ export default function LoansAdvancesPage() {
               loan={selectedLoan}
               staff={selectedStaff}
               onSave={handleSavePayment}
+              isSaving={savingPayment}
               onCancel={handleClosePaymentDialog}
             />
           )}

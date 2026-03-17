@@ -78,6 +78,8 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { useAuth } from '@/hooks/useAuth';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -209,9 +211,11 @@ const SalesPage = () => {
   const [sales, setSales] = useState<Sale[]>([]);
   const [filteredSales, setFilteredSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [openDialog, setOpenDialog] = useState(false);
+  const [savingSale, setSavingSale] = useState(false);
   const [currentSale, setCurrentSale] = useState<Sale | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -381,6 +385,23 @@ const SalesPage = () => {
     } catch (e) { console.error('Error fetching salespeople:', e); }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await Promise.all([
+        fetchSales(),
+        fetchProducts(),
+        fetchCenters(),
+        fetchVisitors(),
+        fetchEnquirySales(),
+        fetchSalesPeople(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   // ─── Totals calculation (per-product GST) ───
 
   const recalcTotals = (prods: SaleProduct[]) => {
@@ -445,11 +466,12 @@ const SalesPage = () => {
   };
 
   const handleSaveSale = async () => {
-    if (!currentSale) return;
+    if (!currentSale || savingSale) return;
     if (!currentSale.patientName.trim()) { setErrorMsg('Patient name is required'); return; }
     if (currentSale.products.length === 0) { setErrorMsg('Add at least one product'); return; }
 
     try {
+      setSavingSale(true);
       const { id, ...saveData } = currentSale as any;
       if (currentSale.id) {
         await updateDoc(doc(db, 'sales', currentSale.id), { ...saveData, updatedAt: serverTimestamp() });
@@ -465,6 +487,8 @@ const SalesPage = () => {
     } catch (e) {
       console.error('Error saving sale:', e);
       setErrorMsg('Failed to save sale');
+    } finally {
+      setSavingSale(false);
     }
   };
 
@@ -614,7 +638,10 @@ const SalesPage = () => {
           </LocalizationProvider>
           {dateFilter && <Button variant="outlined" size="small" onClick={() => setDateFilter(null)}>Clear</Button>}
         </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleAddSale} sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, px: 3 }}>New Sale</Button>
+        <Box display="flex" gap={1.5} flexWrap="wrap">
+          <RefreshDataButton onClick={handleRefresh} loading={refreshing} sx={{ borderRadius: 2, textTransform: 'none' }} />
+          <Button variant="contained" startIcon={<AddIcon />} onClick={handleAddSale} sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, px: 3 }}>New Sale</Button>
+        </Box>
       </Box>
 
       {/* ── Sales Table ── */}
@@ -979,16 +1006,18 @@ const SalesPage = () => {
         </DialogContent>
 
         <DialogActions sx={{ px: 3, py: 2, bgcolor: 'grey.50', borderTop: '1px solid', borderColor: 'divider' }}>
-          <Button onClick={() => { setOpenDialog(false); setCurrentSale(null); }} sx={{ textTransform: 'none' }}>Cancel</Button>
-          <Button
+          <Button onClick={() => { if (!savingSale) { setOpenDialog(false); setCurrentSale(null); } }} sx={{ textTransform: 'none' }} disabled={savingSale}>Cancel</Button>
+          <AsyncActionButton
             variant="contained"
             onClick={handleSaveSale}
             disabled={!currentSale?.patientName?.trim() || (currentSale?.products?.length || 0) === 0}
             sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, px: 4 }}
             startIcon={<ReceiptIcon />}
+            loading={savingSale}
+            loadingText={currentSale?.id ? 'Updating Sale...' : 'Saving Sale...'}
           >
             {currentSale?.id ? 'Update Sale' : 'Save Sale & Create Invoice'}
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
 

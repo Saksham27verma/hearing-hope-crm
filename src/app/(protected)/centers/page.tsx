@@ -31,6 +31,7 @@ import {
   Switch,
   FormControlLabel,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DomainIcon from '@mui/icons-material/Domain';
@@ -73,6 +74,7 @@ export default function CentersPage() {
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [companies, setCompanies] = useState<Array<{id: string; name: string}>>([]);
   const [loading, setLoading] = useState(false);
+  const [savingCenter, setSavingCenter] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [currentCenter, setCurrentCenter] = useState<Center | null>(null);
@@ -154,12 +156,13 @@ export default function CentersPage() {
   };
 
   const handleSave = async () => {
+    if (savingCenter) return;
     if (!form.name.trim()) {
       alert('Center name is required');
       return;
     }
     try {
-      setLoading(true);
+      setSavingCenter(true);
       
       // If this center is being marked as head office, unmark all others
       if (form.isHeadOffice) {
@@ -200,7 +203,7 @@ export default function CentersPage() {
       console.error('Failed to save center', err);
       alert('Failed to save center');
     } finally {
-      setLoading(false);
+      setSavingCenter(false);
     }
   };
 
@@ -581,15 +584,17 @@ export default function CentersPage() {
           })()}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenDialog(false)}>Cancel</Button>
-          <Button 
+          <Button onClick={() => !savingCenter && setOpenDialog(false)} disabled={savingCenter}>Cancel</Button>
+          <AsyncActionButton 
             variant="contained" 
             onClick={handleSave} 
             startIcon={editMode ? <EditIcon /> : <AddIcon />} 
-            disabled={!form.name.trim() || loading}
+            disabled={!form.name.trim()}
+            loading={savingCenter}
+            loadingText={editMode ? 'Updating Center...' : 'Saving Center...'}
           >
             {editMode ? 'Update Center' : 'Add Center'}
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
 

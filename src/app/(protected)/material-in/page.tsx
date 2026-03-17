@@ -63,6 +63,7 @@ import { useAuth } from '@/context/AuthContext';
 import MaterialInForm from '@/components/material-in/MaterialInForm';
 import MaterialInPreviewDialog from '@/components/material-in/MaterialInPreviewDialog';
 import ConvertToPurchaseDialog from '@/components/material-in/ConvertToPurchaseDialog';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 
 // Types
 interface Product {
@@ -135,6 +136,7 @@ export default function MaterialInPage() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [openDialog, setOpenDialog] = useState(false);
   const [currentMaterial, setCurrentMaterial] = useState<MaterialInward | null>(null);
+  const [savingMaterial, setSavingMaterial] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState<Date | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -160,6 +162,7 @@ export default function MaterialInPage() {
   // Sales return tracking states
   const [salesReturns, setSalesReturns] = useState<any[]>([]);
   const [loadingSalesReturns, setLoadingSalesReturns] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Fetch data when component mounts
   useEffect(() => {
@@ -414,6 +417,22 @@ export default function MaterialInPage() {
     }
   };
 
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await Promise.all([
+        fetchMaterials(),
+        fetchProducts(),
+        fetchParties(),
+        fetchCompletedTrials(),
+        fetchSalesReturns(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   // Handle creating material in entry for sales return
   const handleSalesReturn = async (salesReturn: any) => {
     // Generate new challan number (format: SR-YYYYMMDD-XXX for Sales Return)
@@ -604,7 +623,9 @@ export default function MaterialInPage() {
 
   // Handle saving a material
   const handleSaveMaterialAsync = async (materialData: MaterialInward) => {
+    if (savingMaterial) return;
     try {
+      setSavingMaterial(true);
       if (currentMaterial?.id) {
         // Update existing material
         const materialRef = doc(db, 'materialInward', currentMaterial.id);
@@ -652,6 +673,8 @@ export default function MaterialInPage() {
     } catch (error) {
       console.error('Error saving material:', error);
       setErrorMsg('Failed to save material');
+    } finally {
+      setSavingMaterial(false);
     }
   };
 
@@ -821,6 +844,9 @@ export default function MaterialInPage() {
       <Typography variant="body1" color="text.secondary" mb={4}>
         Track and manage material inward from suppliers
       </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 3 }}>
+        <RefreshDataButton onClick={handleRefresh} loading={refreshing} />
+      </Box>
 
       {/* Trial Return Actions */}
       {completedTrials.length > 0 && (
@@ -1203,6 +1229,7 @@ export default function MaterialInPage() {
             products={products}
             parties={parties}
             onSave={handleSaveMaterial}
+            isSaving={savingMaterial}
             onCancel={handleCloseDialog}
           />
         </DialogContent>

@@ -73,6 +73,7 @@ import {
   orderBy,
   doc,
 } from 'firebase/firestore';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 
 // Simplified Visitor interface
 interface Visitor {
@@ -95,6 +96,11 @@ interface Visitor {
   updatedAt?: any;
 }
 
+interface Center {
+  id: string;
+  name: string;
+}
+
 export default function VisitorsPage() {
   const { user, userProfile } = useAuth();
   const router = useRouter();
@@ -102,17 +108,19 @@ export default function VisitorsPage() {
   const [loading, setLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState(false);
   const [editingVisitor, setEditingVisitor] = useState<Visitor | null>(null);
+  const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   const [visitorTypeFilter, setVisitorTypeFilter] = useState('all');
   const [activeTab, setActiveTab] = useState(0);
+  const [centers, setCenters] = useState<Center[]>([]);
 
   const [newVisitor, setNewVisitor] = useState<Partial<Visitor>>({
     name: '',
     phone: '',
     email: '',
     visitorType: 'general',
-    visitingCenter: 'main',
+    visitingCenter: '',
     visitDate: new Date().toISOString().split('T')[0],
     visitTime: '',
     notes: '',
@@ -123,6 +131,23 @@ export default function VisitorsPage() {
 
   useEffect(() => {
     fetchVisitors();
+  }, []);
+
+  useEffect(() => {
+    const fetchCenters = async () => {
+      try {
+        const q = query(collection(db, 'centers'), orderBy('name'));
+        const snapshot = await getDocs(q);
+        const centersList: Center[] = snapshot.docs.map(d => ({
+          id: d.id,
+          name: (d.data() as { name?: string })?.name || 'Center',
+        }));
+        setCenters(centersList);
+      } catch (e) {
+        console.error('Error fetching centers:', e);
+      }
+    };
+    fetchCenters();
   }, []);
 
   const fetchVisitors = async () => {
@@ -170,14 +195,8 @@ export default function VisitorsPage() {
   };
 
   const getCenterLabel = (centerValue: string): string => {
-    const centerMap: { [key: string]: string } = {
-      'main': 'Main Center',
-      'north': 'North Branch',
-      'south': 'South Branch',
-      'east': 'East Branch',
-      'west': 'West Branch'
-    };
-    return centerMap[centerValue] || centerValue;
+    const center = centers.find(c => c.id === centerValue);
+    return (center?.name ?? centerValue) || '—';
   };
 
   const handleOpenDialog = () => {
@@ -186,7 +205,7 @@ export default function VisitorsPage() {
       phone: '',
       email: '',
       visitorType: 'general',
-      visitingCenter: 'main',
+      visitingCenter: centers.length > 0 ? centers[0].id : '',
       visitDate: new Date().toISOString().split('T')[0],
       visitTime: '',
       notes: '',
@@ -199,6 +218,7 @@ export default function VisitorsPage() {
   };
 
   const handleCloseDialog = () => {
+    if (saving) return;
     setOpenDialog(false);
     setEditingVisitor(null);
   };
@@ -243,7 +263,9 @@ export default function VisitorsPage() {
   };
 
   const handleSubmit = async () => {
+    if (saving) return;
     try {
+      setSaving(true);
       // If it's a patient, just redirect to enquiries without saving anything
       if (newVisitor.visitorType === 'patient') {
         handleCloseDialog();
@@ -278,6 +300,8 @@ export default function VisitorsPage() {
       fetchVisitors();
     } catch (error) {
       console.error('Error saving visitor:', error);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -668,19 +692,22 @@ export default function VisitorsPage() {
                       value={newVisitor.email}
                       onChange={handleInputChange}
                     />
-                    <FormControl fullWidth>
+                    <FormControl fullWidth required>
                       <InputLabel>Visiting Center</InputLabel>
                       <Select
                         name="visitingCenter"
-                        value={newVisitor.visitingCenter}
+                        value={newVisitor.visitingCenter ?? ''}
                         label="Visiting Center"
                         onChange={handleInputChange}
                       >
-                        <MenuItem value="main">Main Center</MenuItem>
-                        <MenuItem value="north">North Branch</MenuItem>
-                        <MenuItem value="south">South Branch</MenuItem>
-                        <MenuItem value="east">East Branch</MenuItem>
-                        <MenuItem value="west">West Branch</MenuItem>
+                        {centers.map((c) => (
+                          <MenuItem key={c.id} value={c.id}>
+                            {c.name}
+                          </MenuItem>
+                        ))}
+                        {centers.length === 0 && (
+                          <MenuItem value="" disabled>No centers — add centers in Centers</MenuItem>
+                        )}
                       </Select>
                     </FormControl>
                   </Box>
@@ -751,14 +778,16 @@ export default function VisitorsPage() {
           </Box>
         </DialogContent>
         <DialogActions sx={{ p: 3 }}>
-          <Button onClick={handleCloseDialog}>
+          <Button onClick={handleCloseDialog} disabled={saving}>
             Cancel
           </Button>
-          <Button
+          <AsyncActionButton
             onClick={handleSubmit}
             variant="contained"
             disabled={newVisitor.visitorType === 'general' && (!newVisitor.name || !newVisitor.phone)}
             endIcon={newVisitor.visitorType === 'patient' ? <ArrowForwardIcon /> : undefined}
+            loading={saving}
+            loadingText={editingVisitor ? 'Updating Visitor...' : 'Saving Visitor...'}
           >
             {newVisitor.visitorType === 'patient' 
               ? 'Continue to Enquiries' 
@@ -766,7 +795,7 @@ export default function VisitorsPage() {
                 ? 'Update Visitor' 
                 : 'Register Visitor'
             }
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
     </Box>

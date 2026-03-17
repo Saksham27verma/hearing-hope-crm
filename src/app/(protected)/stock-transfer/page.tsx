@@ -43,6 +43,8 @@ import {
   Tooltip,
   Badge,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
+import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -158,6 +160,7 @@ const StockTransferPage = () => {
   const [loading, setLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState(false);
   const [currentTransfer, setCurrentTransfer] = useState<StockTransfer | null>(null);
+  const [savingTransfer, setSavingTransfer] = useState(false);
   const [centers, setCenters] = useState<Center[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [availableStock, setAvailableStock] = useState<AvailableStockItem[]>([]);
@@ -171,6 +174,7 @@ const StockTransferPage = () => {
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [stockLoading, setStockLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [previewTransfer, setPreviewTransfer] = useState<StockTransfer | null>(null);
 
@@ -201,6 +205,16 @@ const StockTransferPage = () => {
       setErrorMsg('Failed to load data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (refreshing) return;
+    try {
+      setRefreshing(true);
+      await loadData();
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -1189,7 +1203,7 @@ const StockTransferPage = () => {
   };
 
   const handleSaveTransfer = async () => {
-    if (!currentTransfer) return;
+    if (!currentTransfer || savingTransfer) return;
     
     if (!currentTransfer.transferNumber || !currentTransfer.fromBranch || !currentTransfer.toBranch || !currentTransfer.reason) {
       setErrorMsg('Please fill all required fields');
@@ -1206,6 +1220,7 @@ const StockTransferPage = () => {
     }
     
     try {
+      setSavingTransfer(true);
       if (currentTransfer.id) {
         const updateData: any = {
           ...currentTransfer,
@@ -1266,6 +1281,8 @@ const StockTransferPage = () => {
     } catch (error) {
       console.error('Error saving stock transfer:', error);
       setErrorMsg('Failed to save stock transfer');
+    } finally {
+      setSavingTransfer(false);
     }
   };
 
@@ -1478,15 +1495,18 @@ const StockTransferPage = () => {
             )}
           </Box>
           
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleAddTransfer}
-            size="large"
-            sx={{ minWidth: 180 }}
-          >
-            New Transfer
-          </Button>
+          <Box display="flex" gap={1.5} flexWrap="wrap">
+            <RefreshDataButton onClick={handleRefresh} loading={refreshing} />
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={handleAddTransfer}
+              size="large"
+              sx={{ minWidth: 180 }}
+            >
+              New Transfer
+            </Button>
+          </Box>
         </Box>
       </Paper>
       
@@ -2065,17 +2085,19 @@ const StockTransferPage = () => {
         </DialogContent>
         
         <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
-          <Button onClick={handleCloseDialog} startIcon={<CancelIcon />}>
+          <Button onClick={handleCloseDialog} startIcon={<CancelIcon />} disabled={savingTransfer}>
             Cancel
           </Button>
-          <Button 
+          <AsyncActionButton 
             onClick={handleSaveTransfer} 
             variant="contained" 
             startIcon={<CheckCircleIcon />}
             size="large"
+            loading={savingTransfer}
+            loadingText={currentTransfer?.id ? 'Updating Transfer...' : 'Saving Transfer...'}
           >
             {currentTransfer?.id ? 'Update' : 'Create'} Transfer
-          </Button>
+          </AsyncActionButton>
         </DialogActions>
       </Dialog>
       

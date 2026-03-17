@@ -16,6 +16,7 @@ import {
   MenuItem,
   Chip,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -68,11 +69,12 @@ interface Salary {
 interface SalaryFormProps {
   staff: Staff;
   initialData?: Salary;
-  onSave: (data: Salary) => void;
+  onSave: (data: Salary) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
-export default function SalaryForm({ staff, initialData, onSave, onCancel }: SalaryFormProps) {
+export default function SalaryForm({ staff, initialData, onSave, onCancel, isSaving = false }: SalaryFormProps) {
   // Get current month in YYYY-MM format
   const getCurrentMonth = () => {
     return format(new Date(), 'yyyy-MM');
@@ -466,18 +468,21 @@ export default function SalaryForm({ staff, initialData, onSave, onCancel }: Sal
           variant="outlined"
           onClick={onCancel}
           sx={{ borderRadius: 1.5, px: 3 }}
+          disabled={isSaving}
         >
           Cancel
         </Button>
 
-        <Button
+        <AsyncActionButton
           variant="contained"
           color="primary"
           type="submit"
           sx={{ borderRadius: 1.5, px: 4 }}
+          loading={isSaving}
+          loadingText={initialData?.id ? 'Updating Salary...' : 'Saving Salary...'}
         >
           {initialData?.id ? 'Update Salary' : 'Save Salary'}
-        </Button>
+        </AsyncActionButton>
       </Box>
     </Box>
   );

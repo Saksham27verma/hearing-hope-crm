@@ -19,6 +19,7 @@ import {
   Stack,
   Chip,
 } from '@mui/material';
+import AsyncActionButton from '@/components/common/AsyncActionButton';
 import Grid from '@mui/material/Grid';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -81,11 +82,12 @@ interface Staff {
 
 interface StaffFormProps {
   initialData?: Staff;
-  onSave: (data: Staff) => void;
+  onSave: (data: Staff) => Promise<void> | void;
   onCancel: () => void;
+  isSaving?: boolean;
 }
 
-export default function StaffForm({ initialData, onSave, onCancel }: StaffFormProps) {
+export default function StaffForm({ initialData, onSave, onCancel, isSaving = false }: StaffFormProps) {
   // Initialize form state with initial data or default values
   const [formData, setFormData] = useState<Staff>({
     name: initialData?.name || '',
@@ -676,19 +678,22 @@ export default function StaffForm({ initialData, onSave, onCancel }: StaffFormPr
           variant="outlined"
           onClick={onCancel}
           sx={{ borderRadius: 1.5, px: 3 }}
+          disabled={isSaving}
         >
           Cancel
         </Button>
 
         <Box>
-          <Button
+          <AsyncActionButton
             variant="contained"
             color="primary"
             type="submit"
             sx={{ borderRadius: 1.5, px: 4 }}
+            loading={isSaving}
+            loadingText={initialData?.id ? 'Updating Staff...' : 'Saving Staff...'}
           >
             {initialData?.id ? 'Update Staff' : 'Add Staff'}
-          </Button>
+          </AsyncActionButton>
         </Box>
       </Box>
     </Box>
