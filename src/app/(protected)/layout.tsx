@@ -28,6 +28,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [searchOpen, setSearchOpen] = useState(false);
+  const collapseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [hopeAiOpen, setHopeAiOpen] = useState(false);
   const [profileMenuAnchor, setProfileMenuAnchor] = useState<null | HTMLElement>(null);
   const [isRedirecting, setIsRedirecting] = useState(false);
@@ -302,6 +303,33 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }));
   };
 
+  // Auto-collapse/expand sidebar on hover (desktop only)
+  const handleSidebarMouseEnter = () => {
+    if (collapseTimeoutRef.current) {
+      clearTimeout(collapseTimeoutRef.current);
+      collapseTimeoutRef.current = null;
+    }
+    setDrawerOpen(true);
+  };
+
+  const handleSidebarMouseLeave = () => {
+    if (collapseTimeoutRef.current) {
+      clearTimeout(collapseTimeoutRef.current);
+    }
+    collapseTimeoutRef.current = setTimeout(() => {
+      setDrawerOpen(false);
+      collapseTimeoutRef.current = null;
+    }, 300);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (collapseTimeoutRef.current) {
+        clearTimeout(collapseTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Handle profile menu
   const handleProfileClick = (event: React.MouseEvent<HTMLElement>) => {
     setProfileMenuAnchor(profileMenuAnchor ? null : event.currentTarget);
@@ -459,9 +487,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   return (
     <div style={styles.container}>
-      {/* Sidebar */}
+      {/* Sidebar - auto-collapses when cursor leaves, expands when cursor enters */}
       {!shouldHideSidebar && (
-        <div style={styles.sidebar}>
+        <div
+          style={styles.sidebar}
+          onMouseEnter={handleSidebarMouseEnter}
+          onMouseLeave={handleSidebarMouseLeave}
+        >
           <div style={styles.sidebarHeader}>
             <div style={styles.logo}>🎧</div>
             <h2 style={styles.sidebarTitle}>Hope CRM</h2>
