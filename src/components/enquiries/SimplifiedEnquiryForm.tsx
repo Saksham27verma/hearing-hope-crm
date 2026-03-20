@@ -5,6 +5,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
+import { ENQUIRY_REFERENCE_OPTIONS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
 import PureToneAudiogram from './PureToneAudiogram';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
@@ -63,33 +64,6 @@ interface Product {
   createdAt: any;
   updatedAt: any;
 }
-
-// Static options
-const referenceOptions = [
-  'Camp',
-  'CGHS/DGEHS/ Any Govt. deptt',
-  'converted',
-  'Dealer',
-  'Dr Deepika Ref.',
-  'Dr Yogesh Kansal Ref.',
-  'existing',
-  'Gautam dhamija',
-  'GN RESOUND ENQUIRY',
-  'Google Adwords',
-  'Hear.com',
-  'home service',
-  'INDIAMART',
-  'just dial',
-  'Medical Store Reference',
-  'must and more',
-  'Nath brother ( chemist )',
-  'Online',
-  'Other Doctor Referenes',
-  'reference existing patient',
-  'signia',
-  'Visit Health',
-  'walking'
-];
 
 // Job roles from the staff module
 const JOB_ROLES = [
@@ -1776,7 +1750,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               }
                             }}
                           >
-                            {referenceOptions.map(option => (
+                            {ENQUIRY_REFERENCE_OPTIONS.map(option => (
                               <MenuItem key={option} value={option}>
                                 <Checkbox
                                   checked={Array.isArray(field.value) && field.value.includes(option)}

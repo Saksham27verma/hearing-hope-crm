@@ -122,25 +122,27 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
         const enquiriesQuery = query(collection(db, 'enquiries'), limit(50));
         const enquiriesSnapshot = await getDocs(enquiriesQuery);
         
+        const asLower = (v: unknown) => String(v ?? '').toLowerCase();
+
         enquiriesSnapshot.docs.forEach(doc => {
           const data = doc.data();
-          const name = data.name || '';
-          const phone = data.phone || '';
-          const email = data.email || '';
-          const reference = data.reference || '';
-          const address = data.address || '';
-          const assignedTo = data.assignedTo || '';
-          const telecaller = data.telecaller || '';
+          const name = data.name ?? '';
+          const phone = data.phone ?? '';
+          const email = data.email ?? '';
+          const reference = data.reference ?? '';
+          const address = data.address ?? '';
+          const assignedTo = data.assignedTo ?? '';
+          const telecaller = data.telecaller ?? '';
           const status = data.visitStatus || data.status || '';
           
           if (
-            name.toLowerCase().includes(searchTermLower) ||
-            phone.includes(searchTermLower) ||
-            email.toLowerCase().includes(searchTermLower) ||
-            reference.toLowerCase().includes(searchTermLower) ||
-            address.toLowerCase().includes(searchTermLower) ||
-            assignedTo.toLowerCase().includes(searchTermLower) ||
-            telecaller.toLowerCase().includes(searchTermLower)
+            asLower(name).includes(searchTermLower) ||
+            asLower(phone).includes(searchTermLower) ||
+            asLower(email).includes(searchTermLower) ||
+            asLower(reference).includes(searchTermLower) ||
+            asLower(address).includes(searchTermLower) ||
+            asLower(assignedTo).includes(searchTermLower) ||
+            asLower(telecaller).includes(searchTermLower)
           ) {
             searchResults.push({
               id: doc.id,

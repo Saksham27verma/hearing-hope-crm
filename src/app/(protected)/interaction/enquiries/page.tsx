@@ -103,6 +103,9 @@ import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc,
 import { db } from '@/firebase/config';
 import { v4 as uuidv4 } from 'uuid';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
+import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
+import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
+import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
 import { ENQUIRY_STATUS_OPTIONS, getEnquiryStatusMeta } from '@/utils/enquiryStatus';
 
@@ -462,12 +465,8 @@ export default function EnquiriesPage() {
     logicalOperator?: 'AND' | 'OR';
   }>>([]);
 
-  const [filterBuilder, setFilterBuilder] = useState({
-    field: '',
-    operator: '',
-    value: '',
-    dataType: 'text' as 'text' | 'number' | 'date' | 'boolean' | 'array'
-  });
+  /** How to combine advanced filter rules (legacy table filters stay AND-combined with this set). */
+  const [advancedFiltersLogic, setAdvancedFiltersLogic] = useState<'AND' | 'OR'>('AND');
 
   // Legacy filters for backward compatibility
   const [filters, setFilters] = useState({
@@ -531,115 +530,55 @@ export default function EnquiriesPage() {
   const [currentPreset, setCurrentPreset] = useState<string>('');
   const [presetName, setPresetName] = useState<string>('');
   const [showPresetDialog, setShowPresetDialog] = useState<boolean>(false);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState<boolean>(false);
-  const [showFilterBuilder, setShowFilterBuilder] = useState<boolean>(false);
+
+  /** Active staff names from Firestore — same pool the enquiry form uses for dropdowns */
+  const [staffNameOptions, setStaffNameOptions] = useState<string[]>([]);
 
   // Pagination state
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
 
-  // Available fields for filtering with their data types
-  const filterableFields = [
-    { field: 'name', label: 'Name', dataType: 'text' as const },
-    { field: 'phone', label: 'Phone', dataType: 'text' as const },
-    { field: 'email', label: 'Email', dataType: 'text' as const },
-    { field: 'reference', label: 'Reference', dataType: 'text' as const },
-    { field: 'status', label: 'Journey Status', dataType: 'text' as const },
-    { field: 'enquiryType', label: 'Enquiry Type', dataType: 'text' as const },
-    { field: 'assignedTo', label: 'Assigned To', dataType: 'text' as const },
-    { field: 'telecaller', label: 'Telecaller', dataType: 'text' as const },
-    { field: 'address', label: 'Address', dataType: 'text' as const },
-    { field: 'subject', label: 'Subject', dataType: 'text' as const },
-    { field: 'notes', label: 'Notes', dataType: 'text' as const },
-    { field: 'companyName', label: 'Company Name', dataType: 'text' as const },
-    { field: 'purposeOfVisit', label: 'Purpose of Visit', dataType: 'text' as const },
-    { field: 'contactPerson', label: 'Contact Person', dataType: 'text' as const },
-    { field: 'createdAt', label: 'Created Date', dataType: 'date' as const },
-    { field: 'visitDate', label: 'Visit Date', dataType: 'date' as const },
-    { field: 'testDetails.testPrice', label: 'Test Price', dataType: 'number' as const },
-    { field: 'testDetails.rightEarLoss', label: 'Right Ear Loss', dataType: 'number' as const },
-    { field: 'testDetails.leftEarLoss', label: 'Left Ear Loss', dataType: 'number' as const },
-    { field: 'visits.length', label: 'Number of Visits', dataType: 'number' as const },
-    { field: 'followUps.length', label: 'Number of Follow-ups', dataType: 'number' as const },
-    { field: 'activeFormTypes', label: 'Active Form Types', dataType: 'array' as const },
-    { field: 'visitorType', label: 'Visitor Type', dataType: 'text' as const },
-    { field: 'visitType', label: 'Visit Type', dataType: 'text' as const },
-    { field: 'visitStatus', label: 'Visit Status', dataType: 'text' as const },
-    { field: 'visitingCenter', label: 'Visiting Center', dataType: 'text' as const },
-  ];
-
   // Dynamic dropdown options (use real data instead of hardcoded lists)
   const uniq = (values: Array<string | undefined | null>) =>
     Array.from(new Set(values.map(v => (v || '').toString().trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 
-  const assignedToOptions = useMemo(() => uniq(enquiries.map(e => e.assignedTo)), [enquiries]);
-  const telecallerOptions = useMemo(() => uniq(enquiries.map(e => e.telecaller)), [enquiries]);
+  const assignedToOptions = useMemo(
+    () => uniq([...staffNameOptions, ...enquiries.map(e => e.assignedTo)]),
+    [enquiries, staffNameOptions]
+  );
+  const telecallerOptions = useMemo(
+    () => uniq([...staffNameOptions, ...enquiries.map(e => e.telecaller)]),
+    [enquiries, staffNameOptions]
+  );
   const visitorTypeOptions = useMemo(() => uniq(enquiries.map(e => e.visitorType)), [enquiries]);
-  const visitTypeOptions = useMemo(() => uniq(enquiries.map(e => e.visitType)), [enquiries]);
-  const visitStatusOptions = useMemo(() => uniq(enquiries.map(e => e.visitStatus)), [enquiries]);
+  /** Root field only (center/home live on visit rows — use “Visit location” in Add filter) */
+  const visitTypeRootOptions = useMemo(() => uniq(enquiries.map(e => (e as any).visitType)), [enquiries]);
+  const visitStatusRootOptions = useMemo(() => uniq(enquiries.map(e => (e as any).visitStatus)), [enquiries]);
   const enquiryTypeOptions = useMemo(() => uniq(enquiries.map(e => e.enquiryType)), [enquiries]);
   const activeFormTypeOptions = useMemo(() => {
     const fromRoot = enquiries.flatMap(e => (Array.isArray((e as any).activeFormTypes) ? (e as any).activeFormTypes : []));
-    const fromVisits = enquiries.flatMap(e => (Array.isArray(e.visits) ? e.visits : []).flatMap(v => (Array.isArray((v as any).activeFormTypes) ? (v as any).activeFormTypes : [])));
-    return uniq([...fromRoot, ...fromVisits] as any);
+    const fromVisits = enquiries.flatMap(e =>
+      (Array.isArray(e.visits) ? e.visits : []).flatMap(v =>
+        Array.isArray((v as any).activeFormTypes) ? (v as any).activeFormTypes : []
+      )
+    );
+    const fromMedical = enquiries.flatMap(e =>
+      (Array.isArray(e.visitSchedules) ? e.visitSchedules : []).flatMap((s: any) =>
+        Array.isArray(s?.medicalServices) ? s.medicalServices : []
+      )
+    );
+    return uniq([...MEDICAL_SERVICE_SLUGS, ...fromRoot, ...fromVisits, ...fromMedical] as string[]);
   }, [enquiries]);
 
-  // Operators based on data type
-  const operatorsByType = {
-    text: [
-      { value: 'equals', label: 'Equals' },
-      { value: 'not_equals', label: 'Not Equals' },
-      { value: 'contains', label: 'Contains' },
-      { value: 'not_contains', label: 'Does Not Contain' },
-      { value: 'starts_with', label: 'Starts With' },
-      { value: 'ends_with', label: 'Ends With' },
-      { value: 'regex', label: 'Regex Match' },
-      { value: 'is_empty', label: 'Is Empty' },
-      { value: 'is_not_empty', label: 'Is Not Empty' },
-    ],
-    number: [
-      { value: 'equals', label: 'Equals' },
-      { value: 'not_equals', label: 'Not Equals' },
-      { value: 'greater_than', label: 'Greater Than' },
-      { value: 'greater_than_equal', label: 'Greater Than or Equal' },
-      { value: 'less_than', label: 'Less Than' },
-      { value: 'less_than_equal', label: 'Less Than or Equal' },
-      { value: 'between', label: 'Between' },
-      { value: 'not_between', label: 'Not Between' },
-      { value: 'is_null', label: 'Is Null' },
-      { value: 'is_not_null', label: 'Is Not Null' },
-    ],
-    date: [
-      { value: 'equals', label: 'On Date' },
-      { value: 'not_equals', label: 'Not On Date' },
-      { value: 'before', label: 'Before' },
-      { value: 'after', label: 'After' },
-      { value: 'between', label: 'Between' },
-      { value: 'last_days', label: 'Last N Days' },
-      { value: 'next_days', label: 'Next N Days' },
-      { value: 'this_month', label: 'This Month' },
-      { value: 'last_month', label: 'Last Month' },
-      { value: 'this_year', label: 'This Year' },
-      { value: 'is_null', label: 'Is Null' },
-      { value: 'is_not_null', label: 'Is Not Null' },
-    ],
-    boolean: [
-      { value: 'is_true', label: 'Is True' },
-      { value: 'is_false', label: 'Is False' },
-      { value: 'is_null', label: 'Is Null' },
-    ],
-    array: [
-      { value: 'contains', label: 'Contains' },
-      { value: 'not_contains', label: 'Does Not Contain' },
-      { value: 'contains_all', label: 'Contains All' },
-      { value: 'contains_any', label: 'Contains Any' },
-      { value: 'is_empty', label: 'Is Empty' },
-      { value: 'is_not_empty', label: 'Is Not Empty' },
-      { value: 'length_equals', label: 'Length Equals' },
-      { value: 'length_greater', label: 'Length Greater Than' },
-      { value: 'length_less', label: 'Length Less Than' },
-    ]
-  };
+  const referenceOptions = useMemo(() => {
+    const out: string[] = [];
+    enquiries.forEach(e => {
+      const r = (e as any).reference;
+      if (Array.isArray(r)) r.forEach((x: any) => out.push(String(x)));
+      else if (r != null && r !== '') out.push(String(r));
+    });
+    return uniq(out);
+  }, [enquiries]);
   const [activeVisitTab, setActiveVisitTab] = useState<number>(0);
   const [activeFollowUpTab, setActiveFollowUpTab] = useState<number>(0);
   
@@ -897,6 +836,7 @@ export default function EnquiriesPage() {
   useEffect(() => {
     fetchEnquiries();
     fetchCenters();
+    fetchStaffNamesForFilters();
   }, []);
 
   // Column resize handlers
@@ -952,17 +892,34 @@ export default function EnquiriesPage() {
     }
   };
 
+  const fetchStaffNamesForFilters = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'staff'));
+      const names = snap.docs
+        .map(d => {
+          const data = d.data() as { name?: string; status?: string };
+          if (data.status === 'inactive') return null;
+          const n = (data.name || '').toString().trim();
+          return n || null;
+        })
+        .filter(Boolean) as string[];
+      setStaffNameOptions(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b)));
+    } catch (error) {
+      console.error('Error fetching staff for filters:', error);
+    }
+  };
+
   // Helper function to get center name from center ID
   const getCenterName = (centerId: string | undefined): string => {
     if (!centerId) return '-';
-    const center = centers.find(c => c.id === centerId);
+    const center = centers.find(c => String(c.id) === String(centerId));
     return center?.name || '-';
   };
 
   useEffect(() => {
     applyFilters();
     setPage(0); // Reset to first page when filters change
-  }, [enquiries, filters, advancedFilters]);
+  }, [enquiries, filters, advancedFilters, advancedFiltersLogic, searchTerm, statusFilter, typeFilter, userProfile?.role]);
 
 
 
@@ -1047,32 +1004,54 @@ export default function EnquiriesPage() {
     return 'No date';
   };
 
-  // Also fix the applyFilters function to correctly handle createdAt
-  // Helper function to get nested property value
-  const getNestedValue = (obj: any, path: string): any => {
-    return path.split('.').reduce((current, key) => {
-      if (current && typeof current === 'object') {
-        return current[key];
-      }
-      return undefined;
-    }, obj);
-  };
-
   // Helper function to apply a single filter condition
   const applyFilterCondition = (enquiry: any, filter: any): boolean => {
-    const fieldValue = getNestedValue(enquiry, filter.field);
     const { operator, value, dataType } = filter;
 
-    // Handle null/undefined field values
+    let fieldValue: any;
+    if (filter.field === 'paymentForAny') {
+      const arr = Array.isArray(enquiry.payments) ? enquiry.payments : [];
+      fieldValue = arr.map((p: any) => p?.paymentFor).filter(Boolean);
+    } else if (filter.field === 'paymentModeAny') {
+      const arr = Array.isArray(enquiry.payments) ? enquiry.payments : [];
+      fieldValue = arr.map((p: any) => p?.paymentMode).filter(Boolean);
+    } else {
+      fieldValue = getEnquiryFieldRaw(enquiry, filter.field);
+    }
+
     if (fieldValue === null || fieldValue === undefined) {
       return ['is_null', 'is_empty'].includes(operator);
     }
 
     switch (dataType) {
       case 'text':
+        if (Array.isArray(fieldValue)) {
+          const hay = fieldValue.map((x: any) => String(x).toLowerCase());
+          const searchValue = String(value).toLowerCase();
+          const parts = String(value).split('|||').map(s => s.trim().toLowerCase()).filter(Boolean);
+          switch (operator) {
+            case 'in_list':
+              return parts.length === 0 ? true : parts.some(p => hay.includes(p));
+            case 'contains':
+              return hay.some(h => h.includes(searchValue));
+            case 'not_contains':
+              return !hay.some(h => h.includes(searchValue));
+            case 'equals':
+              return hay.includes(searchValue);
+            case 'not_equals':
+              return !hay.includes(searchValue);
+            case 'is_empty':
+              return hay.length === 0 || hay.every(h => !h);
+            case 'is_not_empty':
+              return hay.some(h => Boolean(h));
+            default:
+              return false;
+          }
+        }
+
         const textValue = String(fieldValue).toLowerCase();
         const searchValue = String(value).toLowerCase();
-        
+
         switch (operator) {
           case 'equals': return textValue === searchValue;
           case 'not_equals': return textValue !== searchValue;
@@ -1080,7 +1059,12 @@ export default function EnquiriesPage() {
           case 'not_contains': return !textValue.includes(searchValue);
           case 'starts_with': return textValue.startsWith(searchValue);
           case 'ends_with': return textValue.endsWith(searchValue);
-          case 'regex': 
+          case 'in_list': {
+            const parts = String(value).split('|||').map(s => s.trim().toLowerCase()).filter(Boolean);
+            if (parts.length === 0) return true;
+            return parts.some(p => textValue === p);
+          }
+          case 'regex':
             try {
               return new RegExp(value, 'i').test(textValue);
             } catch (e) {
@@ -1094,9 +1078,9 @@ export default function EnquiriesPage() {
       case 'number':
         const numValue = Number(fieldValue);
         const searchNum = Number(value);
-        
+
         if (isNaN(numValue)) return operator === 'is_null';
-        
+
         switch (operator) {
           case 'equals': return numValue === searchNum;
           case 'not_equals': return numValue !== searchNum;
@@ -1104,29 +1088,30 @@ export default function EnquiriesPage() {
           case 'greater_than_equal': return numValue >= searchNum;
           case 'less_than': return numValue < searchNum;
           case 'less_than_equal': return numValue <= searchNum;
-          case 'between': 
+          case 'between':
             const [min, max] = String(value).split(',').map(Number);
             return numValue >= min && numValue <= max;
           case 'not_between':
             const [minNot, maxNot] = String(value).split(',').map(Number);
             return numValue < minNot || numValue > maxNot;
-          case 'is_null': return false; // Already handled above
+          case 'is_null': return false;
           case 'is_not_null': return true;
           default: return false;
         }
 
       case 'date':
         let dateValue: Date;
-        
-        // Handle different date formats
-        if (fieldValue._seconds) {
+
+        if (fieldValue && typeof fieldValue.toDate === 'function') {
+          dateValue = fieldValue.toDate();
+        } else if (fieldValue._seconds) {
           dateValue = new Date(fieldValue._seconds * 1000);
         } else if (fieldValue.seconds) {
           dateValue = new Date(fieldValue.seconds * 1000);
         } else {
           dateValue = new Date(fieldValue);
         }
-        
+
         if (isNaN(dateValue.getTime())) return operator === 'is_null';
         
         const searchDate = new Date(value);
@@ -1222,18 +1207,30 @@ export default function EnquiriesPage() {
       if (toDay !== null && day > toDay) return false;
       return true;
     };
+
+    const normRef = (r: any) => {
+      if (r == null || r === '') return '';
+      if (Array.isArray(r)) return r.map(x => norm(x)).filter(Boolean).join(' ');
+      return norm(r);
+    };
     
     // Apply legacy basic filters first for backward compatibility
+    // Use asText/norm only: Firestore may store phone/name/etc. as numbers; optional chaining
+    // still calls .toLowerCase() on non-nullish non-strings and throws.
     if (filters.searchTerm || searchTerm) {
-      const term = filters.searchTerm || searchTerm;
-      result = result.filter(enquiry => 
-        (enquiry.name?.toLowerCase() || '').includes(term.toLowerCase()) ||
-        (enquiry.phone || '').includes(term) ||
-        (enquiry.email?.toLowerCase() || '').includes(term.toLowerCase()) ||
-        (enquiry.subject?.toLowerCase() || '').includes(term.toLowerCase()) ||
-        (enquiry.reference?.toLowerCase() || '').includes(term.toLowerCase()) ||
-        (enquiry.notes?.toLowerCase() || '').includes(term.toLowerCase())
-      );
+      const term = norm(filters.searchTerm || searchTerm);
+      if (term.length > 0) {
+        result = result.filter((enquiry: any) =>
+          norm(enquiry.name).includes(term) ||
+          norm(enquiry.phone).includes(term) ||
+          norm(enquiry.email).includes(term) ||
+          norm(enquiry.subject).includes(term) ||
+          normRef(enquiry.reference).includes(term) ||
+          norm(enquiry.notes).includes(term) ||
+          norm(enquiry.message).includes(term) ||
+          norm(enquiry.address).includes(term)
+        );
+      }
     }
     
     // Apply derived journey status filter
@@ -1274,17 +1271,36 @@ export default function EnquiriesPage() {
 
     // Center (support either `center` or `visitingCenter`)
     if (filters.visitingCenter !== 'all') {
-      result = result.filter(e => (((e as any).center || (e as any).visitingCenter || '') === filters.visitingCenter));
+      const want = String(filters.visitingCenter);
+      result = result.filter(
+        e => String((e as any).center || (e as any).visitingCenter || '') === want
+      );
     }
 
     if (filters.visitorType !== 'all') {
       result = result.filter(e => norm((e as any).visitorType) === norm(filters.visitorType));
     }
     if (filters.visitType !== 'all') {
-      result = result.filter(e => norm((e as any).visitType) === norm(filters.visitType));
+      const want = norm(filters.visitType);
+      result = result.filter(e => {
+        if (norm((e as any).visitType) === want) return true;
+        const visitsArr: any[] = Array.isArray((e as any).visits) ? (e as any).visits : [];
+        const schedulesArr: any[] = Array.isArray((e as any).visitSchedules) ? (e as any).visitSchedules : [];
+        return [...visitsArr, ...schedulesArr].some((v: any) => norm(v?.visitType) === want);
+      });
     }
     if (filters.visitStatus !== 'all') {
-      result = result.filter(e => norm(((e as any).visitStatus || 'enquiry')) === norm(filters.visitStatus));
+      const want = norm(filters.visitStatus);
+      result = result.filter(e => {
+        if (norm(((e as any).visitStatus || 'enquiry')) === want) return true;
+        const visitsArr: any[] = Array.isArray((e as any).visits) ? (e as any).visits : [];
+        return visitsArr.some(
+          (v: any) =>
+            norm(v?.hearingAidStatus) === want ||
+            norm(v?.trialResult) === want ||
+            norm(v?.visitStatus) === want
+        );
+      });
     }
 
     if (filters.hasFollowUps !== 'all') {
@@ -1314,7 +1330,7 @@ export default function EnquiriesPage() {
         const schedulesArr: any[] = Array.isArray((e as any).visitSchedules) ? (e as any).visitSchedules : [];
         const dates: Date[] = [];
         visitsArr.forEach(v => {
-          const d = parseDateOnly(v?.date);
+          const d = parseDateOnly(v?.visitDate || v?.date);
           if (d) dates.push(d);
         });
         schedulesArr.forEach(v => {
@@ -1336,7 +1352,11 @@ export default function EnquiriesPage() {
     }
     if (filters.reference) {
       const t = norm(filters.reference);
-      result = result.filter(e => norm((e as any).reference).includes(t));
+      result = result.filter(e => {
+        const r = (e as any).reference;
+        if (Array.isArray(r)) return r.some((x: any) => norm(x).includes(t));
+        return normRef(r).includes(t);
+      });
     }
 
     if (Array.isArray(filters.activeFormTypes) && filters.activeFormTypes.length > 0) {
@@ -1351,24 +1371,11 @@ export default function EnquiriesPage() {
       });
     }
 
-    // Apply advanced filters with logical operators
+    // Advanced filter rules (global AND = all match, OR = any match)
     if (advancedFilters.length > 0) {
       result = result.filter(enquiry => {
-        // Group filters by logical operator
-        const andFilters = advancedFilters.filter(f => !f.logicalOperator || f.logicalOperator === 'AND');
-        const orFilters = advancedFilters.filter(f => f.logicalOperator === 'OR');
-        
-        // All AND conditions must be true
-        const andResult = andFilters.length === 0 || andFilters.every(filter => 
-          applyFilterCondition(enquiry, filter)
-        );
-        
-        // At least one OR condition must be true (if any OR filters exist)
-        const orResult = orFilters.length === 0 || orFilters.some(filter => 
-          applyFilterCondition(enquiry, filter)
-        );
-        
-        return andResult && orResult;
+        const results = advancedFilters.map(f => applyFilterCondition(enquiry, f));
+        return advancedFiltersLogic === 'OR' ? results.some(Boolean) : results.every(Boolean);
       });
     }
     
@@ -2092,12 +2099,7 @@ export default function EnquiriesPage() {
     setTypeFilter('all');
     setDateFilter('');
     setAdvancedFilters([]);
-    setFilterBuilder({
-      field: '',
-      operator: '',
-      value: '',
-      dataType: 'text'
-    });
+    setAdvancedFiltersLogic('AND');
     setFilters({
       searchTerm: '',
       status: 'all',
@@ -2136,7 +2138,8 @@ export default function EnquiriesPage() {
       id: Date.now().toString(),
       name: presetName,
       filters: { ...filters },
-      advancedFilters: [...advancedFilters]
+      advancedFilters: [...advancedFilters],
+      advancedFiltersLogic,
     };
     
     setFilterPresets(prev => [...prev, newPreset]);
@@ -2154,6 +2157,7 @@ export default function EnquiriesPage() {
     if (preset) {
       setFilters(preset.filters);
       setAdvancedFilters(preset.advancedFilters || []);
+      setAdvancedFiltersLogic((preset as any).advancedFiltersLogic === 'OR' ? 'OR' : 'AND');
       setCurrentPreset(presetId);
       
       // Also update legacy filter states for backward compatibility
@@ -2183,158 +2187,6 @@ export default function EnquiriesPage() {
     if (key === 'status') setStatusFilter(value);
     if (key === 'enquiryType') setTypeFilter(value);
     if (key === 'dateFrom') setDateFilter(value);
-  };
-
-  // Advanced filter management functions
-  const addAdvancedFilter = () => {
-    if (!filterBuilder.field || !filterBuilder.operator) return;
-    
-    const newFilter = {
-      id: Date.now().toString(),
-      field: filterBuilder.field,
-      operator: filterBuilder.operator,
-      value: filterBuilder.value,
-      dataType: filterBuilder.dataType,
-      logicalOperator: 'AND' as 'AND' | 'OR'
-    };
-    
-    setAdvancedFilters(prev => [...prev, newFilter]);
-    setFilterBuilder({
-      field: '',
-      operator: '',
-      value: '',
-      dataType: 'text'
-    });
-  };
-
-  const updateAdvancedFilter = (id: string, updates: Partial<typeof advancedFilters[0]>) => {
-    setAdvancedFilters(prev => prev.map(filter => 
-      filter.id === id ? { ...filter, ...updates } : filter
-    ));
-  };
-
-  const removeAdvancedFilter = (id: string) => {
-    setAdvancedFilters(prev => prev.filter(filter => filter.id !== id));
-  };
-
-  const clearAllAdvancedFilters = () => {
-    setAdvancedFilters([]);
-    clearFilters();
-  };
-
-  // Update field selection to set data type
-  const handleFieldChange = (field: string) => {
-    const fieldConfig = filterableFields.find(f => f.field === field);
-    setFilterBuilder(prev => ({
-      ...prev,
-      field,
-      dataType: fieldConfig?.dataType || 'text',
-      operator: '',
-      value: ''
-    }));
-  };
-
-  // Get appropriate operators for current field
-  const getAvailableOperators = () => {
-    return operatorsByType[filterBuilder.dataType] || [];
-  };
-
-  // Render value input based on operator and data type
-  const renderValueInput = () => {
-    const { operator, dataType, value } = filterBuilder;
-    
-    // Some operators don't need values
-    if (['is_null', 'is_not_null', 'is_empty', 'is_not_empty', 'this_month', 'last_month', 'this_year'].includes(operator)) {
-      return null;
-    }
-
-    switch (dataType) {
-      case 'number':
-        if (operator === 'between' || operator === 'not_between') {
-          return (
-            <TextField
-              size="small"
-              placeholder="min,max (e.g., 10,100)"
-              value={value}
-              onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-              helperText="Enter two numbers separated by comma"
-            />
-          );
-        }
-        return (
-          <TextField
-            size="small"
-            type="number"
-            value={value}
-            onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-          />
-        );
-
-      case 'date':
-        if (operator === 'between') {
-          return (
-            <TextField
-              size="small"
-              placeholder="start,end (YYYY-MM-DD,YYYY-MM-DD)"
-              value={value}
-              onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-              helperText="Enter two dates separated by comma"
-            />
-          );
-        }
-        if (operator === 'last_days' || operator === 'next_days') {
-          return (
-            <TextField
-              size="small"
-              type="number"
-              placeholder="Number of days"
-              value={value}
-              onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-            />
-          );
-        }
-        return (
-          <TextField
-            size="small"
-            type="date"
-            value={value}
-            onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-          />
-        );
-
-      case 'array':
-        if (operator.includes('length')) {
-          return (
-            <TextField
-              size="small"
-              type="number"
-              placeholder="Array length"
-              value={value}
-              onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-            />
-          );
-        }
-        return (
-          <TextField
-            size="small"
-            placeholder="Values (comma separated)"
-            value={value}
-            onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-            helperText="Enter values separated by commas"
-          />
-        );
-
-      default: // text
-        return (
-          <TextField
-            size="small"
-            placeholder="Enter value"
-            value={value}
-            onChange={(e) => setFilterBuilder(prev => ({ ...prev, value: e.target.value }))}
-            helperText={operator === 'regex' ? 'Enter regular expression' : ''}
-          />
-        );
-    }
   };
 
   // Pagination handlers
@@ -2476,9 +2328,10 @@ export default function EnquiriesPage() {
   
   // Get initials from name for avatar
   const getInitials = (name: string | undefined): string => {
-    if (!name) return '?';
-    return name
-      .split(' ')
+    const s = String(name ?? '').trim();
+    if (!s) return '?';
+    return s
+      .split(/\s+/)
       .map(part => part.charAt(0))
       .join('')
       .toUpperCase()
@@ -3911,566 +3764,34 @@ export default function EnquiriesPage() {
 
 
 
-      {/* Advanced Search and Filter Controls */}
-      <Paper 
-        elevation={0}
-        sx={{ 
-          p: { xs: 2, sm: 2.5, md: 3 },
-          bgcolor: 'white',
-          border: '1px solid #e0e0e0',
-          borderRadius: 2,
-          maxHeight: '45vh',
-          overflow: 'auto',
-          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
-          '&::-webkit-scrollbar-track': { backgroundColor: '#f5f5f5', borderRadius: '4px' },
-          '&::-webkit-scrollbar-thumb': { backgroundColor: '#ff6b35', borderRadius: '4px', '&:hover': { backgroundColor: '#ff5722' } }
-        }}
-      >
-        {/* Filter Presets */}
-        <Box sx={{ mb: 2, display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>Filter Presets:</Typography>
-          <FormControl size="small" sx={{ minWidth: 150 }}>
-            <Select
-              value={currentPreset}
-              onChange={(e) => loadFilterPreset(e.target.value)}
-              displayEmpty
-            >
-              <MenuItem value="">Select Preset</MenuItem>
-              {filterPresets.map((preset) => (
-                <MenuItem key={preset.id} value={preset.id}>
-                  {preset.name}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() => setShowPresetDialog(true)}
-            startIcon={<AddIcon />}
-          >
-            Save Current
-          </Button>
-          {currentPreset && (
-            <Button
-              size="small"
-              variant="outlined"
-              color="error"
-              onClick={() => deleteFilterPreset(currentPreset)}
-              startIcon={<DeleteIcon />}
-            >
-              Delete
-            </Button>
-          )}
-        </Box>
-
-        {/* Advanced Filter Builder - More Compact */}
-        <Box sx={{ mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Typography variant="subtitle2" fontWeight="bold">Advanced Filter Builder</Typography>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={() => setShowFilterBuilder(!showFilterBuilder)}
-              startIcon={showFilterBuilder ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            >
-              {showFilterBuilder ? 'Hide' : 'Show'} Builder
-            </Button>
-          </Box>
-
-          <Collapse in={showFilterBuilder}>
-            <Box sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: 'background.paper', mb: 2 }}>
-              <Grid container spacing={1} alignItems="end" sx={{ mb: 2 }}>
-                <Grid item xs={12} sm={6} md={2.5}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Field</InputLabel>
-                    <Select
-                      value={filterBuilder.field}
-                      label="Field"
-                      onChange={(e) => handleFieldChange(e.target.value)}
-                    >
-                      {filterableFields.map((field) => (
-                        <MenuItem key={field.field} value={field.field}>
-                          {field.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                <Grid item xs={12} sm={6} md={2.5}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>Operator</InputLabel>
-                    <Select
-                      value={filterBuilder.operator}
-                      label="Operator"
-                      onChange={(e) => setFilterBuilder(prev => ({ ...prev, operator: e.target.value, value: '' }))}
-                      disabled={!filterBuilder.field}
-                    >
-                      {getAvailableOperators().map((op) => (
-                        <MenuItem key={op.value} value={op.value}>
-                          {op.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                <Grid item xs={12} sm={6} md={3}>
-                  {renderValueInput()}
-                </Grid>
-
-                <Grid item xs={12} sm={6} md={2}>
-                  <Button
-                    fullWidth
-                    variant="contained"
-                    onClick={addAdvancedFilter}
-                    disabled={!filterBuilder.field || !filterBuilder.operator}
-                    startIcon={<AddIcon />}
-                    size="small"
-                  >
-                    Add
-                  </Button>
-                </Grid>
-
-                <Grid item xs={12} sm={12} md={2}>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    onClick={clearAllAdvancedFilters}
-                    disabled={advancedFilters.length === 0}
-                    startIcon={<ClearIcon />}
-                    size="small"
-                  >
-                    Clear All
-                  </Button>
-                </Grid>
-              </Grid>
-            </Box>
-          </Collapse>
-
-          {/* Active Advanced Filters - Compact Display */}
-          {advancedFilters.length > 0 && (
-            <Box sx={{ mb: 2, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1, bgcolor: 'action.hover' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                <Typography variant="caption" fontWeight="bold">
-                  Active Filters ({advancedFilters.length}):
-                </Typography>
-              </Box>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                {advancedFilters.map((filter, index) => {
-                  const fieldLabel = filterableFields.find(f => f.field === filter.field)?.label || filter.field;
-                  const operatorLabel = operatorsByType[filter.dataType]?.find(op => op.value === filter.operator)?.label || filter.operator;
-                  
-                  return (
-                    <Box key={filter.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      {index > 0 && (
-                        <Chip 
-                          label={filter.logicalOperator || 'AND'} 
-                          size="small" 
-                          variant="outlined"
-                          onClick={() => updateAdvancedFilter(filter.id, { 
-                            logicalOperator: filter.logicalOperator === 'AND' ? 'OR' : 'AND' 
-                          })}
-                          sx={{ fontSize: '0.7rem', height: '20px' }}
-                        />
-                      )}
-                      
-                      <Chip
-                        label={`${fieldLabel}: ${operatorLabel} ${filter.value || ''}`}
-                        variant="outlined"
-                        onDelete={() => removeAdvancedFilter(filter.id)}
-                        size="small"
-                        sx={{ fontSize: '0.75rem', height: '24px' }}
-                      />
-                    </Box>
-                  );
-                })}
-              </Box>
-            </Box>
-          )}
-        </Box>
-
-        {/* Basic Filters Row */}
-        <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              fullWidth
-              size="small"
-              placeholder="Search by name, phone, email, reference..."
-              value={filters.searchTerm || searchTerm}
-              onChange={(e) => updateFilter('searchTerm', e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon />
-                  </InputAdornment>
-                ),
-                endAdornment: (filters.searchTerm || searchTerm) && (
-                  <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => updateFilter('searchTerm', '')}>
-                      <ClearIcon fontSize="small" />
-                    </IconButton>
-                  </InputAdornment>
-                )
-              }}
-            />
-          </Grid>
-          
-          <Grid item xs={12} sm={6} md={2}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Status</InputLabel>
-              <Select
-                value={filters.status || statusFilter}
-                label="Status"
-                onChange={(e) => updateFilter('status', e.target.value)}
-              >
-                <MenuItem value="all">All Statuses</MenuItem>
-                {ENQUIRY_STATUS_OPTIONS.map((option) => (
-                  <MenuItem key={option.value} value={option.value}>
-                    {option.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={2}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Type</InputLabel>
-              <Select
-                value={filters.enquiryType}
-                label="Type"
-                onChange={(e) => updateFilter('enquiryType', e.target.value)}
-              >
-                <MenuItem value="all">All Types</MenuItem>
-                <MenuItem value="general">General</MenuItem>
-                <MenuItem value="product">Product Inquiry</MenuItem>
-                <MenuItem value="service">Service Request</MenuItem>
-                <MenuItem value="complaint">Complaint</MenuItem>
-                <MenuItem value="appointment">Appointment</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          
-          <Grid item xs={12} sm={6} md={2}>
-            <TextField
-              type="date"
-              fullWidth
-              size="small"
-              label="Date From"
-              value={filters.dateFrom || dateFilter}
-              onChange={(e) => updateFilter('dateFrom', e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={2}>
-            <TextField
-              type="date"
-              fullWidth
-              size="small"
-              label="Date To"
-              value={filters.dateTo}
-              onChange={(e) => updateFilter('dateTo', e.target.value)}
-              InputLabelProps={{ shrink: true }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={1}>
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={showAdvancedFilters ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-              onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-              size="small"
-            >
-              {showAdvancedFilters ? 'Less' : 'More'}
-            </Button>
-          </Grid>
-        </Grid>
-
-        {/* Advanced Filters */}
-        <Collapse in={showAdvancedFilters}>
-          <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2, mb: 2 }}>
-            <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 'bold' }}>Advanced Filters</Typography>
-            
-            {/* Contact & Assignment Filters */}
-            <Grid container spacing={2} sx={{ mb: 2 }}>
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Has Email</InputLabel>
-                  <Select
-                    value={filters.hasEmail}
-                    label="Has Email"
-                    onChange={(e) => updateFilter('hasEmail', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="yes">Yes</MenuItem>
-                    <MenuItem value="no">No</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Has Phone</InputLabel>
-                  <Select
-                    value={filters.hasPhone}
-                    label="Has Phone"
-                    onChange={(e) => updateFilter('hasPhone', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="yes">Yes</MenuItem>
-                    <MenuItem value="no">No</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Assigned To</InputLabel>
-                  <Select
-                    value={filters.assignedTo}
-                    label="Assigned To"
-                    onChange={(e) => updateFilter('assignedTo', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    {assignedToOptions.map((name) => (
-                      <MenuItem key={name} value={name}>{name}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Telecaller</InputLabel>
-                  <Select
-                    value={filters.telecaller}
-                    label="Telecaller"
-                    onChange={(e) => updateFilter('telecaller', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    {telecallerOptions.map((name) => (
-                      <MenuItem key={name} value={name}>{name}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Center</InputLabel>
-                  <Select
-                    value={filters.visitingCenter}
-                    label="Center"
-                    onChange={(e) => updateFilter('visitingCenter', e.target.value)}
-                  >
-                    <MenuItem value="all">All Centers</MenuItem>
-                    {centers.map((c: any) => (
-                      <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Visitor Type</InputLabel>
-                  <Select
-                    value={filters.visitorType}
-                    label="Visitor Type"
-                    onChange={(e) => updateFilter('visitorType', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="patient">Patient</MenuItem>
-                    <MenuItem value="general">General</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-            </Grid>
-
-            {/* Visit & Follow-up Filters */}
-            <Grid container spacing={2} sx={{ mb: 2 }}>
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Visit Type</InputLabel>
-                  <Select
-                    value={filters.visitType}
-                    label="Visit Type"
-                    onChange={(e) => updateFilter('visitType', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    {visitTypeOptions.map((v) => (
-                      <MenuItem key={v} value={v}>{v}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Visit Status</InputLabel>
-                  <Select
-                    value={filters.visitStatus}
-                    label="Visit Status"
-                    onChange={(e) => updateFilter('visitStatus', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    {visitStatusOptions.map((v) => (
-                      <MenuItem key={v} value={v}>{v}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Has Follow-ups</InputLabel>
-                  <Select
-                    value={filters.hasFollowUps}
-                    label="Has Follow-ups"
-                    onChange={(e) => updateFilter('hasFollowUps', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="yes">Yes</MenuItem>
-                    <MenuItem value="no">No</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Test Results</InputLabel>
-                  <Select
-                    value={filters.hasTestResults}
-                    label="Test Results"
-                    onChange={(e) => updateFilter('hasTestResults', e.target.value)}
-                  >
-                    <MenuItem value="all">All</MenuItem>
-                    <MenuItem value="yes">Has Results</MenuItem>
-                    <MenuItem value="no">No Results</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <TextField
-                  type="date"
-                  fullWidth
-                  size="small"
-                  label="Visit Date From"
-                  value={filters.visitDateFrom}
-                  onChange={(e) => updateFilter('visitDateFrom', e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={2}>
-                <TextField
-                  type="date"
-                  fullWidth
-                  size="small"
-                  label="Visit Date To"
-                  value={filters.visitDateTo}
-                  onChange={(e) => updateFilter('visitDateTo', e.target.value)}
-                  InputLabelProps={{ shrink: true }}
-                />
-              </Grid>
-            </Grid>
-
-            {/* Text Search Filters */}
-            <Grid container spacing={2}>
-              <Grid item xs={12} sm={6} md={3}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Company Name"
-                  value={filters.companyName}
-                  onChange={(e) => updateFilter('companyName', e.target.value)}
-                />
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={3}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Purpose of Visit"
-                  value={filters.purposeOfVisit}
-                  onChange={(e) => updateFilter('purposeOfVisit', e.target.value)}
-                />
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={3}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Reference"
-                  value={filters.reference}
-                  onChange={(e) => updateFilter('reference', e.target.value)}
-                />
-              </Grid>
-
-              <Grid item xs={12} sm={6} md={3}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Form Types</InputLabel>
-                  <Select
-                    multiple
-                    value={filters.activeFormTypes}
-                    label="Form Types"
-                    onChange={(e) => updateFilter('activeFormTypes', e.target.value)}
-                    renderValue={(selected) => `${selected.length} selected`}
-                  >
-                    {activeFormTypeOptions.map((t) => (
-                      <MenuItem key={t} value={t}>{t}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-            </Grid>
-          </Box>
-        </Collapse>
-
-        {/* Action Buttons */}
-        <Box sx={{ display: 'flex', gap: 1, justifyContent: 'space-between', alignItems: 'center' }}>
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
-              Showing {Math.min(page * rowsPerPage + 1, filteredEnquiries.length)}-{Math.min((page + 1) * rowsPerPage, filteredEnquiries.length)} of {filteredEnquiries.length} enquiries
-              {filteredEnquiries.length !== enquiries.length && ` (filtered from ${enquiries.length} total)`}
-            </Typography>
-            {advancedFilters.length > 0 && (
-              <Chip 
-                label={`${advancedFilters.length} advanced filters active`} 
-                color="primary" 
-                size="small" 
-                variant="outlined"
-              />
-            )}
-          </Box>
-          
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button 
-              variant="outlined"
-              startIcon={<ClearIcon />}
-              onClick={clearAllAdvancedFilters}
-              size="small"
-              disabled={advancedFilters.length === 0 && !searchTerm && statusFilter === 'all' && typeFilter === 'all'}
-            >
-              Clear All Filters
-            </Button>
-            <Button 
-              variant="contained"
-              startIcon={<FilterIcon />}
-              onClick={() => setShowFilterBuilder(!showFilterBuilder)}
-              size="small"
-              color={advancedFilters.length > 0 ? 'success' : 'primary'}
-            >
-              {advancedFilters.length > 0 ? `${advancedFilters.length} Filters Active` : 'Add Filters'}
-            </Button>
-          </Box>
-        </Box>
-      </Paper>
+      <EnquiryFilterSection
+        filters={filters}
+        updateFilter={updateFilter}
+        searchTerm={searchTerm}
+        advancedFilters={advancedFilters}
+        setAdvancedFilters={setAdvancedFilters}
+        advancedFiltersLogic={advancedFiltersLogic}
+        onAdvancedFiltersLogicChange={setAdvancedFiltersLogic}
+        centers={centers}
+        assignedToOptions={assignedToOptions}
+        telecallerOptions={telecallerOptions}
+        visitorTypeOptions={visitorTypeOptions}
+        visitTypeRootOptions={visitTypeRootOptions}
+        visitStatusRootOptions={visitStatusRootOptions}
+        enquiryTypeOptions={enquiryTypeOptions}
+        activeFormTypeOptions={activeFormTypeOptions}
+        referenceOptions={referenceOptions}
+        filterPresets={filterPresets}
+        currentPreset={currentPreset}
+        onLoadPreset={loadFilterPreset}
+        onSavePresetClick={() => setShowPresetDialog(true)}
+        onDeletePreset={() => currentPreset && deleteFilterPreset(currentPreset)}
+        onClearAll={clearFilters}
+        filteredCount={filteredEnquiries.length}
+        totalCount={enquiries.length}
+        page={page}
+        rowsPerPage={rowsPerPage}
+      />
 
       {/* Filter Preset Save Dialog */}
       <Dialog open={showPresetDialog} onClose={() => setShowPresetDialog(false)}>
