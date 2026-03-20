@@ -68,6 +68,8 @@ import jsPDF from 'jspdf';
 
 type AppointmentType = 'center' | 'home';
 
+type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled';
+
 interface Appointment {
   id?: string;
   title: string;
@@ -80,9 +82,14 @@ interface Appointment {
   address?: string;
   homeVisitorStaffId?: string;
   homeVisitorName?: string;
+  assignedStaffId?: string;
+  assignedStaffName?: string;
+  telecaller?: string;
   notes?: string;
   start: string;
   end: string;
+  status?: AppointmentStatus;
+  feedback?: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -114,6 +121,7 @@ export default function AppointmentSchedulerPage() {
   const [previewPatientPhone, setPreviewPatientPhone] = useState<string>('');
   const [previewCenterName, setPreviewCenterName] = useState<string>('');
   const [previewHomeVisitorName, setPreviewHomeVisitorName] = useState<string>('');
+  const [previewAssignedStaffName, setPreviewAssignedStaffName] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [newAppt, setNewAppt] = useState<Appointment>(defaultNewAppointment);
@@ -232,6 +240,7 @@ export default function AppointmentSchedulerPage() {
     let phone = '';
     let centerName = '';
     let homeVisitorName = data.homeVisitorName || '';
+    let assignedStaffName = data.assignedStaffName || '';
     try {
       if (data.enquiryId) {
         const enq = await getDoc(doc(db, 'enquiries', data.enquiryId));
@@ -245,10 +254,15 @@ export default function AppointmentSchedulerPage() {
         const st = await getDoc(doc(db, 'staff', data.homeVisitorStaffId));
         homeVisitorName = (st.data() as any)?.name || '';
       }
+      if (!assignedStaffName && data.assignedStaffId) {
+        const st = await getDoc(doc(db, 'staff', data.assignedStaffId));
+        assignedStaffName = (st.data() as any)?.name || '';
+      }
     } catch {}
     setPreviewPatientPhone(phone);
     setPreviewCenterName(centerName);
     setPreviewHomeVisitorName(homeVisitorName);
+    setPreviewAssignedStaffName(assignedStaffName);
     setOpenPreview(true);
   };
 
@@ -257,23 +271,40 @@ export default function AppointmentSchedulerPage() {
     try {
       if (!newAppt.patientName) throw new Error('Select a patient');
       if (newAppt.type === 'center' && !newAppt.centerId) throw new Error('Select a center');
+      if (newAppt.type === 'center' && !newAppt.assignedStaffId) throw new Error('Select staff for center visit');
       if (newAppt.type === 'home' && !newAppt.homeVisitorStaffId) throw new Error('Select staff for home visit');
-      
+
+      const centerName = newAppt.centerId ? centers.find((c) => c.id === newAppt.centerId)?.name : '';
+      const payload = {
+        ...newAppt,
+        title: newAppt.patientName || newAppt.title || '',
+        status: newAppt.status || 'scheduled',
+        centerName: centerName || undefined,
+        updatedAt: serverTimestamp(),
+      };
+
       if (isEditMode && editingAppointmentId) {
         // Update existing appointment
-        await updateDoc(doc(db, 'appointments', editingAppointmentId), {
-          ...newAppt,
-          title: newAppt.patientName || newAppt.title || '',
-          updatedAt: serverTimestamp(),
-        });
+        await updateDoc(doc(db, 'appointments', editingAppointmentId), payload);
       } else {
         // Create new appointment
         await addDoc(collection(db, 'appointments'), {
-          ...newAppt,
-          title: newAppt.patientName || newAppt.title || '',
+          ...payload,
           createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
         });
+        // Send push notification to assigned staff
+        const staffId = newAppt.type === 'home' ? newAppt.homeVisitorStaffId : newAppt.assignedStaffId;
+        if (staffId) {
+          fetch('/api/send-appointment-notification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              patientName: newAppt.patientName || newAppt.title,
+              start: newAppt.start,
+              homeVisitorStaffId: staffId,
+            }),
+          }).catch((e) => console.warn('Notification send failed:', e));
+        }
       }
       
       await fetchAllData();
@@ -808,6 +839,10 @@ export default function AppointmentSchedulerPage() {
                     Center
                   </Typography>
                   <Typography variant="body1" sx={{ mb: 1 }}>{previewCenterName || '—'}</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Assigned to
+                  </Typography>
+                  <Typography variant="body1" sx={{ mb: 1 }}>{previewAssignedStaffName || '—'}</Typography>
                 </>
               )}
               <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
@@ -983,7 +1018,9 @@ export default function AppointmentSchedulerPage() {
                             patientPhone: e.phone || '',
                             reference: e.reference || '',
                             address: e.address || '',
-                            centerId: e.center || newAppt.centerId
+                            centerId: e.center || newAppt.centerId,
+                            telecaller: e.telecaller || '',
+                            status: 'scheduled'
                           });
                           setOpenPatientPicker(false);
                         }}
@@ -1150,22 +1187,59 @@ export default function AppointmentSchedulerPage() {
               </Box>
             </Grid>
             {newAppt.type === 'center' ? (
-              <Grid item xs={12} sm={6}>
-                <TextField
-                  select
-                  fullWidth
-                  label="Center"
-                  value={newAppt.centerId}
-                  onChange={e => setNewAppt({ ...newAppt, centerId: e.target.value })}
-                  margin="normal"
-                  size={isMobile ? 'small' : 'medium'}
-                  InputProps={{ startAdornment: <InputAdornment position="start"><PlaceIcon fontSize="small" /></InputAdornment> }}
-                >
-                  {centers.map(c => (
-                    <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-                  ))}
-                </TextField>
-              </Grid>
+              <>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    select
+                    fullWidth
+                    label="Center"
+                    value={newAppt.centerId}
+                    onChange={e => setNewAppt({ ...newAppt, centerId: e.target.value })}
+                    margin="normal"
+                    size={isMobile ? 'small' : 'medium'}
+                    InputProps={{ startAdornment: <InputAdornment position="start"><PlaceIcon fontSize="small" /></InputAdornment> }}
+                  >
+                    {centers.map(c => (
+                      <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                  <Autocomplete
+                    options={staffList}
+                    getOptionLabel={(o: any) => o.name || ''}
+                    value={staffList.find(s => s.id === newAppt.assignedStaffId) || null}
+                    onChange={(_, val: any) => {
+                      setNewAppt({
+                        ...newAppt,
+                        assignedStaffId: val?.id || '',
+                        assignedStaffName: val?.name || '',
+                      });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Assign to (Staff)"
+                        fullWidth
+                        margin="normal"
+                        size={isMobile ? 'small' : 'medium'}
+                        required
+                        InputProps={{
+                          ...params.InputProps,
+                          startAdornment: (
+                            <>
+                              <InputAdornment position="start">
+                                <PersonIcon fontSize="small" />
+                              </InputAdornment>
+                              {params.InputProps.startAdornment}
+                            </>
+                          )
+                        }}
+                      />
+                    )}
+                  />
+                </Grid>
+              </>
             ) : (
               <>
                 <Grid item xs={12}>

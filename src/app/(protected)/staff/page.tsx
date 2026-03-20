@@ -56,6 +56,7 @@ import {
   query, 
   orderBy,
   Timestamp,
+  deleteField,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
@@ -73,6 +74,8 @@ interface Staff {
   jobRole: string;
   basicSalary: number;
   status: 'active' | 'inactive';
+  mobileAppEnabled?: boolean;
+  mobileAppPasswordHash?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -272,10 +275,14 @@ export default function StaffPage() {
       if (currentStaff?.id) {
         // Update existing staff
         const staffRef = doc(db, 'staff', currentStaff.id);
-        await updateDoc(staffRef, {
+        const updateData: Record<string, unknown> = {
           ...staffData,
           updatedAt: serverTimestamp()
-        });
+        };
+        if (!staffData.mobileAppEnabled) {
+          updateData.mobileAppPasswordHash = deleteField();
+        }
+        await updateDoc(staffRef, updateData as any);
         
         // Update local state
         setStaff(prevStaff => 
@@ -498,10 +505,15 @@ export default function StaffPage() {
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Box display="flex" alignItems="center">
-                          <PersonIcon fontSize="small" color="action" sx={{ mr: 1 }} />
+                        <Box display="flex" alignItems="center" gap={1}>
+                          <PersonIcon fontSize="small" color="action" />
                           <Box>
-                            <Typography variant="body2">{staffMember.name}</Typography>
+                            <Box display="flex" alignItems="center" gap={1}>
+                              <Typography variant="body2">{staffMember.name}</Typography>
+                              {(staffMember as any).mobileAppEnabled && (
+                                <Chip label="Mobile" size="small" color="info" variant="outlined" />
+                              )}
+                            </Box>
                             <Typography variant="caption" color="text.secondary">
                               {staffMember.email}
                             </Typography>

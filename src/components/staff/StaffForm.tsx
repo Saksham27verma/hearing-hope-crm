@@ -18,6 +18,8 @@ import {
   FormHelperText,
   Stack,
   Chip,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import Grid from '@mui/material/Grid';
@@ -39,6 +41,9 @@ import {
   AccountCircle as AccountCircleIcon,
   Badge as BadgeIcon,
   AttachMoney as MoneyIcon,
+  Smartphone as SmartphoneIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material';
 
 // Define job roles
@@ -76,6 +81,8 @@ interface Staff {
   aadharNumber?: string;
   basicSalary: number;
   status: 'active' | 'inactive';
+  mobileAppEnabled?: boolean;
+  mobileAppPasswordHash?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -109,11 +116,16 @@ export default function StaffForm({ initialData, onSave, onCancel, isSaving = fa
     aadharNumber: initialData?.aadharNumber || '',
     basicSalary: initialData?.basicSalary || 0,
     status: initialData?.status || 'active',
+    mobileAppEnabled: initialData?.mobileAppEnabled || false,
+    mobileAppPasswordHash: initialData?.mobileAppPasswordHash,
   });
 
   // Form validation
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [activeSection, setActiveSection] = useState('personal');
+  const [mobileAppPassword, setMobileAppPassword] = useState('');
+  const [mobileAppPasswordConfirm, setMobileAppPasswordConfirm] = useState('');
+  const [mobileAppPasswordVisible, setMobileAppPasswordVisible] = useState(false);
 
   // Handle input changes
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -198,18 +210,49 @@ export default function StaffForm({ initialData, onSave, onCancel, isSaving = fa
     if (formData.basicSalary <= 0) {
       newErrors.basicSalary = 'Basic salary must be greater than zero';
     }
+
+    // Mobile app password validation (when enabling or changing)
+    if (formData.mobileAppEnabled) {
+      const isNewStaff = !initialData?.id;
+      const hasExistingHash = !!initialData?.mobileAppPasswordHash;
+      const passwordProvided = mobileAppPassword.trim().length > 0;
+      if (isNewStaff || !hasExistingHash || passwordProvided) {
+        if (mobileAppPassword.length < 8) {
+          newErrors.mobileAppPassword = 'Password must be at least 8 characters';
+        } else if (mobileAppPassword !== mobileAppPasswordConfirm) {
+          newErrors.mobileAppPasswordConfirm = 'Passwords do not match';
+        }
+      }
+    }
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   // Handle form submission
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (validateForm()) {
-      onSave(formData);
+    if (!validateForm()) return;
+
+    const dataToSave: Staff = { ...formData };
+    
+    // Handle mobile app password
+    if (formData.mobileAppEnabled) {
+      const isNewStaff = !initialData?.id;
+      const hasExistingHash = !!initialData?.mobileAppPasswordHash;
+      const passwordProvided = mobileAppPassword.trim().length > 0;
+      if (passwordProvided) {
+        const bcrypt = await import('bcryptjs');
+        dataToSave.mobileAppPasswordHash = bcrypt.hashSync(mobileAppPassword, 10);
+      } else if (!isNewStaff && hasExistingHash) {
+        dataToSave.mobileAppPasswordHash = initialData.mobileAppPasswordHash;
+      }
+    } else {
+      dataToSave.mobileAppPasswordHash = undefined;
     }
+
+    onSave(dataToSave);
   };
 
   // Get name initials for avatar
@@ -287,6 +330,16 @@ export default function StaffForm({ initialData, onSave, onCancel, isSaving = fa
           variant={activeSection === 'emergency' ? 'filled' : 'outlined'}
           sx={{ fontWeight: activeSection === 'emergency' ? 'bold' : 'normal' }}
         />
+        {initialData?.id && (
+          <Chip 
+            icon={<SmartphoneIcon />} 
+            label="Mobile App" 
+            onClick={() => setActiveSection('mobile')}
+            color={activeSection === 'mobile' ? 'primary' : 'default'}
+            variant={activeSection === 'mobile' ? 'filled' : 'outlined'}
+            sx={{ fontWeight: activeSection === 'mobile' ? 'bold' : 'normal' }}
+          />
+        )}
       </Box>
       
       {/* Personal Information */}
@@ -670,6 +723,84 @@ export default function StaffForm({ initialData, onSave, onCancel, isSaving = fa
               />
             </Grid>
           </Grid>
+        </Paper>
+      )}
+
+      {/* Mobile App Access - only when editing existing staff */}
+      {initialData?.id && activeSection === 'mobile' && (
+        <Paper variant="outlined" sx={{ p: 3, mb: 3, borderRadius: 2, borderColor: 'primary.main', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.05)' }}>
+          <Typography variant="subtitle1" fontWeight="bold" mb={2} color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SmartphoneIcon /> Mobile App Access
+          </Typography>
+          <Divider sx={{ mb: 3 }} />
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Enable home visit employees to log into the mobile app with their phone number and password.
+          </Typography>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={formData.mobileAppEnabled || false}
+                onChange={(e) => setFormData(prev => ({ ...prev, mobileAppEnabled: e.target.checked }))}
+                color="primary"
+              />
+            }
+            label="Enable mobile app login"
+          />
+          {formData.mobileAppEnabled && (
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                {initialData?.mobileAppPasswordHash ? 'Enter a new password to change it, or leave blank to keep current.' : 'Set a password for mobile app login (min 8 characters).'}
+              </Typography>
+              <Grid container spacing={3}>
+                <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6' } }}>
+                  <TextField
+                    fullWidth
+                    type={mobileAppPasswordVisible ? 'text' : 'password'}
+                    label="Mobile App Password"
+                    value={mobileAppPassword}
+                    onChange={(e) => {
+                      setMobileAppPassword(e.target.value);
+                      if (errors.mobileAppPassword) setErrors(prev => ({ ...prev, mobileAppPassword: '' }));
+                    }}
+                    error={!!errors.mobileAppPassword}
+                    helperText={errors.mobileAppPassword}
+                    placeholder={initialData?.mobileAppPasswordHash ? 'Leave blank to keep current' : ''}
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <IconButton
+                            onClick={() => setMobileAppPasswordVisible(!mobileAppPasswordVisible)}
+                            edge="end"
+                            size="small"
+                          >
+                            {mobileAppPasswordVisible ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
+                  />
+                </Grid>
+                <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6' } }}>
+                  <TextField
+                    fullWidth
+                    type={mobileAppPasswordVisible ? 'text' : 'password'}
+                    label="Confirm Password"
+                    value={mobileAppPasswordConfirm}
+                    onChange={(e) => {
+                      setMobileAppPasswordConfirm(e.target.value);
+                      if (errors.mobileAppPasswordConfirm) setErrors(prev => ({ ...prev, mobileAppPasswordConfirm: '' }));
+                    }}
+                    error={!!errors.mobileAppPasswordConfirm}
+                    helperText={errors.mobileAppPasswordConfirm}
+                    placeholder={initialData?.mobileAppPasswordHash ? 'Leave blank to keep current' : ''}
+                  />
+                </Grid>
+              </Grid>
+              {formData.mobileAppEnabled && initialData?.mobileAppPasswordHash && (
+                <Chip label="Mobile access enabled" color="success" size="small" sx={{ mt: 2 }} />
+              )}
+            </Box>
+          )}
         </Paper>
       )}
       
