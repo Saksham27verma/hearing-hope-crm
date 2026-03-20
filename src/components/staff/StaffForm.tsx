@@ -249,10 +249,10 @@ export default function StaffForm({ initialData, onSave, onCancel, isSaving = fa
         dataToSave.mobileAppPasswordHash = initialData.mobileAppPasswordHash;
       }
     } else {
-      dataToSave.mobileAppPasswordHash = undefined;
+      delete (dataToSave as Partial<Staff>).mobileAppPasswordHash;
     }
 
-    onSave(dataToSave);
+    await onSave(dataToSave);
   };
 
   // Get name initials for avatar

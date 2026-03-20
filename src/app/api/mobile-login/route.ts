@@ -2,6 +2,23 @@ import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 
+/** Allow staff PWA (and other web clients) to POST from a different origin than the CRM. */
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '86400',
+};
+
+function withCors(res: NextResponse): NextResponse {
+  Object.entries(CORS_HEADERS).forEach(([k, v]) => res.headers.set(k, v));
+  return res;
+}
+
+export async function OPTIONS() {
+  return withCors(new NextResponse(null, { status: 204 }));
+}
+
 function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');
   const withoutCountry = digits.replace(/^91/, '');
@@ -10,7 +27,7 @@ function normalizePhone(phone: string): string {
 }
 
 function jsonError(message: string, status: number) {
-  return NextResponse.json({ ok: false, error: message }, { status });
+  return withCors(NextResponse.json({ ok: false, error: message }, { status }));
 }
 
 export async function POST(req: Request) {
@@ -56,7 +73,7 @@ export async function POST(req: Request) {
 
     const token = await adminAuth().createCustomToken(staffId);
 
-    return NextResponse.json({ ok: true, token });
+    return withCors(NextResponse.json({ ok: true, token }));
   } catch (err: any) {
     console.error('mobile-login error:', err);
     return jsonError(err?.message || 'Login failed', 500);

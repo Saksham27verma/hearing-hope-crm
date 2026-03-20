@@ -80,6 +80,13 @@ interface Staff {
   updatedAt?: Timestamp;
 }
 
+/** Firestore rejects `undefined` field values; strip them before write. */
+function stripUndefinedForFirestore(data: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(data).filter(([key, value]) => value !== undefined && key !== 'id')
+  );
+}
+
 // Define Salary interface
 interface Salary {
   id?: string;
@@ -276,8 +283,8 @@ export default function StaffPage() {
         // Update existing staff
         const staffRef = doc(db, 'staff', currentStaff.id);
         const updateData: Record<string, unknown> = {
-          ...staffData,
-          updatedAt: serverTimestamp()
+          ...stripUndefinedForFirestore(staffData as unknown as Record<string, unknown>),
+          updatedAt: serverTimestamp(),
         };
         if (!staffData.mobileAppEnabled) {
           updateData.mobileAppPasswordHash = deleteField();
@@ -295,11 +302,11 @@ export default function StaffPage() {
       } else {
         // Add new staff
         const newStaffData = {
-          ...staffData,
+          ...stripUndefinedForFirestore(staffData as unknown as Record<string, unknown>),
           createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
+          updatedAt: serverTimestamp(),
         };
-        
+
         const docRef = await addDoc(collection(db, 'staff'), newStaffData);
         
         // Update local state with timestamps converted to current time for UI
@@ -322,7 +329,8 @@ export default function StaffPage() {
       setCurrentStaff(null);
     } catch (error) {
       console.error('Error saving staff member:', error);
-      setErrorMsg('Failed to save staff member');
+      const detail = error instanceof Error ? error.message : 'Failed to save staff member';
+      setErrorMsg(detail);
     } finally {
       setSavingStaff(false);
     }
