@@ -53,6 +53,7 @@ import {
   CircularProgress,
   Snackbar,
   Collapse,
+  Menu,
 } from '@mui/material';
 import { 
   Add as AddIcon, 
@@ -107,7 +108,12 @@ import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
 import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
-import { ENQUIRY_STATUS_OPTIONS, getEnquiryStatusMeta } from '@/utils/enquiryStatus';
+import {
+  ENQUIRY_STATUS_OPTIONS,
+  getEnquiryStatusMeta,
+  parseJourneyStatusOverride,
+  type EnquiryJourneyStatus,
+} from '@/utils/enquiryStatus';
 
 // Create a Grid component that doesn't have TypeScript errors
 const Grid = (props: any) => <MuiGrid {...props} />;
@@ -156,6 +162,8 @@ interface Enquiry {
   address?: string;
   subject?: string;
   status?: string;
+  /** Manual journey chip override; null/omit = derive from latest visit */
+  journeyStatusOverride?: string | null;
   notes?: string;
   assignedTo?: string;
   telecaller?: string;
@@ -448,6 +456,10 @@ export default function EnquiriesPage() {
   const [openVisitDialog, setOpenVisitDialog] = useState<boolean>(false);
   const [openFollowUpDialog, setOpenFollowUpDialog] = useState<boolean>(false);
   const [selectedEnquiry, setSelectedEnquiry] = useState<Enquiry | null>(null);
+  const [journeyStatusMenu, setJourneyStatusMenu] = useState<{
+    anchor: HTMLElement;
+    enquiryId: string;
+  } | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -2061,6 +2073,32 @@ export default function EnquiriesPage() {
   };
   
   // Status change handler
+  const handleJourneyStatusOverrideSave = async (
+    enquiryId: string,
+    next: EnquiryJourneyStatus | 'auto'
+  ) => {
+    try {
+      const enquiryRef = doc(db, 'enquiries', enquiryId);
+      const journeyStatusOverride = next === 'auto' ? null : next;
+      await updateDoc(enquiryRef, {
+        journeyStatusOverride,
+        updatedAt: serverTimestamp(),
+      });
+      const patch = (e: Enquiry) =>
+        e.id === enquiryId ? { ...e, journeyStatusOverride } : e;
+      setEnquiries((prev) => prev.map(patch));
+      setFilteredEnquiries((prev) => prev.map(patch));
+      if (selectedEnquiry?.id === enquiryId) {
+        setSelectedEnquiry({ ...selectedEnquiry, journeyStatusOverride });
+      }
+      setJourneyStatusMenu(null);
+      setAlert({ open: true, message: 'Journey status updated', severity: 'success' });
+    } catch (error) {
+      console.error('Error updating journey status:', error);
+      setAlert({ open: true, message: 'Could not update journey status', severity: 'error' });
+    }
+  };
+
   const handleStatusChange = async (enquiryId: string | undefined, newStatus: string) => {
     if (!enquiryId) return;
     
@@ -4112,7 +4150,23 @@ export default function EnquiriesPage() {
                                 label={derivedStatus.label}
                                 size="small"
                                 color={derivedStatus.color}
-                                sx={{ fontSize: '0.72rem', height: '22px', fontWeight: 700, borderRadius: 99, width: 'fit-content' }}
+                                onClick={
+                                  userProfile?.role === 'audiologist'
+                                    ? undefined
+                                    : (e) =>
+                                        setJourneyStatusMenu({
+                                          anchor: e.currentTarget,
+                                          enquiryId: enquiry.id || '',
+                                        })
+                                }
+                                sx={{
+                                  fontSize: '0.72rem',
+                                  height: '22px',
+                                  fontWeight: 700,
+                                  borderRadius: 99,
+                                  width: 'fit-content',
+                                  cursor: userProfile?.role === 'audiologist' ? 'default' : 'pointer',
+                                }}
                               />
                             );
                           })()}
@@ -4137,7 +4191,22 @@ export default function EnquiriesPage() {
                               label={derivedStatus.label}
                               size="small"
                               color={derivedStatus.color}
-                              sx={{ fontSize: '0.75rem', height: '24px', fontWeight: 700, borderRadius: 99 }}
+                              onClick={
+                                userProfile?.role === 'audiologist'
+                                  ? undefined
+                                  : (e) =>
+                                      setJourneyStatusMenu({
+                                        anchor: e.currentTarget,
+                                        enquiryId: enquiry.id || '',
+                                      })
+                              }
+                              sx={{
+                                fontSize: '0.75rem',
+                                height: '24px',
+                                fontWeight: 700,
+                                borderRadius: 99,
+                                cursor: userProfile?.role === 'audiologist' ? 'default' : 'pointer',
+                              }}
                             />
                           );
                         })()}
@@ -5805,6 +5874,45 @@ export default function EnquiriesPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Menu
+        anchorEl={journeyStatusMenu?.anchor ?? null}
+        open={Boolean(journeyStatusMenu)}
+        onClose={() => setJourneyStatusMenu(null)}
+      >
+        {(() => {
+          const menuEnquiry = journeyStatusMenu?.enquiryId
+            ? enquiries.find((e) => e.id === journeyStatusMenu.enquiryId)
+            : undefined;
+          const manual = parseJourneyStatusOverride(menuEnquiry?.journeyStatusOverride);
+          return (
+            <>
+              <MenuItem
+                selected={!manual}
+                onClick={() =>
+                  journeyStatusMenu?.enquiryId &&
+                  handleJourneyStatusOverrideSave(journeyStatusMenu.enquiryId, 'auto')
+                }
+              >
+                Automatic (latest visit)
+              </MenuItem>
+              <Divider />
+              {ENQUIRY_STATUS_OPTIONS.map((opt) => (
+                <MenuItem
+                  key={opt.value}
+                  selected={manual === opt.value}
+                  onClick={() =>
+                    journeyStatusMenu?.enquiryId &&
+                    handleJourneyStatusOverrideSave(journeyStatusMenu.enquiryId, opt.value)
+                  }
+                >
+                  {opt.label}
+                </MenuItem>
+              ))}
+            </>
+          );
+        })()}
+      </Menu>
 
       {/* Alert Snackbar */}
       <Snackbar

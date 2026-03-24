@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Booking Receipt</title>
+  <style>
+    body { font-family: Inter, Verdana, Arial, Helvetica, sans-serif; color: #1a202c; margin: 0; padding: 0; line-height: 1.35; }
+    .receipt-page { max-width: 720px; margin: 0 auto; padding: 24px 26px 20px; background: #fff; }
+    .brand-red { color: #a80000; }
+    .text-light { color: #4a5568; font-size: 11px; }
+    .text-muted { color: #718096; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .header-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+    .company-name { font-size: 17px; font-weight: 700; margin: 0 0 4px; text-transform: uppercase; letter-spacing: -0.3px; }
+    .document-type { font-size: 10px; font-weight: 700; color: #a80000; text-transform: uppercase; letter-spacing: 1px; border: 1px solid #a80000; padding: 3px 8px; display: inline-block; margin-bottom: 6px; }
+    .meta-grid { width: 100%; border-collapse: collapse; margin-bottom: 16px; border-top: 1px solid #edf2f7; padding-top: 14px; }
+    .meta-grid td { width: 50%; vertical-align: top; padding: 0 8px; }
+    .meta-grid td:first-child { padding-left: 0; border-right: 1px solid #edf2f7; }
+    .label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #a0aec0; margin-bottom: 2px; }
+    .order-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+    .order-table th { border-bottom: 1px solid #1a202c; padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; font-weight: 700; color: #4a5568; }
+    .order-table td { border-bottom: 1px solid #edf2f7; padding: 10px 8px; vertical-align: top; font-size: 11px; }
+    .text-right { text-align: right !important; }
+    .statement-wrapper { width: 100%; margin-top: 10px; border: 1px solid #edf2f7; }
+    .statement-header { background: #f9fafb; padding: 6px 10px; border-bottom: 1px solid #edf2f7; font-size: 9px; font-weight: 700; text-transform: uppercase; color: #4a5568; }
+    .financial-row { display: flex; justify-content: flex-end; padding: 7px 10px; border-bottom: 1px solid #f9fafb; }
+    .financial-label { width: 180px; text-align: right; font-size: 11px; color: #718096; padding-right: 16px; }
+    .financial-value { width: 100px; text-align: right; font-size: 11px; font-weight: 600; }
+    .balance-row { background: #a80000; color: #fff; }
+    .balance-row .financial-label { color: #ffeded; font-weight: 700; }
+    .balance-row .financial-value { font-size: 13px; font-weight: 700; }
+    .protocol-box { margin-top: 12px; border-top: 1px solid #edf2f7; padding-top: 10px; }
+    .protocol-text { font-size: 10px; color: #4a5568; line-height: 1.45; }
+    .terms-footer { margin-top: 12px; font-size: 9px; color: #a0aec0; border-top: 1px dashed #edf2f7; padding-top: 10px; text-align: center; }
+    .logo-img { max-width: 100px; max-height: 44px; margin-bottom: 6px; display: block; object-fit: contain; }
+  </style>
+</head>
+<body>
+<div class="receipt-page">
+  <table class="header-table">
+    <tr>
+      <td width="60%">
+        <img class="logo-img" src="{{LOGO_PLACEHOLDER}}" alt="" />
+        <h1 class="company-name brand-red">{{COMPANY_NAME}}</h1>
+        <div class="text-light">
+          {{COMPANY_ADDRESS}}<br>
+          <strong>Phone:</strong> {{COMPANY_PHONE}}
+          <span> | </span>
+          <strong>Email:</strong> {{COMPANY_EMAIL}}<br>
+          <strong>GSTIN:</strong> 07AAHCH3320A1Z9
+        </div>
+      </td>
+      <td width="40%" style="text-align: right; vertical-align: top">
+        <div class="document-type">Booking Receipt</div>
+        <div style="font-size: 11px; margin-top: 4px" class="text-muted">Receipt #</div>
+        <div style="font-size: 13px; font-weight: 700">{{RECEIPT_NUMBER}}</div>
+        <div style="font-size: 11px; margin-top: 6px" class="text-muted">Date</div>
+        <div style="font-size: 13px"><strong>{{RECEIPT_DATE}}</strong></div>
+        <div style="font-size: 11px; margin-top: 6px" class="text-muted">Center</div>
+        <div style="font-size: 12px">{{CENTER_NAME}}</div>
+      </td>
+    </tr>
+  </table>
+
+  <table class="meta-grid">
+    <tr>
+      <td>
+        <div class="label">Patient information</div>
+        <div style="font-weight: 700; font-size: 13px">{{PATIENT_NAME}}</div>
+        <div class="text-light" style="margin-top: 2px">
+          <strong>Address:</strong> {{PATIENT_ADDRESS}}<br>
+          <strong>Phone:</strong> {{PATIENT_PHONE}}<br>
+          <strong>Email:</strong> {{PATIENT_EMAIL}}
+        </div>
+      </td>
+      <td style="padding-left: 14px">
+        <div class="label">Device specifications</div>
+        <div style="font-weight: 600; font-size: 12px">{{DEVICE_NAME}}</div>
+        <div class="text-light" style="margin-top: 2px">
+          Quantity: <strong>{{QUANTITY}}</strong> unit(s)<br>
+          Payment mode: <strong>{{PAYMENT_MODE}}</strong>
+        </div>
+      </td>
+    </tr>
+  </table>
+
+  <table class="order-table">
+    <thead>
+      <tr>
+        <th width="60%">Clinical item description</th>
+        <th width="20%" class="text-right">Unit MRP</th>
+        <th width="20%" class="text-right">Selling price (per unit)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>
+          <div style="font-weight: 600">{{DEVICE_NAME}}</div>
+          <div class="text-light" style="margin-top: 3px; font-size: 10px">
+            Booking confirmation. Visit date: {{VISIT_DATE}}
+          </div>
+        </td>
+        <td class="text-right">{{MRP}}</td>
+        <td class="text-right" style="font-weight: 700">{{SELLING_PRICE}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="statement-wrapper">
+    <div class="statement-header">Statement of account</div>
+    <div class="financial-row">
+      <div class="financial-label">Total agreed value</div>
+      <div class="financial-value">{{TOTAL_AGREED_VALUE}}</div>
+    </div>
+    <div class="financial-row">
+      <div class="financial-label">Advance amount received</div>
+      <div class="financial-value brand-red">− {{ADVANCE_AMOUNT}}</div>
+    </div>
+    <div class="financial-row balance-row" style="display: flex; justify-content: flex-end">
+      <div class="financial-label">Remaining balance</div>
+      <div class="financial-value">{{BALANCE_AMOUNT}}</div>
+    </div>
+  </div>
+
+  <div class="protocol-box">
+    <div class="text-muted" style="margin-bottom: 3px; font-weight: 700">Terms</div>
+    <div class="protocol-text">{{TERMS_TEXT}}</div>
+  </div>
+
+  <div class="terms-footer">
+    <div style="text-align: left; margin-bottom: 6px; color: #4a5568; font-size: 9px">{{FOOTER_TEXT}}</div>
+    <div style="font-size: 9px; color: #718096; line-height: 1.4">
+      <strong>NOTE:</strong> Booking amounts are adjusted against the final purchase price.
+      <strong style="margin-left: 8px">JURISDICTION:</strong> Delhi.
+    </div>
+    <div style="letter-spacing: 1px; font-weight: 700; color: #e2e8f0; margin-top: 8px; font-size: 9px">
+      PATIENT COPY / CLINICAL RECORD
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -58,6 +58,10 @@ export interface BookingReceiptData {
   bookingDate: string;
   advanceAmount: number;
   deviceName?: string;
+  /** Brand / manufacturer line (e.g. Signia) for custom HTML templates */
+  deviceBrand?: string;
+  /** Model line for custom HTML templates */
+  deviceModel?: string;
   mrp?: number;
   sellingPrice?: number;
   quantity?: number;

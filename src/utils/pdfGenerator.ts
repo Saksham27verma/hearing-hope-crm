@@ -1,6 +1,50 @@
 import { pdf } from '@react-pdf/renderer';
 import InvoiceTemplate, { InvoiceData } from '@/components/invoices/InvoiceTemplate';
 
+function formatInvoiceDateLabel(value: unknown): string {
+  if (value == null) return new Date().toLocaleDateString('en-IN');
+  const v = value as any;
+  if (typeof v?.toDate === 'function') return v.toDate().toLocaleDateString('en-IN');
+  if (v?.seconds != null) return new Date(v.seconds * 1000).toLocaleDateString('en-IN');
+  if (typeof value === 'string' && value.trim()) {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? new Date().toLocaleDateString('en-IN') : d.toLocaleDateString('en-IN');
+  }
+  if (value instanceof Date) return value.toLocaleDateString('en-IN');
+  return new Date().toLocaleDateString('en-IN');
+}
+
+/** Map enquiry + visit into the shape expected by `convertSaleToInvoiceData` / invoice PDF. */
+export function enquiryVisitToInvoiceSalePayload(enquiry: any, visit: any) {
+  const visitKey = visit?.id ?? visit?.visitDate ?? visit?.purchaseDate ?? 'sale';
+  return {
+    products: visit?.products || [],
+    gstAmount: Number(visit?.taxAmount) || 0,
+    totalAmount: Number(visit?.salesAfterTax) || 0,
+    patientName: enquiry?.name || 'Patient',
+    phone: enquiry?.phone || '',
+    email: enquiry?.email || '',
+    address: enquiry?.address || '',
+    saleDate: visit?.purchaseDate || visit?.visitDate || visit?.date || new Date().toISOString().slice(0, 10),
+    invoiceNumber: `INV-${String(enquiry?.id || 'enquiry').slice(0, 8)}-${String(visitKey).slice(0, 24)}`,
+    notes: visit?.saleNotes || visit?.notes || '',
+  };
+}
+
+export async function openEnquirySaleInvoicePDF(enquiry: any, visit: any): Promise<void> {
+  return openInvoicePDF(enquiryVisitToInvoiceSalePayload(enquiry, visit));
+}
+
+export async function downloadEnquirySaleInvoicePDF(
+  enquiry: any,
+  visit: any,
+  filename?: string
+): Promise<void> {
+  const payload = enquiryVisitToInvoiceSalePayload(enquiry, visit);
+  const safeName = (filename || `invoice-${payload.invoiceNumber}.pdf`).replace(/[^\w.-]+/g, '-');
+  return downloadInvoicePDF(payload, safeName);
+}
+
 // Function to convert sale data to invoice data format
 export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
   // Calculate totals
@@ -34,11 +78,8 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
 
   // Generate invoice number if not present
   const invoiceNumber = sale.invoiceNumber || `INV-${Date.now()}`;
-  
-  // Format date
-  const invoiceDate = sale.saleDate?.toDate ? 
-    sale.saleDate.toDate().toLocaleDateString('en-IN') : 
-    new Date().toLocaleDateString('en-IN');
+
+  const invoiceDate = formatInvoiceDateLabel(sale.saleDate);
 
   return {
     // Company Information (you can customize these)

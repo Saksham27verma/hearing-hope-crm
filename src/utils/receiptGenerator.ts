@@ -1,7 +1,7 @@
 import { pdf } from '@react-pdf/renderer';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import BookingReceiptTemplate, { BookingReceiptData } from '@/components/receipts/BookingReceiptTemplate';
 import TrialReceiptTemplate, { TrialReceiptData } from '@/components/receipts/TrialReceiptTemplate';
 import { db } from '@/firebase/config';
@@ -12,9 +12,9 @@ import {
 } from '@/utils/documentTemplateUtils';
 
 const defaultCompany = {
-  companyName: 'Hope Hearing Solutions',
-  companyAddress: 'Your Company Address\nCity, State - PIN Code',
-  companyPhone: '+91 XXXXX XXXXX',
+  companyName: 'Hope Digital Innovations Pvt Ltd',
+  companyAddress: 'G-14, Ground Floor, King Mall, Rohini, Delhi - 85',
+  companyPhone: '9711871169',
   companyEmail: 'info@hopehearing.com',
 };
 
@@ -26,8 +26,7 @@ const defaultTrialTerms = `1. Device is issued for trial and must be returned by
 2. Device should be returned in the same condition. Loss or damage may attract charges.
 3. Trial does not guarantee purchase; full payment required if you decide to buy.`;
 
-const defaultBookingFooter = `Thank you for your booking. This receipt is issued against advance payment for hearing aid booking.
-Please retain this receipt for your records.`;
+const defaultBookingFooter = `Thank you for your booking. Please retain this receipt for your records.`;
 
 const defaultTrialFooter = `This receipt confirms that the above hearing aid device has been issued for trial as on the start date.
 Please return the device in good condition by the end date. Damages or loss may attract charges.
@@ -44,11 +43,54 @@ type StoredDocumentTemplate = {
   createdAt?: any;
 };
 
+const LOGO_PLACEHOLDER_TOKEN = '{{LOGO_PLACEHOLDER}}';
+
+const getDefaultLogoUrl = (): string =>
+  typeof window === 'undefined' ? '/images/logohope.svg' : `${window.location.origin}/images/logohope.svg`;
+
+/** Ensures logo token resolves when the Firestore template has no uploaded logo. */
+const mergeTemplateImagesWithDefaultLogo = (images?: TemplateImage[]): TemplateImage[] => {
+  const list = [...(images ?? [])];
+  const hasLogo = list.some(
+    (im) => im.placeholder === LOGO_PLACEHOLDER_TOKEN && String(im.url ?? '').trim() !== ''
+  );
+  if (!hasLogo) {
+    list.push({ placeholder: LOGO_PLACEHOLDER_TOKEN, url: getDefaultLogoUrl() });
+  }
+  return list;
+};
+
+/** html2canvas often fails to paint external SVGs; inline as data URL before capture. */
+const inlineSvgImagesForHtml2Canvas = async (root: HTMLElement): Promise<void> => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const imgs = Array.from(root.querySelectorAll('img'));
+  await Promise.all(
+    imgs.map(async (img) => {
+      const src = (img.getAttribute('src') || '').trim();
+      if (!src || src.startsWith('data:image/svg+xml')) return;
+      if (!src.includes('.svg')) return;
+      try {
+        const abs = src.startsWith('http') ? src : `${origin}${src.startsWith('/') ? src : `/${src}`}`;
+        const res = await fetch(abs);
+        if (!res.ok) return;
+        const text = await res.text();
+        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`;
+      } catch {
+        /* keep original src */
+      }
+    })
+  );
+};
+
 export type EnquiryLike = {
   name?: string;
   phone?: string;
   email?: string;
   address?: string;
+  /** Selected center document id (enquiry form) */
+  center?: string;
+  visitingCenter?: string;
+  centerId?: string;
   payments?: Array<{
     amount?: number;
     paymentFor?: string;
@@ -67,6 +109,7 @@ export type VisitLike = {
   id?: string;
   visitDate?: string;
   visitTime?: string;
+  centerId?: string;
   hearingAidBooked?: boolean;
   trialGiven?: boolean;
   trialStartDate?: string;
@@ -132,6 +175,56 @@ const formatCurrency = (amount?: number) =>
     ? `Rs. ${amount.toLocaleString('en-IN')}`
     : '';
 
+/** Resolve center display name from visit / enquiry ids (Firestore `centers` collection). */
+async function resolveCenterDisplayName(
+  enquiry: EnquiryLike,
+  visit: VisitLike
+): Promise<string | undefined> {
+  const raw =
+    visit.centerId ||
+    (enquiry as { visitingCenter?: string }).visitingCenter ||
+    (enquiry as { center?: string }).center ||
+    (enquiry as { centerId?: string }).centerId;
+  if (raw == null || String(raw).trim() === '') return undefined;
+  const id = String(raw).trim();
+  try {
+    const snap = await getDoc(doc(db, 'centers', id));
+    if (snap.exists()) {
+      const name = (snap.data() as { name?: string })?.name;
+      if (name && String(name).trim()) return String(name).trim();
+    }
+  } catch (e) {
+    console.warn('resolveCenterDisplayName:', e);
+  }
+  return id;
+}
+
+/** One line for receipt: brand + model/product without repeating the same text twice. */
+function buildUniqueDeviceDescription(
+  visit: VisitLike,
+  product?: { name?: string; productName?: string; brand?: string; model?: string }
+): { brand?: string; model?: string; fullName?: string } {
+  const brand = (visit.hearingAidBrand || product?.brand || '').trim() || undefined;
+  const model = (visit.hearingAidModel || product?.model || '').trim() || undefined;
+  const prodName = (product?.name || product?.productName || '').trim() || undefined;
+
+  const parts: string[] = [];
+  const push = (s?: string) => {
+    const t = (s || '').trim();
+    if (!t) return;
+    if (!parts.some((p) => p.toLowerCase() === t.toLowerCase())) parts.push(t);
+  };
+
+  push(brand);
+  push(model);
+  if (prodName && prodName.toLowerCase() !== (brand || '').toLowerCase() && prodName.toLowerCase() !== (model || '').toLowerCase()) {
+    push(prodName);
+  }
+
+  const fullName = parts.length ? parts.join(' ') : undefined;
+  return { brand, model: model || undefined, fullName };
+}
+
 const getPreferredCustomTemplate = async (documentType: ManagedDocumentType): Promise<StoredDocumentTemplate | null> => {
   try {
     const snapshot = await getDocs(collection(db, 'invoiceTemplates'));
@@ -154,8 +247,11 @@ const getPreferredCustomTemplate = async (documentType: ManagedDocumentType): Pr
   }
 };
 
-const buildBookingReceiptHtml = (template: StoredDocumentTemplate, data: BookingReceiptData) =>
-  replaceTemplateTokens(
+const buildBookingReceiptHtml = (template: StoredDocumentTemplate, data: BookingReceiptData) => {
+  const qty = Number(data.quantity) || 1;
+  const unitSelling = Number(data.sellingPrice) || 0;
+  const totalAgreed = unitSelling * qty;
+  return replaceTemplateTokens(
     template.htmlContent || '',
     {
       COMPANY_NAME: formatHtmlText(data.companyName),
@@ -169,9 +265,15 @@ const buildBookingReceiptHtml = (template: StoredDocumentTemplate, data: Booking
       PATIENT_EMAIL: formatHtmlText(data.patientEmail),
       PATIENT_ADDRESS: formatHtmlText(data.patientAddress, true),
       BOOKING_DATE: formatHtmlText(data.bookingDate),
-      DEVICE_NAME: formatHtmlText(data.deviceName),
+      DEVICE_NAME: formatHtmlText(
+        data.deviceName ||
+          [data.deviceBrand, data.deviceModel].filter(Boolean).join(' ').trim()
+      ),
+      DEVICE_BRAND: formatHtmlText(data.deviceBrand),
+      DEVICE_MODEL: formatHtmlText(data.deviceModel),
       MRP: formatHtmlText(formatCurrency(data.mrp)),
       SELLING_PRICE: formatHtmlText(formatCurrency(data.sellingPrice)),
+      TOTAL_AGREED_VALUE: formatHtmlText(formatCurrency(totalAgreed)),
       QUANTITY: formatHtmlText(data.quantity),
       ADVANCE_AMOUNT: formatHtmlText(formatCurrency(data.advanceAmount)),
       BALANCE_AMOUNT: formatHtmlText(formatCurrency(data.balanceAmount)),
@@ -183,8 +285,9 @@ const buildBookingReceiptHtml = (template: StoredDocumentTemplate, data: Booking
       LOGO_PLACEHOLDER: '',
       SIGNATURE_PLACEHOLDER: '',
     },
-    template.images || []
+    mergeTemplateImagesWithDefaultLogo(template.images)
   );
+};
 
 const buildTrialReceiptHtml = (template: StoredDocumentTemplate, data: TrialReceiptData) =>
   replaceTemplateTokens(
@@ -217,7 +320,7 @@ const buildTrialReceiptHtml = (template: StoredDocumentTemplate, data: TrialRece
       LOGO_PLACEHOLDER: '',
       SIGNATURE_PLACEHOLDER: '',
     },
-    template.images || []
+    mergeTemplateImagesWithDefaultLogo(template.images)
   );
 
 const createPdfFromHtml = async (html: string): Promise<Blob> => {
@@ -225,13 +328,15 @@ const createPdfFromHtml = async (html: string): Promise<Blob> => {
   container.style.position = 'fixed';
   container.style.left = '-10000px';
   container.style.top = '0';
-  container.style.width = '794px';
+  container.style.width = '720px';
   container.style.background = '#ffffff';
   container.style.zIndex = '-1';
   container.innerHTML = html;
   document.body.appendChild(container);
 
   try {
+    await inlineSvgImagesForHtml2Canvas(container);
+
     const images = Array.from(container.querySelectorAll('img'));
     await Promise.all(
       images.map((image) =>
@@ -244,10 +349,10 @@ const createPdfFromHtml = async (html: string): Promise<Blob> => {
       )
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
     const canvas = await html2canvas(container, {
-      scale: 2,
+      scale: 1.75,
       useCORS: true,
       allowTaint: true,
       backgroundColor: '#ffffff',
@@ -258,22 +363,16 @@ const createPdfFromHtml = async (html: string): Promise<Blob> => {
     const pdfDoc = new jsPDF('p', 'mm', 'a4');
     const pageWidth = pdfDoc.internal.pageSize.getWidth();
     const pageHeight = pdfDoc.internal.pageSize.getHeight();
-    const imageData = canvas.toDataURL('image/png');
-    const imageWidth = pageWidth;
-    const imageHeight = (canvas.height * imageWidth) / canvas.width;
-
-    let heightLeft = imageHeight;
-    let position = 0;
-
-    pdfDoc.addImage(imageData, 'PNG', 0, position, imageWidth, imageHeight);
-    heightLeft -= pageHeight;
-
-    while (heightLeft > 0) {
-      position = heightLeft - imageHeight;
-      pdfDoc.addPage();
-      pdfDoc.addImage(imageData, 'PNG', 0, position, imageWidth, imageHeight);
-      heightLeft -= pageHeight;
+    const imageData = canvas.toDataURL('image/png', 0.92);
+    const aspect = canvas.width / canvas.height;
+    let drawW = pageWidth;
+    let drawH = drawW / aspect;
+    if (drawH > pageHeight) {
+      drawH = pageHeight;
+      drawW = drawH * aspect;
     }
+    const x = (pageWidth - drawW) / 2;
+    pdfDoc.addImage(imageData, 'PNG', x, 0, drawW, drawH);
 
     return pdfDoc.output('blob');
   } finally {
@@ -295,6 +394,8 @@ export function buildBookingReceiptData(
   const quantity = Number(visit.bookingQuantity) || 1;
   const sellingPrice = Number(visit.bookingSellingPrice) || 0;
   const bookingTotal = sellingPrice * quantity;
+  const { brand, model, fullName } = buildUniqueDeviceDescription(visit, product);
+  const deviceNameCombined = fullName;
   return {
     ...defaultCompany,
     receiptNumber: options?.receiptNumber ?? `BR-${Date.now()}`,
@@ -305,10 +406,9 @@ export function buildBookingReceiptData(
     patientAddress: enquiry.address,
     bookingDate,
     advanceAmount,
-    deviceName: [product?.name || product?.productName, product?.brand || visit.hearingAidBrand, product?.model || visit.hearingAidModel]
-      .filter(Boolean)
-      .join(' ')
-      .trim() || [visit.hearingAidBrand, visit.hearingAidModel].filter(Boolean).join(' ').trim() || undefined,
+    deviceBrand: brand,
+    deviceModel: model,
+    deviceName: deviceNameCombined,
     mrp: mrp || undefined,
     sellingPrice: sellingPrice || undefined,
     quantity,
@@ -364,7 +464,14 @@ export async function generateBookingReceiptPDF(
   visit: VisitLike,
   options?: { receiptNumber?: string; centerName?: string }
 ): Promise<Blob> {
-  const data = buildBookingReceiptData(enquiry, visit, options);
+  const centerName =
+    options?.centerName !== undefined && options.centerName !== ''
+      ? options.centerName
+      : await resolveCenterDisplayName(enquiry, visit);
+  const data = buildBookingReceiptData(enquiry, visit, {
+    receiptNumber: options?.receiptNumber,
+    centerName,
+  });
   const customTemplate = await getPreferredCustomTemplate('booking_receipt');
   if (customTemplate?.htmlContent) {
     return createPdfFromHtml(buildBookingReceiptHtml(customTemplate, data));
@@ -379,7 +486,14 @@ export async function generateTrialReceiptPDF(
   visit: VisitLike,
   options?: { receiptNumber?: string; centerName?: string }
 ): Promise<Blob> {
-  const data = buildTrialReceiptData(enquiry, visit, options);
+  const centerName =
+    options?.centerName !== undefined && options.centerName !== ''
+      ? options.centerName
+      : await resolveCenterDisplayName(enquiry, visit);
+  const data = buildTrialReceiptData(enquiry, visit, {
+    receiptNumber: options?.receiptNumber,
+    centerName,
+  });
   const customTemplate = await getPreferredCustomTemplate('trial_receipt');
   if (customTemplate?.htmlContent) {
     return createPdfFromHtml(buildTrialReceiptHtml(customTemplate, data));

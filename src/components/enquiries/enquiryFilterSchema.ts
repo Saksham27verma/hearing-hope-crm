@@ -43,6 +43,8 @@ export const PAYMENT_FOR_OPTIONS = [
   { value: 'hearing_aid', label: 'Hearing aid' },
   { value: 'accessory', label: 'Accessory' },
   { value: 'booking_advance', label: 'Booking advance' },
+  { value: 'trial_home_security_deposit', label: 'Home trial security deposit' },
+  { value: 'programming', label: 'Programming' },
   { value: 'full_payment', label: 'Full payment' },
   { value: 'partial_payment', label: 'Partial payment' },
   { value: 'other', label: 'Other' },

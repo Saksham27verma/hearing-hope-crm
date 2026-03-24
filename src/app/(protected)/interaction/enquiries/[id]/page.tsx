@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Box, 
   Typography, 
@@ -24,7 +24,19 @@ import {
   Grid as MuiGrid,
   Stack,
   Tabs,
-  Tab
+  Tab,
+  Snackbar,
+  Alert,
+  Dialog,
+  DialogContent,
+  DialogActions,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Menu,
+  Tooltip,
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -43,21 +55,36 @@ import {
   Receipt as ReceiptIcon,
   Download as DownloadIcon,
   AccessTime as TimeIcon,
-  CalendarMonth as CalendarIcon
+  CalendarMonth as CalendarIcon,
+  Share as ShareIcon,
+  Add as AddIcon,
+  Close as CloseIcon,
+  PhoneInTalk as PhoneInTalkIcon
 } from '@mui/icons-material';
-import { collection, doc, getDoc, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, orderBy, updateDoc, Timestamp, where, serverTimestamp } from 'firebase/firestore';
 import {
   openBookingReceiptPDF,
   downloadBookingReceiptPDF,
   openTrialReceiptPDF,
   downloadTrialReceiptPDF,
 } from '@/utils/receiptGenerator';
-import { getEnquiryStatusMeta } from '@/utils/enquiryStatus';
+import { openEnquirySaleInvoicePDF, downloadEnquirySaleInvoicePDF } from '@/utils/pdfGenerator';
+import {
+  ENQUIRY_STATUS_OPTIONS,
+  getEnquiryStatusMeta,
+  parseJourneyStatusOverride,
+  type EnquiryJourneyStatus,
+} from '@/utils/enquiryStatus';
 import { db } from '@/firebase/config';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import PureToneAudiogram from '@/components/enquiries/PureToneAudiogram';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
+import {
+  getTelecallerSelectOptions,
+  pickDefaultTelecallerName,
+  type StaffRecord,
+} from '@/utils/enquiryTelecallerOptions';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
@@ -206,6 +233,28 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const [error, setError] = useState<string | null>(null);
   const [centers, setCenters] = useState<{ id: string; name: string }[]>([]);
   const [activeVisitTab, setActiveVisitTab] = useState(0);
+  const [shareSnackbar, setShareSnackbar] = useState<{ open: boolean; message: string }>({
+    open: false,
+    message: '',
+  });
+  const [addFollowUpOpen, setAddFollowUpOpen] = useState(false);
+  const [addFollowUpSaving, setAddFollowUpSaving] = useState(false);
+  const [newFollowUp, setNewFollowUp] = useState({
+    date: '',
+    remarks: '',
+    nextFollowUpDate: '',
+    callerName: '',
+  });
+  const [followUpFeedback, setFollowUpFeedback] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
+  const [staffList, setStaffList] = useState<StaffRecord[]>([]);
+  const [telecallerDialogOptions, setTelecallerDialogOptions] = useState<string[]>([]);
+  const [enquiryAppointments, setEnquiryAppointments] = useState<any[]>([]);
+  const [journeyMenuAnchor, setJourneyMenuAnchor] = useState<null | HTMLElement>(null);
+  const [journeyStatusSaving, setJourneyStatusSaving] = useState(false);
 
   const fetchEnquiry = async (id: string) => {
     try {
@@ -240,16 +289,77 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }
   };
 
+  const fetchEnquiryAppointments = async (id: string) => {
+    try {
+      const q = query(collection(db, 'appointments'), where('enquiryId', '==', id));
+      const snap = await getDocs(q);
+      const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      list.sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+      setEnquiryAppointments(list);
+    } catch (e) {
+      console.error('Error fetching appointments:', e);
+      setEnquiryAppointments([]);
+    }
+  };
+
   const handleRefresh = async () => {
     if (!resolvedParams || refreshing) return;
     try {
       setRefreshing(true);
-      await Promise.all([fetchEnquiry(resolvedParams.id), fetchCenters()]);
+      await Promise.all([
+        fetchEnquiry(resolvedParams.id),
+        fetchCenters(),
+        fetchEnquiryAppointments(resolvedParams.id),
+      ]);
     } finally {
       setRefreshing(false);
     }
   };
-  
+
+  const saveJourneyStatusOverride = async (next: EnquiryJourneyStatus | 'auto') => {
+    if (!resolvedParams?.id || !enquiry || userProfile?.role === 'audiologist') return;
+    setJourneyStatusSaving(true);
+    try {
+      const ref = doc(db, 'enquiries', resolvedParams.id);
+      const journeyStatusOverride = next === 'auto' ? null : next;
+      await updateDoc(ref, { journeyStatusOverride, updatedAt: serverTimestamp() });
+      setEnquiry({ ...enquiry, journeyStatusOverride });
+      setJourneyMenuAnchor(null);
+      setFollowUpFeedback({
+        open: true,
+        message:
+          next === 'auto'
+            ? 'Status now follows the latest visit automatically'
+            : 'Journey status updated',
+        severity: 'success',
+      });
+    } catch (e) {
+      console.error(e);
+      setFollowUpFeedback({
+        open: true,
+        message: 'Could not update journey status',
+        severity: 'error',
+      });
+    } finally {
+      setJourneyStatusSaving(false);
+    }
+  };
+
+  const shareProfileLink = () => {
+    if (typeof window === 'undefined' || !resolvedParams?.id) return;
+    const url = `${window.location.origin}/interaction/enquiries/${resolvedParams.id}`;
+    const done = (ok: boolean) =>
+      setShareSnackbar({
+        open: true,
+        message: ok ? 'Profile link copied to clipboard' : 'Could not copy — copy the URL from the address bar',
+      });
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(() => done(true), () => done(false));
+    } else {
+      done(false);
+    }
+  };
+
   useEffect(() => {
     const resolveParams = async () => {
       const resolved = await params;
@@ -264,12 +374,114 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   }, [resolvedParams]);
 
   useEffect(() => {
+    if (!resolvedParams?.id) return;
+    void fetchEnquiryAppointments(resolvedParams.id);
+  }, [resolvedParams?.id]);
+
+  useEffect(() => {
     fetchCenters();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'staff'));
+        const list: StaffRecord[] = snap.docs.map((d) => {
+          const data = d.data() as { name?: string; jobRole?: string; status?: string };
+          return {
+            id: d.id,
+            name: data.name || '',
+            jobRole: data.jobRole || '',
+            status: data.status,
+          };
+        });
+        if (!cancelled) setStaffList(list);
+      } catch (e) {
+        console.error('Error fetching staff for telecaller list:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!addFollowUpOpen) return;
+    const options = getTelecallerSelectOptions(staffList);
+    setTelecallerDialogOptions(options);
+    setNewFollowUp((prev) => ({
+      ...prev,
+      callerName: options.includes(prev.callerName)
+        ? prev.callerName
+        : pickDefaultTelecallerName(options, {
+            displayName: userProfile?.displayName,
+            enquiryTelecaller: enquiry?.telecaller,
+          }),
+    }));
+  }, [staffList, addFollowUpOpen, userProfile?.displayName, enquiry?.telecaller]);
   
   const visits = enquiry?.visits || enquiry?.visitSchedules || [];
   const hasVisits = visits.length > 0;
-  const hasFollowUps = enquiry?.followUps && enquiry.followUps.length > 0;
+  const followUpsList = Array.isArray(enquiry?.followUps) ? enquiry.followUps : [];
+
+  const formatFollowUpDateCell = (value: string | undefined) => {
+    if (!value) return '—';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+  };
+
+  const openAddFollowUpDialog = () => {
+    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const options = getTelecallerSelectOptions(staffList);
+    setTelecallerDialogOptions(options);
+    const callerName = pickDefaultTelecallerName(options, {
+      displayName: userProfile?.displayName,
+      enquiryTelecaller: enquiry?.telecaller,
+    });
+    setNewFollowUp({
+      date: new Date().toISOString().split('T')[0],
+      remarks: '',
+      nextFollowUpDate: nextWeek,
+      callerName,
+    });
+    setAddFollowUpOpen(true);
+  };
+
+  const handleSaveFollowUp = async () => {
+    if (!resolvedParams?.id || !enquiry) return;
+    if (!newFollowUp.callerName.trim()) {
+      setFollowUpFeedback({
+        open: true,
+        message: 'Select who made the call (telecaller list).',
+        severity: 'error',
+      });
+      return;
+    }
+    try {
+      setAddFollowUpSaving(true);
+      const followUpData = {
+        ...newFollowUp,
+        id:
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `fu-${Date.now()}`,
+        createdAt: Timestamp.now(),
+      };
+      const updated = [...followUpsList, followUpData];
+      await updateDoc(doc(db, 'enquiries', resolvedParams.id), { followUps: updated });
+      setEnquiry({ ...enquiry, followUps: updated });
+      setAddFollowUpOpen(false);
+      setFollowUpFeedback({ open: true, message: 'Call logged successfully', severity: 'success' });
+    } catch (err: unknown) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : 'Could not save call';
+      setFollowUpFeedback({ open: true, message, severity: 'error' });
+    } finally {
+      setAddFollowUpSaving(false);
+    }
+  };
+
   const paymentEntries = Array.isArray(enquiry?.paymentRecords) && enquiry.paymentRecords.length > 0
     ? enquiry.paymentRecords.map((payment: any) => ({
         label:
@@ -288,6 +500,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
             payment.paymentFor === 'booking_advance' ? 'Booking' :
             payment.paymentFor === 'hearing_aid' ? 'Hearing Aid' :
             payment.paymentFor === 'accessory' ? 'Accessory' :
+            payment.paymentFor === 'trial_home_security_deposit' ? 'Trial security deposit' :
+            payment.paymentFor === 'programming' ? 'Programming' :
             payment.paymentFor === 'full_payment' ? 'Full Payment' :
             payment.paymentFor === 'partial_payment' ? 'Partial Payment' :
             payment.paymentFor || 'Payment',
@@ -297,20 +511,6 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         }))
       : [];
   const hasPayments = paymentEntries.length > 0 || Boolean(enquiry?.financialSummary);
-  
-  // Receipt data
-  const bookingReceipts = visits
-    .map((visit: any, index: number) => ({ visit, index }))
-    .filter(({ visit }: { visit: any }) => visit.hearingAidBooked || (Number(visit.bookingAdvanceAmount) > 0));
-  const trialReceipts = visits
-    .map((visit: any, index: number) => ({ visit, index }))
-    .filter(({ visit }: { visit: any }) => visit.trialGiven || visit.hearingAidTrial);
-  const hasReceipts = bookingReceipts.length > 0 || trialReceipts.length > 0;
-
-  const getCenterName = (visit?: any) => {
-    const centerId = visit?.centerId || enquiry.visitingCenter;
-    return centerId ? (centers.find(c => c.id === centerId)?.name) || undefined : undefined;
-  };
 
   const hasValue = (value: any) => {
     if (value === null || value === undefined) return false;
@@ -319,6 +519,29 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     if (Array.isArray(value)) return value.length > 0;
     if (typeof value === 'object') return Object.keys(value).length > 0;
     return Boolean(value);
+  };
+
+  // Receipt data
+  const bookingReceipts = visits
+    .map((visit: any, index: number) => ({ visit, index }))
+    .filter(({ visit }: { visit: any }) => visit.hearingAidBooked || (Number(visit.bookingAdvanceAmount) > 0));
+  const trialReceipts = visits
+    .map((visit: any, index: number) => ({ visit, index }))
+    .filter(({ visit }: { visit: any }) => visit.trialGiven || visit.hearingAidTrial);
+  const saleInvoiceReceipts = visits
+    .map((visit: any, index: number) => ({ visit, index }))
+    .filter(
+      ({ visit }: { visit: any }) =>
+        (visit.hearingAidSale || visit.purchaseFromTrial) &&
+        ((Array.isArray(visit.products) && visit.products.length > 0) || hasValue(visit.salesAfterTax))
+    );
+  const hasReceipts =
+    bookingReceipts.length > 0 || trialReceipts.length > 0 || saleInvoiceReceipts.length > 0;
+
+  const getCenterName = (visit?: any) => {
+    const centerId =
+      visit?.centerId || enquiry.visitingCenter || (enquiry as { center?: string }).center;
+    return centerId ? (centers.find(c => c.id === centerId)?.name) || undefined : undefined;
   };
 
   const formatCurrency = (value?: number) =>
@@ -344,6 +567,13 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
   const getBookingTotal = (visit: any) =>
     (Number(visit?.bookingSellingPrice) || 0) * (Number(visit?.bookingQuantity) || 1);
+
+  /** Units per sale line; amounts on stored products are per unit (matches enquiry form). */
+  const saleLineQty = (product: { quantity?: number }) => {
+    const q = Math.floor(Number(product.quantity));
+    if (!Number.isFinite(q) || q < 1) return 1;
+    return Math.min(9999, q);
+  };
 
   const calculateDerivedTotalDue = () => {
     let total = 0;
@@ -374,7 +604,27 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     totalDue - totalPaid
   );
   const paymentStatus = pendingAmount <= 0 ? 'fully_paid' : totalPaid > 0 ? 'partial' : 'pending';
-  const journeyStatus = getEnquiryStatusMeta(enquiry);
+  const journeyStatus = useMemo(() => getEnquiryStatusMeta(enquiry), [enquiry]);
+
+  const appointmentStats = useMemo(() => {
+    const now = Date.now();
+    let completed = 0;
+    let cancelled = 0;
+    let upcoming = 0;
+    let pastScheduled = 0;
+    enquiryAppointments.forEach((a: any) => {
+      const st = a.status === 'completed' ? 'completed' : a.status === 'cancelled' ? 'cancelled' : 'scheduled';
+      const t = new Date(a.start).getTime();
+      if (st === 'completed') completed += 1;
+      else if (st === 'cancelled') cancelled += 1;
+      else if (t >= now) upcoming += 1;
+      else pastScheduled += 1;
+    });
+    return { completed, cancelled, upcoming, pastScheduled, total: enquiryAppointments.length };
+  }, [enquiryAppointments]);
+
+  const getEnquiryAppointmentStatus = (a: any) =>
+    a.status === 'completed' ? 'completed' : a.status === 'cancelled' ? 'cancelled' : 'scheduled';
 
   const getVisitAmount = (visit: any) => {
     if (!visit) return undefined;
@@ -416,6 +666,12 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         </Typography>
       </Box>
     );
+  };
+
+  const getHomeTrialSecurityDepositAmount = (visit: any) => {
+    const ha = visit?.hearingAidDetails || {};
+    const amount = Number(visit?.trialHomeSecurityDepositAmount ?? ha.trialHomeSecurityDepositAmount);
+    return Number.isFinite(amount) ? amount : 0;
   };
 
   if (!resolvedParams || loading || authLoading) {
@@ -478,6 +734,22 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
               backdropFilter: 'blur(10px)',
             }}
           />
+          {resolvedParams && (
+            <Button
+              variant="outlined"
+              startIcon={<ShareIcon />}
+              onClick={shareProfileLink}
+              sx={{
+                borderRadius: 99,
+                borderColor: alpha('#0f172a', 0.12),
+                color: 'text.primary',
+                bgcolor: 'rgba(255,255,255,0.72)',
+                backdropFilter: 'blur(10px)',
+              }}
+            >
+              Share profile
+            </Button>
+          )}
           {userProfile?.role !== 'audiologist' && resolvedParams && (
             <Button
               variant="contained"
@@ -525,7 +797,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
               {enquiry.name || 'Patient Name'}
             </Typography>
             <Typography variant="body1" color="text.secondary" sx={{ mb: 2, maxWidth: 760 }}>
-              Clean patient profile with enquiry, visit, receipt, and payment context in one place.
+              Enquiry journey, visits (test, trial, booking, sale lines), receipts, invoices, and payments in one place.
+              Use Share profile to copy this page URL for your team.
             </Typography>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               {enquiry.phone && userProfile?.role !== 'audiologist' && (
@@ -546,12 +819,55 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   sx={{ borderRadius: 99, bgcolor: 'rgba(255,255,255,0.75)' }}
                 />
               )}
-              <Chip
-                label={journeyStatus.label}
-                color={journeyStatus.color}
-                size="small"
-                sx={{ borderRadius: 99, fontWeight: 700 }}
-              />
+              <Tooltip
+                title={
+                  userProfile?.role === 'audiologist'
+                    ? journeyStatus.label
+                    : journeyStatus.source === 'manual'
+                      ? 'Manual status — click to change'
+                      : 'From latest visit (by date) — click to set manually'
+                }
+              >
+                <Chip
+                  label={journeyStatusSaving ? 'Saving…' : journeyStatus.label}
+                  color={journeyStatus.color}
+                  size="small"
+                  onClick={
+                    userProfile?.role === 'audiologist'
+                      ? undefined
+                      : (e) => setJourneyMenuAnchor(e.currentTarget)
+                  }
+                  sx={{
+                    borderRadius: 99,
+                    fontWeight: 700,
+                    cursor: userProfile?.role === 'audiologist' ? 'default' : 'pointer',
+                  }}
+                />
+              </Tooltip>
+              <Menu
+                anchorEl={journeyMenuAnchor}
+                open={Boolean(journeyMenuAnchor)}
+                onClose={() => !journeyStatusSaving && setJourneyMenuAnchor(null)}
+              >
+                <MenuItem
+                  disabled={journeyStatusSaving}
+                  selected={!parseJourneyStatusOverride(enquiry?.journeyStatusOverride)}
+                  onClick={() => saveJourneyStatusOverride('auto')}
+                >
+                  Automatic (latest visit)
+                </MenuItem>
+                <Divider />
+                {ENQUIRY_STATUS_OPTIONS.map((opt) => (
+                  <MenuItem
+                    key={opt.value}
+                    disabled={journeyStatusSaving}
+                    selected={parseJourneyStatusOverride(enquiry?.journeyStatusOverride) === opt.value}
+                    onClick={() => saveJourneyStatusOverride(opt.value)}
+                  >
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Menu>
             </Stack>
           </Box>
 
@@ -563,7 +879,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
               <MetricCard label="Visits" value={String(visits.length)} accent="#0ea5e9" />
             </Grid>
             <Grid item xs={6}>
-              <MetricCard label="Calls" value={String(enquiry.followUps?.length || 0)} accent="#7c3aed" />
+              <MetricCard label="Calls" value={String(followUpsList.length)} accent="#7c3aed" />
             </Grid>
             <Grid item xs={6}>
               <MetricCard label="Pending" value={formatCurrency(pendingAmount) || '₹0'} accent={pendingAmount > 0 ? '#dc2626' : '#16a34a'} />
@@ -802,7 +1118,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.trialStartDate) ||
                         hasValue(activeVisit.trialHearingAidBrand) ||
                         hasValue(activeVisit.trialHearingAidModel) ||
-                        hasValue(activeVisit.trialSerialNumber)) && (
+                        hasValue(activeVisit.trialSerialNumber) ||
+                        getHomeTrialSecurityDepositAmount(activeVisit) > 0) && (
                         <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#f59e0b', 0.18) }}>
                           <SectionHeading icon={<HearingIcon fontSize="small" />} title="Trial Details" />
                           <Grid container spacing={2}>
@@ -814,6 +1131,51 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             <Grid item xs={12} sm={6}>{renderVisitField('Duration', hasValue(activeVisit.trialDuration) ? `${activeVisit.trialDuration} days` : undefined)}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Start Date', activeVisit.trialStartDate)}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('End Date', activeVisit.trialEndDate)}</Grid>
+                            {(() => {
+                              const isHome =
+                                activeVisit.trialHearingAidType === 'home' ||
+                                activeVisit.hearingAidDetails?.trialHearingAidType === 'home';
+                              const agreed = getHomeTrialSecurityDepositAmount(activeVisit);
+                              if (!isHome || agreed <= 0) return null;
+                              const payList = (enquiry?.payments || []).filter((p: any) => {
+                                if (p.paymentFor !== 'trial_home_security_deposit') return false;
+                                const rid = p.relatedVisitId;
+                                if (rid !== undefined && rid !== null && String(rid) !== '') {
+                                  return String(rid) === String(activeVisit.id ?? '');
+                                }
+                                return visits.length === 1;
+                              });
+                              return (
+                                <>
+                                  <Grid item xs={12} sm={6}>
+                                    {renderVisitField('Security deposit (agreed)', formatCurrency(agreed))}
+                                  </Grid>
+                                  {payList.length > 0 ? (
+                                    <Grid item xs={12}>
+                                      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                                        Recorded payments
+                                      </Typography>
+                                      <Stack spacing={0.75}>
+                                        {payList.map((p: any, idx: number) => (
+                                          <Typography key={p.id || idx} variant="body2">
+                                            {formatCurrency(Number(p.amount))} · {p.paymentMode || '—'}
+                                            {p.referenceNumber ? ` · Ref: ${p.referenceNumber}` : ''}
+                                            {p.remarks ? ` · ${p.remarks}` : ''}
+                                            {p.paymentDate ? ` · ${p.paymentDate}` : ''}
+                                          </Typography>
+                                        ))}
+                                      </Stack>
+                                    </Grid>
+                                  ) : (
+                                    <Grid item xs={12}>
+                                      <Typography variant="body2" color="text.secondary">
+                                        No payment logged yet — record it in the enquiry form under Payments & Billing.
+                                      </Typography>
+                                    </Grid>
+                                  )}
+                                </>
+                              );
+                            })()}
                             <Grid item xs={12} sm={6}>{renderVisitField('Result', activeVisit.trialResult)}</Grid>
                             <Grid item xs={12}>{renderVisitField('Notes', activeVisit.trialNotes)}</Grid>
                           </Grid>
@@ -836,9 +1198,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             <Grid item xs={12} sm={6}>{renderVisitField('Ear', activeVisit.whichEar)}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Booking Date', activeVisit.bookingDate)}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Advance Amount', formatCurrency(activeVisit.bookingAdvanceAmount))}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Selling Price', formatCurrency(activeVisit.bookingSellingPrice))}</Grid>
+                            <Grid item xs={12} sm={6}>{renderVisitField('Selling price (per unit)', formatCurrency(activeVisit.bookingSellingPrice))}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Quantity', hasValue(activeVisit.bookingQuantity) ? String(activeVisit.bookingQuantity) : undefined)}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('MRP', formatCurrency(activeVisit.hearingAidPrice))}</Grid>
+                            <Grid item xs={12} sm={6}>{renderVisitField('MRP (per unit)', formatCurrency(activeVisit.hearingAidPrice))}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Booking Total', formatCurrency(getBookingTotal(activeVisit)))}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Balance Amount', formatCurrency(Math.max(getBookingTotal(activeVisit) - (Number(activeVisit.bookingAdvanceAmount) || 0), 0)))}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Warranty', activeVisit.warranty)}</Grid>
@@ -865,17 +1227,26 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                 <TableHead sx={{ bgcolor: alpha('#16a34a', 0.06) }}>
                                   <TableRow>
                                     <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>Qty</TableCell>
                                     <TableCell sx={{ fontWeight: 700 }}>Serial</TableCell>
-                                    <TableCell align="right" sx={{ fontWeight: 700 }}>Price</TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>Per unit (incl. GST)</TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>Line total</TableCell>
                                   </TableRow>
                                 </TableHead>
                                 <TableBody>
                                   {activeVisit.products.map((product: any, productIndex: number) => (
                                     <TableRow key={product.id || productIndex}>
                                       <TableCell>{product.name || product.productName || '—'}</TableCell>
+                                      <TableCell align="right">{saleLineQty(product)}</TableCell>
                                       <TableCell>{product.serialNumber || '—'}</TableCell>
                                       <TableCell align="right">
-                                        {formatCurrency(product.finalAmount || product.sellingPrice || product.mrp) || '—'}
+                                        {formatCurrency(product.finalAmount ?? product.sellingPrice ?? product.mrp) || '—'}
+                                      </TableCell>
+                                      <TableCell align="right">
+                                        {formatCurrency(
+                                          (Number(product.finalAmount ?? product.sellingPrice ?? 0) || 0) *
+                                            saleLineQty(product)
+                                        ) || '—'}
                                       </TableCell>
                                     </TableRow>
                                   ))}
@@ -967,12 +1338,125 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
             </InfoCard>
           )}
 
+          {/* Scheduled appointments (scheduler) */}
+          <InfoCard>
+            <CardContent sx={{ p: { xs: 2.25, md: 3 } }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                  gap: 2,
+                  flexWrap: 'wrap',
+                  mb: 2,
+                }}
+              >
+                <SectionHeading
+                  icon={<CalendarIcon fontSize="small" />}
+                  title="Appointments"
+                  subtitle={`${appointmentStats.total} total · ${appointmentStats.completed} completed · ${appointmentStats.cancelled} cancelled · ${appointmentStats.upcoming} upcoming`}
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => router.push('/appointments')}
+                  sx={{ borderRadius: 99, flexShrink: 0, mt: { xs: 0, sm: 0.5 } }}
+                >
+                  Open scheduler
+                </Button>
+              </Box>
+              {appointmentStats.pastScheduled > 0 && (
+                <Typography variant="caption" color="warning.main" sx={{ display: 'block', mb: 1.5, fontWeight: 600 }}>
+                  {appointmentStats.pastScheduled} past slot(s) still marked scheduled — mark completed or cancel in the
+                  scheduler.
+                </Typography>
+              )}
+              {enquiryAppointments.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No appointments linked to this enquiry yet. Schedule from the appointment scheduler after selecting this
+                  patient.
+                </Typography>
+              ) : (
+                <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2.25, overflow: 'hidden' }}>
+                  <Table size="small">
+                    <TableHead sx={{ bgcolor: alpha('#0f172a', 0.03) }}>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700 }}>When</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Type</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Notes</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {enquiryAppointments.map((appt: any) => {
+                        const st = getEnquiryAppointmentStatus(appt);
+                        const start = appt.start ? new Date(appt.start) : null;
+                        const when =
+                          start && !Number.isNaN(start.getTime())
+                            ? `${start.toLocaleDateString()} · ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                            : '—';
+                        return (
+                          <TableRow key={appt.id}>
+                            <TableCell sx={{ whiteSpace: 'nowrap' }}>{when}</TableCell>
+                            <TableCell>{appt.type === 'home' ? 'Home' : 'Center'}</TableCell>
+                            <TableCell>
+                              <Chip
+                                size="small"
+                                label={st === 'cancelled' ? 'Cancelled' : st === 'completed' ? 'Completed' : 'Scheduled'}
+                                color={st === 'cancelled' ? 'default' : st === 'completed' ? 'success' : 'primary'}
+                                variant={st === 'scheduled' ? 'filled' : 'outlined'}
+                                sx={{ fontWeight: 700, borderRadius: 99 }}
+                              />
+                            </TableCell>
+                            <TableCell sx={{ maxWidth: 220, color: 'text.secondary' }}>
+                              <Typography variant="body2" noWrap title={appt.notes || ''}>
+                                {appt.notes || '—'}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              )}
+            </CardContent>
+          </InfoCard>
+
           {/* Call History */}
-          {hasFollowUps && (
-            <InfoCard>
-              <CardContent sx={{ p: { xs: 2.25, md: 3 } }}>
-                <SectionHeading icon={<PhoneIcon fontSize="small" />} title="Call History" subtitle={`${enquiry.followUps.length} follow-up entries`} />
-                
+          <InfoCard>
+            <CardContent sx={{ p: { xs: 2.25, md: 3 } }}>
+              <SectionHeading
+                icon={<PhoneIcon fontSize="small" />}
+                title="Call History"
+                subtitle={`${followUpsList.length} follow-up ${followUpsList.length === 1 ? 'entry' : 'entries'}`}
+              />
+              {userProfile?.role !== 'audiologist' && (
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={<AddIcon />}
+                    onClick={openAddFollowUpDialog}
+                    sx={{
+                      borderRadius: 99,
+                      bgcolor: '#7c3aed',
+                      '&:hover': { bgcolor: '#6d28d9' },
+                      boxShadow: '0 8px 22px rgba(124,58,237,0.25)',
+                    }}
+                  >
+                    Log call
+                  </Button>
+                </Box>
+              )}
+
+              {followUpsList.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                  {userProfile?.role === 'audiologist'
+                    ? 'No calls logged yet.'
+                    : 'No calls logged yet. Use Log call to add one without opening edit mode.'}
+                </Typography>
+              ) : (
                 <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2.25, overflow: 'hidden' }}>
                   <Table size="small">
                     <TableHead sx={{ bgcolor: alpha('#0f172a', 0.03) }}>
@@ -984,20 +1468,20 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {enquiry.followUps.map((followUp: any, index: number) => (
-                        <TableRow key={index}>
-                          <TableCell>{new Date(followUp.date).toLocaleDateString()}</TableCell>
-                          <TableCell>{followUp.remarks}</TableCell>
-                          <TableCell>{followUp.nextFollowUpDate ? new Date(followUp.nextFollowUpDate).toLocaleDateString() : '—'}</TableCell>
+                      {followUpsList.map((followUp: any, index: number) => (
+                        <TableRow key={followUp.id || index}>
+                          <TableCell>{formatFollowUpDateCell(followUp.date)}</TableCell>
+                          <TableCell>{followUp.remarks ?? '—'}</TableCell>
+                          <TableCell>{formatFollowUpDateCell(followUp.nextFollowUpDate)}</TableCell>
                           <TableCell>{followUp.callerName || '—'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 </TableContainer>
-              </CardContent>
-            </InfoCard>
-          )}
+              )}
+            </CardContent>
+          </InfoCard>
         </Grid>
 
         {/* Right Column */}
@@ -1016,7 +1500,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           {hasReceipts && (
             <InfoCard sx={{ gridColumn: { md: '1 / -1' } }}>
               <CardContent sx={{ p: { xs: 2.25, md: 3 } }}>
-                <SectionHeading icon={<ReceiptIcon fontSize="small" />} title="Receipts" subtitle="Quick access to patient documents" />
+                <SectionHeading
+                  icon={<ReceiptIcon fontSize="small" />}
+                  title="Receipts & invoices"
+                  subtitle="Booking and trial receipts, plus sales invoices (PDF)"
+                />
                 
                 <Stack spacing={2}>
                   {bookingReceipts.map(({ visit, index }: { visit: any; index: number }) => (
@@ -1031,11 +1519,23 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         {[visit.hearingAidBrand, visit.hearingAidModel].filter(Boolean).join(' ') || 'Booked Device'}
                       </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.6 }}>
-                        MRP: {visit.hearingAidPrice ? `₹${Number(visit.hearingAidPrice).toLocaleString('en-IN')}` : '—'}
+                        MRP (per unit): {visit.hearingAidPrice ? `₹${Number(visit.hearingAidPrice).toLocaleString('en-IN')}` : '—'}
                         {' · '}
                         Qty: {Number(visit.bookingQuantity) || 1}
                         {' · '}
-                        Balance: {visit.bookingSellingPrice ? `₹${Math.max(((Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1)) - Number(visit.bookingAdvanceAmount || 0), 0).toLocaleString('en-IN')}` : '—'}
+                        Selling (per unit):{' '}
+                        {visit.bookingSellingPrice
+                          ? `₹${Number(visit.bookingSellingPrice).toLocaleString('en-IN')}`
+                          : '—'}
+                        {' · '}
+                        Balance due:{' '}
+                        {visit.bookingSellingPrice
+                          ? `₹${Math.max(
+                              (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1) -
+                                Number(visit.bookingAdvanceAmount || 0),
+                              0
+                            ).toLocaleString('en-IN')}`
+                          : '—'}
                       </Typography>
                       <Stack direction="row" spacing={1}>
                         <Button
@@ -1087,6 +1587,61 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           size="small"
                           startIcon={<DownloadIcon />}
                           onClick={() => downloadTrialReceiptPDF(enquiry, visit, undefined, { centerName: getCenterName(visit) })}
+                          sx={{ borderRadius: 99 }}
+                        >
+                          Download
+                        </Button>
+                      </Stack>
+                    </Paper>
+                  ))}
+
+                  {saleInvoiceReceipts.map(({ visit, index }: { visit: any; index: number }) => (
+                    <Paper
+                      key={`sale-inv-${index}`}
+                      variant="outlined"
+                      sx={{
+                        p: 2,
+                        borderRadius: 2.5,
+                        bgcolor: alpha('#16a34a', 0.04),
+                        borderColor: alpha('#16a34a', 0.14),
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                        <Chip label="Sales invoice" size="small" color="success" sx={{ borderRadius: 99, fontWeight: 700 }} />
+                        <Typography variant="caption" color="text.secondary">
+                          {visit.purchaseDate || visit.visitDate || '—'}
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" sx={{ mb: 0.5, fontWeight: 700 }}>
+                        {Array.isArray(visit.products) && visit.products.length > 0
+                          ? visit.products
+                              .map((p: any) => p.name || p.productName)
+                              .filter(Boolean)
+                              .join(', ') || 'Hearing aid sale'
+                          : 'Hearing aid sale'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.6 }}>
+                        Total (incl. GST):{' '}
+                        {visit.salesAfterTax != null && visit.salesAfterTax !== ''
+                          ? `₹${Number(visit.salesAfterTax).toLocaleString('en-IN')}`
+                          : '—'}
+                        {visit.taxAmount != null && visit.taxAmount !== '' && Number(visit.taxAmount) > 0
+                          ? ` · Tax: ₹${Number(visit.taxAmount).toLocaleString('en-IN')}`
+                          : ''}
+                      </Typography>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          size="small"
+                          startIcon={<VisibilityIcon />}
+                          onClick={() => openEnquirySaleInvoicePDF(enquiry, visit)}
+                          sx={{ borderRadius: 99 }}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          size="small"
+                          startIcon={<DownloadIcon />}
+                          onClick={() => downloadEnquirySaleInvoicePDF(enquiry, visit)}
                           sx={{ borderRadius: 99 }}
                         >
                           Download
@@ -1190,7 +1745,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                 </Paper>
                 <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: 'rgba(255,255,255,0.8)' }}>
                   <Typography variant="body2" color="text.secondary">Follow-up Calls</Typography>
-                  <Typography variant="body1" sx={{ fontWeight: 700 }}>{enquiry.followUps?.length || 0}</Typography>
+                  <Typography variant="body1" sx={{ fontWeight: 700 }}>{followUpsList.length}</Typography>
                 </Paper>
                 {enquiry.followUpDate && (
                   <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: 'rgba(255,255,255,0.8)' }}>
@@ -1214,6 +1769,223 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         </Grid>
       </Grid>
       </Box>
+
+      <Dialog
+        open={addFollowUpOpen}
+        onClose={() => !addFollowUpSaving && setAddFollowUpOpen(false)}
+        fullWidth
+        maxWidth="sm"
+        slotProps={{
+          backdrop: { sx: { backdropFilter: 'blur(6px)' } },
+        }}
+        PaperProps={{
+          elevation: 0,
+          sx: {
+            borderRadius: 4,
+            overflow: 'hidden',
+            border: '1px solid',
+            borderColor: alpha('#7c3aed', 0.22),
+            boxShadow: '0 24px 64px rgba(91, 33, 182, 0.18), 0 0 0 1px rgba(255,255,255,0.06) inset',
+          },
+        }}
+      >
+        <Box
+          sx={{
+            position: 'relative',
+            background: 'linear-gradient(125deg, #7c3aed 0%, #6d28d9 42%, #5b21b6 100%)',
+            color: '#fff',
+            px: 3,
+            py: 2.75,
+            pr: 5,
+          }}
+        >
+          <IconButton
+            aria-label="Close"
+            onClick={() => !addFollowUpSaving && setAddFollowUpOpen(false)}
+            disabled={addFollowUpSaving}
+            sx={{
+              position: 'absolute',
+              right: 8,
+              top: 8,
+              color: 'rgba(255,255,255,0.92)',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
+            }}
+          >
+            <CloseIcon />
+          </IconButton>
+          <Stack direction="row" alignItems="flex-start" spacing={1.75}>
+            <Box
+              sx={{
+                width: 48,
+                height: 48,
+                borderRadius: 2.5,
+                display: 'grid',
+                placeItems: 'center',
+                bgcolor: 'rgba(255,255,255,0.18)',
+                border: '1px solid rgba(255,255,255,0.28)',
+                flexShrink: 0,
+              }}
+            >
+              <PhoneInTalkIcon sx={{ fontSize: 28 }} />
+            </Box>
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+                Log call
+              </Typography>
+              <Typography variant="body2" sx={{ mt: 0.75, opacity: 0.92, lineHeight: 1.5, maxWidth: 420 }}>
+                Record a follow-up the same way as in edit enquiry — telecallers come from your staff list and role
+                settings.
+              </Typography>
+            </Box>
+          </Stack>
+        </Box>
+
+        <DialogContent sx={{ p: 0, bgcolor: alpha('#7c3aed', 0.03) }}>
+          <Stack spacing={2.5} sx={{ p: 3 }}>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Call date"
+                  type="date"
+                  value={newFollowUp.date}
+                  onChange={(e) => setNewFollowUp((s) => ({ ...s, date: e.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  fullWidth
+                  size="small"
+                  required
+                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2, bgcolor: 'rgba(255,255,255,0.95)' } }}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  label="Next follow-up"
+                  type="date"
+                  value={newFollowUp.nextFollowUpDate}
+                  onChange={(e) => setNewFollowUp((s) => ({ ...s, nextFollowUpDate: e.target.value }))}
+                  InputLabelProps={{ shrink: true }}
+                  fullWidth
+                  size="small"
+                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2, bgcolor: 'rgba(255,255,255,0.95)' } }}
+                />
+              </Grid>
+            </Grid>
+
+            <FormControl
+              fullWidth
+              size="small"
+              required
+              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2, bgcolor: 'rgba(255,255,255,0.95)' } }}
+            >
+              <InputLabel id="log-call-caller-label">Call done by</InputLabel>
+              <Select
+                labelId="log-call-caller-label"
+                label="Call done by"
+                value={
+                  telecallerDialogOptions.includes(newFollowUp.callerName) ? newFollowUp.callerName : ''
+                }
+                onChange={(e) =>
+                  setNewFollowUp((s) => ({ ...s, callerName: String(e.target.value) }))
+                }
+              >
+                {telecallerDialogOptions.map((name) => (
+                  <MenuItem key={name} value={name} sx={{ borderRadius: 1, mx: 0.5, my: 0.25 }}>
+                    {name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <TextField
+              label="Remarks / notes"
+              placeholder="What was discussed? Outcome, objections, next steps…"
+              value={newFollowUp.remarks}
+              onChange={(e) => setNewFollowUp((s) => ({ ...s, remarks: e.target.value }))}
+              fullWidth
+              multiline
+              minRows={3}
+              size="small"
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: 2,
+                  bgcolor: 'rgba(255,255,255,0.95)',
+                  alignItems: 'flex-start',
+                },
+              }}
+            />
+
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.5 }}>
+              Same list as <strong>Edit enquiry</strong> → follow-up “Call done by”: active staff whose job role is
+              included for telecallers. Use the pencil icon there to change which roles appear (saved in this browser).
+            </Typography>
+          </Stack>
+        </DialogContent>
+
+        <DialogActions
+          sx={{
+            px: 3,
+            py: 2,
+            gap: 1,
+            bgcolor: 'rgba(255,255,255,0.92)',
+            borderTop: '1px solid',
+            borderColor: alpha('#7c3aed', 0.12),
+            justifyContent: 'flex-end',
+          }}
+        >
+          <Button
+            onClick={() => setAddFollowUpOpen(false)}
+            disabled={addFollowUpSaving}
+            sx={{ borderRadius: 99, px: 2.25, textTransform: 'none', fontWeight: 700 }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleSaveFollowUp()}
+            disabled={addFollowUpSaving || !newFollowUp.callerName.trim() || !newFollowUp.date}
+            sx={{
+              borderRadius: 99,
+              px: 2.75,
+              textTransform: 'none',
+              fontWeight: 800,
+              bgcolor: '#7c3aed',
+              boxShadow: '0 10px 28px rgba(124,58,237,0.35)',
+              '&:hover': { bgcolor: '#6d28d9' },
+            }}
+          >
+            {addFollowUpSaving ? 'Saving…' : 'Save call'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={shareSnackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setShareSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setShareSnackbar((s) => ({ ...s, open: false }))}
+          severity={shareSnackbar.message.startsWith('Could not') ? 'warning' : 'success'}
+          sx={{ width: '100%' }}
+        >
+          {shareSnackbar.message}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={followUpFeedback.open}
+        autoHideDuration={5000}
+        onClose={() => setFollowUpFeedback((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setFollowUpFeedback((s) => ({ ...s, open: false }))}
+          severity={followUpFeedback.severity}
+          sx={{ width: '100%' }}
+        >
+          {followUpFeedback.message}
+        </Alert>
+      </Snackbar>
     </PageShell>
   );
 }

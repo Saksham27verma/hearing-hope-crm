@@ -54,6 +54,10 @@ import ImageIcon from '@mui/icons-material/Image';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PhoneIcon from '@mui/icons-material/Phone';
+import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
+import EventRepeatIcon from '@mui/icons-material/EventRepeat';
+import PostAddIcon from '@mui/icons-material/PostAdd';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { db } from '@/firebase/config';
 import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc, where, updateDoc, deleteDoc } from 'firebase/firestore';
@@ -65,6 +69,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import listPlugin from '@fullcalendar/list';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import { endOfDay, startOfDay } from 'date-fns';
 
 type AppointmentType = 'center' | 'home';
 
@@ -136,6 +141,9 @@ export default function AppointmentSchedulerPage() {
   const [selectedCenter, setSelectedCenter] = useState<string>('all');
   const [selectedExecutive, setSelectedExecutive] = useState<string>('all');
   const [exportMenuAnchor, setExportMenuAnchor] = useState<null | HTMLElement>(null);
+  const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false);
+  const [rescheduleAt, setRescheduleAt] = useState<Date | null>(null);
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
   
   // Role-based permissions
   const isAdmin = userProfile?.role === 'admin';
@@ -208,22 +216,53 @@ export default function AppointmentSchedulerPage() {
   }, [appointments, selectedCenter, selectedExecutive]);
 
   // Get upcoming appointments (future appointments)
+  const getApptStatus = (apt: Appointment): AppointmentStatus =>
+    apt.status === 'completed' || apt.status === 'cancelled' ? apt.status : 'scheduled';
+
   const upcomingAppointments = useMemo(() => {
     const now = new Date();
     return filteredAppointments
-      .filter(apt => new Date(apt.start) >= now)
+      .filter((apt) => {
+        const st = getApptStatus(apt);
+        if (st === 'cancelled' || st === 'completed') return false;
+        return new Date(apt.start) >= now;
+      })
       .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   }, [filteredAppointments]);
 
-  const events = useMemo(() => filteredAppointments.map(a => ({
-    id: a.id,
-    title: a.patientName || a.title || 'Patient',
-    start: a.start,
-    end: a.end,
-    extendedProps: a,
-    backgroundColor: a.type === 'center' ? '#1976d2' : '#43a047',
-    borderColor: a.type === 'center' ? '#1565c0' : '#2e7d32',
-  })), [filteredAppointments]);
+  const events = useMemo(
+    () =>
+      filteredAppointments.map((a) => {
+        const st = getApptStatus(a);
+        const baseCenter = '#1976d2';
+        const baseHome = '#43a047';
+        let backgroundColor = a.type === 'center' ? baseCenter : baseHome;
+        let borderColor = a.type === 'center' ? '#1565c0' : '#2e7d32';
+        if (st === 'cancelled') {
+          backgroundColor = '#9e9e9e';
+          borderColor = '#616161';
+        } else if (st === 'completed') {
+          backgroundColor = '#2e7d32';
+          borderColor = '#1b5e20';
+        }
+        return {
+          id: a.id,
+          title: (st === 'cancelled' ? '✕ ' : st === 'completed' ? '✓ ' : '') + (a.patientName || a.title || 'Patient'),
+          start: a.start,
+          end: a.end,
+          extendedProps: { ...a, status: st },
+          backgroundColor,
+          borderColor,
+          classNames: st === 'cancelled' ? ['appt-cancelled'] : st === 'completed' ? ['appt-completed'] : [],
+        };
+      }),
+    [filteredAppointments]
+  );
+
+  const isSameCalendarDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
 
   const handleDateSelect = (info: any) => {
     setNewAppt({
@@ -344,6 +383,103 @@ export default function AppointmentSchedulerPage() {
       console.error(e);
       alert('Failed to delete appointment');
     }
+  };
+
+  const handleCancelAppointment = async () => {
+    if (!previewAppt?.id) return;
+    if (!confirm(`Cancel this visit for ${previewAppt.patientName || 'this patient'}? It will remain on the calendar as cancelled.`)) return;
+    try {
+      await updateDoc(doc(db, 'appointments', previewAppt.id), {
+        status: 'cancelled' as AppointmentStatus,
+        updatedAt: serverTimestamp(),
+      });
+      await fetchAllData();
+      setOpenPreview(false);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to cancel appointment');
+    }
+  };
+
+  const handleMarkAppointmentCompleted = async () => {
+    if (!previewAppt?.id) return;
+    try {
+      await updateDoc(doc(db, 'appointments', previewAppt.id), {
+        status: 'completed' as AppointmentStatus,
+        updatedAt: serverTimestamp(),
+      });
+      await fetchAllData();
+      setOpenPreview(false);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to update appointment');
+    }
+  };
+
+  const openRescheduleSameDayDialog = () => {
+    if (!previewAppt?.start) return;
+    setRescheduleAt(new Date(previewAppt.start));
+    setRescheduleDialogOpen(true);
+  };
+
+  const handleConfirmRescheduleSameDay = async () => {
+    if (!previewAppt?.id || !rescheduleAt) return;
+    const origStart = new Date(previewAppt.start);
+    const origEnd = new Date(previewAppt.end || previewAppt.start);
+    if (!isSameCalendarDay(rescheduleAt, origStart)) {
+      alert('Choose a date and time on the same calendar day as the original appointment.');
+      return;
+    }
+    const duration = Math.max(15 * 60 * 1000, origEnd.getTime() - origStart.getTime());
+    const newStart = new Date(rescheduleAt);
+    const newEnd = new Date(newStart.getTime() + duration);
+    setRescheduleSaving(true);
+    try {
+      await updateDoc(doc(db, 'appointments', previewAppt.id), {
+        start: newStart.toISOString(),
+        end: newEnd.toISOString(),
+        updatedAt: serverTimestamp(),
+      });
+      await fetchAllData();
+      setRescheduleDialogOpen(false);
+      setOpenPreview(false);
+    } catch (e) {
+      console.error(e);
+      alert('Failed to reschedule');
+    } finally {
+      setRescheduleSaving(false);
+    }
+  };
+
+  const handleScheduleAnotherVisit = () => {
+    if (!previewAppt) return;
+    const start = new Date();
+    start.setDate(start.getDate() + 1);
+    start.setHours(10, 0, 0, 0);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    setNewAppt({
+      ...defaultNewAppointment,
+      enquiryId: previewAppt.enquiryId || '',
+      patientName: previewAppt.patientName || previewAppt.title || '',
+      patientPhone: previewAppt.patientPhone || previewPatientPhone || '',
+      reference: previewAppt.reference || '',
+      type: previewAppt.type,
+      centerId: previewAppt.centerId || '',
+      address: previewAppt.address || '',
+      homeVisitorStaffId: previewAppt.homeVisitorStaffId || '',
+      homeVisitorName: previewAppt.homeVisitorName || '',
+      assignedStaffId: previewAppt.assignedStaffId || '',
+      assignedStaffName: previewAppt.assignedStaffName || '',
+      telecaller: previewAppt.telecaller || '',
+      notes: '',
+      start: start.toISOString(),
+      end: end.toISOString(),
+      status: 'scheduled',
+    });
+    setOpenPreview(false);
+    setIsEditMode(false);
+    setEditingAppointmentId(null);
+    setOpenDialog(true);
   };
 
   // Export functions
@@ -746,6 +882,13 @@ export default function AppointmentSchedulerPage() {
           '& .fc-event-title': {
             fontSize: { xs: '0.65rem', sm: '0.75rem' },
             padding: { xs: '1px 2px', sm: '2px 4px' }
+          },
+          '& .appt-cancelled': {
+            opacity: 0.82,
+            '& .fc-event-title': { textDecoration: 'line-through' },
+          },
+          '& .appt-completed': {
+            opacity: 0.95,
           }
         }}>
           <FullCalendar
@@ -809,6 +952,27 @@ export default function AppointmentSchedulerPage() {
               <Typography variant="h6" sx={{ mb: 1, fontSize: { xs: '1rem', sm: '1.25rem' } }}>
                 {previewAppt.patientName || '-'}
               </Typography>
+              <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+                <Chip
+                  size="small"
+                  label={
+                    getApptStatus(previewAppt) === 'cancelled'
+                      ? 'Cancelled'
+                      : getApptStatus(previewAppt) === 'completed'
+                        ? 'Completed'
+                        : 'Scheduled'
+                  }
+                  color={
+                    getApptStatus(previewAppt) === 'cancelled'
+                      ? 'default'
+                      : getApptStatus(previewAppt) === 'completed'
+                        ? 'success'
+                        : 'primary'
+                  }
+                  variant={getApptStatus(previewAppt) === 'scheduled' ? 'filled' : 'outlined'}
+                  sx={{ fontWeight: 700 }}
+                />
+              </Stack>
               <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
                 {previewPatientPhone && (
                   <Chip 
@@ -880,30 +1044,75 @@ export default function AppointmentSchedulerPage() {
             <Typography>Loading...</Typography>
           )}
         </DialogContent>
-        <DialogActions sx={{ p: { xs: 1.5, sm: 2 }, gap: 1, flexDirection: { xs: 'column-reverse', sm: 'row' } }}>
-          <Button 
-            onClick={() => setOpenPreview(false)}
-            variant="outlined"
-            fullWidth={isMobile}
-          >
+        <DialogActions
+          sx={{
+            p: { xs: 1.5, sm: 2 },
+            gap: 1,
+            flexDirection: { xs: 'column-reverse', sm: 'row' },
+            flexWrap: 'wrap',
+            justifyContent: { sm: 'flex-end' },
+          }}
+        >
+          <Button onClick={() => setOpenPreview(false)} variant="outlined" fullWidth={isMobile}>
             Close
           </Button>
+          {canEdit && previewAppt && (
+            <Button
+              onClick={handleScheduleAnotherVisit}
+              variant="outlined"
+              color="secondary"
+              startIcon={<PostAddIcon />}
+              fullWidth={isMobile}
+            >
+              Another visit (other day)
+            </Button>
+          )}
+          {canEdit && previewAppt && getApptStatus(previewAppt) === 'scheduled' && (
+            <>
+              <Button
+                onClick={openRescheduleSameDayDialog}
+                variant="outlined"
+                startIcon={<EventRepeatIcon />}
+                fullWidth={isMobile}
+              >
+                Reschedule (same day)
+              </Button>
+              <Button
+                onClick={() => void handleCancelAppointment()}
+                variant="outlined"
+                color="warning"
+                startIcon={<CancelOutlinedIcon />}
+                fullWidth={isMobile}
+              >
+                Cancel visit
+              </Button>
+              <Button
+                onClick={() => void handleMarkAppointmentCompleted()}
+                variant="contained"
+                color="success"
+                startIcon={<CheckCircleOutlineIcon />}
+                fullWidth={isMobile}
+              >
+                Mark completed
+              </Button>
+            </>
+          )}
           {canEdit && (
-            <Button 
+            <Button
               onClick={handleEdit}
               variant="contained"
               startIcon={<EditIcon />}
               fullWidth={isMobile}
-              sx={{ 
+              sx={{
                 bgcolor: '#ff6b35',
-                '&:hover': { bgcolor: '#ff5722' }
+                '&:hover': { bgcolor: '#ff5722' },
               }}
             >
               Edit
             </Button>
           )}
           {canDelete && (
-            <Button 
+            <Button
               onClick={handleDelete}
               variant="contained"
               color="error"
@@ -913,6 +1122,58 @@ export default function AppointmentSchedulerPage() {
               Delete
             </Button>
           )}
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={rescheduleDialogOpen}
+        onClose={() => !rescheduleSaving && setRescheduleDialogOpen(false)}
+        fullWidth
+        maxWidth="xs"
+        fullScreen={isMobile}
+      >
+        <DialogTitle>Reschedule on same day</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Pick a new time on{' '}
+            <strong>
+              {previewAppt
+                ? new Date(previewAppt.start).toLocaleDateString(undefined, {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric',
+                  })
+                : ''}
+            </strong>
+            . Duration stays the same.
+          </Typography>
+          <LocalizationProvider dateAdapter={AdapterDateFns}>
+            {previewAppt && rescheduleAt && (
+              <DateTimePicker
+                label="New date & time"
+                value={rescheduleAt}
+                onChange={(v) => v && setRescheduleAt(v)}
+                minDateTime={startOfDay(new Date(previewAppt.start))}
+                maxDateTime={endOfDay(new Date(previewAppt.start))}
+                slotProps={{
+                  textField: { fullWidth: true, size: 'small' },
+                }}
+              />
+            )}
+          </LocalizationProvider>
+        </DialogContent>
+        <DialogActions sx={{ px: 2, pb: 2 }}>
+          <Button onClick={() => setRescheduleDialogOpen(false)} disabled={rescheduleSaving}>
+            Back
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleConfirmRescheduleSameDay()}
+            disabled={rescheduleSaving || !rescheduleAt}
+          >
+            {rescheduleSaving ? 'Saving…' : 'Apply'}
+          </Button>
         </DialogActions>
       </Dialog>
 
@@ -1324,6 +1585,25 @@ export default function AppointmentSchedulerPage() {
                 Default duration set to 1 hour
               </Typography>
             </Grid>
+            {isEditMode && (
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  select
+                  fullWidth
+                  label="Visit status"
+                  value={newAppt.status || 'scheduled'}
+                  onChange={(e) =>
+                    setNewAppt({ ...newAppt, status: e.target.value as AppointmentStatus })
+                  }
+                  margin="normal"
+                  size={isMobile ? 'small' : 'medium'}
+                >
+                  <MenuItem value="scheduled">Scheduled</MenuItem>
+                  <MenuItem value="completed">Completed</MenuItem>
+                  <MenuItem value="cancelled">Cancelled</MenuItem>
+                </TextField>
+              </Grid>
+            )}
             <Grid item xs={12}>
               <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
                 Notes

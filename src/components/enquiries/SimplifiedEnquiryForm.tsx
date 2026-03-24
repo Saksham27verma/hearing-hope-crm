@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -13,10 +13,11 @@ import {
   TextField, Button, Typography, Box, Paper,
   FormControl, InputLabel, Select, MenuItem,
   Card, CardContent, Divider, Stepper, Step, StepLabel,
-  Grid as MuiGrid, IconButton, FormHelperText,
+  Grid as MuiGrid, IconButton, FormHelperText, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Tabs, Tab, Chip, InputAdornment, Switch, FormControlLabel,
-  Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox
+  Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox, Radio,
+  List, ListItem, ListItemButton, ListItemText, ListSubheader, Badge
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -41,7 +42,13 @@ import {
   Category as CategoryIcon,
   ViewList as ViewListIcon,
   GridView as GridViewIcon,
-  AssignmentReturn as AssignmentReturnIcon
+  AssignmentReturn as AssignmentReturnIcon,
+  KeyboardArrowUp as KeyboardArrowUpIcon,
+  KeyboardArrowDown as KeyboardArrowDownIcon,
+  ScienceOutlined as ScienceOutlinedIcon,
+  BookmarkAdded as BookmarkAddedIcon,
+  LockOutlined as LockOutlinedIcon,
+  Timeline as TimelineIcon
 } from '@mui/icons-material';
 
 // Custom Grid wrapper
@@ -63,6 +70,17 @@ interface Product {
   quantityType?: 'piece' | 'pair';
   createdAt: any;
   updatedAt: any;
+}
+
+/** Token-based match: every word must appear somewhere in product fields (dynamic search). */
+function productMatchesCatalogSearch(p: Product, queryLower: string): boolean {
+  const q = queryLower.trim();
+  if (!q) return true;
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const hay = `${p.company || ''} ${p.name || ''} ${p.type || ''} ${String(p.mrp ?? '')} ${p.hsnCode || ''}`
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+  return tokens.every((t) => hay.includes(t));
 }
 
 // Job roles from the staff module
@@ -104,6 +122,10 @@ const formatCurrency = (amount: number) => {
   }).format(amount);
 };
 
+/** Max 2 decimal places for discount % (display + stored values). */
+const roundDiscountPercent = (value: number) =>
+  Math.round(Math.max(0, Math.min(100, Number(value) || 0)) * 100) / 100;
+
 interface FollowUp {
   id: string;
   date: string;
@@ -137,14 +159,41 @@ interface HearingAidProduct {
   location?: string;
 }
 
+/** Units per sale line; amounts on the line are per unit. */
+function hearingAidLineQty(p: { quantity?: number }): number {
+  const q = Math.floor(Number(p.quantity));
+  if (!Number.isFinite(q) || q < 1) return 1;
+  return Math.min(9999, q);
+}
+
+function sumHearingAidVisitTotals(products: HearingAidProduct[]) {
+  return {
+    grossMRP: products.reduce((sum, p) => sum + p.mrp * hearingAidLineQty(p), 0),
+    grossSalesBeforeTax: products.reduce((sum, p) => sum + p.sellingPrice * hearingAidLineQty(p), 0),
+    taxAmount: products.reduce((sum, p) => sum + p.gstAmount * hearingAidLineQty(p), 0),
+    salesAfterTax: products.reduce((sum, p) => sum + p.finalAmount * hearingAidLineQty(p), 0),
+  };
+}
+
 interface PaymentRecord {
   id: string;
   paymentDate: string;
   amount: number;
-  paymentFor: 'hearing_test' | 'hearing_aid' | 'accessory' | 'booking_advance' | 'full_payment' | 'partial_payment' | 'other';
+  paymentFor:
+    | 'hearing_test'
+    | 'hearing_aid'
+    | 'accessory'
+    | 'booking_advance'
+    | 'trial_home_security_deposit'
+    | 'programming'
+    | 'full_payment'
+    | 'partial_payment'
+    | 'other';
   paymentMode: 'Cash' | 'Card' | 'UPI' | 'Net Banking' | 'Cheque' | 'NEFT/RTGS';
   referenceNumber: string;
   remarks: string;
+  /** When paymentFor is trial_home_security_deposit, identifies which visit the deposit is for */
+  relatedVisitId?: string;
 }
 
 interface Visit {
@@ -198,6 +247,8 @@ interface Visit {
   trialHearingAidModel: string;
   trialHearingAidType: string;
   trialSerialNumber: string;
+  /** Home trial only: agreed refundable security deposit amount (record actual payment in Payments section) */
+  trialHomeSecurityDepositAmount: number;
   trialNotes: string;
   trialResult: 'ongoing' | 'successful' | 'unsuccessful' | 'extended';
   // Booking related fields
@@ -328,6 +379,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const [currentField, setCurrentField] = useState<keyof typeof selectedRoles>('telecaller');
   const [products, setProducts] = useState<any[]>([]);
   const [hearingAidProducts, setHearingAidProducts] = useState<Product[]>([]);
+  /** Product catalog picker (trial / booking) */
+  const [hearingAidCatalogDialogOpen, setHearingAidCatalogDialogOpen] = useState(false);
+  const [draftCatalogProductIds, setDraftCatalogProductIds] = useState<string[]>([]);
+  const [catalogDialogSearch, setCatalogDialogSearch] = useState('');
+  const [catalogDialogBrandFilter, setCatalogDialogBrandFilter] = useState('');
+  /** Trial visits: only one catalog hearing aid */
+  const [catalogDialogSingleProduct, setCatalogDialogSingleProduct] = useState(false);
+  /** Which flow opened the catalog (drives single vs multi and copy) */
+  const [catalogPickerIntent, setCatalogPickerIntent] = useState<'trial' | 'booking'>('trial');
+  const deferredCatalogSearch = useDeferredValue(catalogDialogSearch);
+  const isCatalogSearchPending = catalogDialogSearch !== deferredCatalogSearch;
   const [centers, setCenters] = useState<any[]>([]);
   const [currentProduct, setCurrentProduct] = useState({
     inventoryId: '',
@@ -336,6 +398,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     hsnCode: '',
     serialNumber: '',
     unit: 'piece' as 'piece' | 'pair' | 'quantity',
+    quantity: 1,
     saleDate: new Date().toISOString().split('T')[0],
     mrp: 0,
     dealerPrice: 0,
@@ -352,13 +415,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     location: ''
   });
 
-  const [currentPayment, setCurrentPayment] = useState({
+  const [currentPayment, setCurrentPayment] = useState<{
+    paymentDate: string;
+    amount: number;
+    paymentFor: PaymentRecord['paymentFor'];
+    paymentMode: PaymentRecord['paymentMode'];
+    referenceNumber: string;
+    remarks: string;
+    relatedVisitId?: string;
+  }>({
     paymentDate: new Date().toISOString().split('T')[0],
     amount: 0,
-    paymentFor: 'full_payment' as PaymentRecord['paymentFor'],
-    paymentMode: 'Cash' as PaymentRecord['paymentMode'],
+    paymentFor: 'full_payment',
+    paymentMode: 'Cash',
     referenceNumber: '',
-    remarks: ''
+    remarks: '',
+    relatedVisitId: undefined,
   });
 
 
@@ -367,15 +439,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   useEffect(() => {
     if (currentProduct.mrp > 0) {
       const discountAmount = (currentProduct.mrp * currentProduct.discountPercent) / 100;
-      const calculatedSellingPrice = currentProduct.mrp - discountAmount;
       const gstAmount = (currentProduct.sellingPrice * currentProduct.gstPercent) / 100;
       const finalAmount = currentProduct.sellingPrice + gstAmount;
 
-      setCurrentProduct(prev => ({
+      setCurrentProduct((prev) => ({
         ...prev,
         discountAmount,
         gstAmount,
-        finalAmount
+        finalAmount,
       }));
     }
   }, [currentProduct.mrp, currentProduct.sellingPrice, currentProduct.discountPercent, currentProduct.gstPercent]);
@@ -384,13 +455,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const updateSellingPrice = (newSellingPrice: number) => {
     if (currentProduct.mrp > 0 && newSellingPrice !== currentProduct.sellingPrice) {
       const discountAmount = currentProduct.mrp - newSellingPrice;
-      const discountPercent = (discountAmount / currentProduct.mrp) * 100;
-      
+      const discountPercent = roundDiscountPercent((discountAmount / currentProduct.mrp) * 100);
+
       setCurrentProduct(prev => ({
         ...prev,
         sellingPrice: newSellingPrice,
-        discountPercent: Math.max(0, discountPercent),
-        discountAmount: Math.max(0, discountAmount)
+        discountPercent,
+        discountAmount: Math.max(0, discountAmount),
       }));
     } else {
       setCurrentProduct(prev => ({ ...prev, sellingPrice: newSellingPrice }));
@@ -399,18 +470,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
   // Calculate selling price when discount percentage is changed
   const updateDiscountPercent = (newDiscountPercent: number) => {
+    const pct = roundDiscountPercent(newDiscountPercent);
     if (currentProduct.mrp > 0) {
-      const discountAmount = (currentProduct.mrp * newDiscountPercent) / 100;
+      const discountAmount = (currentProduct.mrp * pct) / 100;
       const sellingPrice = currentProduct.mrp - discountAmount;
-      
+
       setCurrentProduct(prev => ({
         ...prev,
-        discountPercent: newDiscountPercent,
+        discountPercent: pct,
         discountAmount,
-        sellingPrice: Math.max(0, sellingPrice)
+        sellingPrice: Math.max(0, sellingPrice),
       }));
     } else {
-      setCurrentProduct(prev => ({ ...prev, discountPercent: newDiscountPercent }));
+      setCurrentProduct(prev => ({ ...prev, discountPercent: pct }));
     }
   };
 
@@ -461,12 +533,60 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         || (currentVisit as any).trialHearingAidModel
         || '')
     : '';
+  /** Preview quantity for sale line (serialized stock = 1 unit per row). */
+  const saleLineQtyPreview =
+    currentProduct.serialNumber?.trim().length > 0
+      ? 1
+      : hearingAidLineQty({ quantity: currentProduct.quantity });
   // When booking is linked to a trial, we lock device fields
   const isUsingTrialDevice = !!(
     currentVisit?.hearingAidBooked &&
     currentVisit?.bookingFromTrial &&
     (currentVisit?.bookingFromVisitId || currentVisit?.previousVisitId)
   );
+
+  const trialOn = !!currentVisit?.hearingAidTrial;
+  const bookingOn = !!(currentVisit?.hearingAidBooked && !currentVisit?.hearingAidSale);
+  const showTrialDeviceCard = trialOn && !isUsingTrialDevice;
+  const showBookingDeviceCard = bookingOn && !trialOn && !isUsingTrialDevice;
+  const showLockedDeviceCard = isUsingTrialDevice;
+  const showHearingAidJourneyBlock = trialOn || bookingOn;
+
+  const catalogCompanyOptions = useMemo(
+    () =>
+      [...new Set(hearingAidProducts.map((p) => p.company).filter(Boolean) as string[])].sort((a, b) =>
+        a.localeCompare(b)
+      ),
+    [hearingAidProducts]
+  );
+
+  const catalogDialogFilteredProducts = useMemo(() => {
+    const brandFiltered = !catalogDialogBrandFilter
+      ? hearingAidProducts
+      : hearingAidProducts.filter((p) => (p.company || '') === catalogDialogBrandFilter);
+    const q = deferredCatalogSearch.toLowerCase();
+    return brandFiltered.filter((p) => productMatchesCatalogSearch(p, q));
+  }, [hearingAidProducts, catalogDialogBrandFilter, deferredCatalogSearch]);
+
+  const draftCatalogProductsOrdered = useMemo(() => {
+    const byId = new Map(hearingAidProducts.map((p) => [p.id, p]));
+    return draftCatalogProductIds.map((id) => byId.get(id)).filter((x): x is Product => !!x);
+  }, [draftCatalogProductIds, hearingAidProducts]);
+
+  const catalogDialogOrphanSelected = useMemo(() => {
+    const filteredIds = new Set(catalogDialogFilteredProducts.map((p) => p.id));
+    return draftCatalogProductsOrdered.filter((p) => !filteredIds.has(p.id));
+  }, [draftCatalogProductsOrdered, catalogDialogFilteredProducts]);
+
+  const selectedCatalogProducts = useMemo(() => {
+    if (!currentVisit) return [];
+    const ids = (currentVisit.products || [])
+      .filter((p) => p.productId && hearingAidProducts.some((hp) => hp.id === p.productId))
+      .map((p) => p.productId as string);
+    const byId = new Map(hearingAidProducts.map((p) => [p.id, p]));
+    return ids.map((id) => byId.get(id)).filter((x): x is Product => !!x);
+  }, [currentVisit, hearingAidProducts]);
+
   const watchName = watch('name');
   const watchPhone = watch('phone');
 
@@ -876,6 +996,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           trialHearingAidModel: visit.hearingAidDetails?.trialHearingAidModel || '',
           trialHearingAidType: visit.hearingAidDetails?.trialHearingAidType || '',
           trialSerialNumber: visit.hearingAidDetails?.trialSerialNumber || '',
+          trialHomeSecurityDepositAmount:
+            Number(visit.hearingAidDetails?.trialHomeSecurityDepositAmount) || 0,
           trialNotes: visit.hearingAidDetails?.trialNotes || '',
           trialResult: visit.hearingAidDetails?.trialResult || 'ongoing',
           // Booking related fields
@@ -900,12 +1022,23 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           underWarranty: visit.programmingDetails?.underWarranty || false,
           programmingAmount: visit.programmingDetails?.programmingAmount || 0,
           programmingDoneBy: visit.programmingDetails?.programmingDoneBy || '',
-          products: visit.hearingAidDetails?.products || [],
-          grossMRP: visit.hearingAidDetails?.grossMRP || 0,
-          grossSalesBeforeTax: visit.hearingAidDetails?.grossSalesBeforeTax || 0,
-          taxAmount: visit.hearingAidDetails?.taxAmount || 0,
-          salesAfterTax: visit.hearingAidDetails?.salesAfterTax || 0,
-          totalDiscountPercent: visit.hearingAidDetails?.totalDiscountPercent || 0
+          ...(() => {
+            const raw = visit.hearingAidDetails?.products || [];
+            const products = raw.map((p: any) => ({
+              ...p,
+              quantity: hearingAidLineQty({ quantity: p.quantity }),
+              discountPercent: roundDiscountPercent(Number(p.discountPercent) || 0),
+            }));
+            const t = sumHearingAidVisitTotals(products);
+            return {
+              products,
+              grossMRP: t.grossMRP,
+              grossSalesBeforeTax: t.grossSalesBeforeTax,
+              taxAmount: t.taxAmount,
+              salesAfterTax: t.salesAfterTax,
+            };
+          })(),
+          totalDiscountPercent: visit.hearingAidDetails?.totalDiscountPercent || 0,
         })) || [];
 
         reset({
@@ -946,7 +1079,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         paymentFor: 'full_payment',
         paymentMode: 'Cash',
         referenceNumber: '',
-        remarks: ''
+        remarks: '',
+        relatedVisitId: undefined,
       });
     }
   }, [open, isEditMode, enquiry?.id, reset]);
@@ -966,6 +1100,165 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     nextVisits[visitIndex] = { ...nextVisits[visitIndex], ...updates } as Visit;
     setValue('visits', nextVisits);
   };
+
+  const applyCatalogHearingAidSelection = useCallback(
+    (visitIndex: number, selectedIds: string[]) => {
+      const currentVisits = getValues('visits');
+      const nextVisits = [...currentVisits];
+      const visit = { ...(nextVisits[visitIndex] || {}) } as Visit;
+
+      const manualProducts = (visit.products || []).filter(
+        (p) => !p.productId || !hearingAidProducts.some((hp) => hp.id === p.productId)
+      );
+
+      const bookingOnVisit = !!(visit.hearingAidBooked && !visit.hearingAidSale);
+      /** Trial and booking: one catalog model per visit. Sale lines use inventory below, not this picker. */
+      const forceSingle = !!visit.hearingAidTrial || bookingOnVisit;
+      const effectiveIds = forceSingle ? selectedIds.slice(0, 1) : [...selectedIds];
+
+      const byProductId = new Map(hearingAidProducts.map((p) => [p.id, p]));
+      const selectedProducts = effectiveIds
+        .map((id) => byProductId.get(id))
+        .filter((x): x is Product => !!x);
+
+      const mappedProducts: HearingAidProduct[] = selectedProducts.map((p) => {
+        const mrp = p.mrp || 0;
+        const discountPercent = 0;
+        const discountAmount = 0;
+        const sellingPrice = mrp;
+        const gstPercent = p.gstPercentage ?? 18;
+        const gstAmount = gstPercent > 0 ? (sellingPrice * gstPercent) / 100 : 0;
+        const finalAmount = sellingPrice + gstAmount;
+
+        return {
+          id: `${p.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          inventoryId: '',
+          productId: p.id,
+          name: p.name,
+          hsnCode: p.hsnCode,
+          serialNumber: '',
+          unit: 'piece',
+          quantity: 1,
+          saleDate: new Date().toISOString().split('T')[0],
+          mrp,
+          dealerPrice: 0,
+          sellingPrice,
+          discountPercent,
+          discountAmount,
+          gstPercent,
+          gstAmount,
+          finalAmount,
+          gstApplicable: p.gstApplicable,
+          gstType: p.gstType ?? 'IGST',
+          warranty: '',
+          company: p.company,
+          location: '',
+        };
+      });
+
+      const updatedProducts = [...mappedProducts, ...manualProducts];
+      visit.products = updatedProducts;
+      const catTotals = sumHearingAidVisitTotals(updatedProducts);
+      visit.grossMRP = catTotals.grossMRP;
+      visit.grossSalesBeforeTax = catTotals.grossSalesBeforeTax;
+      visit.taxAmount = catTotals.taxAmount;
+      visit.salesAfterTax = catTotals.salesAfterTax;
+
+      if (selectedProducts.length > 0) {
+        const first = selectedProducts[0];
+        visit.hearingAidProductId = first.id;
+        visit.hearingAidBrand = first.company || '';
+        visit.hearingAidModel = first.name || '';
+        visit.hearingAidType = first.type || '';
+        visit.hearingAidPrice = first.mrp || 0;
+        if (visit.hearingAidTrial) {
+          visit.trialHearingAidBrand = first.company || '';
+          visit.trialHearingAidModel = first.name || '';
+        }
+      } else {
+        visit.hearingAidProductId = '';
+        visit.hearingAidBrand = '';
+        visit.hearingAidModel = '';
+        visit.hearingAidType = '';
+        visit.hearingAidPrice = 0;
+        if (visit.hearingAidTrial) {
+          visit.trialHearingAidBrand = '';
+          visit.trialHearingAidModel = '';
+        }
+      }
+
+      nextVisits[visitIndex] = visit;
+      setValue('visits', nextVisits);
+    },
+    [getValues, setValue, hearingAidProducts]
+  );
+
+  const openHearingAidCatalogDialog = useCallback(
+    (intent: 'trial' | 'booking') => {
+      const visit = getValues('visits')[activeVisit];
+      if (!visit) return;
+      const ids = (visit.products || [])
+        .filter((p) => p.productId && hearingAidProducts.some((hp) => hp.id === p.productId))
+        .map((p) => p.productId as string);
+      setCatalogPickerIntent(intent);
+      setCatalogDialogSingleProduct(true);
+      setDraftCatalogProductIds(ids.slice(0, 1));
+      setCatalogDialogSearch('');
+      setCatalogDialogBrandFilter('');
+      setHearingAidCatalogDialogOpen(true);
+    },
+    [activeVisit, getValues, hearingAidProducts]
+  );
+
+  const toggleDraftCatalogProduct = useCallback(
+    (productId: string) => {
+      setDraftCatalogProductIds((prev) => {
+        if (catalogDialogSingleProduct) {
+          if (prev.includes(productId)) return [];
+          return [productId];
+        }
+        return prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId];
+      });
+    },
+    [catalogDialogSingleProduct]
+  );
+
+  const moveDraftCatalogProduct = useCallback((index: number, dir: -1 | 1) => {
+    setDraftCatalogProductIds((prev) => {
+      const next = [...prev];
+      const j = index + dir;
+      if (j < 0 || j >= next.length) return prev;
+      const t = next[index];
+      next[index] = next[j];
+      next[j] = t;
+      return next;
+    });
+  }, []);
+
+  const applyHearingAidCatalogDialog = useCallback(() => {
+    const ids = catalogDialogSingleProduct
+      ? draftCatalogProductIds.slice(0, 1)
+      : draftCatalogProductIds;
+    applyCatalogHearingAidSelection(activeVisit, ids);
+    setHearingAidCatalogDialogOpen(false);
+    setCatalogDialogSearch('');
+    setCatalogDialogBrandFilter('');
+    setCatalogDialogSingleProduct(false);
+    setCatalogPickerIntent('trial');
+  }, [
+    activeVisit,
+    applyCatalogHearingAidSelection,
+    catalogDialogSingleProduct,
+    draftCatalogProductIds,
+  ]);
+
+  const removeCatalogProductFromVisit = useCallback(
+    (productId: string) => {
+      const nextIds = selectedCatalogProducts.filter((p) => p.id !== productId).map((p) => p.id);
+      applyCatalogHearingAidSelection(activeVisit, nextIds);
+    },
+    [activeVisit, applyCatalogHearingAidSelection, selectedCatalogProducts]
+  );
 
   // Add new visit
   const addVisit = () => {
@@ -1012,6 +1305,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       trialHearingAidModel: '',
       trialHearingAidType: '',
       trialSerialNumber: '',
+      trialHomeSecurityDepositAmount: 0,
       trialNotes: '',
       trialResult: 'ongoing',
       // Booking related fields
@@ -1072,24 +1366,29 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   // Handle product changes
   const addProduct = () => {
     if (currentProduct.name && currentProduct.mrp > 0) {
-      const discountAmount = (currentProduct.mrp * currentProduct.discountPercent) / 100;
-      const sellingPrice = currentProduct.sellingPrice || (currentProduct.mrp - discountAmount);
-      const gstAmount = currentProduct.gstPercent > 0 ? (sellingPrice * currentProduct.gstPercent) / 100 : 0;
+      const hasSerial = !!(currentProduct.serialNumber && String(currentProduct.serialNumber).trim());
+      const qty = hasSerial ? 1 : hearingAidLineQty({ quantity: currentProduct.quantity });
+      const discountPercent = roundDiscountPercent(currentProduct.discountPercent);
+      const discountAmount = (currentProduct.mrp * discountPercent) / 100;
+      const sellingPrice = Math.max(0, currentProduct.mrp - discountAmount);
+      const gstAmount =
+        currentProduct.gstPercent > 0 ? (sellingPrice * currentProduct.gstPercent) / 100 : 0;
       const finalAmount = sellingPrice + gstAmount;
 
       const newProduct: HearingAidProduct = {
-        id: Date.now().toString(),
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         inventoryId: currentProduct.inventoryId,
         productId: currentProduct.productId,
         name: currentProduct.name,
         hsnCode: currentProduct.hsnCode,
         serialNumber: currentProduct.serialNumber,
         unit: currentProduct.unit,
+        quantity: qty,
         saleDate: currentProduct.saleDate,
         mrp: currentProduct.mrp,
         dealerPrice: currentProduct.dealerPrice,
         sellingPrice,
-        discountPercent: currentProduct.discountPercent,
+        discountPercent,
         discountAmount,
         gstPercent: currentProduct.gstPercent,
         gstAmount,
@@ -1098,22 +1397,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         gstType: currentProduct.gstType,
         warranty: currentProduct.warranty,
         company: currentProduct.company,
-        location: currentProduct.location
+        location: currentProduct.location,
       };
 
       const updatedVisits = [...watchedVisits];
       updatedVisits[activeVisit].products.push(newProduct);
-      
-      // Update totals
+
       const products = updatedVisits[activeVisit].products;
-      updatedVisits[activeVisit].grossMRP = products.reduce((sum, p) => sum + p.mrp, 0);
-      updatedVisits[activeVisit].grossSalesBeforeTax = products.reduce((sum, p) => sum + p.sellingPrice, 0);
-      updatedVisits[activeVisit].taxAmount = products.reduce((sum, p) => sum + p.gstAmount, 0);
-      updatedVisits[activeVisit].salesAfterTax = products.reduce((sum, p) => sum + p.finalAmount, 0);
+      const totals = sumHearingAidVisitTotals(products);
+      updatedVisits[activeVisit].grossMRP = totals.grossMRP;
+      updatedVisits[activeVisit].grossSalesBeforeTax = totals.grossSalesBeforeTax;
+      updatedVisits[activeVisit].taxAmount = totals.taxAmount;
+      updatedVisits[activeVisit].salesAfterTax = totals.salesAfterTax;
 
       setValue('visits', updatedVisits);
-      
-      // Reset current product
+
       setCurrentProduct({
         inventoryId: '',
         productId: '',
@@ -1121,6 +1419,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         hsnCode: '',
         serialNumber: '',
         unit: 'piece',
+        quantity: 1,
         saleDate: new Date().toISOString().split('T')[0],
         mrp: 0,
         dealerPrice: 0,
@@ -1134,7 +1433,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         gstType: 'IGST',
         warranty: '',
         company: '',
-        location: ''
+        location: '',
       });
     }
   };
@@ -1142,14 +1441,37 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const removeProduct = (productIndex: number) => {
     const updatedVisits = [...watchedVisits];
     updatedVisits[activeVisit].products.splice(productIndex, 1);
-    
-    // Update totals
-    const products = updatedVisits[activeVisit].products;
-    updatedVisits[activeVisit].grossMRP = products.reduce((sum, p) => sum + p.mrp, 0);
-    updatedVisits[activeVisit].grossSalesBeforeTax = products.reduce((sum, p) => sum + p.sellingPrice, 0);
-    updatedVisits[activeVisit].taxAmount = products.reduce((sum, p) => sum + p.gstAmount, 0);
-    updatedVisits[activeVisit].salesAfterTax = products.reduce((sum, p) => sum + p.finalAmount, 0);
 
+    const products = updatedVisits[activeVisit].products;
+    const totals = sumHearingAidVisitTotals(products);
+    updatedVisits[activeVisit].grossMRP = totals.grossMRP;
+    updatedVisits[activeVisit].grossSalesBeforeTax = totals.grossSalesBeforeTax;
+    updatedVisits[activeVisit].taxAmount = totals.taxAmount;
+    updatedVisits[activeVisit].salesAfterTax = totals.salesAfterTax;
+
+    setValue('visits', updatedVisits);
+  };
+
+  const updateSaleProductLine = (productIndex: number, patch: Partial<HearingAidProduct>) => {
+    const updatedVisits = [...getValues('visits')];
+    const visit = { ...updatedVisits[activeVisit] };
+    const products = [...visit.products];
+    const prev = products[productIndex];
+    if (!prev) return;
+    const merged = { ...prev, ...patch };
+    if (merged.serialNumber?.trim()) {
+      merged.quantity = 1;
+    } else if (patch.quantity !== undefined) {
+      merged.quantity = hearingAidLineQty({ quantity: patch.quantity });
+    }
+    products[productIndex] = merged;
+    visit.products = products;
+    const totals = sumHearingAidVisitTotals(products);
+    visit.grossMRP = totals.grossMRP;
+    visit.grossSalesBeforeTax = totals.grossSalesBeforeTax;
+    visit.taxAmount = totals.taxAmount;
+    visit.salesAfterTax = totals.salesAfterTax;
+    updatedVisits[activeVisit] = visit;
     setValue('visits', updatedVisits);
   };
 
@@ -1265,6 +1587,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       if (visit.programming) {
         total += visit.programmingAmount || 0;
       }
+
+      // Home trial security deposit (agreed amount — collect via Payments section)
+      if (
+        visit.hearingAidTrial &&
+        visit.trialHearingAidType === 'home' &&
+        Number(visit.trialHomeSecurityDepositAmount) > 0
+      ) {
+        total += Number(visit.trialHomeSecurityDepositAmount) || 0;
+      }
     });
     
     return total;
@@ -1321,10 +1652,24 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       
       if (visit.programming && visit.programmingAmount > 0) {
         options.push({
-          value: 'programming',
+          value: 'programming' as const,
           label: 'Programming',
           amount: visit.programmingAmount,
           description: visit.hearingAidName || 'Hearing aid programming'
+        });
+      }
+
+      if (
+        visit.hearingAidTrial &&
+        visit.trialHearingAidType === 'home' &&
+        Number(visit.trialHomeSecurityDepositAmount) > 0
+      ) {
+        options.push({
+          value: 'trial_home_security_deposit' as const,
+          label: 'Home trial security deposit',
+          amount: Number(visit.trialHomeSecurityDepositAmount) || 0,
+          description: `Refundable deposit · Visit ${visit.id}${visit.visitDate ? ` (${visit.visitDate})` : ''}`,
+          visitId: visit.id,
         });
       }
     });
@@ -1356,16 +1701,42 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
   const handlePaymentForChange = (paymentFor: PaymentRecord['paymentFor']) => {
     const paymentOptions = getAvailablePaymentOptions();
-    const selectedOption = paymentOptions.find(opt => opt.value === paymentFor);
-    
-    setCurrentPayment(prev => ({
+    const selectedOption = paymentOptions.find(
+      (opt) => opt.value === paymentFor && !(opt as { visitId?: string }).visitId
+    );
+
+    setCurrentPayment((prev) => ({
       ...prev,
       paymentFor,
+      relatedVisitId: undefined,
       amount: selectedOption?.amount || 0,
-      paymentDate: paymentFor === 'booking_advance'
-        ? (getValues('visits').find(v => v.hearingAidBooked)?.bookingDate || getValues('visits').find(v => v.hearingAidBooked)?.visitDate || prev.paymentDate)
-        : prev.paymentDate
+      paymentDate:
+        paymentFor === 'booking_advance'
+          ? getValues('visits').find((v) => v.hearingAidBooked)?.bookingDate ||
+            getValues('visits').find((v) => v.hearingAidBooked)?.visitDate ||
+            prev.paymentDate
+          : prev.paymentDate,
     }));
+  };
+
+  const applyTrialHomeSecurityPaymentForVisit = (visitId: string) => {
+    const visit = getValues('visits').find((v) => v.id === visitId);
+    const amt = Number(visit?.trialHomeSecurityDepositAmount) || 0;
+    setCurrentPayment((prev) => ({
+      ...prev,
+      paymentFor: 'trial_home_security_deposit',
+      relatedVisitId: visitId,
+      amount: amt,
+      paymentDate: visit?.trialStartDate || visit?.visitDate || prev.paymentDate,
+    }));
+  };
+
+  const handlePaymentPurposeRawChange = (raw: string) => {
+    if (raw.startsWith('trial_sd__')) {
+      applyTrialHomeSecurityPaymentForVisit(raw.slice('trial_sd__'.length));
+      return;
+    }
+    handlePaymentForChange(raw as PaymentRecord['paymentFor']);
   };
 
   const calculateTotalPaid = () => {
@@ -1383,7 +1754,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       const payments = getValues('payments');
       const newPayment: PaymentRecord = {
         id: Date.now().toString(),
-        ...currentPayment
+        paymentDate: currentPayment.paymentDate,
+        amount: currentPayment.amount,
+        paymentFor: currentPayment.paymentFor,
+        paymentMode: currentPayment.paymentMode,
+        referenceNumber: currentPayment.referenceNumber,
+        remarks: currentPayment.remarks,
+        ...(currentPayment.relatedVisitId
+          ? { relatedVisitId: currentPayment.relatedVisitId }
+          : {}),
       };
       
       setValue('payments', [...payments, newPayment]);
@@ -1395,7 +1774,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         paymentFor: 'full_payment',
         paymentMode: 'Cash',
         referenceNumber: '',
-        remarks: ''
+        remarks: '',
+        relatedVisitId: undefined,
       });
     }
   };
@@ -1510,6 +1890,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           trialHearingAidModel: visit.trialHearingAidModel,
           trialHearingAidType: visit.trialHearingAidType,
           trialSerialNumber: visit.trialSerialNumber,
+          trialHomeSecurityDepositAmount: visit.trialHomeSecurityDepositAmount,
           trialNotes: visit.trialNotes,
           trialResult: visit.trialResult,
           // Persist booking fields
@@ -2124,23 +2505,83 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             control={
                               <Switch
                                 checked={currentVisit.hearingAidTrial}
-                                onChange={(e) => updateVisit(activeVisit, 'hearingAidTrial', e.target.checked)}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  updateVisit(activeVisit, 'hearingAidTrial', checked);
+                                  if (checked) {
+                                    const visit = getValues('visits')[activeVisit];
+                                    const catalogIds = (visit?.products || [])
+                                      .filter(
+                                        (p) =>
+                                          p.productId &&
+                                          hearingAidProducts.some((hp) => hp.id === p.productId)
+                                      )
+                                      .map((p) => p.productId as string);
+                                    if (catalogIds.length > 1) {
+                                      applyCatalogHearingAidSelection(activeVisit, catalogIds.slice(0, 1));
+                                    }
+                                  }
+                                }}
                                 disabled={isAudiologist}
                                 color="info"
                               />
                             }
-                            label="Hearing Aid Trial"
+                            label={
+                              <Box>
+                                <Typography variant="body2" component="span">
+                                  Hearing Aid Trial
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  display="block"
+                                  color="text.secondary"
+                                  sx={{ lineHeight: 1.2 }}
+                                >
+                                  Try one model · single device from catalog
+                                </Typography>
+                              </Box>
+                            }
                           />
                           <FormControlLabel
                             control={
                               <Switch
                                 checked={currentVisit.hearingAidBooked}
-                                onChange={(e) => updateVisit(activeVisit, 'hearingAidBooked', e.target.checked)}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  updateVisit(activeVisit, 'hearingAidBooked', checked);
+                                  if (checked) {
+                                    const visit = getValues('visits')[activeVisit];
+                                    const catalogIds = (visit?.products || [])
+                                      .filter(
+                                        (p) =>
+                                          p.productId &&
+                                          hearingAidProducts.some((hp) => hp.id === p.productId)
+                                      )
+                                      .map((p) => p.productId as string);
+                                    if (catalogIds.length > 1) {
+                                      applyCatalogHearingAidSelection(activeVisit, catalogIds.slice(0, 1));
+                                    }
+                                  }
+                                }}
                                 disabled={isAudiologist}
                                 color="warning"
                               />
                             }
-                            label="Hearing Aid Booked"
+                            label={
+                              <Box>
+                                <Typography variant="body2" component="span">
+                                  Hearing Aid Booked
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  display="block"
+                                  color="text.secondary"
+                                  sx={{ lineHeight: 1.2 }}
+                                >
+                                  One catalog model · quantity in booking details
+                                </Typography>
+                              </Box>
+                            }
                           />
                           <FormControlLabel
                             control={
@@ -2151,7 +2592,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 color="success"
                               />
                             }
-                            label="Hearing Aid Sale"
+                            label={
+                              <Box>
+                                <Typography variant="body2" component="span">
+                                  Hearing Aid Sale
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  display="block"
+                                  color="text.secondary"
+                                  sx={{ lineHeight: 1.2 }}
+                                >
+                                  Inventory: qty or one row per serial · same model allowed
+                                </Typography>
+                              </Box>
+                            }
                           />
                           <FormControlLabel
                             control={
@@ -2329,20 +2784,35 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Card>
                     )}
 
-                    {/* Hearing Aid Basic Details - only for Trial/Booking (hidden for Sale) */}
-                    {(currentVisit.hearingAidTrial || currentVisit.hearingAidBooked) && (
-                      <Card sx={{ mb: 4, bgcolor: '#f8f9fa', borderRadius: 2, border: 2, borderColor: 'primary.main' }}>
+                    {/* Hearing aid journey + device blocks (trial vs booking are visually separate) */}
+                    {showHearingAidJourneyBlock && (
+                      <Card
+                        sx={{
+                          mb: 3,
+                          borderRadius: 2,
+                          border: 1,
+                          borderColor: 'divider',
+                          bgcolor: 'grey.50',
+                          boxShadow: 'none',
+                        }}
+                      >
                         <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                            <MedicalIcon sx={{ color: 'primary.main' }} />
-                            <Typography variant="h6" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                              Hearing Aid Basic Details
-                            </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+                            <TimelineIcon sx={{ color: 'text.secondary', mt: 0.25 }} />
+                            <Box>
+                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
+                                Device journey
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Link this visit to a prior trial or booking, or copy device details in one tap.
+                              </Typography>
+                            </Box>
                           </Box>
-                          
-                          {/* Journey tracking */}
-                          <Box sx={{ mb: 3, p: 2, bgcolor: '#e3f2fd', borderRadius: 2 }}>
-                            <Typography variant="subtitle2" sx={{ mb: 2, color: 'primary.dark' }}>Journey Connection</Typography>
+
+                          <Box sx={{ mb: 0, p: 2, bgcolor: 'background.paper', borderRadius: 2, border: 1, borderColor: 'divider' }}>
+                            <Typography variant="subtitle2" sx={{ mb: 2, color: 'text.secondary', fontWeight: 600 }}>
+                              Continue from a previous visit
+                            </Typography>
                             <Grid container spacing={2}>
                               <Grid item xs={12} md={6}>
                                 <FormControl fullWidth>
@@ -2409,15 +2879,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Grid>
                           </Box>
                           
-                          {/* Quick Action Buttons */}
-                          <Box sx={{ mb: 3, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                            {watchedVisits.slice(0, activeVisit).some(visit => visit.hearingAidTrial) && (
+                          <Box sx={{ mt: 2, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                            {watchedVisits.slice(0, activeVisit).some((visit) => visit.hearingAidTrial) && (
                               <Button
                                 variant="outlined"
                                 size="small"
                                 startIcon={<CheckIcon />}
                                 onClick={() => {
-                                  const trialVisit = getValues('visits').slice(0, activeVisit).find(visit => visit.hearingAidTrial);
+                                  const trialVisit = getValues('visits')
+                                    .slice(0, activeVisit)
+                                    .find((visit) => visit.hearingAidTrial);
                                   if (trialVisit) {
                                     updateVisitFields(activeVisit, {
                                       hearingAidProductId: trialVisit.hearingAidProductId || '',
@@ -2426,29 +2897,38 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       hearingAidType: trialVisit.hearingAidType || '',
                                       whichEar: trialVisit.whichEar || 'both',
                                       previousVisitId: trialVisit.id,
-                                      hearingAidPrice: typeof trialVisit.hearingAidPrice === 'number' ? (trialVisit.hearingAidPrice || 0) : 0,
-                                      bookingFromTrial: currentVisit.hearingAidBooked ? true : (currentVisit.bookingFromTrial || false),
-                                      bookingFromVisitId: currentVisit.hearingAidBooked ? trialVisit.id : (currentVisit.bookingFromVisitId || ''),
+                                      hearingAidPrice:
+                                        typeof trialVisit.hearingAidPrice === 'number'
+                                          ? trialVisit.hearingAidPrice || 0
+                                          : 0,
+                                      bookingFromTrial: currentVisit.hearingAidBooked
+                                        ? true
+                                        : currentVisit.bookingFromTrial || false,
+                                      bookingFromVisitId: currentVisit.hearingAidBooked
+                                        ? trialVisit.id
+                                        : currentVisit.bookingFromVisitId || '',
                                       products: trialVisit.products || [],
                                       grossMRP: trialVisit.grossMRP || 0,
                                       grossSalesBeforeTax: trialVisit.grossSalesBeforeTax || 0,
                                       taxAmount: trialVisit.taxAmount || 0,
-                                      salesAfterTax: trialVisit.salesAfterTax || 0
+                                      salesAfterTax: trialVisit.salesAfterTax || 0,
                                     });
                                   }
                                 }}
                                 sx={{ color: 'info.main', borderColor: 'info.main' }}
                               >
-                                Same as Trial
+                                Same as prior trial
                               </Button>
                             )}
-                            {watchedVisits.slice(0, activeVisit).some(visit => visit.hearingAidBooked) && (
+                            {watchedVisits.slice(0, activeVisit).some((visit) => visit.hearingAidBooked) && (
                               <Button
                                 variant="outlined"
                                 size="small"
                                 startIcon={<CheckIcon />}
                                 onClick={() => {
-                                  const bookingVisit = getValues('visits').slice(0, activeVisit).find(visit => visit.hearingAidBooked);
+                                  const bookingVisit = getValues('visits')
+                                    .slice(0, activeVisit)
+                                    .find((visit) => visit.hearingAidBooked);
                                   if (bookingVisit) {
                                     updateVisitFields(activeVisit, {
                                       hearingAidProductId: bookingVisit.hearingAidProductId || '',
@@ -2462,267 +2942,402 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       grossMRP: bookingVisit.grossMRP || 0,
                                       grossSalesBeforeTax: bookingVisit.grossSalesBeforeTax || 0,
                                       taxAmount: bookingVisit.taxAmount || 0,
-                                      salesAfterTax: bookingVisit.salesAfterTax || 0
+                                      salesAfterTax: bookingVisit.salesAfterTax || 0,
                                     });
                                   }
                                 }}
                                 sx={{ color: 'warning.main', borderColor: 'warning.main' }}
                               >
-                                Same as Booked
+                                Same as prior booking
                               </Button>
                             )}
                           </Box>
+                        </CardContent>
+                      </Card>
+                    )}
 
-                          {/* Product Selection (hidden when using trial device) */}
-                          {!isUsingTrialDevice && (
-                            <Box sx={{ mb: 3, p: 2, bgcolor: '#f3e5f5', borderRadius: 2 }}>
-                              <Typography variant="subtitle2" sx={{ mb: 2, color: 'secondary.dark' }}>
-                                Select Hearing Aids from Products Database
+                    {showLockedDeviceCard && (
+                      <Card
+                        sx={{
+                          mb: 4,
+                          borderRadius: 2,
+                          border: 2,
+                          borderColor: 'info.main',
+                          bgcolor: 'grey.50',
+                          backgroundImage: (theme) =>
+                            `linear-gradient(135deg, ${theme.palette.info.light}14 0%, transparent 55%)`,
+                        }}
+                      >
+                        <CardContent sx={{ p: 3 }}>
+                          <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }}>
+                            <LockOutlinedIcon sx={{ color: 'info.main', fontSize: 32 }} />
+                            <Box>
+                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'info.dark' }}>
+                                Device locked to trial
                               </Typography>
-                              <Grid container spacing={2}>
-                                <Grid item xs={12} md={8}>
-                                  <FormControl fullWidth>
-                                    <InputLabel>Choose Hearing Aid Product(s)</InputLabel>
-                                    <Select 
-                                      multiple
-                                      value={(currentVisit.products || [])
-                                        .filter(p => p.productId && hearingAidProducts.some(hp => hp.id === p.productId))
-                                        .map(p => p.productId)}
-                                      onChange={(e) => {
-                                        const value = e.target.value as string[] | string;
-                                        const selectedIds = Array.isArray(value) ? value : value ? [value] : [];
-
-                                        const currentVisits = getValues('visits');
-                                        const nextVisits = [...currentVisits];
-                                        const visit = { ...(nextVisits[activeVisit] || {}) } as Visit;
-
-                                        const manualProducts = (visit.products || []).filter(
-                                          p => !p.productId || !hearingAidProducts.some(hp => hp.id === p.productId)
-                                        );
-
-                                        const selectedProducts = hearingAidProducts.filter(p => selectedIds.includes(p.id));
-
-                                        const mappedProducts: HearingAidProduct[] = selectedProducts.map((p) => {
-                                          const mrp = p.mrp || 0;
-                                          const discountPercent = 0;
-                                          const discountAmount = 0;
-                                          const sellingPrice = mrp;
-                                          const gstPercent = p.gstPercentage ?? 18;
-                                          const gstAmount = gstPercent > 0 ? (sellingPrice * gstPercent) / 100 : 0;
-                                          const finalAmount = sellingPrice + gstAmount;
-
-                                          return {
-                                            id: `${p.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                                            inventoryId: '',
-                                            productId: p.id,
-                                            name: p.name,
-                                            hsnCode: p.hsnCode,
-                                            serialNumber: '',
-                                            unit: 'piece',
-                                            saleDate: new Date().toISOString().split('T')[0],
-                                            mrp,
-                                            dealerPrice: 0,
-                                            sellingPrice,
-                                            discountPercent,
-                                            discountAmount,
-                                            gstPercent,
-                                            gstAmount,
-                                            finalAmount,
-                                            gstApplicable: p.gstApplicable,
-                                            gstType: p.gstType ?? 'IGST',
-                                            warranty: '',
-                                            company: p.company,
-                                            location: ''
-                                          };
-                                        });
-
-                                        const updatedProducts = [...mappedProducts, ...manualProducts];
-
-                                        visit.products = updatedProducts;
-                                        visit.grossMRP = updatedProducts.reduce((sum, p) => sum + p.mrp, 0);
-                                        visit.grossSalesBeforeTax = updatedProducts.reduce((sum, p) => sum + p.sellingPrice, 0);
-                                        visit.taxAmount = updatedProducts.reduce((sum, p) => sum + p.gstAmount, 0);
-                                        visit.salesAfterTax = updatedProducts.reduce((sum, p) => sum + p.finalAmount, 0);
-
-                                        if (selectedProducts.length > 0) {
-                                          const first = selectedProducts[0];
-                                          visit.hearingAidProductId = first.id;
-                                          visit.hearingAidBrand = first.company || '';
-                                          visit.hearingAidModel = first.name || '';
-                                          visit.hearingAidType = first.type || '';
-                                          visit.hearingAidPrice = first.mrp || 0;
-                                        } else {
-                                          visit.hearingAidProductId = '';
-                                          visit.hearingAidBrand = '';
-                                          visit.hearingAidModel = '';
-                                          visit.hearingAidType = '';
-                                          visit.hearingAidPrice = 0;
-                                        }
-
-                                        nextVisits[activeVisit] = visit;
-                                        setValue('visits', nextVisits);
-                                      }}
-                                      label="Choose Hearing Aid Product(s)"
-                                      displayEmpty
-                                      sx={{ borderRadius: 2, minWidth: '200px' }}
-                                      renderValue={(selected) => (
-                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                          {(selected as string[]).map((id) => {
-                                            const p = hearingAidProducts.find(hp => hp.id === id);
-                                            return p ? (
-                                              <Chip
-                                                key={id}
-                                                label={`${p.company} ${p.name}`}
-                                                size="small"
-                                                sx={{ borderRadius: 1 }}
-                                              />
-                                            ) : null;
-                                          })}
-                                        </Box>
-                                      )}
-                                      MenuProps={{
-                                        PaperProps: {
-                                          style: {
-                                            maxHeight: 320
-                                          }
-                                        }
-                                      }}
-                                    >
-                                      {hearingAidProducts.map((product) => (
-                                        <MenuItem key={product.id} value={product.id}>
-                                          <Checkbox
-                                            checked={(currentVisit.products || []).some(p => p.productId === product.id)}
-                                            sx={{ mr: 1 }}
-                                          />
-                                          {product.company} {product.name} - ₹{(product.mrp || 0).toLocaleString()}
-                                        </MenuItem>
-                                      ))}
-                                    </Select>
-                                  </FormControl>
-                                </Grid>
-                                <Grid item xs={12} md={4}>
-                                  <Button
-                                    variant="text"
-                                    size="small"
-                                    onClick={() => {
-                                      const currentVisits = getValues('visits');
-                                      const nextVisits = [...currentVisits];
-                                      const visit = { ...(nextVisits[activeVisit] || {}) } as Visit;
-
-                                      const manualProducts = (visit.products || []).filter(
-                                        p => !p.productId || !hearingAidProducts.some(hp => hp.id === p.productId)
-                                      );
-
-                                      visit.products = manualProducts;
-                                      visit.grossMRP = manualProducts.reduce((sum, p) => sum + p.mrp, 0);
-                                      visit.grossSalesBeforeTax = manualProducts.reduce((sum, p) => sum + p.sellingPrice, 0);
-                                      visit.taxAmount = manualProducts.reduce((sum, p) => sum + p.gstAmount, 0);
-                                      visit.salesAfterTax = manualProducts.reduce((sum, p) => sum + p.finalAmount, 0);
-
-                                      visit.hearingAidProductId = '';
-                                      visit.hearingAidBrand = '';
-                                      visit.hearingAidModel = '';
-                                      visit.hearingAidType = '';
-                                      visit.hearingAidPrice = 0;
-
-                                      nextVisits[activeVisit] = visit;
-                                      setValue('visits', nextVisits);
-                                    }}
-                                    sx={{ height: 'fit-content', mt: 1 }}
-                                  >
-                                    Clear Selection
-                                  </Button>
-                                </Grid>
-                              </Grid>
+                              <Typography variant="body2" color="text.secondary">
+                                This booking continues the trial device. Change the model under Trial (or turn off
+                                &quot;booking from trial&quot;) if you need a different catalog selection.
+                              </Typography>
                             </Box>
-                          )}
-
-                          {/* Device Details */}
-                          {!isUsingTrialDevice ? (
-                            <Grid container spacing={3}>
-                              <Grid item xs={12} md={3}>
-                                <TextField
-                                  fullWidth
-                                  label="Device Brand"
-                                  value={brandDisplay}
-                                  onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
-                                  helperText="Select from products above"
-                                  disabled
-                                />
+                          </Stack>
+                          <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 2, border: 1, borderColor: 'divider' }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
+                              Trial device in use
+                            </Typography>
+                            <Grid container spacing={2}>
+                              <Grid item xs={12} md={4}>
+                                <Typography variant="caption" color="text.secondary">
+                                  Brand / model
+                                </Typography>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                  {currentVisit.hearingAidBrand} {currentVisit.hearingAidModel}
+                                </Typography>
                               </Grid>
-                              <Grid item xs={12} md={3}>
-                                <TextField
-                                  fullWidth
-                                  label="Device Model"
-                                  value={modelDisplay}
-                                  onChange={(e) => updateVisit(activeVisit, 'hearingAidModel', e.target.value)}
-                                  disabled
-                                />
+                              <Grid item xs={12} md={4}>
+                                <Typography variant="caption" color="text.secondary">
+                                  Type / ear
+                                </Typography>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                  {currentVisit.hearingAidType} / {currentVisit.whichEar}
+                                </Typography>
                               </Grid>
-                              <Grid item xs={12} md={2}>
-                                <TextField
-                                  fullWidth
-                                  label="Device Type"
-                                  value={currentVisit.hearingAidType}
-                                  onChange={(e) => updateVisit(activeVisit, 'hearingAidType', e.target.value)}
-                                  placeholder="RIC, BTE, ITC..."
-                                />
-                              </Grid>
-                              <Grid item xs={12} md={2}>
-                                <FormControl fullWidth>
-                                  <InputLabel>Which Ear</InputLabel>
-                                  <Select 
-                                    value={currentVisit.whichEar}
-                                    onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
-                                    label="Which Ear"
-                                    sx={{ borderRadius: 2, minWidth: '200px' }}
-                                  >
-                                    <MenuItem value="left">Left</MenuItem>
-                                    <MenuItem value="right">Right</MenuItem>
-                                    <MenuItem value="both">Both</MenuItem>
-                                  </Select>
-                                </FormControl>
-                              </Grid>
-                              <Grid item xs={12} md={2}>
-                                <TextField
-                                  fullWidth
-                                  label="MRP"
-                                  type="number"
-                                  value={currentVisit.hearingAidPrice}
-                                  onChange={(e) => updateVisit(activeVisit, 'hearingAidPrice', parseFloat(e.target.value) || 0)}
-                                  disabled={currentVisit.hearingAidBooked}
-                                  InputProps={{
-                                    startAdornment: <InputAdornment position="start">₹</InputAdornment>
-                                  }}
-                                />
+                              <Grid item xs={12} md={4}>
+                                <Typography variant="caption" color="text.secondary">
+                                  MRP (per unit)
+                                </Typography>
+                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                                  ₹ {Number(currentVisit.hearingAidPrice || 0).toLocaleString()}
+                                </Typography>
                               </Grid>
                             </Grid>
-                          ) : (
-                            // Read-only summary when using trial device
-                            <Box sx={{ p: 2, bgcolor: 'grey.100', borderRadius: 2 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Using Trial Device Details</Typography>
-                              <Grid container spacing={2}>
-                                <Grid item xs={12} md={4}>
-                                  <Typography variant="body2">Brand/Model</Typography>
-                                  <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                    {currentVisit.hearingAidBrand} {currentVisit.hearingAidModel}
-                                  </Typography>
-                                </Grid>
-                                <Grid item xs={12} md={3}>
-                                  <Typography variant="body2">Type / Ear</Typography>
-                                  <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                    {currentVisit.hearingAidType} / {currentVisit.whichEar}
-                                  </Typography>
-                                </Grid>
-                                <Grid item xs={12} md={3}>
-                                  <Typography variant="body2">MRP</Typography>
-                                  <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                    ₹ {Number(currentVisit.hearingAidPrice || 0).toLocaleString()}
-                                  </Typography>
-                                </Grid>
-                              </Grid>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {showTrialDeviceCard && (
+                      <Card
+                        sx={{
+                          mb: 4,
+                          borderRadius: 2,
+                          border: 2,
+                          borderColor: 'info.light',
+                          bgcolor: '#e8f4fc',
+                          boxShadow: (theme) => `0 8px 24px ${theme.palette.info.main}18`,
+                        }}
+                      >
+                        <CardContent sx={{ p: 3 }}>
+                          <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }}>
+                            <ScienceOutlinedIcon sx={{ color: 'info.main', fontSize: 32 }} />
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'info.dark' }}>
+                                Trial hearing aid
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Pick exactly one catalog model for this trial. The dialog uses a single-choice layout
+                                and keeps brand, model, and MRP (per unit) in sync.
+                              </Typography>
                             </Box>
-                          )}
+                          </Stack>
+
+                          <Box
+                            sx={{
+                              mb: 3,
+                              p: 2,
+                              bgcolor: 'background.paper',
+                              borderRadius: 2,
+                              border: 1,
+                              borderColor: 'info.light',
+                            }}
+                          >
+                            <Typography variant="subtitle2" sx={{ mb: 0.5, color: 'info.dark', fontWeight: 600 }}>
+                              Catalog — trial device
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                              Search in the dialog; one model only. Clears trial name fields when empty.
+                            </Typography>
+                            <Stack spacing={2}>
+                              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+                                <Badge
+                                  color="info"
+                                  badgeContent={selectedCatalogProducts.length || undefined}
+                                  invisible={selectedCatalogProducts.length === 0}
+                                  overlap="rectangular"
+                                >
+                                  <Button
+                                    variant="contained"
+                                    color="info"
+                                    size="large"
+                                    startIcon={<ScienceOutlinedIcon />}
+                                    onClick={() => openHearingAidCatalogDialog('trial')}
+                                    sx={{ borderRadius: 2, px: 3, py: 1.25, textTransform: 'none', fontWeight: 600 }}
+                                  >
+                                    Choose trial model
+                                  </Button>
+                                </Badge>
+                                <Button
+                                  variant="outlined"
+                                  color="info"
+                                  size="medium"
+                                  onClick={() => applyCatalogHearingAidSelection(activeVisit, [])}
+                                  disabled={selectedCatalogProducts.length === 0}
+                                  sx={{ borderRadius: 2 }}
+                                >
+                                  Clear trial device
+                                </Button>
+                              </Stack>
+                              {selectedCatalogProducts.length > 0 ? (
+                                <Box>
+                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                                    Selected for trial
+                                  </Typography>
+                                  <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75}>
+                                    {selectedCatalogProducts.map((p, idx) => (
+                                      <Chip
+                                        key={`trial-${p.id}-${idx}`}
+                                        label={`${p.company ? `${p.company} ` : ''}${p.name}`}
+                                        size="small"
+                                        onDelete={() => removeCatalogProductFromVisit(p.id)}
+                                        sx={{ maxWidth: '100%', borderRadius: 1.5 }}
+                                      />
+                                    ))}
+                                  </Stack>
+                                </Box>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  No trial model yet — open the picker above.
+                                </Typography>
+                              )}
+                            </Stack>
+                          </Box>
+
+                          <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'info.dark' }}>
+                            Trial device details
+                          </Typography>
+                          <Grid container spacing={3}>
+                            <Grid item xs={12} md={3}>
+                              <TextField
+                                fullWidth
+                                label="Device Brand"
+                                value={brandDisplay}
+                                onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
+                                helperText="From catalog"
+                                disabled
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={3}>
+                              <TextField
+                                fullWidth
+                                label="Device Model"
+                                value={modelDisplay}
+                                onChange={(e) => updateVisit(activeVisit, 'hearingAidModel', e.target.value)}
+                                disabled
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={2}>
+                              <TextField
+                                fullWidth
+                                label="Device Type"
+                                value={currentVisit.hearingAidType}
+                                onChange={(e) => updateVisit(activeVisit, 'hearingAidType', e.target.value)}
+                                placeholder="RIC, BTE, ITC..."
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={2}>
+                              <FormControl fullWidth>
+                                <InputLabel>Which Ear</InputLabel>
+                                <Select
+                                  value={currentVisit.whichEar}
+                                  onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
+                                  label="Which Ear"
+                                  sx={{ borderRadius: 2, minWidth: '200px' }}
+                                >
+                                  <MenuItem value="left">Left</MenuItem>
+                                  <MenuItem value="right">Right</MenuItem>
+                                  <MenuItem value="both">Both</MenuItem>
+                                </Select>
+                              </FormControl>
+                            </Grid>
+                            <Grid item xs={12} md={2}>
+                              <TextField
+                                fullWidth
+                                label="MRP (per unit)"
+                                type="number"
+                                value={currentVisit.hearingAidPrice}
+                                onChange={(e) =>
+                                  updateVisit(activeVisit, 'hearingAidPrice', parseFloat(e.target.value) || 0)
+                                }
+                                disabled={currentVisit.hearingAidBooked}
+                                InputProps={{
+                                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+                                }}
+                              />
+                            </Grid>
+                          </Grid>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {showBookingDeviceCard && (
+                      <Card
+                        sx={{
+                          mb: 4,
+                          borderRadius: 2,
+                          border: 2,
+                          borderColor: 'warning.main',
+                          bgcolor: '#fffaf0',
+                          boxShadow: (theme) => `0 8px 24px ${theme.palette.warning.main}22`,
+                        }}
+                      >
+                        <CardContent sx={{ p: 3 }}>
+                          <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }}>
+                            <BookmarkAddedIcon sx={{ color: 'warning.dark', fontSize: 32 }} />
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'warning.dark' }}>
+                                Booking — hearing aid
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                One catalog model for this booking. MRP is per unit — use booking quantity and selling
+                                price (per unit) in Booking details for totals.
+                              </Typography>
+                            </Box>
+                          </Stack>
+
+                          <Box
+                            sx={{
+                              mb: 3,
+                              p: 2,
+                              bgcolor: 'background.paper',
+                              borderRadius: 2,
+                              border: 1,
+                              borderColor: 'warning.light',
+                            }}
+                          >
+                            <Typography variant="subtitle2" sx={{ mb: 0.5, color: 'warning.dark', fontWeight: 600 }}>
+                              Catalog — booked model
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                              Single choice in the dialog. Sets primary brand, model, and catalog MRP (per unit).
+                            </Typography>
+                            <Stack spacing={2}>
+                              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+                                <Badge
+                                  color="warning"
+                                  badgeContent={selectedCatalogProducts.length || undefined}
+                                  invisible={selectedCatalogProducts.length === 0}
+                                  overlap="rectangular"
+                                >
+                                  <Button
+                                    variant="contained"
+                                    color="warning"
+                                    size="large"
+                                    startIcon={<BookmarkAddedIcon />}
+                                    onClick={() => openHearingAidCatalogDialog('booking')}
+                                    sx={{ borderRadius: 2, px: 3, py: 1.25, textTransform: 'none', fontWeight: 600 }}
+                                  >
+                                    Choose booking model
+                                  </Button>
+                                </Badge>
+                                <Button
+                                  variant="outlined"
+                                  color="warning"
+                                  size="medium"
+                                  onClick={() => applyCatalogHearingAidSelection(activeVisit, [])}
+                                  disabled={selectedCatalogProducts.length === 0}
+                                  sx={{ borderRadius: 2 }}
+                                >
+                                  Clear model
+                                </Button>
+                              </Stack>
+                              {selectedCatalogProducts.length > 0 ? (
+                                <Box>
+                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                                    Booked model (catalog)
+                                  </Typography>
+                                  <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.75}>
+                                    {selectedCatalogProducts.map((p, idx) => (
+                                      <Chip
+                                        key={`book-${p.id}-${idx}`}
+                                        label={`${p.company ? `${p.company} ` : ''}${p.name}`}
+                                        size="small"
+                                        onDelete={() => removeCatalogProductFromVisit(p.id)}
+                                        sx={{ maxWidth: '100%', borderRadius: 1.5 }}
+                                      />
+                                    ))}
+                                  </Stack>
+                                </Box>
+                              ) : (
+                                <Typography variant="body2" color="text.secondary">
+                                  No model selected yet — open the picker above.
+                                </Typography>
+                              )}
+                            </Stack>
+                          </Box>
+
+                          <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'warning.dark' }}>
+                            Booked device (per unit)
+                          </Typography>
+                          <Grid container spacing={3}>
+                            <Grid item xs={12} md={3}>
+                              <TextField
+                                fullWidth
+                                label="Device Brand"
+                                value={brandDisplay}
+                                onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
+                                helperText="From catalog"
+                                disabled
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={3}>
+                              <TextField
+                                fullWidth
+                                label="Device Model"
+                                value={modelDisplay}
+                                onChange={(e) => updateVisit(activeVisit, 'hearingAidModel', e.target.value)}
+                                disabled
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={2}>
+                              <TextField
+                                fullWidth
+                                label="Device Type"
+                                value={currentVisit.hearingAidType}
+                                onChange={(e) => updateVisit(activeVisit, 'hearingAidType', e.target.value)}
+                                placeholder="RIC, BTE, ITC..."
+                              />
+                            </Grid>
+                            <Grid item xs={12} md={2}>
+                              <FormControl fullWidth>
+                                <InputLabel>Which Ear</InputLabel>
+                                <Select
+                                  value={currentVisit.whichEar}
+                                  onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
+                                  label="Which Ear"
+                                  sx={{ borderRadius: 2, minWidth: '200px' }}
+                                >
+                                  <MenuItem value="left">Left</MenuItem>
+                                  <MenuItem value="right">Right</MenuItem>
+                                  <MenuItem value="both">Both</MenuItem>
+                                </Select>
+                              </FormControl>
+                            </Grid>
+                            <Grid item xs={12} md={2}>
+                              <TextField
+                                fullWidth
+                                label="MRP (per unit)"
+                                type="number"
+                                value={currentVisit.hearingAidPrice}
+                                onChange={(e) =>
+                                  updateVisit(activeVisit, 'hearingAidPrice', parseFloat(e.target.value) || 0)
+                                }
+                                disabled={currentVisit.hearingAidBooked}
+                                InputProps={{
+                                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+                                }}
+                              />
+                            </Grid>
+                          </Grid>
                         </CardContent>
                       </Card>
                     )}
@@ -2753,6 +3368,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       updateVisit(activeVisit, 'trialDuration', 0);
                                       updateVisit(activeVisit, 'trialStartDate', '');
                                       updateVisit(activeVisit, 'trialEndDate', '');
+                                      updateVisit(activeVisit, 'trialHomeSecurityDepositAmount', 0);
                                     }
                                   }}
                                   label="Trial Type"
@@ -2871,6 +3487,32 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Grid>
                             )}
 
+                            {currentVisit.trialHearingAidType === 'home' && (
+                              <Grid item xs={12} md={6}>
+                                <TextField
+                                  fullWidth
+                                  label="Security deposit amount (agreed)"
+                                  type="number"
+                                  value={currentVisit.trialHomeSecurityDepositAmount || ''}
+                                  onChange={(e) =>
+                                    updateVisit(
+                                      activeVisit,
+                                      'trialHomeSecurityDepositAmount',
+                                      parseFloat(e.target.value) || 0
+                                    )
+                                  }
+                                  InputProps={{
+                                    startAdornment: (
+                                      <InputAdornment position="start">
+                                        <RupeeIcon />
+                                      </InputAdornment>
+                                    ),
+                                  }}
+                                  helperText="Refundable deposit for taking the device home. Record the actual collection under Payments & Billing (mode, reference, remarks)."
+                                />
+                              </Grid>
+                            )}
+
                             {/* Trial Notes */}
                             <Grid item xs={12}>
                               <TextField
@@ -2897,6 +3539,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               Booking Specific Details
                             </Typography>
                           </Box>
+
+                          {trialOn && bookingOn && (
+                            <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
+                              Hearing aid model and catalog selection for this visit are managed in the{' '}
+                              <strong>Trial hearing aid</strong> section above. Use this card for amounts, dates, and
+                              booking workflow only.
+                            </Alert>
+                          )}
                           
                           <Grid container spacing={3}>
                             <Grid item xs={12} md={6}>
@@ -2924,14 +3574,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             <Grid item xs={12} md={6}>
                               <TextField
                                 fullWidth
-                                label="Selling Price"
+                                label="Selling price (per unit)"
                                 type="number"
                                 value={currentVisit.bookingSellingPrice || ''}
                                 onChange={(e) => updateVisit(activeVisit, 'bookingSellingPrice', parseFloat(e.target.value) || 0)}
                                 InputProps={{
                                   startAdornment: <InputAdornment position="start">₹</InputAdornment>
                                 }}
-                                helperText="Used for booking total and balance calculation"
+                                helperText="Per single unit. Booking total = this × quantity below; used for balance calculation."
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
@@ -2949,7 +3599,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           <Grid container spacing={2} sx={{ mt: 0.5 }}>
                             <Grid item xs={12} md={4}>
                               <Box sx={{ mt: 2 }}>
-                                <Typography variant="body2" color="text.secondary">MRP</Typography>
+                                <Typography variant="body2" color="text.secondary">MRP (per unit)</Typography>
                                 <Typography variant="body1" sx={{ fontWeight: 600 }}>
                                   ₹ {Number(currentVisit.hearingAidPrice || 0).toLocaleString()}
                                 </Typography>
@@ -3100,12 +3750,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   const trialVisit = getValues('visits').slice(0, activeVisit).find(v => v.hearingAidTrial);
                                   if (trialVisit) {
                                     const products = trialVisit.products || [];
-                                    const totals = {
-                                      grossMRP: products.reduce((s, p) => s + (p.mrp || 0), 0),
-                                      grossSalesBeforeTax: products.reduce((s, p) => s + (p.sellingPrice || 0), 0),
-                                      taxAmount: products.reduce((s, p) => s + (p.gstAmount || 0), 0),
-                                      salesAfterTax: products.reduce((s, p) => s + (p.finalAmount || 0), 0)
-                                    };
+                                    const totals = sumHearingAidVisitTotals(products);
                                     updateVisitFields(activeVisit, {
                                       previousVisitId: trialVisit.id,
                                       hearingAidProductId: trialVisit.hearingAidProductId || '',
@@ -3135,6 +3780,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   const bookingVisit = getValues('visits').slice(0, activeVisit).find(v => v.hearingAidBooked);
                                   if (bookingVisit) {
                                     const products = bookingVisit.products || [];
+                                    const bt = sumHearingAidVisitTotals(products);
                                     updateVisitFields(activeVisit, {
                                       previousVisitId: bookingVisit.id,
                                       hearingAidProductId: bookingVisit.hearingAidProductId || '',
@@ -3146,10 +3792,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       bookingSellingPrice: bookingVisit.bookingSellingPrice || bookingVisit.grossSalesBeforeTax || 0,
                                       bookingQuantity: bookingVisit.bookingQuantity || Math.max(1, (products || []).reduce((sum, p) => sum + (Number(p.quantity) || 1), 0)),
                                       products,
-                                      grossMRP: bookingVisit.grossMRP || products.reduce((s, p) => s + (p.mrp || 0), 0),
-                                      grossSalesBeforeTax: bookingVisit.grossSalesBeforeTax || products.reduce((s, p) => s + (p.sellingPrice || 0), 0),
-                                      taxAmount: bookingVisit.taxAmount || products.reduce((s, p) => s + (p.gstAmount || 0), 0),
-                                      salesAfterTax: bookingVisit.salesAfterTax || products.reduce((s, p) => s + (p.finalAmount || 0), 0)
+                                      grossMRP: bookingVisit.grossMRP || bt.grossMRP,
+                                      grossSalesBeforeTax: bookingVisit.grossSalesBeforeTax || bt.grossSalesBeforeTax,
+                                      taxAmount: bookingVisit.taxAmount || bt.taxAmount,
+                                      salesAfterTax: bookingVisit.salesAfterTax || bt.salesAfterTax,
                                     });
                                   }
                                 }}
@@ -3346,6 +3992,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                           updateVisit(activeVisit, 'trialDuration', 0);
                                           updateVisit(activeVisit, 'trialStartDate', '');
                                           updateVisit(activeVisit, 'trialEndDate', '');
+                                          updateVisit(activeVisit, 'trialHomeSecurityDepositAmount', 0);
                                         }
                                       }}
                                       label="Trial Type"
@@ -3437,6 +4084,33 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   </Grid>
                                 )}
 
+                                {currentVisit.trialHearingAidType === 'home' && (
+                                  <Grid item xs={12} md={6}>
+                                    <TextField
+                                      fullWidth
+                                      label="Security deposit amount (agreed)"
+                                      type="number"
+                                      value={currentVisit.trialHomeSecurityDepositAmount || ''}
+                                      onChange={(e) =>
+                                        updateVisit(
+                                          activeVisit,
+                                          'trialHomeSecurityDepositAmount',
+                                          parseFloat(e.target.value) || 0
+                                        )
+                                      }
+                                      InputProps={{
+                                        startAdornment: (
+                                          <InputAdornment position="start">
+                                            <RupeeIcon />
+                                          </InputAdornment>
+                                        ),
+                                      }}
+                                      helperText="Record collection in Payments & Billing (payment mode, reference, remarks)."
+                                      sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                    />
+                                  </Grid>
+                                )}
+
                                 {/* Trial Notes */}
                                 <Grid item xs={12}>
                                   <TextField
@@ -3511,17 +4185,31 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
 
                           {/* Product Addition Form */}
-                          <Box sx={{ mb: 4, p: 3, bgcolor: 'background.paper', borderRadius: 2, border: 1, borderColor: 'divider' }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                              <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                              Add Hearing Aid Product
-                            </Typography>
-                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                                💡 GST will be auto-calculated based on product settings
+                          <Box
+                            sx={{
+                              mb: 4,
+                              p: 3,
+                              bgcolor: 'background.paper',
+                              borderRadius: 2,
+                              border: 1,
+                              borderColor: 'divider',
+                              boxShadow: 1,
+                            }}
+                          >
+                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ sm: 'center' }} sx={{ mb: 2 }}>
+                              <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                                Add sale line
                               </Typography>
-                            </Box>
-                            <Grid container spacing={2} alignItems="end">
-                              <Grid item xs={12} md={4}>
+                            </Stack>
+                            <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
+                              <strong>Same model, multiple devices:</strong> if stock has{' '}
+                              <strong>no serial</strong>, use <strong>Quantity</strong> for several units on one line. If
+                              each unit has a <strong>serial</strong>, quantity stays 1 — use <strong>Add line</strong>{' '}
+                              again after each inventory pick (same model, different serials is allowed).
+                            </Alert>
+
+                            <Grid container spacing={2}>
+                              <Grid item xs={12} md={5}>
                                 <Button
                                   fullWidth
                                   variant="outlined"
@@ -3529,88 +4217,118 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   onClick={() => setInventoryDialogOpen(true)}
                                   startIcon={<InventoryIcon />}
                                   sx={{
-                                    height: '56px',
+                                    minHeight: 56,
                                     borderStyle: 'dashed',
                                     borderWidth: 2,
                                     borderColor: currentProduct.inventoryId ? 'success.main' : 'grey.400',
                                     backgroundColor: currentProduct.inventoryId ? 'success.50' : 'transparent',
                                     '&:hover': {
                                       borderColor: currentProduct.inventoryId ? 'success.dark' : 'primary.main',
-                                      backgroundColor: currentProduct.inventoryId ? 'success.100' : 'primary.50'
-                                    }
+                                      backgroundColor: currentProduct.inventoryId ? 'success.100' : 'primary.50',
+                                    },
                                   }}
                                 >
                                   {currentProduct.inventoryId ? (
                                     <Box sx={{ textAlign: 'left', width: '100%' }}>
                                       <Typography variant="body2" sx={{ fontWeight: 600, color: 'success.dark' }}>
-                                        {currentProduct.name} - {currentProduct.company}
+                                        {currentProduct.name} — {currentProduct.company}
                                       </Typography>
                                       <Typography variant="caption" sx={{ color: 'success.main' }}>
-                                        SN: {currentProduct.serialNumber} | ₹{currentProduct.mrp?.toLocaleString()}
+                                        {currentProduct.serialNumber ? `SN: ${currentProduct.serialNumber}` : 'No serial'} · ₹
+                                        {currentProduct.mrp?.toLocaleString()} ea.
                                       </Typography>
-                                        </Box>
+                                    </Box>
                                   ) : (
-                                    <Typography>
-                                      Select Hearing Aid from Inventory ({availableInventory.length} available)
-                                    </Typography>
+                                    <Typography>Select from inventory ({availableInventory.length} in stock)</Typography>
                                   )}
                                 </Button>
                               </Grid>
-                              <Grid item xs={12} md={2}>
+                              <Grid item xs={12} sm={6} md={3}>
                                 <TextField
                                   fullWidth
                                   size="small"
-                                  label="Product Name"
+                                  label="Product name"
                                   value={currentProduct.name}
-                                  onChange={(e) => setCurrentProduct(prev => ({ ...prev, name: e.target.value }))}
+                                  onChange={(e) => setCurrentProduct((prev) => ({ ...prev, name: e.target.value }))}
                                 />
                               </Grid>
-                              <Grid item xs={12} md={1}>
+                              <Grid item xs={6} sm={3} md={2}>
                                 <TextField
                                   fullWidth
                                   size="small"
                                   label="HSN"
                                   value={currentProduct.hsnCode}
-                                  onChange={(e) => setCurrentProduct(prev => ({ ...prev, hsnCode: e.target.value }))}
+                                  onChange={(e) => setCurrentProduct((prev) => ({ ...prev, hsnCode: e.target.value }))}
                                 />
                               </Grid>
-                              <Grid item xs={12} md={1}>
+                              <Grid item xs={6} sm={3} md={2}>
                                 <TextField
                                   fullWidth
                                   size="small"
-                                  label="Serial No."
+                                  label="Serial no."
                                   value={currentProduct.serialNumber}
-                                  onChange={(e) => setCurrentProduct(prev => ({ ...prev, serialNumber: e.target.value }))}
+                                  onChange={(e) => {
+                                    const sn = e.target.value;
+                                    setCurrentProduct((prev) => ({
+                                      ...prev,
+                                      serialNumber: sn,
+                                      quantity: sn.trim() ? 1 : Math.max(1, prev.quantity || 1),
+                                    }));
+                                  }}
+                                  helperText={
+                                    currentProduct.serialNumber?.trim()
+                                      ? 'Quantity locked to 1 per serial'
+                                      : undefined
+                                  }
                                 />
                               </Grid>
-                              <Grid item xs={12} md={1}>
+
+                              <Grid item xs={6} sm={4} md={2}>
                                 <TextField
                                   fullWidth
                                   size="small"
-                                  label="MRP"
+                                  label="Quantity"
+                                  type="number"
+                                  disabled={!!currentProduct.serialNumber?.trim()}
+                                  value={currentProduct.serialNumber?.trim() ? 1 : currentProduct.quantity}
+                                  onChange={(e) =>
+                                    setCurrentProduct((prev) => ({
+                                      ...prev,
+                                      quantity: Math.max(1, parseInt(e.target.value || '1', 10) || 1),
+                                    }))
+                                  }
+                                  inputProps={{ min: 1, max: 9999 }}
+                                  helperText="Same model & per-unit price"
+                                />
+                              </Grid>
+                              <Grid item xs={6} sm={4} md={2}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="MRP (per unit)"
                                   type="number"
                                   value={currentProduct.mrp}
                                   onChange={(e) => {
                                     const newMrp = Number(e.target.value);
-                                    setCurrentProduct(prev => ({ 
-                                      ...prev, 
+                                    setCurrentProduct((prev) => ({
+                                      ...prev,
                                       mrp: newMrp,
-                                      sellingPrice: newMrp > 0 ? newMrp : prev.sellingPrice
+                                      sellingPrice: newMrp > 0 ? newMrp : prev.sellingPrice,
                                     }));
                                   }}
                                 />
                               </Grid>
-                              <Grid item xs={12} md={1}>
+                              <Grid item xs={6} sm={4} md={2}>
                                 <TextField
                                   fullWidth
                                   size="small"
-                                  label="Selling Price"
+                                  label="Selling price (per unit)"
                                   type="number"
                                   value={currentProduct.sellingPrice}
                                   onChange={(e) => updateSellingPrice(Number(e.target.value))}
                                 />
                               </Grid>
-                              <Grid item xs={12} md={1}>
+                              <Grid item xs={6} sm={4} md={2}>
                                 <TextField
                                   fullWidth
                                   size="small"
@@ -3618,153 +4336,221 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   type="number"
                                   value={currentProduct.discountPercent}
                                   onChange={(e) => updateDiscountPercent(Number(e.target.value))}
+                                  inputProps={{ step: 0.01, min: 0, max: 100 }}
+                                  helperText="Up to 2 decimal places"
                                 />
                               </Grid>
-                              <Grid item xs={12} md={1}>
+                              <Grid item xs={6} sm={4} md={2}>
                                 <TextField
                                   fullWidth
                                   size="small"
-                                  label={currentProduct.gstPercent === 0 ? "GST % (Exempt)" : "GST %"}
+                                  label={currentProduct.gstPercent === 0 ? 'GST % (exempt)' : 'GST %'}
                                   type="number"
                                   value={currentProduct.gstPercent}
-                                  onChange={(e) => setCurrentProduct(prev => ({ ...prev, gstPercent: Number(e.target.value) }))}
+                                  onChange={(e) =>
+                                    setCurrentProduct((prev) => ({ ...prev, gstPercent: Number(e.target.value) }))
+                                  }
                                   disabled={currentProduct.productId !== '' && currentProduct.gstPercent === 0}
                                   sx={{
                                     '& .MuiInputBase-input': {
-                                      color: currentProduct.gstPercent === 0 ? 'text.secondary' : 'text.primary'
+                                      color: currentProduct.gstPercent === 0 ? 'text.secondary' : 'text.primary',
                                     },
                                     '& .MuiInputLabel-root': {
-                                      color: currentProduct.gstPercent === 0 ? 'warning.main' : 'text.secondary'
-                                    }
+                                      color: currentProduct.gstPercent === 0 ? 'warning.main' : 'text.secondary',
+                                    },
                                   }}
                                 />
                               </Grid>
-                              <Grid item xs={12} md={1}>
+                              <Grid item xs={12} sm={6} md={2}>
                                 <TextField
                                   fullWidth
                                   size="small"
                                   label="Warranty"
                                   value={currentProduct.warranty}
-                                  onChange={(e) => setCurrentProduct(prev => ({ ...prev, warranty: e.target.value }))}
+                                  onChange={(e) => setCurrentProduct((prev) => ({ ...prev, warranty: e.target.value }))}
                                 />
                               </Grid>
                             </Grid>
-                            
-                            {/* Calculated Values Display */}
+
                             {currentProduct.mrp > 0 && (
-                              <Grid container spacing={2} sx={{ mt: 1, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                                <Grid item xs={3}>
-                                  <Typography variant="body2" color="text.secondary">Discount Amount</Typography>
-                                  <Typography variant="h6" sx={{ fontWeight: 600, color: 'error.main' }}>
-                                    {formatCurrency(currentProduct.discountAmount)}
-                                  </Typography>
+                              <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                                  Line preview × {saleLineQtyPreview} unit{saleLineQtyPreview !== 1 ? 's' : ''}
+                                </Typography>
+                                <Grid container spacing={2} alignItems="center">
+                                  <Grid item xs={6} sm={3}>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Discount (line)
+                                    </Typography>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'error.main' }}>
+                                      {formatCurrency(currentProduct.discountAmount * saleLineQtyPreview)}
+                                    </Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={3}>
+                                    <Typography variant="caption" color="text.secondary">
+                                      GST (line){' '}
+                                      {currentProduct.gstPercent === 0 && '(exempt)'}
+                                    </Typography>
+                                    <Typography
+                                      variant="subtitle1"
+                                      sx={{
+                                        fontWeight: 700,
+                                        color: currentProduct.gstPercent === 0 ? 'text.secondary' : 'warning.main',
+                                      }}
+                                    >
+                                      {currentProduct.gstPercent === 0
+                                        ? '—'
+                                        : formatCurrency(currentProduct.gstAmount * saleLineQtyPreview)}
+                                    </Typography>
+                                  </Grid>
+                                  <Grid item xs={6} sm={3}>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Final (line)
+                                    </Typography>
+                                    <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'success.main' }}>
+                                      {formatCurrency(currentProduct.finalAmount * saleLineQtyPreview)}
+                                    </Typography>
+                                  </Grid>
+                                  <Grid item xs={12} sm={3}>
+                                    <Button
+                                      fullWidth
+                                      variant="contained"
+                                      onClick={addProduct}
+                                      startIcon={<AddIcon />}
+                                      disabled={!currentProduct.name || currentProduct.mrp <= 0}
+                                      sx={{ borderRadius: 2, py: 1.25 }}
+                                    >
+                                      Add line
+                                    </Button>
+                                  </Grid>
                                 </Grid>
-                                <Grid item xs={3}>
-                                  <Typography variant="body2" color="text.secondary">
-                                    GST Amount {currentProduct.gstPercent === 0 && '(Exempt)'}
-                                  </Typography>
-                                  <Typography variant="h6" sx={{ 
-                                    fontWeight: 600, 
-                                    color: currentProduct.gstPercent === 0 ? 'text.secondary' : 'warning.main' 
-                                  }}>
-                                    {currentProduct.gstPercent === 0 ? 'Exempt' : formatCurrency(currentProduct.gstAmount)}
-                                  </Typography>
-                                </Grid>
-                                <Grid item xs={3}>
-                                  <Typography variant="body2" color="text.secondary">Final Amount</Typography>
-                                  <Typography variant="h6" sx={{ fontWeight: 600, color: 'success.main' }}>
-                                    {formatCurrency(currentProduct.finalAmount)}
-                                  </Typography>
-                                </Grid>
-                                <Grid item xs={3}>
+                              </Paper>
+                            )}
+
+                            {currentProduct.mrp === 0 && (
+                              <Box sx={{ mt: 2 }}>
                                 <Button
-                                  fullWidth
                                   variant="contained"
                                   onClick={addProduct}
                                   startIcon={<AddIcon />}
-                                  size="small"
-                                    disabled={!currentProduct.name || currentProduct.mrp <= 0}
+                                  disabled={!currentProduct.name || currentProduct.mrp <= 0}
+                                  sx={{ borderRadius: 2 }}
                                 >
-                                    Add Product
+                                  Add line
                                 </Button>
-                              </Grid>
-                            </Grid>
-                            )}
-                            
-                            {currentProduct.mrp === 0 && (
-                              <Grid container spacing={2} sx={{ mt: 1 }}>
-                                <Grid item xs={12} md={3}>
-                                  <Button
-                                    fullWidth
-                                    variant="contained"
-                                    onClick={addProduct}
-                                    startIcon={<AddIcon />}
-                                    size="small"
-                                    disabled={!currentProduct.name || currentProduct.mrp <= 0}
-                                  >
-                                    Add Product
-                                  </Button>
-                                </Grid>
-                              </Grid>
+                              </Box>
                             )}
                           </Box>
 
-                          {/* Products Table */}
                           {currentVisit.products.length > 0 && (
-                            <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-                              <Table>
+                            <TableContainer component={Paper} sx={{ borderRadius: 2, boxShadow: 2, mb: 2 }}>
+                              <Table size="small">
                                 <TableHead>
                                   <TableRow sx={{ bgcolor: 'grey.100' }}>
-                                    <TableCell sx={{ fontWeight: 600 }}>Product Name</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>HSN</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>Serial No.</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>MRP</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>Selling Price</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>Discount</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>GST</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>Final Amount</TableCell>
-                                    <TableCell sx={{ fontWeight: 600 }}>Actions</TableCell>
+                                    <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
+                                    <TableCell sx={{ fontWeight: 700 }}>HSN</TableCell>
+                                    <TableCell sx={{ fontWeight: 700 }}>Serial</TableCell>
+                                    <TableCell align="center" sx={{ fontWeight: 700 }}>
+                                      Qty
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                      MRP (ea.)
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                      Sell (ea.)
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                      Disc. %
+                                    </TableCell>
+                                    <TableCell sx={{ fontWeight: 700 }}>GST</TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                      Line total
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                      {' '}
+                                    </TableCell>
                                   </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                  {currentVisit.products.map((product, index) => (
-                                    <TableRow key={product.id}>
-                                      <TableCell>{product.name}</TableCell>
-                                      <TableCell>{product.hsnCode}</TableCell>
-                                      <TableCell>{product.serialNumber}</TableCell>
-                                      <TableCell>{formatCurrency(product.mrp)}</TableCell>
-                                      <TableCell>{formatCurrency(product.sellingPrice)}</TableCell>
-                                      <TableCell>{product.discountPercent}%</TableCell>
-                                      <TableCell sx={{ 
-                                        color: product.gstPercent === 0 ? 'text.secondary' : 'text.primary',
-                                        fontStyle: product.gstPercent === 0 ? 'italic' : 'normal'
-                                      }}>
-                                        {product.gstPercent === 0 ? 'Exempt' : `${product.gstPercent}%`}
-                                      </TableCell>
-                                      <TableCell sx={{ fontWeight: 600 }}>{formatCurrency(product.finalAmount)}</TableCell>
-                                      <TableCell>
-                                        <IconButton
-                                          size="small"
-                                          onClick={() => removeProduct(index)}
-                                          color="error"
+                                  {currentVisit.products.map((product, index) => {
+                                    const q = hearingAidLineQty(product);
+                                    const discPct = roundDiscountPercent(product.discountPercent);
+                                    return (
+                                      <TableRow key={product.id} hover>
+                                        <TableCell>
+                                          <Typography variant="body2" fontWeight={600}>
+                                            {product.name}
+                                          </Typography>
+                                          {product.company && (
+                                            <Typography variant="caption" color="text.secondary">
+                                              {product.company}
+                                            </Typography>
+                                          )}
+                                        </TableCell>
+                                        <TableCell>{product.hsnCode || '—'}</TableCell>
+                                        <TableCell>{product.serialNumber || '—'}</TableCell>
+                                        <TableCell align="center" sx={{ minWidth: 88 }}>
+                                          {product.serialNumber?.trim() ? (
+                                            <Chip label="1" size="small" variant="outlined" />
+                                          ) : (
+                                            <TextField
+                                              size="small"
+                                              type="number"
+                                              value={q}
+                                              onChange={(e) =>
+                                                updateSaleProductLine(index, {
+                                                  quantity: Math.max(1, parseInt(e.target.value || '1', 10) || 1),
+                                                })
+                                              }
+                                              inputProps={{ min: 1, max: 9999, style: { textAlign: 'center' } }}
+                                              sx={{ width: 72 }}
+                                            />
+                                          )}
+                                        </TableCell>
+                                        <TableCell align="right">{formatCurrency(product.mrp)}</TableCell>
+                                        <TableCell align="right">{formatCurrency(product.sellingPrice)}</TableCell>
+                                        <TableCell align="right">{discPct.toFixed(2)}%</TableCell>
+                                        <TableCell
+                                          sx={{
+                                            color: product.gstPercent === 0 ? 'text.secondary' : 'text.primary',
+                                            fontStyle: product.gstPercent === 0 ? 'italic' : 'normal',
+                                          }}
                                         >
-                                          <DeleteIcon />
-                                        </IconButton>
-                                      </TableCell>
-                                    </TableRow>
-                                  ))}
+                                          {product.gstPercent === 0 ? 'Exempt' : `${product.gstPercent}%`}
+                                        </TableCell>
+                                        <TableCell align="right" sx={{ fontWeight: 700 }}>
+                                          {formatCurrency(product.finalAmount * q)}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                          <IconButton size="small" onClick={() => removeProduct(index)} color="error">
+                                            <DeleteIcon />
+                                          </IconButton>
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  })}
                                 </TableBody>
-                                <TableHead>
+                                <TableBody>
                                   <TableRow sx={{ bgcolor: 'primary.50' }}>
-                                    <TableCell colSpan={3} sx={{ fontWeight: 700 }}>Totals</TableCell>
-                                    <TableCell sx={{ fontWeight: 700 }}>{formatCurrency(currentVisit.grossMRP)}</TableCell>
-                                    <TableCell sx={{ fontWeight: 700 }}>{formatCurrency(currentVisit.grossSalesBeforeTax)}</TableCell>
-                                    <TableCell sx={{ fontWeight: 700 }}>-</TableCell>
-                                    <TableCell sx={{ fontWeight: 700 }}>{formatCurrency(currentVisit.taxAmount)}</TableCell>
-                                    <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>{formatCurrency(currentVisit.salesAfterTax)}</TableCell>
-                                    <TableCell></TableCell>
+                                    <TableCell colSpan={4} sx={{ fontWeight: 800 }}>
+                                      Totals
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 800 }}>
+                                      {formatCurrency(currentVisit.grossMRP)}
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 800 }}>
+                                      {formatCurrency(currentVisit.grossSalesBeforeTax)}
+                                    </TableCell>
+                                    <TableCell align="right">—</TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 800 }}>
+                                      {formatCurrency(currentVisit.taxAmount)}
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ fontWeight: 800, color: 'primary.main' }}>
+                                      {formatCurrency(currentVisit.salesAfterTax)}
+                                    </TableCell>
+                                    <TableCell />
                                   </TableRow>
-                                </TableHead>
+                                </TableBody>
                               </Table>
                             </TableContainer>
                           )}
@@ -4954,13 +5740,23 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       <FormControl fullWidth size="small">
                         <InputLabel>Payment For</InputLabel>
                         <Select
-                          value={currentPayment.paymentFor}
-                          onChange={(e) => handlePaymentForChange(e.target.value as PaymentRecord['paymentFor'])}
+                          value={
+                            currentPayment.paymentFor === 'trial_home_security_deposit' &&
+                            currentPayment.relatedVisitId
+                              ? `trial_sd__${currentPayment.relatedVisitId}`
+                              : currentPayment.paymentFor
+                          }
+                          onChange={(e) => handlePaymentPurposeRawChange(String(e.target.value))}
                           label="Payment For"
                           sx={{ borderRadius: 2 }}
                         >
-                          {getAvailablePaymentOptions().map((option) => (
-                            <MenuItem key={option.value} value={option.value}>
+                          {getAvailablePaymentOptions().map((option) => {
+                            const visitId = (option as { visitId?: string }).visitId;
+                            const selectValue = visitId
+                              ? `trial_sd__${visitId}`
+                              : option.value;
+                            return (
+                            <MenuItem key={selectValue} value={selectValue}>
                               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                                 <Box>
                                   <Typography variant="body1" sx={{ fontWeight: 500 }}>
@@ -4980,7 +5776,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 )}
                               </Box>
                             </MenuItem>
-                          ))}
+                          );
+                          })}
                         </Select>
                       </FormControl>
                     </Grid>
@@ -5020,6 +5817,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             ? 'Auto-filled for full payment'
                             : currentPayment.paymentFor === 'partial_payment' || currentPayment.paymentFor === 'other'
                             ? 'Enter custom amount'
+                            : currentPayment.paymentFor === 'trial_home_security_deposit'
+                            ? 'Matches home trial security amount for this visit'
                             : 'Auto-filled from service'
                         }
                         size="small"
@@ -5095,18 +5894,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                         {getAvailablePaymentOptions()
                           .filter(opt => opt.amount > 0 && opt.value !== 'partial_payment' && opt.value !== 'other')
-                          .map((option) => (
+                          .map((option) => {
+                            const vid = (option as { visitId?: string }).visitId;
+                            const chipActive =
+                              option.value === 'trial_home_security_deposit' && vid
+                                ? currentPayment.paymentFor === 'trial_home_security_deposit' &&
+                                  currentPayment.relatedVisitId === vid
+                                : currentPayment.paymentFor === option.value;
+                            return (
                             <Chip
-                              key={option.value}
+                              key={vid ? `${option.value}-${vid}` : option.value}
                               label={`${option.label} - ${formatCurrency(option.amount)}`}
                               variant="outlined"
                               size="small"
                               clickable
-                              onClick={() => handlePaymentForChange(option.value as PaymentRecord['paymentFor'])}
-                              color={currentPayment.paymentFor === option.value ? 'primary' : 'default'}
+                              onClick={() =>
+                                vid
+                                  ? handlePaymentPurposeRawChange(`trial_sd__${vid}`)
+                                  : handlePaymentForChange(option.value as PaymentRecord['paymentFor'])
+                              }
+                              color={chipActive ? 'primary' : 'default'}
                               sx={{ cursor: 'pointer' }}
                             />
-                          ))}
+                          );
+                          })}
                       </Box>
                     </Box>
                   )}
@@ -5131,34 +5942,42 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                          </TableHead>
                          <TableBody>
                            {payments.map((payment) => {
-                              const paymentForLabels = {
+                              const paymentForLabels: Record<string, string> = {
                                hearing_test: 'Hearing Test',
                                hearing_aid: 'Hearing Aid',
                                accessory: 'Accessory',
                                 booking_advance: 'Booking Advance',
+                               trial_home_security_deposit: 'Home trial security deposit',
+                               programming: 'Programming',
                                full_payment: 'Full Payment',
                                partial_payment: 'Partial Payment',
                                other: 'Other'
                              };
                              
-                              const paymentForColors = {
+                              const paymentForColors: Record<string, 'primary' | 'secondary' | 'success' | 'warning' | 'info' | 'default'> = {
                                hearing_test: 'primary',
                                hearing_aid: 'secondary',
                                accessory: 'success',
                                 booking_advance: 'warning',
+                               trial_home_security_deposit: 'info',
+                               programming: 'default',
                                full_payment: 'info',
                                partial_payment: 'warning',
                                other: 'default'
-                             } as const;
+                             };
                              
                              return (
                                <TableRow key={payment.id}>
                                  <TableCell>{payment.paymentDate}</TableCell>
                                  <TableCell>
                                    <Chip 
-                                     label={paymentForLabels[payment.paymentFor]} 
+                                     label={
+                                       payment.paymentFor === 'trial_home_security_deposit' && payment.relatedVisitId
+                                         ? `${paymentForLabels[payment.paymentFor]} (Visit ${payment.relatedVisitId})`
+                                         : paymentForLabels[payment.paymentFor] || payment.paymentFor
+                                     } 
                                      size="small" 
-                                     color={paymentForColors[payment.paymentFor]} 
+                                     color={paymentForColors[payment.paymentFor] || 'default'} 
                                      variant="outlined" 
                                    />
                                  </TableCell>
@@ -5341,6 +6160,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Typography variant="body2">
                                     Duration: {visit.trialDuration} days ({visit.trialStartDate} to {visit.trialEndDate})
                                   </Typography>
+                                  {visit.trialHearingAidType === 'home' &&
+                                    Number(visit.trialHomeSecurityDepositAmount) > 0 && (
+                                      <Typography variant="body2">
+                                        Home trial security deposit (agreed):{' '}
+                                        {formatCurrency(Number(visit.trialHomeSecurityDepositAmount))}
+                                        {' — '}
+                                        collect under Payments & Billing.
+                                      </Typography>
+                                    )}
                                   <Typography variant="body2">
                                     Result: <Chip label={visit.trialResult} size="small" color={
                                       visit.trialResult === 'successful' ? 'success' :
@@ -5642,15 +6470,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         Payment Records ({payments.length})
                       </Typography>
                                              {payments.map((payment) => {
-                         const paymentForLabels = {
+                         const paymentForLabels: Record<string, string> = {
                            hearing_test: 'Hearing Test',
                            hearing_aid: 'Hearing Aid',
                            accessory: 'Accessory',
                            booking_advance: 'Booking Advance',
+                           trial_home_security_deposit: 'Home trial security deposit',
+                           programming: 'Programming',
                            full_payment: 'Full Payment',
                            partial_payment: 'Partial Payment',
                            other: 'Other'
                          };
+                         const forLabel =
+                           payment.paymentFor === 'trial_home_security_deposit' && payment.relatedVisitId
+                             ? `${paymentForLabels[payment.paymentFor] || payment.paymentFor} (Visit ${payment.relatedVisitId})`
+                             : paymentForLabels[payment.paymentFor] || payment.paymentFor;
                          
                          return (
                            <Box key={payment.id} sx={{ 
@@ -5667,7 +6501,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                  {formatCurrency(payment.amount)} - {payment.paymentMode}
                                </Typography>
                                <Typography variant="body2" color="text.secondary">
-                                 {payment.paymentDate} • For: {paymentForLabels[payment.paymentFor]}
+                                 {payment.paymentDate} • For: {forLabel}
                                  {payment.referenceNumber && ` • Ref: ${payment.referenceNumber}`}
                                  {payment.remarks && ` • ${payment.remarks}`}
                                </Typography>
@@ -5741,6 +6575,373 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           </Box>
         </Box>
       </Paper>
+
+      {/* Hearing aid product catalog (trial / booking) */}
+      <Dialog
+        open={hearingAidCatalogDialogOpen}
+        onClose={() => {
+          setHearingAidCatalogDialogOpen(false);
+          setCatalogDialogSearch('');
+          setCatalogDialogBrandFilter('');
+          setCatalogDialogSingleProduct(false);
+          setCatalogPickerIntent('trial');
+        }}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            py: 2,
+            px: 2.5,
+            flexShrink: 0,
+            background: (theme) =>
+              catalogPickerIntent === 'booking'
+                ? `linear-gradient(135deg, ${theme.palette.warning.dark} 0%, ${theme.palette.warning.main} 100%)`
+                : `linear-gradient(135deg, ${theme.palette.info.dark} 0%, ${theme.palette.info.light} 100%)`,
+            color: 'common.white',
+          }}
+        >
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            {catalogPickerIntent === 'booking' ? (
+              <BookmarkAddedIcon sx={{ opacity: 0.95 }} />
+            ) : (
+              <ScienceOutlinedIcon sx={{ opacity: 0.95 }} />
+            )}
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                {catalogPickerIntent === 'booking'
+                  ? 'Choose the booked model'
+                  : 'Pick the trial hearing aid'}
+              </Typography>
+              <Typography variant="body2" sx={{ opacity: 0.92, mt: 0.25 }}>
+                {catalogPickerIntent === 'booking'
+                  ? `One model only. Catalog MRP is per unit; use booking quantity and selling price (per unit) in Booking details. ${hearingAidProducts.length} products.`
+                  : 'Choose exactly one model to try — search and filter below.'}
+              </Typography>
+            </Box>
+          </Stack>
+        </DialogTitle>
+        <DialogContent
+          sx={{
+            p: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            flex: '1 1 auto',
+            minHeight: 0,
+          }}
+        >
+          <Box sx={{ p: 2, bgcolor: 'grey.50', borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
+            <Stack spacing={1.5}>
+              <TextField
+                fullWidth
+                autoFocus
+                size="small"
+                placeholder="Type to filter — brand, model, type (RIC, BTE), or price…"
+                value={catalogDialogSearch}
+                onChange={(e) => setCatalogDialogSearch(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" color="action" />
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2, bgcolor: 'background.paper' } }}
+              />
+              {isCatalogSearchPending && (
+                <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                  Updating matches…
+                </Typography>
+              )}
+              <FormControl fullWidth size="small">
+                <InputLabel id="catalog-dialog-brand-label">Brand</InputLabel>
+                <Select
+                  labelId="catalog-dialog-brand-label"
+                  value={catalogDialogBrandFilter}
+                  label="Brand"
+                  onChange={(e) => setCatalogDialogBrandFilter(e.target.value as string)}
+                  sx={{ borderRadius: 2, bgcolor: 'background.paper' }}
+                >
+                  <MenuItem value="">
+                    <em>All brands</em>
+                  </MenuItem>
+                  {catalogCompanyOptions.map((c) => (
+                    <MenuItem key={c} value={c}>
+                      {c}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Stack>
+          </Box>
+
+          <MuiGrid
+            container
+            sx={{
+              flex: '1 1 auto',
+              minHeight: 0,
+              overflow: 'hidden',
+              alignItems: 'stretch',
+            }}
+          >
+            <MuiGrid
+              size={{ xs: 12, md: 7 }}
+              sx={{
+                borderRight: { md: 1 },
+                borderColor: 'divider',
+                borderBottom: { xs: 1, md: 0 },
+                minHeight: 0,
+                maxHeight: { xs: 'min(42vh, 360px)', md: 'min(56vh, 520px)' },
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
+              <List dense disablePadding sx={{ py: 0 }}>
+                {catalogDialogOrphanSelected.length > 0 && (
+                  <>
+                    <ListSubheader
+                      sx={{
+                        bgcolor: 'action.hover',
+                        typography: 'caption',
+                        fontWeight: 700,
+                        lineHeight: '36px',
+                      }}
+                    >
+                      Still selected (hidden by filter)
+                    </ListSubheader>
+                    {catalogDialogOrphanSelected.map((p) => {
+                      const checked = draftCatalogProductIds.includes(p.id);
+                      return (
+                        <ListItemButton
+                          key={p.id}
+                          onClick={() => toggleDraftCatalogProduct(p.id)}
+                          selected={checked}
+                          sx={{ alignItems: 'flex-start', py: 1 }}
+                        >
+                          {catalogDialogSingleProduct ? (
+                            <Radio
+                              checked={checked}
+                              tabIndex={-1}
+                              disableRipple
+                              value={p.id}
+                              sx={{ py: 0.25, pr: 1 }}
+                            />
+                          ) : (
+                            <Checkbox
+                              edge="start"
+                              checked={checked}
+                              tabIndex={-1}
+                              disableRipple
+                              sx={{ pt: 0.25 }}
+                            />
+                          )}
+                          <ListItemText
+                            primary={p.name}
+                            secondary={`${p.company || '—'} · ${p.type || '—'} · ${formatCurrency(p.mrp || 0)}`}
+                            primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                            secondaryTypographyProps={{ variant: 'caption' }}
+                          />
+                        </ListItemButton>
+                      );
+                    })}
+                    <Divider />
+                  </>
+                )}
+                <ListSubheader
+                  sx={{
+                    bgcolor: 'background.paper',
+                    typography: 'caption',
+                    fontWeight: 700,
+                    lineHeight: '36px',
+                  }}
+                >
+                  {catalogDialogFilteredProducts.length} match
+                  {catalogDialogFilteredProducts.length === 1 ? '' : 'es'}
+                  {deferredCatalogSearch.trim() || catalogDialogBrandFilter ? '' : ' (showing all for this brand)'}
+                </ListSubheader>
+                {catalogDialogFilteredProducts.length === 0 ? (
+                  <Box sx={{ px: 2, py: 4, textAlign: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Nothing matches. Try fewer words, another brand, or clear the search box.
+                    </Typography>
+                  </Box>
+                ) : (
+                  catalogDialogFilteredProducts.map((p) => {
+                    const checked = draftCatalogProductIds.includes(p.id);
+                    return (
+                      <ListItemButton
+                        key={p.id}
+                        onClick={() => toggleDraftCatalogProduct(p.id)}
+                        selected={checked}
+                        sx={{ alignItems: 'flex-start', py: 1 }}
+                      >
+                        {catalogDialogSingleProduct ? (
+                          <Radio
+                            checked={checked}
+                            tabIndex={-1}
+                            disableRipple
+                            value={p.id}
+                            sx={{ py: 0.25, pr: 1 }}
+                          />
+                        ) : (
+                          <Checkbox
+                            edge="start"
+                            checked={checked}
+                            tabIndex={-1}
+                            disableRipple
+                            sx={{ pt: 0.25 }}
+                          />
+                        )}
+                        <ListItemText
+                          primary={p.name}
+                          secondary={`${p.company || '—'} · ${p.type || '—'} · ${formatCurrency(p.mrp || 0)}`}
+                          primaryTypographyProps={{ variant: 'body2', fontWeight: 600 }}
+                          secondaryTypographyProps={{ variant: 'caption' }}
+                        />
+                      </ListItemButton>
+                    );
+                  })
+                )}
+              </List>
+            </MuiGrid>
+
+            <MuiGrid
+              size={{ xs: 12, md: 5 }}
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                bgcolor: 'grey.100',
+                minHeight: 0,
+                maxHeight: { xs: 'min(36vh, 280px)', md: 'min(56vh, 520px)' },
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                WebkitOverflowScrolling: 'touch',
+              }}
+            >
+              <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Your selection
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {catalogPickerIntent === 'booking'
+                    ? 'One model for this booking (brand / model / MRP per unit).'
+                    : 'One device for this trial (brand / model / MRP per unit).'}
+                </Typography>
+              </Box>
+              <List dense disablePadding sx={{ py: 0 }}>
+                {draftCatalogProductsOrdered.length === 0 ? (
+                  <Box sx={{ p: 2.5 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Tap items on the left to add them here.
+                    </Typography>
+                  </Box>
+                ) : (
+                  draftCatalogProductsOrdered.map((p, index) => (
+                    <ListItem
+                      key={p.id}
+                      disablePadding
+                      secondaryAction={
+                        <Stack direction="row" alignItems="center" sx={{ pr: 0.5 }}>
+                          {!catalogDialogSingleProduct && (
+                            <>
+                              <IconButton
+                                size="small"
+                                aria-label="Move up"
+                                onClick={() => moveDraftCatalogProduct(index, -1)}
+                                disabled={index === 0}
+                              >
+                                <KeyboardArrowUpIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                aria-label="Move down"
+                                onClick={() => moveDraftCatalogProduct(index, 1)}
+                                disabled={index === draftCatalogProductsOrdered.length - 1}
+                              >
+                                <KeyboardArrowDownIcon fontSize="small" />
+                              </IconButton>
+                            </>
+                          )}
+                          <IconButton
+                            size="small"
+                            aria-label="Remove"
+                            color="error"
+                            onClick={() => toggleDraftCatalogProduct(p.id)}
+                          >
+                            <CloseIcon fontSize="small" />
+                          </IconButton>
+                        </Stack>
+                      }
+                      sx={{
+                        pr: catalogDialogSingleProduct ? 10 : 18,
+                        alignItems: 'flex-start',
+                        borderBottom: 1,
+                        borderColor: 'divider',
+                      }}
+                    >
+                      <ListItemText
+                        sx={{ py: 1, pl: 2, pr: 1 }}
+                        primary={
+                          <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap">
+                            <Typography component="span" variant="body2" fontWeight={600}>
+                              {p.name}
+                            </Typography>
+                            {index === 0 && (
+                              <Chip
+                                label={
+                                  catalogPickerIntent === 'booking' ? 'Booked model' : 'Trial device'
+                                }
+                                size="small"
+                                color="primary"
+                                sx={{ height: 22 }}
+                              />
+                            )}
+                          </Stack>
+                        }
+                        secondary={`${p.company || '—'} · ${formatCurrency(p.mrp || 0)}`}
+                        primaryTypographyProps={{ component: 'div' }}
+                        secondaryTypographyProps={{ variant: 'caption', component: 'div' }}
+                      />
+                    </ListItem>
+                  ))
+                )}
+              </List>
+            </MuiGrid>
+          </MuiGrid>
+        </DialogContent>
+        <DialogActions sx={{ px: 2.5, py: 2, borderTop: 1, borderColor: 'divider', flexShrink: 0 }}>
+          <Button
+            onClick={() => {
+              setHearingAidCatalogDialogOpen(false);
+              setCatalogDialogSearch('');
+              setCatalogDialogBrandFilter('');
+              setCatalogDialogSingleProduct(false);
+            }}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={applyHearingAidCatalogDialog}
+            sx={{ borderRadius: 2, px: 3, textTransform: 'none', fontWeight: 600 }}
+          >
+            Apply {draftCatalogProductIds.length > 0 ? `(${draftCatalogProductIds.length})` : ''}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Hearing Aid Inventory Selection Dialog */}
       <Dialog
@@ -5905,6 +7106,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             gstApplicable: item.gstApplicable,
                             gstType: item.gstType,
                             unit: 'piece',
+                            quantity: 1,
                             serialNumber: item.serialNumber || '',
                             sellingPrice: item.mrp,
                             discountPercent: 0,
@@ -6187,6 +7389,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             gstApplicable: item.gstApplicable,
                             gstType: item.gstType,
                             unit: 'piece',
+                            quantity: 1,
                             serialNumber: item.serialNumber || '',
                             sellingPrice: item.mrp,
                             discountPercent: 0,
