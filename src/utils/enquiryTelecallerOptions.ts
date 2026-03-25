@@ -74,10 +74,26 @@ export function groupActiveStaffByJobRole(staffList: StaffRecord[]): Record<stri
   return grouped;
 }
 
+/** Names already on the enquiry so dropdowns stay correct even if staff query is empty. */
+export function collectTelecallerExtrasFromEnquiry(
+  enquiry: { telecaller?: string; followUps?: { callerName?: string }[] } | null | undefined
+): string[] {
+  if (!enquiry) return [];
+  const out: string[] = [];
+  const add = (s: string | undefined | null) => {
+    const t = String(s || '').trim();
+    if (t && !out.includes(t)) out.push(t);
+  };
+  add(enquiry.telecaller);
+  (enquiry.followUps || []).forEach((f) => add(f?.callerName));
+  return out;
+}
+
 /** Display names for the telecaller / "call done by" select (same rules as enquiry form). */
 export function getTelecallerSelectOptions(
   staffList: StaffRecord[],
-  selectedRoles: Record<string, string[]> = readEnquiryStaffRolesFromStorage()
+  selectedRoles: Record<string, string[]> = readEnquiryStaffRolesFromStorage(),
+  extraNames: (string | null | undefined)[] = []
 ): string[] {
   const staffByRole = groupActiveStaffByJobRole(staffList);
   const allowedRoles = selectedRoles.telecaller || [];
@@ -88,6 +104,10 @@ export function getTelecallerSelectOptions(
         names.push(staff.name);
       }
     });
+  });
+  const extras = extraNames.map((n) => String(n || '').trim()).filter(Boolean);
+  extras.forEach((n) => {
+    if (!names.includes(n)) names.unshift(n);
   });
   return names.length > 0 ? names : [...FALLBACK_TELECALLER_NAMES];
 }

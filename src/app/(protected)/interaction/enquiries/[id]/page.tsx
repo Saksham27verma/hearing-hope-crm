@@ -82,6 +82,7 @@ import PureToneAudiogram from '@/components/enquiries/PureToneAudiogram';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   getTelecallerSelectOptions,
+  collectTelecallerExtrasFromEnquiry,
   pickDefaultTelecallerName,
   type StaffRecord,
 } from '@/utils/enquiryTelecallerOptions';
@@ -408,7 +409,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
   useEffect(() => {
     if (!addFollowUpOpen) return;
-    const options = getTelecallerSelectOptions(staffList);
+    const options = getTelecallerSelectOptions(
+      staffList,
+      undefined,
+      collectTelecallerExtrasFromEnquiry(enquiry)
+    );
     setTelecallerDialogOptions(options);
     setNewFollowUp((prev) => ({
       ...prev,
@@ -419,7 +424,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
             enquiryTelecaller: enquiry?.telecaller,
           }),
     }));
-  }, [staffList, addFollowUpOpen, userProfile?.displayName, enquiry?.telecaller]);
+  }, [staffList, addFollowUpOpen, userProfile?.displayName, enquiry]);
   
   const visits = enquiry?.visits || enquiry?.visitSchedules || [];
   const hasVisits = visits.length > 0;
@@ -433,7 +438,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
   const openAddFollowUpDialog = () => {
     const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const options = getTelecallerSelectOptions(staffList);
+    const options = getTelecallerSelectOptions(
+      staffList,
+      undefined,
+      collectTelecallerExtrasFromEnquiry(enquiry)
+    );
     setTelecallerDialogOptions(options);
     const callerName = pickDefaultTelecallerName(options, {
       displayName: userProfile?.displayName,

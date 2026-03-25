@@ -518,6 +518,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const watchedVisits = watch('visits');
   const currentVisit = watchedVisits[activeVisit];
   const selectedCenter = watch('center');
+  const watchedTelecaller = watch('telecaller');
+  const watchedAssignedTo = watch('assignedTo');
+  const watchedFollowUps = watch('followUps');
   // Helpers to derive brand/model from selected product if not explicitly set
   const getProductById = (productId?: string) =>
     (productId ? hearingAidProducts.find(p => p.id === productId) : undefined);
@@ -680,7 +683,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             jobRole: doc.data().jobRole,
             status: doc.data().status
           }))
-          .filter(staff => staff.status === 'active'); // Only active staff
+          .filter((staff) => (staff.status || 'active') === 'active');
 
         setStaffMembers(staffList);
         
@@ -699,23 +702,64 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     fetchStaffMembers();
   }, []);
 
-  // Function to get staff options for a specific field
-  const getStaffOptionsForField = (fieldName: keyof typeof selectedRoles): string[] => {
-    const allowedRoles = selectedRoles[fieldName] || [];
-    const staffForField: string[] = [];
-    
-    allowedRoles.forEach(role => {
-      const staffInRole = staffByRole[role] || [];
-      staffInRole.forEach(staff => {
-        if (!staffForField.includes(staff.name)) {
-          staffForField.push(staff.name);
-        }
+  // Staff dropdowns: real Firestore staff first; merge saved enquiry/form names so values stay visible for staff users if the list query was empty.
+  const getStaffOptionsForField = useCallback(
+    (fieldName: keyof typeof selectedRoles): string[] => {
+      const allowedRoles = selectedRoles[fieldName] || [];
+      const staffForField: string[] = [];
+
+      allowedRoles.forEach((role) => {
+        const staffInRole = staffByRole[role] || [];
+        staffInRole.forEach((staff) => {
+          if (staff.name && !staffForField.includes(staff.name)) {
+            staffForField.push(staff.name);
+          }
+        });
       });
-    });
-    
-    // Fallback to default options if no staff found
-    return staffForField.length > 0 ? staffForField : fallbackStaffOptions;
-  };
+
+      const extras: (string | undefined | null)[] = [];
+      const enqVisits = enquiry?.visits || enquiry?.visitSchedules || [];
+      if (fieldName === 'telecaller') {
+        extras.push(watchedTelecaller, enquiry?.telecaller);
+        (watchedFollowUps || []).forEach((f) => extras.push(f.callerName));
+        (enquiry?.followUps || []).forEach((f: { callerName?: string }) => extras.push(f.callerName));
+      } else if (fieldName === 'assignedTo') {
+        extras.push(watchedAssignedTo, enquiry?.assignedTo);
+      } else if (fieldName === 'testBy') {
+        (watchedVisits || []).forEach((v) => extras.push(v.testDoneBy));
+        enqVisits.forEach((v: { testDoneBy?: string }) => extras.push(v.testDoneBy));
+      } else if (fieldName === 'programmingBy') {
+        (watchedVisits || []).forEach((v) => extras.push(v.programmingDoneBy));
+        enqVisits.forEach((v: { programmingDoneBy?: string }) => extras.push(v.programmingDoneBy));
+      } else if (fieldName === 'sales') {
+        (watchedVisits || []).forEach((v) => extras.push(v.hearingAidBrand));
+        enqVisits.forEach((v: { hearingAidBrand?: string }) => extras.push(v.hearingAidBrand));
+      }
+
+      const merged: string[] = [];
+      const seen = new Set<string>();
+      const push = (s: string | undefined | null) => {
+        const t = String(s || '').trim();
+        if (t && !seen.has(t)) {
+          seen.add(t);
+          merged.push(t);
+        }
+      };
+      extras.forEach((s) => push(s));
+      staffForField.forEach((s) => push(s));
+
+      return merged.length > 0 ? merged : fallbackStaffOptions;
+    },
+    [
+      staffByRole,
+      selectedRoles,
+      watchedTelecaller,
+      watchedAssignedTo,
+      watchedFollowUps,
+      watchedVisits,
+      enquiry,
+    ]
+  );
 
   // Fetch previous sales when sales return is activated
   useEffect(() => {
