@@ -23,6 +23,19 @@ export type StaffRecord = {
   status?: string;
 };
 
+/**
+ * Seed / default `users` displayName values (see scripts/seed-database.js) — not real people
+ * and must not appear as telecaller dropdown choices.
+ */
+const GENERIC_LOGIN_DISPLAY_NAMES = new Set(
+  ['staff user', 'admin user', 'audiologist user'].map((s) => s)
+);
+
+export function isGenericLoginDisplayName(name: string | null | undefined): boolean {
+  const t = String(name || '').trim().toLowerCase();
+  return GENERIC_LOGIN_DISPLAY_NAMES.has(t);
+}
+
 const DEFAULT_SELECTED_ROLES: Record<string, string[]> = {
   telecaller: ['Telecaller', 'Customer Support'],
   assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
@@ -105,7 +118,9 @@ export function getTelecallerSelectOptions(
       }
     });
   });
-  const extras = extraNames.map((n) => String(n || '').trim()).filter(Boolean);
+  const extras = extraNames
+    .map((n) => String(n || '').trim())
+    .filter((n) => n && !isGenericLoginDisplayName(n));
   extras.forEach((n) => {
     if (!names.includes(n)) names.unshift(n);
   });
@@ -117,9 +132,10 @@ export function pickDefaultTelecallerName(
   options: string[],
   prefs: { displayName?: string | null; enquiryTelecaller?: string | null }
 ): string {
-  const dn = prefs.displayName?.trim() || '';
+  const dnRaw = prefs.displayName?.trim() || '';
+  const dn = isGenericLoginDisplayName(dnRaw) ? '' : dnRaw;
   if (dn && (options.length === 0 || options.includes(dn))) return dn;
   const etc = prefs.enquiryTelecaller?.trim() || '';
   if (etc && (options.length === 0 || options.includes(etc))) return etc;
-  return options[0] || dn || etc || '';
+  return options[0] || etc || '';
 }

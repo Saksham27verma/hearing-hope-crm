@@ -86,6 +86,7 @@ import {
   pickDefaultTelecallerName,
   type StaffRecord,
 } from '@/utils/enquiryTelecallerOptions';
+import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
@@ -387,16 +388,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     let cancelled = false;
     (async () => {
       try {
-        const snap = await getDocs(collection(db, 'staff'));
-        const list: StaffRecord[] = snap.docs.map((d) => {
-          const data = d.data() as { name?: string; jobRole?: string; status?: string };
-          return {
-            id: d.id,
-            name: data.name || '',
-            jobRole: data.jobRole || '',
-            status: data.status,
-          };
-        });
+        const list = await fetchStaffRecordsWithServerFallback();
         if (!cancelled) setStaffList(list);
       } catch (e) {
         console.error('Error fetching staff for telecaller list:', e);

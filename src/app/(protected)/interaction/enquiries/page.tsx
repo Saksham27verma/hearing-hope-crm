@@ -119,6 +119,7 @@ import {
   readEnquiryStaffRolesFromStorage,
   type StaffRecord,
 } from '@/utils/enquiryTelecallerOptions';
+import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 
 // Create a Grid component that doesn't have TypeScript errors
 const Grid = (props: any) => <MuiGrid {...props} />;
@@ -923,18 +924,7 @@ export default function EnquiriesPage() {
 
   const fetchStaffNamesForFilters = async () => {
     try {
-      const snap = await getDocs(collection(db, 'staff'));
-      const list: StaffRecord[] = snap.docs
-        .map((d) => {
-          const data = d.data() as { name?: string; status?: string; jobRole?: string };
-          return {
-            id: d.id,
-            name: (data.name || '').toString().trim(),
-            jobRole: (data.jobRole || '').toString().trim(),
-            status: data.status,
-          };
-        })
-        .filter((s) => (s.status || 'active') === 'active' && s.name);
+      const list = await fetchStaffRecordsWithServerFallback();
       setStaffRecords(list);
       const names = list.map((s) => s.name);
       setStaffNameOptions(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b)));

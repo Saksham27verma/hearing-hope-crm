@@ -6,6 +6,8 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { ENQUIRY_REFERENCE_OPTIONS } from '@/components/enquiries/enquiryFormFieldOptions';
+import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
+import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
 import PureToneAudiogram from './PureToneAudiogram';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
@@ -670,36 +672,33 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     fetchCenters();
   }, []);
 
-  // Fetch staff members
+  // Fetch staff members (client Firestore + server fallback so staff-role users get full lists under strict rules)
   useEffect(() => {
     const fetchStaffMembers = async () => {
       try {
-        const staffQuery = collection(db, 'staff');
-        const querySnapshot = await getDocs(staffQuery);
-        const staffList: StaffMember[] = querySnapshot.docs
-          .map(doc => ({
-            id: doc.id,
-            name: doc.data().name,
-            jobRole: doc.data().jobRole,
-            status: doc.data().status
-          }))
-          .filter((staff) => (staff.status || 'active') === 'active');
+        const records = await fetchStaffRecordsWithServerFallback();
+        const staffList: StaffMember[] = records.map((r) => ({
+          id: r.id,
+          name: r.name,
+          jobRole: r.jobRole,
+          status: ((r.status || 'active') === 'inactive' ? 'inactive' : 'active') as
+            | 'active'
+            | 'inactive',
+        }));
 
         setStaffMembers(staffList);
-        
-        // Group staff by role
+
         const groupedByRole: Record<string, StaffMember[]> = {};
-        JOB_ROLES.forEach(role => {
-          groupedByRole[role] = staffList.filter(staff => staff.jobRole === role);
+        JOB_ROLES.forEach((role) => {
+          groupedByRole[role] = staffList.filter((staff) => staff.jobRole === role);
         });
         setStaffByRole(groupedByRole);
-        
       } catch (error) {
         console.error('Error fetching staff members:', error);
       }
     };
 
-    fetchStaffMembers();
+    void fetchStaffMembers();
   }, []);
 
   // Staff dropdowns: real Firestore staff first; merge saved enquiry/form names so values stay visible for staff users if the list query was empty.
@@ -717,10 +716,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         });
       });
 
+      if (
+        fieldName === 'telecaller' &&
+        staffForField.length === 0 &&
+        staffMembers.length > 0
+      ) {
+        staffMembers.forEach((staff) => {
+          if (staff.name && !staffForField.includes(staff.name)) {
+            staffForField.push(staff.name);
+          }
+        });
+        staffForField.sort((a, b) => a.localeCompare(b));
+      }
+
       const extras: (string | undefined | null)[] = [];
       const enqVisits = enquiry?.visits || enquiry?.visitSchedules || [];
       if (fieldName === 'telecaller') {
-        extras.push(userProfile?.displayName, watchedTelecaller, enquiry?.telecaller);
+        const dn = userProfile?.displayName?.trim();
+        if (dn && !isGenericLoginDisplayName(dn)) extras.push(dn);
+        extras.push(watchedTelecaller, enquiry?.telecaller);
         (watchedFollowUps || []).forEach((f) => extras.push(f.callerName));
         (enquiry?.followUps || []).forEach((f: { callerName?: string }) => extras.push(f.callerName));
       } else if (fieldName === 'assignedTo') {
@@ -751,12 +765,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       if (merged.length > 0) return merged;
       if (fieldName === 'telecaller') {
         const dn = userProfile?.displayName?.trim();
-        return dn ? [dn] : [];
+        if (dn && !isGenericLoginDisplayName(dn)) return [dn];
+        return [];
       }
       return fallbackStaffOptions;
     },
     [
       staffByRole,
+      staffMembers,
       selectedRoles,
       watchedTelecaller,
       watchedAssignedTo,
