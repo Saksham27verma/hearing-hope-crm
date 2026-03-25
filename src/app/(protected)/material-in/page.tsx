@@ -59,6 +59,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
+import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 import { useAuth } from '@/context/AuthContext';
 import MaterialInForm from '@/components/material-in/MaterialInForm';
 import MaterialInPreviewDialog from '@/components/material-in/MaterialInPreviewDialog';
@@ -389,23 +390,26 @@ export default function MaterialInPage() {
         const visits = enquiryData.visits || [];
         
         visits.forEach((visit: any, visitIndex: number) => {
-          if (visit.salesReturn && visit.returnSerialNumber) {
+          if (!visit.salesReturn) return;
+          const lines = expandSalesReturnLinesFromVisit(visit);
+          lines.forEach((line) => {
             salesReturnsData.push({
               enquiryId: enquiryDoc.id,
               enquiryName: enquiryData.name || 'Unknown',
               enquiryPhone: enquiryData.phone || 'Unknown',
               visitIndex,
               visitDate: visit.visitDate || 'Unknown',
-              serialNumber: visit.returnSerialNumber,
+              serialNumber: line.serialNumber,
+              model: line.model || '',
               condition: visit.returnCondition || 'good',
               reason: visit.returnReason || '',
               penaltyAmount: visit.returnPenaltyAmount || 0,
               refundAmount: visit.returnRefundAmount || 0,
               notes: visit.returnNotes || '',
               originalSaleDate: visit.returnOriginalSaleDate || '',
-              originalSaleVisitId: visit.returnOriginalSaleVisitId || ''
+              originalSaleVisitId: visit.returnOriginalSaleVisitId || '',
             });
-          }
+          });
         });
       });
       
@@ -476,7 +480,7 @@ export default function MaterialInPage() {
         gstApplicable: product.gstApplicable || false,
         quantityType: product.quantityType || 'piece',
         condition: salesReturn.condition,
-        remarks: `Sales return from ${salesReturn.enquiryName} (${salesReturn.enquiryPhone}) - S/N: ${salesReturn.serialNumber} - Reason: ${salesReturn.reason}`
+        remarks: `Sales return from ${salesReturn.enquiryName} (${salesReturn.enquiryPhone}) - S/N: ${salesReturn.serialNumber}${salesReturn.model ? ` - Model: ${salesReturn.model}` : ''} - Reason: ${salesReturn.reason}`
       }],
       totalAmount: 0, // Return at 0 cost
       status: 'received' as 'pending' | 'received' | 'rejected',
@@ -950,8 +954,12 @@ export default function MaterialInPage() {
           </Typography>
           
           <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)', lg: 'repeat(3, 1fr)' } }}>
-            {salesReturns.map((salesReturn, index) => (
-              <Paper key={index} variant="outlined" sx={{ p: 2, bgcolor: 'warning.50' }}>
+            {salesReturns.map((salesReturn) => (
+              <Paper
+                key={`${salesReturn.enquiryId}-${salesReturn.visitIndex}-${salesReturn.serialNumber}`}
+                variant="outlined"
+                sx={{ p: 2, bgcolor: 'warning.50' }}
+              >
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                   <Box>
                     <Typography variant="subtitle2" fontWeight="bold">
@@ -974,6 +982,11 @@ export default function MaterialInPage() {
                   <Typography variant="body2">
                     <strong>Serial Number:</strong> {salesReturn.serialNumber}
                   </Typography>
+                  {salesReturn.model ? (
+                    <Typography variant="body2">
+                      <strong>Model:</strong> {salesReturn.model}
+                    </Typography>
+                  ) : null}
                   <Typography variant="body2">
                     <strong>Return Date:</strong> {salesReturn.visitDate}
                   </Typography>

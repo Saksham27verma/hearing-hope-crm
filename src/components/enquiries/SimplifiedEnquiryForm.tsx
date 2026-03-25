@@ -15,7 +15,7 @@ import {
   TextField, Button, Typography, Box, Paper,
   FormControl, InputLabel, Select, MenuItem,
   Card, CardContent, Divider, Stepper, Step, StepLabel,
-  Grid as MuiGrid, IconButton, FormHelperText, Alert,
+  Grid as MuiGrid, IconButton, FormHelperText, Alert, Autocomplete,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Tabs, Tab, Chip, InputAdornment, Switch, FormControlLabel,
   Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox, Radio,
@@ -177,6 +177,66 @@ function sumHearingAidVisitTotals(products: HearingAidProduct[]) {
   };
 }
 
+interface SalesReturnLine {
+  id: string;
+  serialNumber: string;
+  model: string;
+  productName?: string;
+  brand?: string;
+  visitIndex?: number;
+  saleDate?: string;
+  finalAmount?: number;
+}
+
+function newSalesReturnLineId(): string {
+  return `sr-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function legacySerialsToLines(serial: string, modelFallback: string): SalesReturnLine[] {
+  const s = String(serial || '').trim();
+  if (!s) return [];
+  if (s.includes(',')) {
+    return s
+      .split(',')
+      .map((part, i) => ({
+        id: `legacy-${i}-${part.trim()}`,
+        serialNumber: part.trim(),
+        model: modelFallback || '',
+      }))
+      .filter((x) => x.serialNumber);
+  }
+  return [{ id: 'legacy-0', serialNumber: s, model: modelFallback || '' }];
+}
+
+function normalizeSalesReturnItemsFromSaved(
+  saved: Record<string, any> | undefined,
+  hearingDetails: Record<string, any> | undefined
+): SalesReturnLine[] {
+  const items = saved?.salesReturnItems ?? hearingDetails?.salesReturnItems;
+  if (Array.isArray(items) && items.length > 0) {
+    return items
+      .map((it: any) => ({
+        id: String(it.id || newSalesReturnLineId()),
+        serialNumber: String(it.serialNumber || '').trim(),
+        model: String(it.model || '').trim(),
+        productName: it.productName,
+        brand: it.brand,
+        visitIndex: typeof it.visitIndex === 'number' ? it.visitIndex : undefined,
+        saleDate: it.saleDate,
+        finalAmount: it.finalAmount,
+      }))
+      .filter((it) => it.serialNumber);
+  }
+  const legacy = String(saved?.returnSerialNumber ?? hearingDetails?.returnSerialNumber ?? '').trim();
+  if (!legacy) return [];
+  const modelFb = String(saved?.hearingAidModel ?? hearingDetails?.quotation ?? '').trim();
+  return legacySerialsToLines(legacy, modelFb);
+}
+
+function linesToLegacyReturnSerialString(lines: SalesReturnLine[]): string {
+  return lines.map((l) => l.serialNumber.trim()).filter(Boolean).join(', ');
+}
+
 interface PaymentRecord {
   id: string;
   paymentDate: string;
@@ -266,6 +326,8 @@ interface Visit {
   purchaseFromVisitId: string; // Which visit this purchase relates to
   
   // Sales Return related fields
+  /** One row per returned device (serial + model). Kept in sync with returnSerialNumber for legacy readers. */
+  salesReturnItems: SalesReturnLine[];
   returnSerialNumber: string;
   returnReason: string;
   returnCondition: 'excellent' | 'good' | 'fair' | 'poor';
@@ -291,6 +353,166 @@ interface Visit {
   taxAmount: number;
   salesAfterTax: number;
   totalDiscountPercent: number;
+}
+
+/** Home trial refundable security (₹) when type is home. */
+function visitHomeTrialSecurityAmount(visit: Visit): number {
+  if (!visit?.hearingAidTrial || visit.trialHearingAidType !== 'home') return 0;
+  return Math.max(0, Number(visit.trialHomeSecurityDepositAmount) || 0);
+}
+
+/**
+ * Find the home-trial visit whose security should credit a booking/sale on visits[currentIndex].
+ * Uses previousVisitId chain, then same visit (trial + booking), then most recent prior home trial.
+ */
+function findLinkedHomeTrialVisitWithSecurity(visits: Visit[], currentIndex: number): Visit | null {
+  if (currentIndex < 0 || currentIndex >= visits.length) return null;
+  const current = visits[currentIndex];
+  if (
+    visitHomeTrialSecurityAmount(current) > 0 &&
+    current.hearingAidBooked &&
+    !current.hearingAidSale
+  ) {
+    return current;
+  }
+  const startIds = [
+    current.previousVisitId,
+    current.bookingFromVisitId,
+    current.purchaseFromVisitId,
+  ].filter((x): x is string => Boolean(x && String(x).trim()));
+  const seen = new Set<string>();
+  for (const start of startIds) {
+    let id: string | undefined = start;
+    while (id && !seen.has(id)) {
+      seen.add(id);
+      const pv = visits.find((v) => v.id === id);
+      if (!pv) break;
+      if (visitHomeTrialSecurityAmount(pv) > 0) return pv;
+      id = pv.previousVisitId;
+    }
+  }
+  for (let i = currentIndex - 1; i >= 0; i--) {
+    const v = visits[i];
+    if (visitHomeTrialSecurityAmount(v) > 0) return v;
+  }
+  return null;
+}
+
+/** If true, do not add home trial security as its own line in total due — it is netted against a later booking/sale. */
+function homeTrialSecurityAbsorbedIntoLaterVisit(visits: Visit[], trialIndex: number): boolean {
+  const trialVisit = visits[trialIndex];
+  if (!trialVisit || visitHomeTrialSecurityAmount(trialVisit) === 0) return false;
+  for (let j = trialIndex + 1; j < visits.length; j++) {
+    const later = visits[j];
+    const linked = findLinkedHomeTrialVisitWithSecurity(visits, j);
+    if (linked?.id !== trialVisit.id) continue;
+    if (later.hearingAidBooked && !later.hearingAidSale) return true;
+    if (later.hearingAidSale) return true;
+  }
+  return false;
+}
+
+function getBookingHomeTrialSecurityCredit(visits: Visit[], visitIndex: number): number {
+  const v = visits[visitIndex];
+  if (!v?.hearingAidBooked || v.hearingAidSale) return 0;
+  const trial = findLinkedHomeTrialVisitWithSecurity(visits, visitIndex);
+  return trial ? visitHomeTrialSecurityAmount(trial) : 0;
+}
+
+/** Credit toward a sale; zero if a booking visit already sat between trial and this sale (credit used at booking). */
+function getSaleHomeTrialSecurityCredit(visits: Visit[], visitIndex: number): number {
+  const v = visits[visitIndex];
+  if (!v?.hearingAidSale) return 0;
+  const trial = findLinkedHomeTrialVisitWithSecurity(visits, visitIndex);
+  if (!trial) return 0;
+  const ti = visits.findIndex((x) => x.id === trial.id);
+  if (ti < 0) return visitHomeTrialSecurityAmount(trial);
+  for (let j = ti + 1; j < visitIndex; j++) {
+    const mid = visits[j];
+    if (mid.hearingAidBooked && !mid.hearingAidSale) return 0;
+  }
+  return visitHomeTrialSecurityAmount(trial);
+}
+
+function visitBookingAdvanceAmount(visit: Visit): number {
+  if (!visit?.hearingAidBooked || visit.hearingAidSale) return 0;
+  return Math.max(0, Number(visit.bookingAdvanceAmount) || 0);
+}
+
+/** Sale visit continues the journey from this booking visit (same chain). */
+function saleVisitContinuesFromBookingVisit(
+  visits: Visit[],
+  saleIndex: number,
+  bookingVisitId: string
+): boolean {
+  const sale = visits[saleIndex];
+  if (!sale?.hearingAidSale || !bookingVisitId) return false;
+  if (sale.previousVisitId === bookingVisitId) return true;
+  const pfv = (sale as Visit).purchaseFromVisitId;
+  if (pfv && String(pfv) === bookingVisitId) return true;
+  const seen = new Set<string>();
+  let id: string | undefined = sale.previousVisitId;
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    if (id === bookingVisitId) return true;
+    const v = visits.find((x) => x.id === id);
+    id = v?.previousVisitId;
+  }
+  return false;
+}
+
+/**
+ * Booking-only visit: its gross is not added to total due when a later linked sale supersedes it
+ * (final bill is the sale; advance is credited at sale time).
+ */
+function bookingVisitSupersededByLaterSale(visits: Visit[], bookingIndex: number): boolean {
+  const book = visits[bookingIndex];
+  if (!book?.hearingAidBooked || book.hearingAidSale) return false;
+  const bid = book.id;
+  for (let j = bookingIndex + 1; j < visits.length; j++) {
+    if (!visits[j].hearingAidSale) continue;
+    if (saleVisitContinuesFromBookingVisit(visits, j, bid)) return true;
+    if (findLinkedPriorBookingVisitWithAdvance(visits, j)?.id === bid) return true;
+  }
+  return false;
+}
+
+/** Booking visit (with advance) that the sale continues from — for crediting advance against sale due. */
+function findLinkedPriorBookingVisitWithAdvance(visits: Visit[], saleIndex: number): Visit | null {
+  if (saleIndex < 0 || saleIndex >= visits.length) return null;
+  const sale = visits[saleIndex];
+  if (!sale?.hearingAidSale) return null;
+  const pfv = sale.purchaseFromVisitId;
+  if (pfv) {
+    const byPurchase = visits.find((v) => v.id === pfv);
+    if (
+      byPurchase &&
+      byPurchase.hearingAidBooked &&
+      !byPurchase.hearingAidSale &&
+      visitBookingAdvanceAmount(byPurchase) > 0
+    ) {
+      return byPurchase;
+    }
+  }
+  const seen = new Set<string>();
+  let id: string | undefined = sale.previousVisitId;
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    const pv = visits.find((v) => v.id === id);
+    if (!pv) break;
+    if (pv.hearingAidBooked && !pv.hearingAidSale && visitBookingAdvanceAmount(pv) > 0) return pv;
+    id = pv.previousVisitId;
+  }
+  for (let i = saleIndex - 1; i >= 0; i--) {
+    const v = visits[i];
+    if (v.hearingAidBooked && !v.hearingAidSale && visitBookingAdvanceAmount(v) > 0) return v;
+  }
+  return null;
+}
+
+function getBookingAdvanceCreditForSale(visits: Visit[], saleIndex: number): number {
+  const b = findLinkedPriorBookingVisitWithAdvance(visits, saleIndex);
+  return b ? visitBookingAdvanceAmount(b) : 0;
 }
 
 interface FormData {
@@ -745,10 +967,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       } else if (fieldName === 'programmingBy') {
         (watchedVisits || []).forEach((v) => extras.push(v.programmingDoneBy));
         enqVisits.forEach((v: { programmingDoneBy?: string }) => extras.push(v.programmingDoneBy));
-      } else if (fieldName === 'sales') {
-        (watchedVisits || []).forEach((v) => extras.push(v.hearingAidBrand));
-        enqVisits.forEach((v: { hearingAidBrand?: string }) => extras.push(v.hearingAidBrand));
       }
+      // Who Sold (sales): options must be staff only. Do not merge visit.hearingAidBrand — that is
+      // often the device manufacturer (Signia, Phonak) on trial/booking, not a salesperson.
 
       const merged: string[] = [];
       const seen = new Set<string>();
@@ -1021,7 +1242,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     if (open) {
       if (isEditMode && enquiry) {
         // Set form values for edit mode
-        const visits = enquiry.visitSchedules?.map((visit: any, index: number) => ({
+        const visits = enquiry.visitSchedules?.map((visit: any, index: number) => {
+          const savedFlat = enquiry.visits?.[index];
+          const had = visit.hearingAidDetails || {};
+          const normalizedItems = normalizeSalesReturnItemsFromSaved(savedFlat, had);
+          const persistedSerial = String(
+            savedFlat?.returnSerialNumber ?? had.returnSerialNumber ?? ''
+          ).trim();
+          const serialStr =
+            persistedSerial || linesToLegacyReturnSerialString(normalizedItems);
+
+          return {
           id: visit.id || (index + 1).toString(),
           visitDate: visit.visitDate || '',
           visitTime: visit.visitTime || '',
@@ -1105,7 +1336,28 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             };
           })(),
           totalDiscountPercent: visit.hearingAidDetails?.totalDiscountPercent || 0,
-        })) || [];
+          salesReturn:
+            !!savedFlat?.salesReturn ||
+            !!had.salesReturn ||
+            visit.medicalServices?.includes('sales_return') ||
+            false,
+          salesReturnItems: normalizedItems,
+          returnSerialNumber: serialStr,
+          returnReason: savedFlat?.returnReason ?? had.returnReason ?? '',
+          returnCondition: (savedFlat?.returnCondition ??
+            had.returnCondition ??
+            'good') as Visit['returnCondition'],
+          returnPenaltyAmount:
+            Number(savedFlat?.returnPenaltyAmount ?? had.returnPenaltyAmount) || 0,
+          returnRefundAmount:
+            Number(savedFlat?.returnRefundAmount ?? had.returnRefundAmount) || 0,
+          returnOriginalSaleDate:
+            savedFlat?.returnOriginalSaleDate ?? had.returnOriginalSaleDate ?? '',
+          returnOriginalSaleVisitId:
+            savedFlat?.returnOriginalSaleVisitId ?? had.returnOriginalSaleVisitId ?? '',
+          returnNotes: savedFlat?.returnNotes ?? had.returnNotes ?? '',
+          };
+        }) || [];
 
         reset({
           name: enquiry.name || '',
@@ -1387,6 +1639,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       purchaseFromVisitId: '',
       
       // Sales Return related fields
+      salesReturnItems: [],
       returnSerialNumber: '',
       returnReason: '',
       returnCondition: 'good',
@@ -1600,7 +1853,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               serialNumber: product.serialNumber,
               productName: product.name,
               brand: visit.hearingAidBrand || product.company || '',
-              model: visit.hearingAidModel || '',
+              model: product.name || visit.hearingAidModel || '',
               mrp: product.mrp || 0,
               sellingPrice: product.sellingPrice || 0,
               finalAmount: product.finalAmount || 0,
@@ -1614,64 +1867,51 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     setPreviousSales(salesData);
   };
 
-  // Handle serial number selection from previous sales
-  const handleSerialNumberSelect = (selectedSale: any) => {
-    if (selectedSale) {
-      // Auto-populate sale details
-      updateVisitFields(activeVisit, {
-        returnSerialNumber: selectedSale.serialNumber,
-        returnOriginalSaleDate: selectedSale.saleDate,
-        returnOriginalSaleVisitId: selectedSale.visitIndex.toString()
-      });
-    }
-  };
-
   // Payment handling functions
   const calculateTotalDue = () => {
     const visits = getValues('visits');
     let total = 0;
-    
-    visits.forEach(visit => {
-      // Add hearing test price
+
+    visits.forEach((visit, visitIndex) => {
       if (visit.hearingTest && visit.testPrice) {
         total += visit.testPrice;
       }
-      
-      // Booking should use selling price x quantity, not GST-based totals
+
       if (visit.hearingAidBooked && !visit.hearingAidSale) {
-        total += (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1);
+        if (!bookingVisitSupersededByLaterSale(visits, visitIndex)) {
+          total +=
+            (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1);
+        }
       } else if (visit.hearingAidSale && visit.products) {
         total += visit.salesAfterTax || 0;
       }
-      
-      // Add accessory amount
+
       if (visit.accessory && !visit.accessoryFOC) {
         total += (visit.accessoryAmount || 0) * (visit.accessoryQuantity || 1);
       }
-      
-      // Add programming amount
+
       if (visit.programming) {
         total += visit.programmingAmount || 0;
       }
 
-      // Home trial security deposit (agreed amount — collect via Payments section)
       if (
         visit.hearingAidTrial &&
         visit.trialHearingAidType === 'home' &&
-        Number(visit.trialHomeSecurityDepositAmount) > 0
+        Number(visit.trialHomeSecurityDepositAmount) > 0 &&
+        !homeTrialSecurityAbsorbedIntoLaterVisit(visits, visitIndex)
       ) {
         total += Number(visit.trialHomeSecurityDepositAmount) || 0;
       }
     });
-    
+
     return total;
   };
 
   const getAvailablePaymentOptions = () => {
     const visits = getValues('visits');
     const options = [];
-    
-    visits.forEach(visit => {
+
+    visits.forEach((visit, visitIndex) => {
       if (visit.hearingTest && visit.testPrice > 0) {
         options.push({
           value: 'hearing_test',
@@ -1680,7 +1920,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           description: `Test on ${visit.visitDate || 'scheduled date'}`
         });
       }
-      
+
       if (visit.hearingAidBooked && visit.bookingAdvanceAmount > 0) {
         options.push({
           value: 'booking_advance',
@@ -1690,19 +1930,35 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         });
       }
 
-      if (visit.hearingAidBooked && !visit.hearingAidSale && ((Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1)) > 0) {
+      const bookingGross =
+        (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1);
+      const bookingSd = getBookingHomeTrialSecurityCredit(visits, visitIndex);
+      const bookingNetDue = Math.max(
+        bookingGross - (Number(visit.bookingAdvanceAmount) || 0) - bookingSd,
+        0
+      );
+
+      if (visit.hearingAidBooked && !visit.hearingAidSale && bookingGross > 0) {
         options.push({
           value: 'hearing_aid',
           label: 'Hearing Aid',
-          amount: (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1),
-          description: `Booked device x ${Number(visit.bookingQuantity) || 1}`
+          amount: bookingNetDue,
+          description: `Booked device x ${Number(visit.bookingQuantity) || 1}${bookingSd > 0 ? ' (after trial security adjustment)' : ''}`
         });
       } else if (visit.hearingAidSale && visit.salesAfterTax > 0) {
+        const saleSd = getSaleHomeTrialSecurityCredit(visits, visitIndex);
+        const saleAdv = getBookingAdvanceCreditForSale(visits, visitIndex);
+        const saleNet = Math.max((visit.salesAfterTax || 0) - saleSd - saleAdv, 0);
+        const creditParts: string[] = [];
+        if (saleSd > 0) creditParts.push('trial security');
+        if (saleAdv > 0) creditParts.push('booking advance');
+        const creditNote =
+          creditParts.length > 0 ? ` (after ${creditParts.join(' + ')})` : '';
         options.push({
           value: 'hearing_aid',
           label: 'Hearing Aid',
-          amount: visit.salesAfterTax,
-          description: `${visit.products?.length || 0} product(s)`
+          amount: saleNet,
+          description: `${visit.products?.length || 0} product(s)${creditNote}`,
         });
       }
       
@@ -1881,9 +2137,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     const totalDue = calculateTotalDue();
     const totalPaid = calculateTotalPaid();
     const outstanding = calculateOutstanding();
-    
+
+    const visitsForSave = data.visits.map((visit) => {
+      const items = visit.salesReturnItems;
+      if (visit.salesReturn && Array.isArray(items) && items.length > 0) {
+        return {
+          ...visit,
+          returnSerialNumber: linesToLegacyReturnSerialString(items),
+        };
+      }
+      return visit;
+    });
+
     const formattedData = {
       ...data,
+      visits: visitsForSave,
       followUps,
       status: 'active',
       // Payment summary
@@ -1893,7 +2161,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         outstanding,
         paymentStatus: outstanding <= 0 ? 'fully_paid' : 'pending'
       },
-      visitSchedules: data.visits.map(visit => {
+      visitSchedules: visitsForSave.map(visit => {
         // Build hearingTestDetails object, only including audiogramData if it exists
         const hearingTestDetails: any = {
           testType: visit.testType || null,
@@ -1919,6 +2187,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             ...(visit.hearingAidTrial ? ['hearing_aid_trial'] : []),
             ...(visit.hearingAidBooked ? ['hearing_aid_booked'] : []),
             ...(visit.hearingAidSale ? ['hearing_aid_sale'] : []),
+            ...(visit.salesReturn ? ['sales_return'] : []),
             ...(visit.accessory ? ['accessory'] : []),
             ...(visit.programming ? ['programming'] : []),
             ...(visit.repair ? ['repair'] : []),
@@ -1969,7 +2238,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           // Persist purchase fields
           purchaseFromTrial: visit.purchaseFromTrial,
           purchaseDate: visit.purchaseDate,
-          purchaseFromVisitId: visit.purchaseFromVisitId
+          purchaseFromVisitId: visit.purchaseFromVisitId,
+          // Sales return (mirrors flat visit for consumers that read visitSchedules only)
+          salesReturn: visit.salesReturn,
+          salesReturnItems: visit.salesReturnItems,
+          returnSerialNumber: visit.returnSerialNumber,
+          returnReason: visit.returnReason,
+          returnCondition: visit.returnCondition,
+          returnPenaltyAmount: visit.returnPenaltyAmount,
+          returnRefundAmount: visit.returnRefundAmount,
+          returnOriginalSaleDate: visit.returnOriginalSaleDate,
+          returnOriginalSaleVisitId: visit.returnOriginalSaleVisitId,
+          returnNotes: visit.returnNotes
         }),
         accessoryDetails: removeUndefined({
           accessoryName: visit.accessoryName,
@@ -2678,7 +2958,26 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             control={
                               <Switch
                                 checked={currentVisit.salesReturn}
-                                onChange={(e) => updateVisit(activeVisit, 'salesReturn', e.target.checked)}
+                                onChange={(e) => {
+                                  const on = e.target.checked;
+                                  if (!on) {
+                                    updateVisit(activeVisit, 'salesReturn', false);
+                                    return;
+                                  }
+                                  const v = getValues('visits')[activeVisit];
+                                  const existing = [...(v.salesReturnItems || [])];
+                                  const legacy = String(v.returnSerialNumber || '').trim();
+                                  if (existing.length === 0 && legacy) {
+                                    const migrated = legacySerialsToLines(legacy, v.hearingAidModel || '');
+                                    updateVisitFields(activeVisit, {
+                                      salesReturn: true,
+                                      salesReturnItems: migrated,
+                                      returnSerialNumber: linesToLegacyReturnSerialString(migrated),
+                                    });
+                                  } else {
+                                    updateVisit(activeVisit, 'salesReturn', true);
+                                  }
+                                }}
                                 disabled={isAudiologist}
                                 color="error"
                               />
@@ -3683,8 +3982,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               <Box sx={{ mt: 2 }}>
                                 <Typography variant="body2" color="text.secondary">Balance Amount</Typography>
                                 <Typography variant="body1" sx={{ fontWeight: 700, color: 'warning.dark' }}>
-                                  ₹ {Math.max(((Number(currentVisit.bookingSellingPrice) || 0) * (Number(currentVisit.bookingQuantity) || 1)) - (Number(currentVisit.bookingAdvanceAmount) || 0), 0).toLocaleString()}
+                                  ₹ {(() => {
+                                    const gross =
+                                      (Number(currentVisit.bookingSellingPrice) || 0) *
+                                      (Number(currentVisit.bookingQuantity) || 1);
+                                    const adv = Number(currentVisit.bookingAdvanceAmount) || 0;
+                                    const sd = getBookingHomeTrialSecurityCredit(watchedVisits, activeVisit);
+                                    return Math.max(gross - adv - sd, 0).toLocaleString();
+                                  })()}
                                 </Typography>
+                                {getBookingHomeTrialSecurityCredit(watchedVisits, activeVisit) > 0 && (
+                                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                                    After booking advance and home trial security (
+                                    {formatCurrency(getBookingHomeTrialSecurityCredit(watchedVisits, activeVisit))}{' '}
+                                    treated as advance)
+                                  </Typography>
+                                )}
                               </Box>
                             </Grid>
                           </Grid>
@@ -3703,21 +4016,43 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Typography>
                           </Box>
 
-                          {/* If this sale follows a booking, show a compact booking advance summary */}
-                          {currentVisit.previousVisitId && (() => {
-                            const prev = getValues('visits').find(v => v.id === currentVisit.previousVisitId);
-                            return prev && prev.hearingAidBooked && prev.bookingAdvanceAmount > 0 ? (
-                              <Box sx={{ mb: 2, p: 2, bgcolor: 'warning.50', borderRadius: 1, border: 1, borderColor: 'warning.100' }}>
-                                <Typography variant="body2" sx={{ fontWeight: 600, color: 'warning.dark' }}>
-                                  Booking Advance: {formatCurrency(prev.bookingAdvanceAmount)} on {prev.bookingDate || prev.visitDate}
+                          {/* Credits toward sale: trial security + booking advance (total due = sale only when booking was superseded). */}
+                          {(() => {
+                            const advBook = findLinkedPriorBookingVisitWithAdvance(watchedVisits, activeVisit);
+                            const saleSd = getSaleHomeTrialSecurityCredit(watchedVisits, activeVisit);
+                            const saleAdv = getBookingAdvanceCreditForSale(watchedVisits, activeVisit);
+                            if (saleSd <= 0 && saleAdv <= 0) return null;
+                            const gross = Number(currentVisit.salesAfterTax) || 0;
+                            const net = Math.max(gross - saleSd - saleAdv, 0);
+                            return (
+                              <Alert severity="success" sx={{ mb: 2, borderRadius: 2 }}>
+                                {advBook &&
+                                  (advBook.hearingAidBrand || advBook.hearingAidModel) &&
+                                  saleAdv > 0 && (
+                                    <Typography variant="body2" sx={{ mb: 1, color: 'text.secondary' }}>
+                                      Linked booking device: {(advBook.hearingAidBrand || '').toString()}{' '}
+                                      {(advBook.hearingAidModel || '').toString()}
+                                      {advBook.bookingDate || advBook.visitDate
+                                        ? ` · ${advBook.bookingDate || advBook.visitDate}`
+                                        : ''}
+                                    </Typography>
+                                  )}
+                                <Typography variant="body2" component="div">
+                                  {saleSd > 0 && (
+                                    <>Trial security {formatCurrency(saleSd)} credited.</>
+                                  )}
+                                  {saleSd > 0 && saleAdv > 0 && <> </>}
+                                  {saleAdv > 0 && (
+                                    <>Booking advance {formatCurrency(saleAdv)} credited.</>
+                                  )}{' '}
+                                  Total due for this enquiry counts the sale invoice once; these prepayments are not
+                                  double-counted.
                                 </Typography>
-                                {(prev.hearingAidBrand || prev.hearingAidModel) && (
-                                  <Typography variant="body2" sx={{ mt: 0.5 }}>
-                                    Booked Device: {(prev.hearingAidBrand || '').toString()} {(prev.hearingAidModel || '').toString()}
-                                  </Typography>
-                                )}
-                              </Box>
-                            ) : null;
+                                <Typography variant="body2" sx={{ mt: 1, fontWeight: 700 }}>
+                                  Balance after credits: {formatCurrency(net)} (invoice {formatCurrency(gross)}).
+                                </Typography>
+                              </Alert>
+                            );
                           })()}
 
                           {/* Show device names from Trial and Booking journeys when auto-population is not used */}
@@ -3770,11 +4105,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       label="Who Sold"
                                       sx={{ borderRadius: 2, minWidth: '200px' }}
                                     >
-                                      {getStaffOptionsForField('sales').map(option => (
-                                        <MenuItem key={option} value={option}>
-                                          💼 {option}
-                                        </MenuItem>
-                                      ))}
+                                      {(() => {
+                                        const staffOpts = getStaffOptionsForField('sales');
+                                        const cur = (currentVisit.hearingAidBrand || '').trim();
+                                        const list =
+                                          cur && !staffOpts.includes(cur)
+                                            ? [cur, ...staffOpts]
+                                            : staffOpts;
+                                        return list.map((option) => (
+                                          <MenuItem key={option} value={option}>
+                                            {staffOpts.includes(option) ? `💼 ${option}` : `⚠ ${option} (not in staff list)`}
+                                          </MenuItem>
+                                        ));
+                                      })()}
                                     </Select>
                                   </FormControl>
                                   {isAdmin && (
@@ -3820,7 +4163,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     updateVisitFields(activeVisit, {
                                       previousVisitId: trialVisit.id,
                                       hearingAidProductId: trialVisit.hearingAidProductId || '',
-                                      hearingAidBrand: trialVisit.trialHearingAidBrand || trialVisit.hearingAidBrand || '',
+                                      // Do not copy trial device brand into hearingAidBrand on a sale — that field is "Who Sold" (staff).
                                       hearingAidModel: trialVisit.trialHearingAidModel || trialVisit.hearingAidModel || '',
                                       hearingAidType: trialVisit.hearingAidType || '',
                                       whichEar: trialVisit.whichEar || 'both',
@@ -3850,7 +4193,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     updateVisitFields(activeVisit, {
                                       previousVisitId: bookingVisit.id,
                                       hearingAidProductId: bookingVisit.hearingAidProductId || '',
-                                      hearingAidBrand: bookingVisit.hearingAidBrand || '',
+                                      // Booking "brand" is the device manufacturer; on sale, hearingAidBrand is Who Sold (staff).
                                       hearingAidModel: bookingVisit.hearingAidModel || '',
                                       hearingAidType: bookingVisit.hearingAidType || '',
                                       whichEar: bookingVisit.whichEar || 'both',
@@ -3896,11 +4239,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                           updateVisit(activeVisit, 'hearingAidJourneyId', journeyId);
                                           
                                           // Copy basic hearing aid info if available
-                                          if (previousVisit.hearingAidBrand) {
-                                            updateVisit(activeVisit, 'hearingAidBrand', previousVisit.hearingAidBrand);
-                                            updateVisit(activeVisit, 'hearingAidModel', previousVisit.hearingAidModel);
-                                            updateVisit(activeVisit, 'hearingAidType', previousVisit.hearingAidType);
-                                            updateVisit(activeVisit, 'whichEar', previousVisit.whichEar);
+                                          {
+                                            const saleCtx = getValues('visits')[activeVisit]?.hearingAidSale;
+                                            if (saleCtx) {
+                                              // On sale visits, hearingAidBrand = Who Sold — only copy from another sale visit.
+                                              if (previousVisit.hearingAidSale && previousVisit.hearingAidBrand) {
+                                                updateVisit(activeVisit, 'hearingAidBrand', previousVisit.hearingAidBrand);
+                                              }
+                                            } else if (previousVisit.hearingAidBrand) {
+                                              updateVisit(activeVisit, 'hearingAidBrand', previousVisit.hearingAidBrand);
+                                            }
+                                            if (previousVisit.hearingAidModel) {
+                                              updateVisit(activeVisit, 'hearingAidModel', previousVisit.hearingAidModel);
+                                            }
+                                            if (previousVisit.hearingAidType) {
+                                              updateVisit(activeVisit, 'hearingAidType', previousVisit.hearingAidType);
+                                            }
+                                            if (previousVisit.whichEar) {
+                                              updateVisit(activeVisit, 'whichEar', previousVisit.whichEar);
+                                            }
                                           }
                                           
                                           // Set journey stage based on previous visit
@@ -4668,94 +5025,214 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Box>
                             </Grid>
 
-                            {/* Serial Number Selection */}
-                            <Grid item xs={12} md={6}>
+                            {/* Devices to return: multi-select from prior sales or manual rows */}
+                            <Grid item xs={12}>
                               {serialSelectionMode === 'dropdown' ? (
-                                <FormControl fullWidth>
-                                  <InputLabel>Select Serial Number from Previous Sales</InputLabel>
-                                  <Select
-                                    value={currentVisit.returnSerialNumber}
-                                    label="Select Serial Number from Previous Sales"
-                                    onChange={(e) => {
-                                      const selectedSale = previousSales.find(sale => sale.serialNumber === e.target.value);
-                                      handleSerialNumberSelect(selectedSale);
-                                    }}
-                                    sx={{ borderRadius: 2 }}
-                                  >
-                                    {previousSales.length === 0 ? (
-                                      <MenuItem disabled value="">
-                                        <Typography color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                          No previous sales found for this patient
-                                        </Typography>
-                                      </MenuItem>
-                                    ) : (
-                                      previousSales.map((sale, index) => (
-                                        <MenuItem key={index} value={sale.serialNumber}>
-                                          <Box>
-                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                              S/N: {sale.serialNumber}
-                                            </Typography>
-                                            <Typography variant="caption" color="text.secondary">
-                                              {sale.productName} • {sale.brand} {sale.model}
-                                            </Typography>
-                                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                              Sold on: {sale.saleDate} • Amount: ₹{sale.finalAmount}
-                                            </Typography>
-                                          </Box>
-                                        </MenuItem>
-                                      ))
+                                <Box>
+                                  <Autocomplete
+                                    multiple
+                                    options={previousSales}
+                                    disableCloseOnSelect
+                                    getOptionLabel={(sale) =>
+                                      `${sale.serialNumber} — ${sale.productName || 'Product'} (${sale.brand || ''} ${sale.model || ''})`.trim()
+                                    }
+                                    isOptionEqualToValue={(a, b) => a.serialNumber === b.serialNumber}
+                                    value={previousSales.filter((sale) =>
+                                      (currentVisit.salesReturnItems || []).some(
+                                        (line) => line.serialNumber === sale.serialNumber
+                                      )
                                     )}
-                                  </Select>
+                                    onChange={(_, newValue) => {
+                                      const prevLines = currentVisit.salesReturnItems || [];
+                                      const fromPicker: SalesReturnLine[] = newValue.map((sale, i) => ({
+                                        id: `pick-${sale.serialNumber}-${i}`,
+                                        serialNumber: sale.serialNumber,
+                                        model: String(sale.model || '').trim(),
+                                        productName: sale.productName,
+                                        brand: sale.brand,
+                                        visitIndex: sale.visitIndex,
+                                        saleDate: sale.saleDate,
+                                        finalAmount: sale.finalAmount,
+                                      }));
+                                      const manualOnly = prevLines.filter(
+                                        (line) =>
+                                          !previousSales.some((ps) => ps.serialNumber === line.serialNumber)
+                                      );
+                                      const merged = [...fromPicker, ...manualOnly];
+                                      const first = fromPicker[0];
+                                      updateVisitFields(activeVisit, {
+                                        salesReturnItems: merged,
+                                        returnSerialNumber: linesToLegacyReturnSerialString(merged),
+                                        returnOriginalSaleDate: first?.saleDate || '',
+                                        returnOriginalSaleVisitId:
+                                          first?.visitIndex != null ? String(first.visitIndex) : '',
+                                      });
+                                    }}
+                                    renderInput={(params) => (
+                                      <TextField
+                                        {...params}
+                                        label="Select devices from previous sales"
+                                        placeholder={
+                                          previousSales.length ? 'Choose one or more serial numbers' : ''
+                                        }
+                                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                      />
+                                    )}
+                                    renderOption={(props, sale) => (
+                                      <li {...props} key={sale.serialNumber}>
+                                        <Box>
+                                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                            S/N: {sale.serialNumber}
+                                          </Typography>
+                                          <Typography variant="caption" color="text.secondary" display="block">
+                                            {sale.productName} • {sale.brand} {sale.model}
+                                          </Typography>
+                                          <Typography variant="caption" color="text.secondary" display="block">
+                                            Sold on: {sale.saleDate} • ₹{sale.finalAmount}
+                                          </Typography>
+                                        </Box>
+                                      </li>
+                                    )}
+                                  />
                                   {previousSales.length === 0 && (
-                                    <FormHelperText>
-                                      No previous sales found. Please add a sale first or use manual entry.
+                                    <FormHelperText sx={{ mt: 1 }}>
+                                      No previous sales found. Add a sale visit first or use manual entry.
                                     </FormHelperText>
                                   )}
-                                </FormControl>
+                                  {(currentVisit.salesReturnItems || []).some(
+                                    (line) =>
+                                      !previousSales.some((ps) => ps.serialNumber === line.serialNumber)
+                                  ) && (
+                                    <Alert severity="info" sx={{ mt: 2 }}>
+                                      Some devices were entered manually and are not shown in the list above.
+                                      Switch to &quot;Enter Manually&quot; to edit them.
+                                    </Alert>
+                                  )}
+                                </Box>
                               ) : (
-                                <TextField
-                                  fullWidth
-                                  label="Serial Number to Return"
-                                  value={currentVisit.returnSerialNumber}
-                                  onChange={(e) => updateVisit(activeVisit, 'returnSerialNumber', e.target.value)}
-                                  placeholder="Enter serial number manually"
-                                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                                  helperText="Enter the serial number of the hearing aid to return"
-                                />
+                                <Box>
+                                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                                    Devices to return (serial + model per row)
+                                  </Typography>
+                                  {(currentVisit.salesReturnItems || []).map((line, idx) => (
+                                    <Grid
+                                      container
+                                      spacing={1}
+                                      key={line.id}
+                                      sx={{ mb: 1, alignItems: 'center' }}
+                                    >
+                                      <Grid item xs={12} sm={5}>
+                                        <TextField
+                                          fullWidth
+                                          size="small"
+                                          label="Serial number"
+                                          value={line.serialNumber}
+                                          onChange={(e) => {
+                                            const next = [...(currentVisit.salesReturnItems || [])];
+                                            next[idx] = {
+                                              ...next[idx],
+                                              serialNumber: e.target.value,
+                                            };
+                                            updateVisitFields(activeVisit, {
+                                              salesReturnItems: next,
+                                              returnSerialNumber: linesToLegacyReturnSerialString(next),
+                                            });
+                                          }}
+                                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                        />
+                                      </Grid>
+                                      <Grid item xs={12} sm={5}>
+                                        <TextField
+                                          fullWidth
+                                          size="small"
+                                          label="Hearing aid model"
+                                          value={line.model}
+                                          onChange={(e) => {
+                                            const next = [...(currentVisit.salesReturnItems || [])];
+                                            next[idx] = { ...next[idx], model: e.target.value };
+                                            updateVisitFields(activeVisit, { salesReturnItems: next });
+                                          }}
+                                          placeholder="e.g. Pure Charge&Go AX"
+                                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                        />
+                                      </Grid>
+                                      <Grid item xs={12} sm={2}>
+                                        <IconButton
+                                          aria-label="Remove device"
+                                          color="error"
+                                          onClick={() => {
+                                            const next = (currentVisit.salesReturnItems || []).filter(
+                                              (_, i) => i !== idx
+                                            );
+                                            updateVisitFields(activeVisit, {
+                                              salesReturnItems: next,
+                                              returnSerialNumber: linesToLegacyReturnSerialString(next),
+                                            });
+                                          }}
+                                        >
+                                          <DeleteIcon />
+                                        </IconButton>
+                                      </Grid>
+                                    </Grid>
+                                  ))}
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    startIcon={<AddIcon />}
+                                    onClick={() => {
+                                      const next = [
+                                        ...(currentVisit.salesReturnItems || []),
+                                        {
+                                          id: newSalesReturnLineId(),
+                                          serialNumber: '',
+                                          model: '',
+                                        },
+                                      ];
+                                      updateVisitFields(activeVisit, {
+                                        salesReturnItems: next,
+                                        returnSerialNumber: linesToLegacyReturnSerialString(next),
+                                      });
+                                    }}
+                                    sx={{ mt: 1 }}
+                                  >
+                                    Add device
+                                  </Button>
+                                </Box>
                               )}
                             </Grid>
 
-                            {/* Selected Sale Details Display */}
-                            {currentVisit.returnSerialNumber && serialSelectionMode === 'dropdown' && (
-                              <Grid item xs={12}>
-                                {(() => {
-                                  const selectedSale = previousSales.find(sale => sale.serialNumber === currentVisit.returnSerialNumber);
-                                  if (!selectedSale) return null;
-                                  
-                                  return (
-                                    <Paper sx={{ p: 2, bgcolor: 'primary.50', borderRadius: 2, border: 1, borderColor: 'primary.100' }}>
-                                      <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'primary.dark', mb: 1 }}>
-                                        📋 Selected Sale Details
-                                      </Typography>
-                                      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' }, gap: 1 }}>
-                                        <Typography variant="body2">
-                                          <strong>Product:</strong> {selectedSale.productName}
-                                        </Typography>
-                                        <Typography variant="body2">
-                                          <strong>Brand/Model:</strong> {selectedSale.brand} {selectedSale.model}
-                                        </Typography>
-                                        <Typography variant="body2">
-                                          <strong>Sale Date:</strong> {selectedSale.saleDate}
-                                        </Typography>
-                                        <Typography variant="body2">
-                                          <strong>Original Amount:</strong> ₹{selectedSale.finalAmount}
-                                        </Typography>
-                                      </Box>
-                                    </Paper>
-                                  );
-                                })()}
-                              </Grid>
-                            )}
+                            {/* Summary of selected lines (dropdown mode) */}
+                            {serialSelectionMode === 'dropdown' &&
+                              (currentVisit.salesReturnItems || []).length > 0 && (
+                                <Grid item xs={12}>
+                                  <Paper
+                                    sx={{ p: 2, bgcolor: 'primary.50', borderRadius: 2, border: 1, borderColor: 'primary.100' }}
+                                  >
+                                    <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'primary.dark', mb: 1 }}>
+                                      Selected devices
+                                    </Typography>
+                                    <Stack spacing={1}>
+                                      {(currentVisit.salesReturnItems || []).map((line) => (
+                                        <Box
+                                          key={line.id}
+                                          sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}
+                                        >
+                                          <Chip size="small" label={`S/N: ${line.serialNumber || '—'}`} />
+                                          {line.model ? (
+                                            <Chip size="small" variant="outlined" label={line.model} />
+                                          ) : null}
+                                          {line.productName ? (
+                                            <Typography variant="caption" color="text.secondary">
+                                              {line.productName}
+                                              {line.saleDate ? ` • ${line.saleDate}` : ''}
+                                            </Typography>
+                                          ) : null}
+                                        </Box>
+                                      ))}
+                                    </Stack>
+                                  </Paper>
+                                </Grid>
+                              )}
 
                             {/* Return Condition */}
                             <Grid item xs={12} md={6}>

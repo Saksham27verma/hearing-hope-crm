@@ -31,6 +31,15 @@ import {
 } from '@mui/icons-material';
 import { collection, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
 // Avoid MUI Grid generic type noise by wrapping (consistent with other modules)
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
@@ -41,6 +50,16 @@ const formatCurrency = (amount: number) =>
     currency: 'INR',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(amount) ? amount : 0);
+
+/** Compact INR for chart axis labels */
+const formatAxisInr = (n: number) => {
+  if (!Number.isFinite(n)) return '0';
+  const v = Math.abs(n);
+  if (v >= 1e7) return `${(n / 1e7).toFixed(1)}Cr`;
+  if (v >= 1e5) return `${(n / 1e5).toFixed(1)}L`;
+  if (v >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
+  return String(Math.round(n));
+};
 
 const escapeCsv = (value: any) => {
   const s = (value ?? '').toString();
@@ -68,8 +87,12 @@ type NormalizedSale = {
   source: 'sales' | 'enquiry';
   date: Date;
   patientName: string;
-  centerId?: string;
+  /** Resolved Firestore center id when matched */
+  centerId: string;
+  /** Display label from centers collection or branch text */
   centerName: string;
+  /** Stable key for filters, grouping, and charts (id or orphan slug) */
+  centerKey: string;
   executiveName: string;
   subtotal: number;
   gstAmount: number;
@@ -82,14 +105,106 @@ type NormalizedBooking = {
   visitId?: string;
   date: Date;
   patientName: string;
-  centerId?: string;
+  centerId: string;
   centerName: string;
+  centerKey: string;
   executiveName: string;
   advanceAmount: number;
   bookingDateRaw?: string;
 };
 
-type Center = { id: string; name?: string };
+type Center = { id: string; name?: string; isHeadOffice?: boolean };
+
+/** Legacy inventory dropdown values — map to head office when possible */
+const LEGACY_INVENTORY_BRANCHES = new Set([
+  'main branch',
+  'north branch',
+  'south branch',
+  'east branch',
+  'west branch',
+]);
+
+function baseCenterMatchKey(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+(center|branch)\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+type CenterResolveContext = {
+  idToName: Map<string, string>;
+  nameLowerToId: Map<string, string>;
+  baseKeyToId: Map<string, string>;
+  headOfficeId: string | null;
+};
+
+function buildCenterResolveContext(centers: Center[]): CenterResolveContext {
+  const idToName = new Map<string, string>();
+  const nameLowerToId = new Map<string, string>();
+  const baseKeyToId = new Map<string, string>();
+
+  centers.forEach(c => {
+    const n = (c.name || '').toString().trim();
+    const label = n || c.id;
+    idToName.set(c.id, label);
+    const low = n.toLowerCase();
+    if (low) nameLowerToId.set(low, c.id);
+    const bk = baseCenterMatchKey(n);
+    if (bk && !baseKeyToId.has(bk)) baseKeyToId.set(bk, c.id);
+  });
+
+  const headOfficeId = centers.find(c => !!c.isHeadOffice)?.id ?? null;
+  return { idToName, nameLowerToId, baseKeyToId, headOfficeId };
+}
+
+/**
+ * Map raw center id + branch/name to one logical center so id-based and name-based rows merge (e.g. two "Rohini").
+ */
+function resolveCenter(
+  rawCenterId: string | undefined,
+  branchOrName: string,
+  ctx: CenterResolveContext
+): { centerKey: string; centerId: string; centerName: string } {
+  const id = (rawCenterId || '').toString().trim();
+  if (id && ctx.idToName.has(id)) {
+    const label = ctx.idToName.get(id)!;
+    return { centerKey: id, centerId: id, centerName: label };
+  }
+
+  const branch = (branchOrName || '').toString().trim();
+  const lower = branch.toLowerCase();
+
+  if (LEGACY_INVENTORY_BRANCHES.has(lower) && ctx.headOfficeId && ctx.idToName.has(ctx.headOfficeId)) {
+    const hid = ctx.headOfficeId;
+    const label = ctx.idToName.get(hid)!;
+    return { centerKey: hid, centerId: hid, centerName: label };
+  }
+
+  if (lower && ctx.nameLowerToId.has(lower)) {
+    const cid = ctx.nameLowerToId.get(lower)!;
+    const label = ctx.idToName.get(cid)!;
+    return { centerKey: cid, centerId: cid, centerName: label };
+  }
+
+  const bk = baseCenterMatchKey(branch);
+  if (bk && ctx.baseKeyToId.has(bk)) {
+    const cid = ctx.baseKeyToId.get(bk)!;
+    const label = ctx.idToName.get(cid)!;
+    return { centerKey: cid, centerId: cid, centerName: label };
+  }
+
+  if (!branch) {
+    return { centerKey: '__unassigned__', centerId: '', centerName: '—' };
+  }
+  const slug = lower.replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'unknown';
+  return {
+    centerKey: `__orphan__:${slug}`,
+    centerId: '',
+    centerName: branch,
+  };
+}
 
 function parseVisitDateToDate(dateStr?: string): Date | null {
   const s = (dateStr || '').toString().trim();
@@ -172,6 +287,7 @@ export default function SalesReportsTab() {
       setCenters(centersList);
       const centerMap = new Map<string, string>();
       centersList.forEach(c => centerMap.set(c.id, (c.name || c.id).toString()));
+      const resolveCtx = buildCenterResolveContext(centersList);
 
       const normalizedSales: NormalizedSale[] = [];
       salesSnap.docs.forEach(d => {
@@ -181,12 +297,17 @@ export default function SalesReportsTab() {
         const subtotal = Number(data.totalAmount || 0);
         const gstAmount = Number(data.gstAmount || 0);
         const total = subtotal + gstAmount;
+        const branch = (data.branch || '').toString();
+        const rawCenterId = (data.centerId || '').toString();
+        const rc = resolveCenter(rawCenterId || undefined, branch, resolveCtx);
         normalizedSales.push({
           id: d.id,
           source: 'sales',
           date,
           patientName: (data.patientName || '—').toString(),
-          centerName: (data.branch || '—').toString(),
+          centerId: rc.centerId,
+          centerName: rc.centerName,
+          centerKey: rc.centerKey,
           executiveName: (data.salesperson?.name || data.salespersonName || '—').toString(),
           subtotal,
           gstAmount,
@@ -198,8 +319,9 @@ export default function SalesReportsTab() {
       enquiriesSnap.docs.forEach(d => {
         const e: any = d.data();
         const patientName = (e.name || e.patientName || e.fullName || '—').toString();
-        const centerId = (e.center || '').toString();
-        const centerName = centerId ? (centerMap.get(centerId) || centerId) : '—';
+        const rawCenter = (e.center || '').toString().trim();
+        const mappedName = rawCenter ? (centerMap.get(rawCenter) || '') : '';
+        const rc = resolveCenter(mappedName ? rawCenter : undefined, mappedName || rawCenter, resolveCtx);
         const visits: any[] = Array.isArray(e.visits) ? e.visits : [];
 
         visits.forEach((visit: any, idx: number) => {
@@ -226,8 +348,9 @@ export default function SalesReportsTab() {
               source: 'enquiry',
               date,
               patientName,
-              centerId,
-              centerName,
+              centerId: rc.centerId,
+              centerName: rc.centerName,
+              centerKey: rc.centerKey,
               executiveName: (visit.hearingAidBrand || '—').toString(), // “Who Sold” field in this form
               subtotal,
               gstAmount,
@@ -247,8 +370,9 @@ export default function SalesReportsTab() {
               visitId: (visit.id || '').toString(),
               date,
               patientName,
-              centerId,
-              centerName,
+              centerId: rc.centerId,
+              centerName: rc.centerName,
+              centerKey: rc.centerKey,
               executiveName: (visit.hearingAidBrand || '—').toString(), // “Who Sold”
               advanceAmount: Number(visit.bookingAdvanceAmount || 0),
               bookingDateRaw: (visit.bookingDate || '').toString(),
@@ -278,10 +402,7 @@ export default function SalesReportsTab() {
   const filteredSales = useMemo(() => {
     return sales.filter(s => {
       if (!inRange(s.date, dateFromObj, dateToObj)) return false;
-      if (centerFilter !== 'all') {
-        // For sales collection, centerName is branch string, so allow both id or name filter
-        if ((s.centerId || '') !== centerFilter && s.centerName !== centerFilter) return false;
-      }
+      if (centerFilter !== 'all' && s.centerKey !== centerFilter) return false;
       if (execFilter !== 'all' && s.executiveName !== execFilter) return false;
       return true;
     });
@@ -290,7 +411,7 @@ export default function SalesReportsTab() {
   const filteredBookings = useMemo(() => {
     return bookings.filter(b => {
       if (!inRange(b.date, dateFromObj, dateToObj)) return false;
-      if (centerFilter !== 'all' && (b.centerId || '') !== centerFilter && b.centerName !== centerFilter) return false;
+      if (centerFilter !== 'all' && b.centerKey !== centerFilter) return false;
       if (execFilter !== 'all' && b.executiveName !== execFilter) return false;
       return true;
     });
@@ -299,17 +420,16 @@ export default function SalesReportsTab() {
   const centerOptions = useMemo(() => {
     const seen = new Map<string, string>();
     centers.forEach(c => seen.set(c.id, centerNameById.get(c.id) || c.id));
-    // Also include branch strings from sales collection, because those aren’t center ids
-    sales
-      .filter(s => s.source === 'sales')
-      .forEach(s => {
-        const name = (s.centerName || '').toString().trim();
-        if (name) seen.set(name, name);
-      });
+    sales.forEach(s => {
+      if (!seen.has(s.centerKey)) seen.set(s.centerKey, s.centerName);
+    });
+    bookings.forEach(b => {
+      if (!seen.has(b.centerKey)) seen.set(b.centerKey, b.centerName);
+    });
     return Array.from(seen.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [centers, centerNameById, sales]);
+  }, [centers, centerNameById, sales, bookings]);
 
   const execOptions = useMemo(() => {
     const set = new Set<string>();
@@ -319,15 +439,27 @@ export default function SalesReportsTab() {
   }, [sales, bookings]);
 
   const centerWise = useMemo(() => {
-    const map = new Map<string, { center: string; count: number; total: number }>();
+    const map = new Map<string, { centerKey: string; center: string; count: number; total: number }>();
     filteredSales.forEach(s => {
-      const key = s.centerId || s.centerName || '—';
-      const name = s.centerName || (s.centerId ? (centerNameById.get(s.centerId) || s.centerId) : '—');
-      const prev = map.get(key) || { center: name, count: 0, total: 0 };
-      map.set(key, { center: name, count: prev.count + 1, total: prev.total + (s.total || 0) });
+      const key = s.centerKey;
+      const name = s.centerName;
+      const prev = map.get(key) || { centerKey: key, center: name, count: 0, total: 0 };
+      map.set(key, {
+        centerKey: key,
+        center: name,
+        count: prev.count + 1,
+        total: prev.total + (s.total || 0),
+      });
     });
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
-  }, [filteredSales, centerNameById]);
+  }, [filteredSales]);
+
+  const centerWiseChartRows = useMemo(() => {
+    // Recharts vertical layout draws first row at bottom — reverse so highest total is at top
+    return [...centerWise]
+      .reverse()
+      .map(r => ({ label: r.center, total: r.total, count: r.count }));
+  }, [centerWise]);
 
   const execWise = useMemo(() => {
     const map = new Map<string, { executive: string; count: number; total: number }>();
@@ -494,6 +626,74 @@ export default function SalesReportsTab() {
               Export CSV
             </Button>
           </Box>
+          {centerWiseChartRows.length > 0 && (
+            <Paper elevation={0} variant="outlined" sx={{ p: 2, mb: 2 }}>
+              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                Total sales by center (INR) — bar length shows amount; hover for count and exact total
+              </Typography>
+              <Box sx={{ width: '100%', height: Math.max(320, centerWiseChartRows.length * 40 + 100) }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    layout="vertical"
+                    data={centerWiseChartRows}
+                    margin={{ top: 8, right: 28, left: 8, bottom: 8 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e0e0e0" />
+                    <XAxis
+                      type="number"
+                      tickFormatter={formatAxisInr}
+                      tick={{ fontSize: 11 }}
+                      axisLine={{ stroke: '#bdbdbd' }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={132}
+                      tick={{ fontSize: 12 }}
+                      axisLine={{ stroke: '#bdbdbd' }}
+                      interval={0}
+                    />
+                    <RechartsTooltip
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length) return null;
+                        const row = payload[0]?.payload as { label: string; total: number; count: number };
+                        return (
+                          <Box
+                            sx={{
+                              bgcolor: 'background.paper',
+                              border: 1,
+                              borderColor: 'divider',
+                              borderRadius: 1,
+                              px: 1.5,
+                              py: 1,
+                              boxShadow: 2,
+                            }}
+                          >
+                            <Typography variant="caption" display="block" fontWeight={600}>
+                              {row?.label ?? label}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              No. of sales: {row?.count ?? '—'}
+                            </Typography>
+                            <Typography variant="body2" fontWeight={600}>
+                              {formatCurrency(row?.total ?? 0)}
+                            </Typography>
+                          </Box>
+                        );
+                      }}
+                    />
+                    <Bar
+                      dataKey="total"
+                      name="total"
+                      fill="#1565c0"
+                      radius={[0, 4, 4, 0]}
+                      maxBarSize={28}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </Box>
+            </Paper>
+          )}
           <TableContainer component={Paper} elevation={0} variant="outlined">
             <Table size="small">
               <TableHead>
@@ -507,7 +707,7 @@ export default function SalesReportsTab() {
                 {centerWise.length ? (
                   <>
                     {centerWise.map(r => (
-                      <TableRow key={r.center} hover>
+                      <TableRow key={r.centerKey} hover>
                         <TableCell>{r.center}</TableCell>
                         <TableCell align="right">{r.count}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 600 }}>

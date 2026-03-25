@@ -66,6 +66,7 @@ import {
 import { collection, query, getDocs, where, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
+import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 // Temporarily disabled performance monitoring to prevent bundling issues
@@ -580,31 +581,38 @@ export default function InventoryPage() {
               });
             });
 
-            if (visit.salesReturn && visit.returnSerialNumber) {
-              const matchedProduct = products.find((prod: any) =>
-                [prod.serialNumber, prod.trialSerialNumber].includes(visit.returnSerialNumber)
-              );
-              const { productId, productName } = matchedProduct
-                ? getJourneyProductInfo(matchedProduct)
-                : { productId: '', productName: 'Unknown Product' };
-              addJourneyEvent(visit.returnSerialNumber, {
-                id: `sale-return-${docSnap.id}-${visit.id || visitIndex}-${visit.returnSerialNumber}`,
-                productId,
-                productName,
-                eventType: 'sale-return',
-                title: 'Sales Return',
-                description: `Return recorded for ${patientName}`,
-                date: visit.returnDate || visitDate,
-                location: matchedProduct?.location || data.center || '',
-                counterparty: patientName,
-                referenceNo: visit.id || visit.returnOriginalSaleVisitId || '',
-                notes: [
-                  visit.returnReason || '',
-                  visit.returnCondition || '',
-                  visit.returnNotes || '',
-                ].filter(Boolean).join(' • '),
-                sourceLabel: 'Enquiry',
-                sourcePath: `/interaction/enquiries/${docSnap.id}`,
+            if (visit.salesReturn) {
+              const returnLines = expandSalesReturnLinesFromVisit(visit);
+              returnLines.forEach((line) => {
+                const sn = line.serialNumber;
+                const matchedProduct = products.find((prod: any) =>
+                  [prod.serialNumber, prod.trialSerialNumber].includes(sn)
+                );
+                const { productId, productName } = matchedProduct
+                  ? getJourneyProductInfo(matchedProduct)
+                  : { productId: '', productName: line.model || line.productName || 'Unknown Product' };
+                addJourneyEvent(sn, {
+                  id: `sale-return-${docSnap.id}-${visit.id || visitIndex}-${sn}`,
+                  productId,
+                  productName,
+                  eventType: 'sale-return',
+                  title: 'Sales Return',
+                  description: `Return recorded for ${patientName}`,
+                  date: visit.returnDate || visitDate,
+                  location: matchedProduct?.location || data.center || '',
+                  counterparty: patientName,
+                  referenceNo: visit.id || visit.returnOriginalSaleVisitId || '',
+                  notes: [
+                    line.model ? `Model: ${line.model}` : '',
+                    visit.returnReason || '',
+                    visit.returnCondition || '',
+                    visit.returnNotes || '',
+                  ]
+                    .filter(Boolean)
+                    .join(' • '),
+                  sourceLabel: 'Enquiry',
+                  sourcePath: `/interaction/enquiries/${docSnap.id}`,
+                });
               });
             }
           });
