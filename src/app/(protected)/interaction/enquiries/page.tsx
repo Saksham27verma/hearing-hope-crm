@@ -114,6 +114,11 @@ import {
   parseJourneyStatusOverride,
   type EnquiryJourneyStatus,
 } from '@/utils/enquiryStatus';
+import {
+  getTelecallerSelectOptions,
+  readEnquiryStaffRolesFromStorage,
+  type StaffRecord,
+} from '@/utils/enquiryTelecallerOptions';
 
 // Create a Grid component that doesn't have TypeScript errors
 const Grid = (props: any) => <MuiGrid {...props} />;
@@ -545,6 +550,8 @@ export default function EnquiriesPage() {
 
   /** Active staff names from Firestore — same pool the enquiry form uses for dropdowns */
   const [staffNameOptions, setStaffNameOptions] = useState<string[]>([]);
+  /** Full staff rows for telecaller role-filtered dropdowns (matches SimplifiedEnquiryForm). */
+  const [staffRecords, setStaffRecords] = useState<StaffRecord[]>([]);
 
   // Pagination state
   const [page, setPage] = useState(0);
@@ -814,6 +821,16 @@ export default function EnquiriesPage() {
     callerName: ''
   });
 
+  /** Telecaller / “call by” options for legacy multi-step create form — real staff + current form values. */
+  const newEnquiryTelecallerSelectOptions = useMemo(() => {
+    const extras = [
+      userProfile?.displayName,
+      newEnquiry.telecaller,
+      ...(newEnquiry.followUps || []).map((f) => f.callerName),
+    ];
+    return getTelecallerSelectOptions(staffRecords, readEnquiryStaffRolesFromStorage(), extras);
+  }, [staffRecords, newEnquiry.telecaller, newEnquiry.followUps, userProfile?.displayName]);
+
   const [showAddFollowUpForm, setShowAddFollowUpForm] = useState(false);
   const [selectedSpecializedForm, setSelectedSpecializedForm] = useState<string>('');
 
@@ -907,14 +924,19 @@ export default function EnquiriesPage() {
   const fetchStaffNamesForFilters = async () => {
     try {
       const snap = await getDocs(collection(db, 'staff'));
-      const names = snap.docs
-        .map(d => {
-          const data = d.data() as { name?: string; status?: string };
-          if (data.status === 'inactive') return null;
-          const n = (data.name || '').toString().trim();
-          return n || null;
+      const list: StaffRecord[] = snap.docs
+        .map((d) => {
+          const data = d.data() as { name?: string; status?: string; jobRole?: string };
+          return {
+            id: d.id,
+            name: (data.name || '').toString().trim(),
+            jobRole: (data.jobRole || '').toString().trim(),
+            status: data.status,
+          };
         })
-        .filter(Boolean) as string[];
+        .filter((s) => (s.status || 'active') === 'active' && s.name);
+      setStaffRecords(list);
+      const names = list.map((s) => s.name);
       setStaffNameOptions(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b)));
     } catch (error) {
       console.error('Error fetching staff for filters:', error);
@@ -3429,10 +3451,11 @@ export default function EnquiriesPage() {
                               displayEmpty
                             >
                               <MenuItem value="">-None-</MenuItem>
-                              <MenuItem value="Staff 1">Staff 1</MenuItem>
-                              <MenuItem value="Staff 2">Staff 2</MenuItem>
-                              <MenuItem value="Manager">Manager</MenuItem>
-                              <MenuItem value="Telecaller">Telecaller</MenuItem>
+                              {newEnquiryTelecallerSelectOptions.map((name) => (
+                                <MenuItem key={name} value={name}>
+                                  {name}
+                                </MenuItem>
+                              ))}
                             </Select>
                           </FormControl>
                         </TableCell>
@@ -4569,12 +4592,11 @@ export default function EnquiriesPage() {
                         sx={{ minWidth: 200 }}
                       >
                         <MenuItem value="">-None-</MenuItem>
-                        <MenuItem value="Telecaller 1">Telecaller 1</MenuItem>
-                        <MenuItem value="Telecaller 2">Telecaller 2</MenuItem>
-                        <MenuItem value="Telecaller 3">Telecaller 3</MenuItem>
-                        <MenuItem value="Senior Telecaller">Senior Telecaller</MenuItem>
-                        <MenuItem value="Team Lead">Team Lead</MenuItem>
-                        <MenuItem value="Customer Care Executive">Customer Care Executive</MenuItem>
+                        {newEnquiryTelecallerSelectOptions.map((name) => (
+                          <MenuItem key={name} value={name}>
+                            {name}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </FormControl>
                   </Grid>
@@ -4672,10 +4694,11 @@ export default function EnquiriesPage() {
                                     displayEmpty
                                   >
                                     <MenuItem value="">-None-</MenuItem>
-                                    <MenuItem value="Staff 1">Staff 1</MenuItem>
-                                    <MenuItem value="Staff 2">Staff 2</MenuItem>
-                                    <MenuItem value="Manager">Manager</MenuItem>
-                                    <MenuItem value="Telecaller">Telecaller</MenuItem>
+                                    {newEnquiryTelecallerSelectOptions.map((name) => (
+                                      <MenuItem key={name} value={name}>
+                                        {name}
+                                      </MenuItem>
+                                    ))}
                                   </Select>
                                 </FormControl>
                               </TableCell>

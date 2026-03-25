@@ -720,7 +720,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       const extras: (string | undefined | null)[] = [];
       const enqVisits = enquiry?.visits || enquiry?.visitSchedules || [];
       if (fieldName === 'telecaller') {
-        extras.push(watchedTelecaller, enquiry?.telecaller);
+        extras.push(userProfile?.displayName, watchedTelecaller, enquiry?.telecaller);
         (watchedFollowUps || []).forEach((f) => extras.push(f.callerName));
         (enquiry?.followUps || []).forEach((f: { callerName?: string }) => extras.push(f.callerName));
       } else if (fieldName === 'assignedTo') {
@@ -748,7 +748,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       extras.forEach((s) => push(s));
       staffForField.forEach((s) => push(s));
 
-      return merged.length > 0 ? merged : fallbackStaffOptions;
+      if (merged.length > 0) return merged;
+      if (fieldName === 'telecaller') {
+        const dn = userProfile?.displayName?.trim();
+        return dn ? [dn] : [];
+      }
+      return fallbackStaffOptions;
     },
     [
       staffByRole,
@@ -758,6 +763,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       watchedFollowUps,
       watchedVisits,
       enquiry,
+      userProfile?.displayName,
     ]
   );
 

@@ -412,7 +412,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const options = getTelecallerSelectOptions(
       staffList,
       undefined,
-      collectTelecallerExtrasFromEnquiry(enquiry)
+      [...collectTelecallerExtrasFromEnquiry(enquiry), userProfile?.displayName]
     );
     setTelecallerDialogOptions(options);
     setNewFollowUp((prev) => ({
@@ -441,7 +441,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const options = getTelecallerSelectOptions(
       staffList,
       undefined,
-      collectTelecallerExtrasFromEnquiry(enquiry)
+      [...collectTelecallerExtrasFromEnquiry(enquiry), userProfile?.displayName]
     );
     setTelecallerDialogOptions(options);
     const callerName = pickDefaultTelecallerName(options, {

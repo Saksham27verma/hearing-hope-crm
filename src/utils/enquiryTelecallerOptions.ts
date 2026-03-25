@@ -109,7 +109,7 @@ export function getTelecallerSelectOptions(
   extras.forEach((n) => {
     if (!names.includes(n)) names.unshift(n);
   });
-  return names.length > 0 ? names : [...FALLBACK_TELECALLER_NAMES];
+  return names;
 }
 
 /** Prefer signed-in display name, then enquiry telecaller, then first option. */
@@ -118,8 +118,8 @@ export function pickDefaultTelecallerName(
   prefs: { displayName?: string | null; enquiryTelecaller?: string | null }
 ): string {
   const dn = prefs.displayName?.trim() || '';
-  if (dn && options.includes(dn)) return dn;
+  if (dn && (options.length === 0 || options.includes(dn))) return dn;
   const etc = prefs.enquiryTelecaller?.trim() || '';
-  if (etc && options.includes(etc)) return etc;
-  return options[0] || '';
+  if (etc && (options.length === 0 || options.includes(etc))) return etc;
+  return options[0] || dn || etc || '';
 }
