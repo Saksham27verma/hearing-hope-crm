@@ -76,6 +76,7 @@ interface Staff {
   status: 'active' | 'inactive';
   mobileAppEnabled?: boolean;
   mobileAppPasswordHash?: string;
+  staffAppSchedulerAccess?: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -520,6 +521,9 @@ export default function StaffPage() {
                               <Typography variant="body2">{staffMember.name}</Typography>
                               {(staffMember as any).mobileAppEnabled && (
                                 <Chip label="Mobile" size="small" color="info" variant="outlined" />
+                              )}
+                              {(staffMember as any).staffAppSchedulerAccess && (
+                                <Chip label="PWA Scheduler" size="small" color="secondary" variant="outlined" />
                               )}
                             </Box>
                             <Typography variant="caption" color="text.secondary">

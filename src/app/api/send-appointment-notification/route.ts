@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { adminDb } from '@/server/firebaseAdmin';
+import { notifyStaffDevices } from '@/server/notifyStaffDevices';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -26,42 +26,30 @@ export async function POST(req: Request) {
       return jsonError('Missing required fields: patientName, start, homeVisitorStaffId', 400);
     }
 
-    const db = adminDb();
-    const staffDoc = await db.collection('staff').doc(homeVisitorStaffId).get();
-    const pushToken = staffDoc.data()?.pushToken as string | undefined;
-
-    if (!pushToken || !pushToken.startsWith('ExponentPushToken[')) {
-      return NextResponse.json({ ok: true, skipped: 'No push token for staff' });
-    }
-
     const dateTimeStr = formatAppointmentDate(start);
-    const message = {
-      to: pushToken,
-      title: 'New Home Visit Appointment',
+    const result = await notifyStaffDevices(String(homeVisitorStaffId), {
+      title: 'New appointment',
       body: `${patientName} • ${dateTimeStr}`,
-      data: { type: 'appointment', patientName, start },
-      sound: 'default',
-      channelId: 'appointments',
-    };
-
-    const res = await fetch('https://exp.host/--/api/v2/push/send', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
+      data: {
+        type: 'appointment_new',
+        patientName: String(patientName),
+        start: String(start),
       },
-      body: JSON.stringify(message),
     });
 
-    const result = await res.json().catch(() => ({}));
-    if (result.data?.status === 'error') {
-      console.error('Expo push error:', result.data.message);
-      return jsonError(result.data.message || 'Failed to send notification', 500);
+    const anyDelivered = result.expo === 'sent' || result.fcm.sent > 0;
+    if (!anyDelivered && result.expo === 'error') {
+      return jsonError('Push notification failed', 500);
     }
 
-    return NextResponse.json({ ok: true });
-  } catch (err: any) {
+    if (!anyDelivered && result.expo === 'skipped' && result.fcm.attempted === 0) {
+      return NextResponse.json({ ok: true, skipped: 'No push tokens for staff' });
+    }
+
+    return NextResponse.json({ ok: true, ...result });
+  } catch (err: unknown) {
     console.error('send-appointment-notification error:', err);
-    return jsonError(err?.message || 'Failed to send notification', 500);
+    const message = err instanceof Error ? err.message : 'Failed to send notification';
+    return jsonError(message, 500);
   }
 }

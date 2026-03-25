@@ -60,7 +60,20 @@ import PostAddIcon from '@mui/icons-material/PostAdd';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { db } from '@/firebase/config';
-import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, doc, getDoc, where, updateDoc, deleteDoc } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+  doc,
+  getDoc,
+  where,
+  updateDoc,
+  deleteDoc,
+  deleteField,
+} from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -311,6 +324,7 @@ export default function AppointmentSchedulerPage() {
       if (!newAppt.patientName) throw new Error('Select a patient');
       if (newAppt.type === 'center' && !newAppt.centerId) throw new Error('Select a center');
       if (newAppt.type === 'center' && !newAppt.assignedStaffId) throw new Error('Select staff for center visit');
+      if (newAppt.type === 'home' && !newAppt.centerId) throw new Error('Select which center this home visit is for');
       if (newAppt.type === 'home' && !newAppt.homeVisitorStaffId) throw new Error('Select staff for home visit');
 
       const centerName = newAppt.centerId ? centers.find((c) => c.id === newAppt.centerId)?.name : '';
@@ -323,8 +337,11 @@ export default function AppointmentSchedulerPage() {
       };
 
       if (isEditMode && editingAppointmentId) {
-        // Update existing appointment
-        await updateDoc(doc(db, 'appointments', editingAppointmentId), payload);
+        const prev = appointments.find((a) => a.id === editingAppointmentId);
+        const startChanged = Boolean(prev && prev.start !== newAppt.start);
+        const patch = { ...payload } as Record<string, unknown>;
+        if (startChanged) patch.pwaReminderSentForStart = deleteField();
+        await updateDoc(doc(db, 'appointments', editingAppointmentId), patch);
       } else {
         // Create new appointment
         await addDoc(collection(db, 'appointments'), {
@@ -439,6 +456,7 @@ export default function AppointmentSchedulerPage() {
         start: newStart.toISOString(),
         end: newEnd.toISOString(),
         updatedAt: serverTimestamp(),
+        pwaReminderSentForStart: deleteField(),
       });
       await fetchAllData();
       setRescheduleDialogOpen(false);
@@ -650,7 +668,7 @@ export default function AppointmentSchedulerPage() {
           pdf.setTextColor(80, 80, 80);
           
           if (center) {
-            pdf.text(`Enquiry Center: ${center.name}`, margin + 5, yPos);
+            pdf.text(`Center: ${center.name}`, margin + 5, yPos);
             yPos += 5;
           }
 
@@ -1017,6 +1035,10 @@ export default function AppointmentSchedulerPage() {
               </Typography>
               {previewAppt.type === 'center' ? null : (
                 <>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    Center
+                  </Typography>
+                  <Typography variant="body1" sx={{ mb: 1 }}>{previewCenterName || previewAppt.centerName || '—'}</Typography>
                   <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
                     Home Address
                   </Typography>
@@ -1503,6 +1525,32 @@ export default function AppointmentSchedulerPage() {
               </>
             ) : (
               <>
+                <Grid item xs={12} sm={6}>
+                  <TextField
+                    select
+                    fullWidth
+                    required
+                    label="Center"
+                    helperText="Which center this home visit is under"
+                    value={newAppt.centerId}
+                    onChange={(e) => setNewAppt({ ...newAppt, centerId: e.target.value })}
+                    margin="normal"
+                    size={isMobile ? 'small' : 'medium'}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <PlaceIcon fontSize="small" />
+                        </InputAdornment>
+                      ),
+                    }}
+                  >
+                    {centers.map((c) => (
+                      <MenuItem key={c.id} value={c.id}>
+                        {c.name}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
                 <Grid item xs={12}>
                   <TextField
                     fullWidth

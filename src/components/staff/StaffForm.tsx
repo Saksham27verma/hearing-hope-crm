@@ -83,6 +83,8 @@ interface Staff {
   status: 'active' | 'inactive';
   mobileAppEnabled?: boolean;
   mobileAppPasswordHash?: string;
+  /** When true, this staff member can use the Staff Telecalling PWA: full appointment scheduler, all enquiries, staff/center lookups (Firestore rules). */
+  staffAppSchedulerAccess?: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -118,6 +120,7 @@ export default function StaffForm({ initialData, onSave, onCancel, isSaving = fa
     status: initialData?.status || 'active',
     mobileAppEnabled: initialData?.mobileAppEnabled || false,
     mobileAppPasswordHash: initialData?.mobileAppPasswordHash,
+    staffAppSchedulerAccess: initialData?.staffAppSchedulerAccess || false,
   });
 
   // Form validation
@@ -746,6 +749,22 @@ export default function StaffForm({ initialData, onSave, onCancel, isSaving = fa
             }
             label="Enable mobile app login"
           />
+          <FormControlLabel
+            sx={{ display: 'block', mt: 2 }}
+            control={
+              <Switch
+                checked={formData.staffAppSchedulerAccess || false}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, staffAppSchedulerAccess: e.target.checked }))
+                }
+                color="secondary"
+              />
+            }
+            label="Staff Telecalling PWA — full scheduler & enquiries"
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', ml: 4.5, mb: 1, maxWidth: 520 }}>
+            Grants Firestore access to manage all appointments (like CRM scheduler), read enquiries, log calls, and load staff/center lists. Use only for front-desk / telecalling roles.
+          </Typography>
           {formData.mobileAppEnabled && (
             <Box sx={{ mt: 3 }}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
