@@ -14,8 +14,12 @@ function formatAppointmentDate(iso: string): string {
 }
 
 /**
- * Vercel Cron (every 5 minutes): remind assigned staff when an appointment start time is reached.
- * Secured with CRON_SECRET (Vercel sets Authorization: Bearer <CRON_SECRET> when the env var exists).
+ * Remind assigned staff when an appointment start time is reached (30-minute lookback window).
+ * Secured with CRON_SECRET: call with header Authorization: Bearer <CRON_SECRET>.
+ *
+ * Vercel Hobby: cannot schedule this more than once per day, so do not use vercel.json crons for
+ * this route on Hobby. Use Vercel Pro (e.g. cron */5 * * * *) or an external cron (cron-job.org,
+ * etc.) hitting GET this URL every ~5 minutes.
  */
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;

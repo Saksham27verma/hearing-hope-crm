@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/appointment-pwa-reminders",
-      "schedule": "*/5 * * * *"
-    }
-  ]
-}
+{}
