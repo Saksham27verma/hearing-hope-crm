@@ -52,7 +52,7 @@ function buildMessages(input: GenerateAnswerInput) {
   const topExact = input.exactResults.slice(0, MAX_EXACT_RESULTS_FOR_PROMPT);
   const topCitations = input.citations.slice(0, MAX_CITATIONS_FOR_PROMPT);
 
-  let evidenceParts: string[] = [];
+  const evidenceParts: string[] = [];
 
   if (topExact.length) {
     evidenceParts.push(`FACTS:\n${topExact.join('\n')}`);

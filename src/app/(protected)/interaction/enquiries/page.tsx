@@ -1603,7 +1603,7 @@ export default function EnquiriesPage() {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     
-    let allVisits: any[] = [];
+    const allVisits: any[] = [];
     
     enquiries.forEach(enquiry => {
       if (enquiry.visits && enquiry.visits.length > 0) {

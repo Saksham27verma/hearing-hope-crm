@@ -447,7 +447,7 @@ export default function MaterialInPage() {
     
     // Find a generic hearing aid product for now
     // In a real scenario, you'd match the exact product based on serial number
-    let product = products.find(p => 
+    const product = products.find(p => 
       p.type?.toLowerCase().includes('hearing aid') || 
       p.name.toLowerCase().includes('hearing aid')
     );

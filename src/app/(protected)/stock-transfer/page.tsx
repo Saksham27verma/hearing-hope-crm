@@ -489,7 +489,6 @@ const StockTransferPage = () => {
       };
 
       let materialInItemsCount = 0;
-      let purchaseItemsCount = 0;
 
       // Process Material Inward
       console.log('📥 Processing Material Inward documents:', materialInSnap.size);
