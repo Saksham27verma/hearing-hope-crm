@@ -274,9 +274,14 @@ export interface InvoiceData {
     quantity: number;
     rate: number;
     mrp?: number;
+    /** Rupee discount amount (do not use as % in templates). */
     discount?: number;
+    /** 0–100; preferred for HTML invoice tables. */
+    discountPercent?: number;
     gstPercent?: number;
     amount: number;
+    hsnCode?: string;
+    sellingPrice?: number;
   }[];
   
   // Totals

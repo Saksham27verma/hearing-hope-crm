@@ -471,44 +471,134 @@ export const initializeInvoiceProviders = (configs: Record<string, any>) => {
   }
 };
 
+function tsToInvoiceDate(value: any): string {
+  if (value?.toDate && typeof value.toDate === 'function') {
+    try {
+      return value.toDate().toLocaleDateString('en-IN');
+    } catch {
+      /* fall through */
+    }
+  }
+  if (value?.seconds != null) {
+    return new Date(value.seconds * 1000).toLocaleDateString('en-IN');
+  }
+  return new Date().toLocaleDateString('en-IN');
+}
+
 // Helper function to convert sale data to InvoiceData
 export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
+  const dateSource = sale.saleDate ?? sale.visitDate;
+  const invoiceDate = tsToInvoiceDate(dateSource);
+
+  const productItems =
+    sale.products?.map((product: any, index: number) => {
+      const qty = product.quantity || 1;
+      const rate = Number(product.sellingPrice ?? product.finalAmount ?? 0);
+      const mrp = Number(product.mrp) > 0 ? Number(product.mrp) : rate;
+      const discountPercent =
+        typeof product.discountPercent === 'number' && !Number.isNaN(product.discountPercent)
+          ? Math.max(0, Math.min(100, Math.round(product.discountPercent)))
+          : mrp > 0
+            ? Math.max(0, Math.min(100, Math.round(((mrp - rate) / mrp) * 100)))
+            : 0;
+      return {
+        id: product.id || `item-${index}`,
+        name: product.name || 'Unknown Product',
+        description: product.type || '',
+        serialNumber: product.serialNumber || '',
+        quantity: qty,
+        rate,
+        mrp,
+        discount: product.discount || 0,
+        discountPercent,
+        gstPercent: typeof product.gstPercent === 'number' ? product.gstPercent : sale.gstPercentage || 0,
+        amount: rate * qty,
+        hsnCode: product.hsnCode,
+        sellingPrice: rate,
+      };
+    }) || [];
+
+  const manualItems =
+    (sale.manualLineItems || []).map((line: any, index: number) => {
+      const qty = line.quantity || 1;
+      const rate = line.rate || 0;
+      const lineSub = qty * rate;
+      const taxPct = line.taxPercent ?? 0;
+      return {
+        id: line.id || `manual-${index}`,
+        name: line.description || 'Line item',
+        description: '',
+        serialNumber: '',
+        quantity: qty,
+        rate,
+        mrp: rate,
+        discount: 0,
+        discountPercent: 0,
+        gstPercent: taxPct,
+        amount: lineSub,
+        sellingPrice: rate,
+      };
+    }) || [];
+
+  const items = [...productItems, ...manualItems];
+
+  const productSub = (sale.products || []).reduce(
+    (sum: number, product: any) => sum + (product.sellingPrice || product.finalAmount || 0) * (product.quantity || 1),
+    0
+  );
+  const manualSub = (sale.manualLineItems || []).reduce((sum: number, line: any) => {
+    const qty = line.quantity || 1;
+    const rate = line.rate || 0;
+    return sum + qty * rate;
+  }, 0);
+  const subtotal = productSub + manualSub;
+
+  let manualGst = 0;
+  (sale.manualLineItems || []).forEach((line: any) => {
+    const lineSub = (line.quantity || 1) * (line.rate || 0);
+    manualGst += Math.round((lineSub * (line.taxPercent || 0)) / 100);
+  });
+  const productGst = (sale.products || []).reduce((sum: number, p: any) => sum + (p.gstAmount || 0), 0);
+  const totalGST = typeof sale.gstAmount === 'number' ? sale.gstAmount : productGst + manualGst;
+
+  const grandTotal =
+    typeof sale.grandTotal === 'number' && !Number.isNaN(sale.grandTotal)
+      ? sale.grandTotal
+      : (sale.totalAmount || 0) + totalGST;
+
+  let dueStr = '';
+  if (sale.dueDate?.toDate) {
+    try {
+      dueStr = sale.dueDate.toDate().toLocaleDateString('en-IN');
+    } catch {
+      dueStr = '';
+    }
+  } else if (sale.dueDate?.seconds != null) {
+    dueStr = new Date(sale.dueDate.seconds * 1000).toLocaleDateString('en-IN');
+  }
+
   return {
     companyName: 'Hope Hearing Solutions',
     companyAddress: 'Your Company Address\nCity, State - PIN Code',
     companyPhone: '+91 XXXXX XXXXX',
     companyEmail: 'info@hopehearing.com',
     companyGST: 'GST Number Here',
-    
+
     invoiceNumber: sale.invoiceNumber || `INV-${Date.now()}`,
-    invoiceDate: sale.saleDate?.toDate ? 
-      sale.saleDate.toDate().toLocaleDateString('en-IN') : 
-      new Date().toLocaleDateString('en-IN'),
-    
+    invoiceDate,
+    dueDate: dueStr || undefined,
+
     customerName: sale.patientName || 'Walk-in Customer',
     customerAddress: sale.address || '',
     customerPhone: sale.phone || '',
     customerEmail: sale.email || '',
-    
-    items: sale.products?.map((product: any, index: number) => ({
-      id: product.id || `item-${index}`,
-      name: product.name || 'Unknown Product',
-      description: product.type || '',
-      serialNumber: product.serialNumber || '',
-      quantity: product.quantity || 1,
-      rate: product.sellingPrice || product.finalAmount || 0,
-      mrp: product.mrp || 0,
-      discount: product.discount || 0,
-      gstPercent: product.gstPercent || sale.gstPercentage || 0,
-      amount: (product.sellingPrice || product.finalAmount || 0) * (product.quantity || 1),
-    })) || [],
-    
-    subtotal: sale.products?.reduce((sum: number, product: any) => {
-      return sum + (product.sellingPrice || product.finalAmount || 0) * (product.quantity || 1);
-    }, 0) || 0,
-    totalGST: sale.gstAmount || 0,
-    grandTotal: sale.totalAmount || 0,
-    
+
+    items,
+
+    subtotal,
+    totalGST,
+    grandTotal,
+
     referenceDoctor: sale.referenceDoctor?.name || '',
     salesperson: sale.salesperson?.name || '',
     branch: sale.branch || '',
