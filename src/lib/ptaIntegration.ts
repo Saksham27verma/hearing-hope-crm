@@ -10,6 +10,10 @@ export type ExternalPtaReportLink = {
   patientLabel: string;
   viewUrl: string;
   linkedAt?: string;
+  /** Prefer for iframe embed (minimal chrome). Falls back to viewUrl. */
+  embedUrl?: string;
+  /** If PTA API returns pure-tone points, CRM can render PureToneAudiogram without iframe. */
+  audiogramData?: Record<string, unknown>;
 };
 
 export type PtaReportListItem = {
@@ -17,6 +21,8 @@ export type PtaReportListItem = {
   patientName: string;
   viewUrl: string;
   createdAt?: string;
+  embedUrl?: string;
+  audiogramData?: Record<string, unknown>;
 };
 
 function pickString(obj: Record<string, unknown>, keys: string[]): string {
@@ -25,6 +31,17 @@ function pickString(obj: Record<string, unknown>, keys: string[]): string {
     if (typeof v === 'string' && v.trim()) return v.trim();
   }
   return '';
+}
+
+function pickAudiogramObject(o: Record<string, unknown>): Record<string, unknown> | undefined {
+  const keys = ['audiogramData', 'audiogram', 'ptaAudiogram', 'pureToneAudiogram'];
+  for (const k of keys) {
+    const v = o[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      return v as Record<string, unknown>;
+    }
+  }
+  return undefined;
 }
 
 /** Normalize one row from the PTA app (flexible field names). */
@@ -36,11 +53,15 @@ export function normalizePtaReportRow(raw: unknown): PtaReportListItem | null {
   const viewUrl = pickString(o, ['viewUrl', 'url', 'href', 'link', 'publicUrl']);
   if (!id || !viewUrl) return null;
   const createdAt = pickString(o, ['createdAt', 'created_at', 'date', 'testDate']);
+  const embedUrl = pickString(o, ['embedUrl', 'iframeUrl', 'embed', 'audiogramEmbedUrl', 'previewUrl']);
+  const audiogramData = pickAudiogramObject(o);
   return {
     id,
     patientName: patientName || id,
     viewUrl,
     ...(createdAt ? { createdAt } : {}),
+    ...(embedUrl ? { embedUrl } : {}),
+    ...(audiogramData ? { audiogramData } : {}),
   };
 }
 
@@ -64,5 +85,7 @@ export function listItemToStoredLink(item: PtaReportListItem): ExternalPtaReport
     patientLabel: item.patientName,
     viewUrl: item.viewUrl,
     linkedAt: new Date().toISOString(),
+    ...(item.embedUrl ? { embedUrl: item.embedUrl } : {}),
+    ...(item.audiogramData ? { audiogramData: item.audiogramData } : {}),
   };
 }

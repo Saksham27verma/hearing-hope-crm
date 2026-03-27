@@ -1120,6 +1120,62 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                               <Link href={activeVisitExternalPta.viewUrl} target="_blank" rel="noopener noreferrer" variant="body2">
                                 Open PTA report in new tab
                               </Link>
+                              {activeVisitExternalPta.audiogramData &&
+                              typeof activeVisitExternalPta.audiogramData === 'object' &&
+                              Object.keys(activeVisitExternalPta.audiogramData).length > 0 ? (
+                                <Box sx={{ mt: 2 }}>
+                                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
+                                    Audiogram (from PTA)
+                                  </Typography>
+                                  <PureToneAudiogram
+                                    data={activeVisitExternalPta.audiogramData as any}
+                                    onChange={() => {}}
+                                    editable={false}
+                                    readOnly={true}
+                                  />
+                                </Box>
+                              ) : (
+                                <Box sx={{ mt: 2.5 }}>
+                                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
+                                    PTA audiogram preview
+                                  </Typography>
+                                  <Box
+                                    sx={{
+                                      borderRadius: 2,
+                                      overflow: 'hidden',
+                                      border: 1,
+                                      borderColor: 'divider',
+                                      height: { xs: 420, sm: 520 },
+                                      bgcolor: 'grey.100',
+                                      maxWidth: '100%',
+                                    }}
+                                  >
+                                    <Box
+                                      component="iframe"
+                                      title={`PTA report ${activeVisitExternalPta.reportId}`}
+                                      src={activeVisitExternalPta.embedUrl || activeVisitExternalPta.viewUrl}
+                                      sx={{
+                                        width: '100%',
+                                        height: '100%',
+                                        border: 0,
+                                        display: 'block',
+                                      }}
+                                      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                                    />
+                                  </Box>
+                                  <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
+                                    Embedded PTA report. If this stays blank, your PTA app may block iframes (
+                                    <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                                      X-Frame-Options
+                                    </Box>
+                                    ) — use &quot;Open PTA report&quot; above, or add an embed URL (
+                                    <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                                      embedUrl
+                                    </Box>
+                                    ) in the list API.
+                                  </Typography>
+                                </Box>
+                              )}
                             </Box>
                           )}
                           {activeVisitAudiogramData && (
