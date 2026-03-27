@@ -31,7 +31,7 @@ import {
   Settings as SettingsIcon,
   Preview as PreviewIcon,
 } from '@mui/icons-material';
-import { InvoiceConfig } from '@/utils/pdfGenerator';
+import type { InvoiceConfig } from '@/utils/invoicePdfPreferences';
 
 interface InvoiceTemplateSelectorProps {
   open: boolean;

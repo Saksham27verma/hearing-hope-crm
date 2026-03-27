@@ -59,7 +59,8 @@ import {
   Share as ShareIcon,
   Add as AddIcon,
   Close as CloseIcon,
-  PhoneInTalk as PhoneInTalkIcon
+  PhoneInTalk as PhoneInTalkIcon,
+  PictureAsPdf as PictureAsPdfIcon,
 } from '@mui/icons-material';
 import { collection, doc, getDoc, getDocs, query, orderBy, updateDoc, Timestamp, where, serverTimestamp } from 'firebase/firestore';
 import {
@@ -68,7 +69,8 @@ import {
   openTrialReceiptPDF,
   downloadTrialReceiptPDF,
 } from '@/utils/receiptGenerator';
-import { openEnquirySaleInvoicePDF, downloadEnquirySaleInvoicePDF } from '@/utils/pdfGenerator';
+import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
+import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
 import {
   ENQUIRY_STATUS_OPTIONS,
   getEnquiryStatusMeta,
@@ -227,7 +229,7 @@ const InfoRow = ({ icon, label, value, color = 'text.primary' }: any) => {
 
 export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
-  const { userProfile, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
   const [resolvedParams, setResolvedParams] = useState<{ id: string } | null>(null);
   const [enquiry, setEnquiry] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -257,6 +259,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const [enquiryAppointments, setEnquiryAppointments] = useState<any[]>([]);
   const [journeyMenuAnchor, setJourneyMenuAnchor] = useState<null | HTMLElement>(null);
   const [journeyStatusSaving, setJourneyStatusSaving] = useState(false);
+  const [invoicePdfOpen, setInvoicePdfOpen] = useState(false);
+  const [invoicePdfData, setInvoicePdfData] = useState<ReturnType<typeof convertSaleToInvoiceData> | null>(null);
 
   const fetchEnquiry = async (id: string) => {
     try {
@@ -1506,7 +1510,6 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   title="Receipts & invoices"
                   subtitle="Booking and trial receipts, plus sales invoices (PDF)"
                 />
-                
                 <Stack spacing={2}>
                   {bookingReceipts.map(({ visit, index }: { visit: any; index: number }) => (
                     <Paper key={`booking-${index}`} variant="outlined" sx={{ p: 2, borderRadius: 2.5, bgcolor: alpha('#4f46e5', 0.03), borderColor: alpha('#4f46e5', 0.12) }}>
@@ -1630,23 +1633,23 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           ? ` · Tax: ₹${Number(visit.taxAmount).toLocaleString('en-IN')}`
                           : ''}
                       </Typography>
-                      <Stack direction="row" spacing={1}>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                         <Button
                           size="small"
-                          startIcon={<VisibilityIcon />}
-                          onClick={() => openEnquirySaleInvoicePDF(enquiry, visit)}
+                          variant="contained"
+                          startIcon={<PictureAsPdfIcon />}
+                          onClick={() => {
+                            const payload = enquiryVisitToInvoiceSalePayload(enquiry, visit);
+                            setInvoicePdfData(convertSaleToInvoiceData(payload));
+                            setInvoicePdfOpen(true);
+                          }}
                           sx={{ borderRadius: 99 }}
                         >
-                          View
+                          Invoice PDF…
                         </Button>
-                        <Button
-                          size="small"
-                          startIcon={<DownloadIcon />}
-                          onClick={() => downloadEnquirySaleInvoicePDF(enquiry, visit)}
-                          sx={{ borderRadius: 99 }}
-                        >
-                          Download
-                        </Button>
+                        <Typography variant="caption" color="text.secondary" sx={{ width: '100%', mt: 0.5 }}>
+                          Same template picker as Sales &amp; Invoicing — choose an Invoice Manager template, then open, download, or print.
+                        </Typography>
                       </Stack>
                     </Paper>
                   ))}
@@ -1987,6 +1990,19 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           {followUpFeedback.message}
         </Alert>
       </Snackbar>
+
+      {invoicePdfData && (
+        <InvoicePrintConfirmModal
+          open={invoicePdfOpen}
+          onClose={() => {
+            setInvoicePdfOpen(false);
+            setInvoicePdfData(null);
+          }}
+          invoiceData={invoicePdfData}
+          userId={user?.uid}
+          extraPdfActions
+        />
+      )}
     </PageShell>
   );
 }

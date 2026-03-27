@@ -17,6 +17,7 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '@/context/AuthContext';
+import SqueezeLoader from '@/components/ui/loading-indicator';
 
 const GoogleLogo = () => (
   <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
@@ -84,17 +85,14 @@ const LoginPage = () => {
 
   if (authLoading) {
     return (
-      <Box 
-        sx={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          alignItems: 'center', 
-          height: '100vh',
-          backgroundColor: '#f8f9fa'
-        }}
-      >
-        <CircularProgress color="primary" />
-      </Box>
+      <SqueezeLoader
+        backgroundColor="#f8f9fa"
+        caption="Signing you in…"
+        subcaption="Checking your account"
+        size={64}
+        spinDuration={10}
+        squeezeDuration={3}
+      />
     );
   }
 

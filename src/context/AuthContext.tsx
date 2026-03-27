@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 
 // Define user role type
@@ -21,6 +21,7 @@ export interface UserProfile {
 interface AuthContextInterface {
   user: any | null;
   userProfile: UserProfile | null;
+  /** True only until the first Firebase auth + user profile resolution (not used for random mutations). */
   loading: boolean;
   error: string | null;
   signIn: (email: string, password: string) => Promise<void>;
@@ -59,46 +60,50 @@ const AuthContext = createContext<AuthContextInterface>({
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(false);
+  /** True until Firebase has delivered the first auth state (avoids flash to /login on refresh). */
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   const router = useRouter();
   const pathname = usePathname();
+  /** Keep latest path for onAuthStateChanged without re-subscribing on every navigation. */
+  const pathnameRef = useRef(pathname);
+  pathnameRef.current = pathname;
+  /** Next.js `useRouter()` identity can change across navigations; never re-subscribe auth because of it. */
+  const routerRef = useRef(router);
+  routerRef.current = router;
 
-  // Initialize auth listener
+  // Single long-lived auth listener — deps must stay empty: pathname via pathnameRef, router via routerRef.
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
-    
+
     const initAuth = async () => {
       try {
-        setLoading(true);
-        
-        // Dynamic import to prevent bundling issues
+        // Initial `useState(true)` covers first paint; do NOT setLoading(true) here or a re-run blanks the whole app.
+
         const firebaseModule = await import('../firebase/config');
         const { auth, db } = firebaseModule;
         const { onAuthStateChanged, signOut: firebaseSignOut } = await import('firebase/auth');
-        const { doc, getDoc, setDoc } = await import('firebase/firestore');
-        
+        const { doc, getDoc } = await import('firebase/firestore');
+
         if (!auth) {
           console.error('Firebase Auth not initialized');
           setError('Firebase configuration error');
           setLoading(false);
           return;
         }
-        
+
         unsubscribe = onAuthStateChanged(auth, async (authUser) => {
           if (authUser) {
             setUser(authUser);
 
-            // Security: ONLY allow users that already exist in Firestore `users/{uid}`.
-            // Never auto-create admin profiles (this was making every login an admin).
             if (!db) {
               await firebaseSignOut(auth);
               setUser(null);
               setUserProfile(null);
               setError('Database not available. Please try again.');
               setLoading(false);
-              router.push('/login');
+              routerRef.current.push('/login');
               return;
             }
 
@@ -110,7 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setUserProfile(null);
                 setError('Not authorized. Ask admin to add your user first.');
                 setLoading(false);
-                router.push('/login');
+                routerRef.current.push('/login');
                 return;
               }
 
@@ -123,33 +128,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setUserProfile(null);
               setError('Failed to load your access profile. Please try again.');
               setLoading(false);
-              router.push('/login');
+              routerRef.current.push('/login');
               return;
             }
           } else {
             setUser(null);
             setUserProfile(null);
             setLoading(false);
-            
-            if (pathname !== '/login' && pathname !== '/') {
-              router.push('/login');
+
+            const p = pathnameRef.current;
+            if (p && p !== '/login' && p !== '/') {
+              routerRef.current.push('/login');
             }
           }
         });
-        
       } catch (err) {
         console.error('Auth initialization error:', err);
         setError('Firebase initialization failed');
         setLoading(false);
       }
     };
-    
+
     initAuth();
-    
+
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [router, pathname]);
+  }, []);
 
   // Sign in function
   const signIn = async (email: string, password: string) => {
@@ -170,7 +175,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = async () => {
     try {
       setError(null);
-      setLoading(true);
 
       const { auth, db } = await import('../firebase/config');
       const { GoogleAuthProvider, signInWithPopup, signOut: firebaseSignOut } = await import('firebase/auth');
@@ -235,11 +239,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       router.push('/dashboard');
-      setLoading(false);
     } catch (err: any) {
       console.error('Google sign-in error:', err);
       setError(err.message || 'Failed to sign in with Google');
-      setLoading(false);
       throw err;
     }
   };
@@ -267,16 +269,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     branchId?: string
   ) => {
     try {
-      setLoading(true);
       setError(null);
-      
+
       const { auth, db } = await import('../firebase/config');
       const { createUserWithEmailAndPassword } = await import('firebase/auth');
       const { doc, setDoc } = await import('firebase/firestore');
-      
+
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const newUser = userCredential.user;
-      
+
       const userProfile: UserProfile = {
         uid: newUser.uid,
         email: newUser.email!,
@@ -286,13 +287,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         createdAt: Date.now(),
         branchId,
       };
-      
+
       await setDoc(doc(db, 'users', newUser.uid), userProfile);
-      setLoading(false);
     } catch (err: any) {
       console.error('Create user error:', err);
       setError(err.message || 'Failed to create user');
-      setLoading(false);
     }
   };
 
@@ -300,8 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const changePassword = async (currentPassword: string, newPassword: string) => {
     try {
       setError(null);
-      setLoading(true);
-      
+
       if (!user || !user.email) {
         throw new Error('User not authenticated');
       }
@@ -316,19 +314,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const { auth } = await import('../firebase/config');
       const { signInWithEmailAndPassword, updatePassword, EmailAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
-      
+
       // Re-authenticate user with current password
       const credential = EmailAuthProvider.credential(user.email, currentPassword);
       await reauthenticateWithCredential(user, credential);
-      
+
       // Update password
       await updatePassword(user, newPassword);
-      
-      setLoading(false);
     } catch (err: any) {
       console.error('Change password error:', err);
       setError(err.message || 'Failed to change password');
-      setLoading(false);
       throw err;
     }
   };
@@ -337,8 +332,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const changeEmail = async (newEmail: string, password: string) => {
     try {
       setError(null);
-      setLoading(true);
-      
+
       if (!user || !user.email) {
         throw new Error('User not authenticated');
       }
@@ -351,14 +345,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const { auth } = await import('../firebase/config');
       const { updateEmail, EmailAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
-      
+
       // Re-authenticate user with password
       const credential = EmailAuthProvider.credential(user.email, password);
       await reauthenticateWithCredential(user, credential);
-      
+
       // Update email
       await updateEmail(user, newEmail);
-      
+
       // Update email in Firestore user profile
       const { db } = await import('../firebase/config');
       if (db) {
@@ -368,12 +362,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           updatedAt: Date.now(),
         });
       }
-      
-      setLoading(false);
     } catch (err: any) {
       console.error('Change email error:', err);
       setError(err.message || 'Failed to change email');
-      setLoading(false);
       throw err;
     }
   };
@@ -382,18 +373,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const resetUserPassword = async (email: string) => {
     try {
       setError(null);
-      setLoading(true);
-      
+
       const { auth } = await import('../firebase/config');
       const { sendPasswordResetEmail } = await import('firebase/auth');
-      
+
       await sendPasswordResetEmail(auth, email);
-      
-      setLoading(false);
     } catch (err: any) {
       console.error('Reset password error:', err);
       setError(err.message || 'Failed to send password reset email');
-      setLoading(false);
       throw err;
     }
   };
@@ -404,8 +391,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateUserPassword = async (uid: string, newPassword: string) => {
     try {
       setError(null);
-      setLoading(true);
-      
+
       // Validate password strength
       if (newPassword.length < 8) {
         throw new Error('Password must be at least 8 characters long');
@@ -429,12 +415,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         throw new Error('Database not available. Please use password reset email instead.');
       }
-      
-      setLoading(false);
     } catch (err: any) {
       console.error('Update user password error:', err);
       setError(err.message || 'Failed to update user password');
-      setLoading(false);
       throw err;
     }
   };
@@ -445,8 +428,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateUserEmail = async (uid: string, newEmail: string) => {
     try {
       setError(null);
-      setLoading(true);
-      
+
       // Validate email format
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(newEmail)) {
@@ -462,7 +444,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           updatedAt: serverTimestamp(),
           emailUpdatedBy: user?.uid,
         });
-        
+
         // Store email update request for Cloud Function to process Auth update
         await setDocRequest(doc(db, 'emailUpdateRequests', `${uid}_${Date.now()}`), {
           uid,
@@ -474,12 +456,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         throw new Error('Database not available');
       }
-      
-      setLoading(false);
     } catch (err: any) {
       console.error('Update user email error:', err);
       setError(err.message || 'Failed to update user email');
-      setLoading(false);
       throw err;
     }
   };

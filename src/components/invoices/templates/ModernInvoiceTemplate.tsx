@@ -318,9 +318,8 @@ const ModernInvoiceTemplate: React.FC<{ data: InvoiceData }> = ({ data }) => (
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>
-          Thank you for your business!
-          {'\n'}
-          This invoice was generated electronically and is valid without signature.
+          {data.footerNote ||
+            'Thank you for your business!\nThis invoice was generated electronically and is valid without signature.'}
         </Text>
       </View>
     </Page>

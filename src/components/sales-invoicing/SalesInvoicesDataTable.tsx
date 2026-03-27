@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import {
   Paper,
   Table,
@@ -13,9 +14,10 @@ import {
   TableSortLabel,
   Typography,
   IconButton,
-  Chip,
+  Button,
   Box,
   Tooltip,
+  Chip,
   useMediaQuery,
   useTheme,
 } from '@mui/material';
@@ -25,11 +27,34 @@ import {
   Print as PrintIcon,
   Visibility as VisibilityIcon,
   PostAdd as PostAddIcon,
+  OpenInNew as OpenInNewIcon,
+  HighlightOff as VoidInvoiceIcon,
 } from '@mui/icons-material';
 import type { UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import { Timestamp } from 'firebase/firestore';
 
-export type SortKey = 'invoiceNumber' | 'date' | 'client' | 'linked' | 'total' | 'status';
+export type SortKey = 'invoiceNumber' | 'date' | 'client' | 'linked' | 'total';
+
+/** Enquiry patient profile URL, or visitors list when only a visitor id is linked. */
+function patientProfileHref(r: UnifiedInvoiceRow): string | null {
+  if (r.kind === 'saved' && r.savedSale) {
+    if (r.savedSale.enquiryId) return `/interaction/enquiries/${r.savedSale.enquiryId}`;
+    if (r.savedSale.visitorId) return '/interaction/visitors';
+    return null;
+  }
+  if (r.kind === 'enquiry_pending' && r.derivedEnquiry) {
+    if (r.derivedEnquiry.enquiryId) return `/interaction/enquiries/${r.derivedEnquiry.enquiryId}`;
+    if (r.derivedEnquiry.visitorId) return '/interaction/visitors';
+  }
+  return null;
+}
+
+function patientProfileButtonLabel(r: UnifiedInvoiceRow): string {
+  if (r.kind === 'saved' && r.savedSale?.enquiryId) return 'Patient profile';
+  if (r.kind === 'enquiry_pending' && r.derivedEnquiry?.enquiryId) return 'Patient profile';
+  if (r.linkedEnquiryRef) return 'Open visitor list';
+  return 'Profile';
+}
 
 interface SalesInvoicesDataTableProps {
   rows: UnifiedInvoiceRow[];
@@ -49,21 +74,8 @@ interface SalesInvoicesDataTableProps {
   onCreateFromEnquiry: (row: UnifiedInvoiceRow) => void;
   isAdmin: boolean;
   highlightedRowId?: string | null;
-}
-
-function statusChipColor(variant: UnifiedInvoiceRow['statusVariant']): 'success' | 'warning' | 'error' | 'info' | 'default' {
-  switch (variant) {
-    case 'paid':
-      return 'success';
-    case 'pending':
-      return 'warning';
-    case 'overdue':
-      return 'error';
-    case 'uninvoiced':
-      return 'info';
-    default:
-      return 'default';
-  }
+  /** Admin-only: soft-void invoice (Firestore `cancelled`). */
+  onCancelSaved?: (row: UnifiedInvoiceRow) => void;
 }
 
 export default function SalesInvoicesDataTable({
@@ -84,6 +96,7 @@ export default function SalesInvoicesDataTable({
   onCreateFromEnquiry,
   isAdmin,
   highlightedRowId,
+  onCancelSaved,
 }: SalesInvoicesDataTableProps) {
   const theme = useTheme();
   const compact = useMediaQuery(theme.breakpoints.down('md'));
@@ -115,38 +128,58 @@ export default function SalesInvoicesDataTable({
               {sortable('invoiceNumber', 'Invoice #')}
               {sortable('date', 'Date')}
               {sortable('client', 'Client')}
-              {!compact && sortable('linked', 'Linked enquiry')}
+              {!compact && sortable('linked', 'Linked profile')}
               {sortable('total', 'Total', 'right')}
-              {sortable('status', 'Status')}
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {slice.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={compact ? 6 : 7} align="center" sx={{ py: 6, color: 'text.secondary' }}>
+                <TableCell colSpan={compact ? 5 : 6} align="center" sx={{ py: 6, color: 'text.secondary' }}>
                   No invoices match your filters.
                 </TableCell>
               </TableRow>
             ) : (
-              slice.map((r) => (
+              slice.map((r) => {
+                const voided = !!r.isCancelled;
+                return (
                 <TableRow
                   key={r.rowId}
-                  hover
+                  hover={!voided}
                   selected={highlightedRowId === r.rowId}
                   sx={{
+                    ...(voided && {
+                      opacity: 0.88,
+                      bgcolor: 'action.hover',
+                      borderLeft: '3px solid',
+                      borderLeftColor: 'warning.main',
+                    }),
                     '&.Mui-selected': { bgcolor: 'rgba(79, 70, 229, 0.08)' },
-                    '&:hover': { bgcolor: 'rgba(79, 70, 229, 0.04)' },
+                    '&:hover': { bgcolor: voided ? 'action.selected' : 'rgba(79, 70, 229, 0.04)' },
                   }}
                 >
                   <TableCell>
-                    <Typography variant="body2" fontWeight={600} sx={{ fontFamily: 'ui-monospace, monospace' }}>
-                      {r.invoiceNumber || '—'}
-                    </Typography>
+                    <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
+                      <Typography
+                        variant="body2"
+                        fontWeight={600}
+                        sx={{
+                          fontFamily: 'ui-monospace, monospace',
+                          textDecoration: voided ? 'line-through' : undefined,
+                          color: voided ? 'text.secondary' : undefined,
+                        }}
+                      >
+                        {r.invoiceNumber || '—'}
+                      </Typography>
+                      {voided && (
+                        <Chip label="Cancelled" size="small" color="warning" variant="outlined" sx={{ fontWeight: 700, height: 22 }} />
+                      )}
+                    </Box>
                   </TableCell>
-                  <TableCell>{formatDate(r.date as Timestamp)}</TableCell>
+                  <TableCell sx={{ color: voided ? 'text.secondary' : undefined }}>{formatDate(r.date as Timestamp)}</TableCell>
                   <TableCell>
-                    <Typography variant="body2" fontWeight={600}>
+                    <Typography variant="body2" fontWeight={600} sx={{ color: voided ? 'text.secondary' : undefined }}>
                       {r.clientName}
                     </Typography>
                     {r.clientPhone && (
@@ -157,20 +190,38 @@ export default function SalesInvoicesDataTable({
                   </TableCell>
                   {!compact && (
                     <TableCell>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontFamily: 'ui-monospace, monospace', fontSize: '0.8rem' }}>
-                        {r.linkedEnquiryRef ? `${r.linkedEnquiryRef.slice(0, 10)}…` : '—'}
-                      </Typography>
+                      {patientProfileHref(r) ? (
+                        <Button
+                          component={Link}
+                          href={patientProfileHref(r)!}
+                          size="small"
+                          variant="outlined"
+                          color="primary"
+                          startIcon={<OpenInNewIcon sx={{ fontSize: 16 }} />}
+                          sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap' }}
+                        >
+                          {patientProfileButtonLabel(r)}
+                        </Button>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          —
+                        </Typography>
+                      )}
                     </TableCell>
                   )}
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>
+                  <TableCell
+                    align="right"
+                    sx={{
+                      fontWeight: 700,
+                      textDecoration: voided ? 'line-through' : undefined,
+                      color: voided ? 'text.secondary' : undefined,
+                    }}
+                  >
                     {formatCurrency(r.total)}
-                  </TableCell>
-                  <TableCell>
-                    <Chip label={r.statusLabel} size="small" color={statusChipColor(r.statusVariant)} variant={r.statusVariant === 'uninvoiced' ? 'outlined' : 'filled'} sx={{ fontWeight: 600 }} />
                   </TableCell>
                   <TableCell align="right">
                     <Box display="flex" justifyContent="flex-end" flexWrap="wrap" gap={0.25}>
-                      {r.kind === 'saved' && (
+                      {r.kind === 'saved' && !voided && (
                         <>
                           <Tooltip title="Edit">
                             <IconButton size="small" color="primary" onClick={() => onEditSaved(r)}>
@@ -181,6 +232,13 @@ export default function SalesInvoicesDataTable({
                             <Tooltip title="Delete">
                               <IconButton size="small" color="error" onClick={() => onDeleteSaved(r.savedSale!.id!)}>
                                 <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          {isAdmin && onCancelSaved && r.savedSale?.id && (
+                            <Tooltip title="Cancel invoice (void)">
+                              <IconButton size="small" color="warning" onClick={() => onCancelSaved(r)}>
+                                <VoidInvoiceIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
                           )}
@@ -195,6 +253,11 @@ export default function SalesInvoicesDataTable({
                             </IconButton>
                           </Tooltip>
                         </>
+                      )}
+                      {r.kind === 'saved' && voided && (
+                        <Typography variant="caption" color="text.secondary" sx={{ py: 0.5, px: 0.5 }}>
+                          Voided
+                        </Typography>
                       )}
                       {r.kind === 'enquiry_pending' && (
                         <>
@@ -213,7 +276,8 @@ export default function SalesInvoicesDataTable({
                     </Box>
                   </TableCell>
                 </TableRow>
-              ))
+              );
+              })
             )}
           </TableBody>
         </Table>

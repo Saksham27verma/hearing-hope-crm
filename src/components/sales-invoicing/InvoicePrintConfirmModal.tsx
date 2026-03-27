@@ -25,6 +25,8 @@ import {
   createInvoicePdfBlobFromElement,
   DEFAULT_INVOICE_PDF_SETTINGS,
   openPdfBlobPrintDialog,
+  openPdfBlobInNewTab,
+  downloadPdfBlob,
 } from '@/utils/invoicePdfFromElement';
 
 export const invoicePrintTemplateStorageKey = (uid: string) => `invoicePrintTemplate:${uid}`;
@@ -44,15 +46,24 @@ interface InvoicePrintConfirmModalProps {
   onClose: () => void;
   invoiceData: InvoiceData;
   userId: string | undefined;
+  /** Patient profile / enquiry: also offer open-in-browser and download (same template as print). */
+  extraPdfActions?: boolean;
 }
 
-export default function InvoicePrintConfirmModal({ open, onClose, invoiceData, userId }: InvoicePrintConfirmModalProps) {
+export default function InvoicePrintConfirmModal({
+  open,
+  onClose,
+  invoiceData,
+  userId,
+  extraPdfActions = false,
+}: InvoicePrintConfirmModalProps) {
   const printRef = useRef<HTMLDivElement>(null);
   const [templates, setTemplates] = useState<FirestoreTemplate[]>([]);
   const [fullById, setFullById] = useState<Record<string, FirestoreTemplate>>({});
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string>('');
   const [printing, setPrinting] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selected = templates.find((t) => t.id === selectedId);
@@ -94,15 +105,29 @@ export default function InvoicePrintConfirmModal({ open, onClose, invoiceData, u
     if (open) loadTemplates();
   }, [open, loadTemplates]);
 
+  const renderPdfBlob = async (): Promise<Blob> => {
+    if (!printRef.current) throw new Error('Invoice preview is not ready yet.');
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const { blob } = await createInvoicePdfBlobFromElement(
+      printRef.current,
+      invoiceData.invoiceNumber,
+      DEFAULT_INVOICE_PDF_SETTINGS
+    );
+    return blob;
+  };
+
+  const persistTemplateChoice = () => {
+    if (userId && selectedId) localStorage.setItem(invoicePrintTemplateStorageKey(userId), selectedId);
+  };
+
   const handleConfirmPrint = async () => {
     if (!selectedId || !printRef.current) return;
     setPrinting(true);
     setError(null);
     try {
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const { blob } = await createInvoicePdfBlobFromElement(printRef.current, invoiceData.invoiceNumber, DEFAULT_INVOICE_PDF_SETTINGS);
+      const blob = await renderPdfBlob();
       openPdfBlobPrintDialog(blob);
-      if (userId) localStorage.setItem(invoicePrintTemplateStorageKey(userId), selectedId);
+      persistTemplateChoice();
       onClose();
     } catch (e) {
       console.error(e);
@@ -112,17 +137,56 @@ export default function InvoicePrintConfirmModal({ open, onClose, invoiceData, u
     }
   };
 
+  const handleOpenInBrowser = async () => {
+    if (!selectedId || !printRef.current) return;
+    setPdfBusy(true);
+    setError(null);
+    try {
+      const blob = await renderPdfBlob();
+      openPdfBlobInNewTab(blob);
+      persistTemplateChoice();
+      onClose();
+    } catch (e) {
+      console.error(e);
+      setError('Failed to generate PDF. Try again.');
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!selectedId || !printRef.current) return;
+    setPdfBusy(true);
+    setError(null);
+    try {
+      const blob = await renderPdfBlob();
+      const safe = `invoice-${invoiceData.invoiceNumber || 'INV'}.pdf`.replace(/[^\w.-]+/g, '-');
+      downloadPdfBlob(blob, safe);
+      persistTemplateChoice();
+      onClose();
+    } catch (e) {
+      console.error(e);
+      setError('Failed to generate PDF. Try again.');
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  const busy = printing || pdfBusy;
+
   const visualTemplate: InvoiceVisualTemplate = 'modern';
 
   return (
     <>
-      <Dialog open={open} onClose={printing ? undefined : onClose} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+      <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
         <DialogTitle>
           <Typography variant="h6" fontWeight={700}>
-            Print invoice
+            {extraPdfActions ? 'Invoice PDF' : 'Print invoice'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Choose a template, then confirm to open the print dialog.
+            {extraPdfActions
+              ? 'Choose a template from Invoice Manager, then open, download, or print — same as Sales & Invoicing.'
+              : 'Choose a template, then confirm to open the print dialog.'}
           </Typography>
         </DialogTitle>
         <DialogContent>
@@ -177,15 +241,43 @@ export default function InvoicePrintConfirmModal({ open, onClose, invoiceData, u
             </Box>
           )}
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={onClose} disabled={printing} sx={{ borderRadius: 2 }}>
+        <DialogActions
+          sx={{
+            px: 3,
+            pb: 2,
+            flexWrap: 'wrap',
+            gap: 1,
+            justifyContent: 'flex-end',
+          }}
+        >
+          <Button onClick={onClose} disabled={busy} sx={{ borderRadius: 2 }}>
             Cancel
           </Button>
+          {extraPdfActions && (
+            <>
+              <Button
+                variant="outlined"
+                onClick={handleOpenInBrowser}
+                disabled={busy || !selectedId || templates.length === 0}
+                sx={{ borderRadius: 2 }}
+              >
+                {pdfBusy && !printing ? 'Generating…' : 'Open in browser'}
+              </Button>
+              <Button
+                variant="outlined"
+                onClick={handleDownloadPdf}
+                disabled={busy || !selectedId || templates.length === 0}
+                sx={{ borderRadius: 2 }}
+              >
+                {pdfBusy && !printing ? 'Generating…' : 'Download PDF'}
+              </Button>
+            </>
+          )}
           <Button
             variant="contained"
             startIcon={printing ? <CircularProgress size={18} color="inherit" /> : <PrintIcon />}
             onClick={handleConfirmPrint}
-            disabled={printing || !selectedId || templates.length === 0}
+            disabled={busy || !selectedId || templates.length === 0}
             sx={{ borderRadius: 2 }}
           >
             {printing ? 'Generating…' : 'Confirm & print'}

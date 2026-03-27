@@ -293,6 +293,8 @@ export interface InvoiceData {
   // Additional Information
   notes?: string;
   terms?: string;
+  /** Replaces default thank-you lines in the PDF footer when set (billing style). */
+  footerNote?: string;
   paymentMethod?: string;
   referenceDoctor?: string;
   salesperson?: string;
@@ -475,8 +477,8 @@ const InvoiceTemplate: React.FC<{ data: InvoiceData }> = ({ data }) => (
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>
-          Thank you for your business!
-          {'\n'}This is a computer-generated invoice and does not require a physical signature.
+          {data.footerNote ||
+            'Thank you for your business!\nThis is a computer-generated invoice and does not require a physical signature.'}
         </Text>
       </View>
     </Page>

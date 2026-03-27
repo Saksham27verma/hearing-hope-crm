@@ -245,7 +245,18 @@ export default function CrmSidebar({
                     <button
                       type="button"
                       style={applyActiveRow(!!parentRowActive)}
-                      onClick={() => toggleMenu(item.text)}
+                      onClick={() => {
+                        // Collapsed rail: child links only render when `showLabels` is true.
+                        // Expand first, then ensure this submenu is open (do not toggle closed if it was already open).
+                        if (!showLabels && hasChildren) {
+                          onMouseEnter?.();
+                          if (!openMenus[item.text]) {
+                            toggleMenu(item.text);
+                          }
+                          return;
+                        }
+                        toggleMenu(item.text);
+                      }}
                       onMouseEnter={(e) => {
                         if (!parentRowActive) {
                           e.currentTarget.style.backgroundColor = CRM_ORANGE_GHOST_HOVER;

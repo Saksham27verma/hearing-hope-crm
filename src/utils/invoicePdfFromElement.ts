@@ -82,3 +82,21 @@ export function openPdfBlobPrintDialog(blob: Blob): void {
     }
   }, 500);
 }
+
+/** Open generated invoice PDF in a new tab (preview) without triggering print. */
+export function openPdfBlobInNewTab(blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(url), 120_000);
+}
+
+export function downloadPdfBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName.replace(/[^\w.-]+/g, '-');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}

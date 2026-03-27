@@ -92,8 +92,17 @@ import { deriveEnquirySalesFromDocs } from '@/lib/sales-invoicing/enquiryDerivat
 import { buildUnifiedInvoiceRows } from '@/lib/sales-invoicing/mergeUnifiedRows';
 import { filterUnifiedRows } from '@/lib/sales-invoicing/filterRows';
 import { timestampToMs } from '@/lib/sales-invoicing/timestamps';
-import type { DerivedEnquirySale, ManualLineItem, PaymentStatus, SaleRecord, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
+import type {
+  DerivedEnquirySale,
+  InvoiceTablePaymentFilter,
+  ManualLineItem,
+  PaymentStatus,
+  SaleRecord,
+  UnifiedInvoiceRow,
+} from '@/lib/sales-invoicing/types';
 import { prefillSaleFromDerivedEnquiry } from '@/lib/sales-invoicing/enquiryPrefill';
+import { allocateNextInvoiceNumber, peekNextInvoiceNumber } from '@/services/invoiceNumbering';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
 
 // ─── Types ───
 
@@ -161,6 +170,10 @@ interface Sale {
   enquiryId?: string;
   visitorId?: string;
   enquiryVisitIndex?: number;
+  cancelled?: boolean;
+  cancelledAt?: Timestamp;
+  cancelledByUid?: string;
+  cancelReason?: string;
 }
 
 interface Center {
@@ -171,30 +184,11 @@ interface Center {
 
 // ─── Constants ───
 
-const PAYMENT_METHODS = [
-  { value: 'cash', label: 'Cash' },
-  { value: 'card', label: 'Card' },
-  { value: 'upi', label: 'UPI' },
-  { value: 'bank_transfer', label: 'Bank Transfer' },
-  { value: 'cheque', label: 'Cheque' },
-  { value: 'emi', label: 'EMI' },
-  { value: 'mixed', label: 'Mixed' },
-];
-
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
 
 const formatDate = (timestamp: Timestamp) =>
   new Date(timestamp.seconds * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-
-const generateInvoiceNumber = () => {
-  const now = new Date();
-  const y = now.getFullYear().toString().slice(-2);
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `INV-${y}${m}${d}-${rand}`;
-};
 
 // ─── Section Header component ───
 
@@ -222,6 +216,13 @@ export default function SalesInvoicingPageInner() {
   const theme = useTheme();
   const isAdmin = userProfile?.role === 'admin';
 
+  const { options: paymentMethodOptions } = useFieldOptions('invoices', 'payment_method');
+  const { options: paymentStatusOptionsAll } = useFieldOptions('invoices', 'payment_status');
+  const salePaymentStatusOptions = useMemo(
+    () => paymentStatusOptionsAll.filter((o) => ['paid', 'pending', 'overdue'].includes(o.optionValue)),
+    [paymentStatusOptionsAll]
+  );
+
   const [sales, setSales] = useState<Sale[]>([]);
   const [derivedEnquiryLines, setDerivedEnquiryLines] = useState<DerivedEnquirySale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -241,7 +242,7 @@ export default function SalesInvoicingPageInner() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filterDateFrom, setFilterDateFrom] = useState<Date | null>(null);
   const [filterDateTo, setFilterDateTo] = useState<Date | null>(null);
-  const [filterPaymentStatuses, setFilterPaymentStatuses] = useState<PaymentStatus[]>([]);
+  const [filterPaymentStatuses, setFilterPaymentStatuses] = useState<InvoiceTablePaymentFilter[]>([]);
   const [filterSource, setFilterSource] = useState<'all' | 'manual' | 'enquiry'>('all');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
@@ -250,6 +251,9 @@ export default function SalesInvoicingPageInner() {
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
+  const [cancelDialogRow, setCancelDialogRow] = useState<UnifiedInvoiceRow | null>(null);
+  const [cancelReasonInput, setCancelReasonInput] = useState('');
+  const [cancellingInvoice, setCancellingInvoice] = useState(false);
 
   // Product add form state
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -260,9 +264,11 @@ export default function SalesInvoicingPageInner() {
   const [selectedProductSellingPrice, setSelectedProductSellingPrice] = useState<number>(0);
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
+  /** When false on a new sale, save uses atomic sequence from `invoiceSettings/default`. Set true after user edits invoice #. */
+  const [invoiceNumberTouchedByUser, setInvoiceNumberTouchedByUser] = useState(false);
 
-  const emptySale: Sale = {
-    invoiceNumber: generateInvoiceNumber(),
+  const createEmptySale = (invoiceNumber = ''): Sale => ({
+    invoiceNumber,
     patientName: '',
     phone: '',
     email: '',
@@ -284,7 +290,7 @@ export default function SalesInvoicingPageInner() {
     saleDate: Timestamp.now(),
     manualLineItems: [],
     source: 'manual',
-  };
+  });
 
   // ─── Data loading ───
 
@@ -405,16 +411,31 @@ export default function SalesInvoicingPageInner() {
 
   // ─── Sale CRUD ───
 
-  const handleAddSale = () => {
+  const handleAddSale = async () => {
+    resetProductForm();
+    let suggested = '';
+    let forceCustom = false;
+    try {
+      suggested = await peekNextInvoiceNumber(db);
+    } catch (e) {
+      console.error('peekNextInvoiceNumber:', e);
+      setErrorMsg('Could not load the next invoice number. Enter a custom invoice number to save (the sequence will not advance).');
+      forceCustom = true;
+    }
+    setInvoiceNumberTouchedByUser(forceCustom);
     setCurrentSale({
-      ...emptySale,
+      ...createEmptySale(suggested),
       salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
     });
-    resetProductForm();
     setOpenDialog(true);
   };
 
   const handleEditSale = (sale: Sale) => {
+    if (sale.cancelled) {
+      setErrorMsg('This invoice was cancelled and cannot be edited.');
+      return;
+    }
+    setInvoiceNumberTouchedByUser(false);
     setCurrentSale({
       ...sale,
       manualLineItems: sale.manualLineItems || [],
@@ -423,6 +444,43 @@ export default function SalesInvoicingPageInner() {
     });
     resetProductForm();
     setOpenDialog(true);
+  };
+
+  const handleConfirmCancelInvoice = async () => {
+    const id = cancelDialogRow?.savedSale?.id;
+    if (!id || cancellingInvoice || cancelDialogRow?.savedSale?.cancelled) return;
+    try {
+      setCancellingInvoice(true);
+      const reason = cancelReasonInput.trim();
+      await updateDoc(doc(db, 'sales', id), {
+        cancelled: true,
+        cancelledAt: serverTimestamp(),
+        cancelledByUid: user?.uid || null,
+        ...(reason ? { cancelReason: reason } : {}),
+        updatedAt: serverTimestamp(),
+      });
+      setSales((prev) =>
+        prev.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                cancelled: true,
+                cancelledAt: Timestamp.now(),
+                cancelledByUid: user?.uid,
+                ...(reason ? { cancelReason: reason } : {}),
+              }
+            : s
+        )
+      );
+      setSuccessMsg('Invoice cancelled');
+      setCancelDialogRow(null);
+      setCancelReasonInput('');
+    } catch (e) {
+      console.error('Error cancelling invoice:', e);
+      setErrorMsg('Failed to cancel invoice');
+    } finally {
+      setCancellingInvoice(false);
+    }
   };
 
   const handleDeleteSale = async (id: string) => {
@@ -439,14 +497,35 @@ export default function SalesInvoicingPageInner() {
 
   const handleSaveSale = async () => {
     if (!currentSale || savingSale) return;
+    if (currentSale.cancelled) {
+      setErrorMsg('This invoice was cancelled and cannot be saved.');
+      return;
+    }
     if (!currentSale.patientName.trim()) { setErrorMsg('Patient name is required'); return; }
     const hasLines = currentSale.products.length > 0 || (currentSale.manualLineItems && currentSale.manualLineItems.length > 0);
     if (!hasLines) { setErrorMsg('Add at least one catalog product or manual line item'); return; }
 
     try {
       setSavingSale(true);
+      let finalInvoiceNumber = (currentSale.invoiceNumber || '').trim();
+      if (!currentSale.id) {
+        if (!invoiceNumberTouchedByUser) {
+          try {
+            finalInvoiceNumber = await allocateNextInvoiceNumber(db);
+          } catch (e) {
+            console.error('allocateNextInvoiceNumber:', e);
+            setErrorMsg('Could not allocate the next invoice number. Check Firestore rules and the invoiceSettings document, or enter a custom number.');
+            return;
+          }
+        } else if (!finalInvoiceNumber) {
+          setErrorMsg('Invoice number is required when using a custom value.');
+          return;
+        }
+      }
+
       const saleToSave: Sale = {
         ...currentSale,
+        invoiceNumber: finalInvoiceNumber,
         salesperson: {
           id: user?.uid || currentSale.salesperson?.id || '',
           name: userProfile?.displayName || user?.email || currentSale.salesperson?.name || '',
@@ -464,6 +543,7 @@ export default function SalesInvoicingPageInner() {
       }
       setOpenDialog(false);
       setCurrentSale(null);
+      setInvoiceNumberTouchedByUser(false);
     } catch (e) {
       console.error('Error saving sale:', e);
       setErrorMsg('Failed to save sale');
@@ -605,8 +685,6 @@ export default function SalesInvoicingPageInner() {
           return cmpStr(String(a.linkedEnquiryRef || ''), String(b.linkedEnquiryRef || ''));
         case 'total':
           return dir * (a.total - b.total);
-        case 'status':
-          return cmpStr(a.statusLabel, b.statusLabel);
         default:
           return 0;
       }
@@ -635,6 +713,10 @@ export default function SalesInvoicingPageInner() {
   );
 
   const openPrintFlow = useCallback((row: UnifiedInvoiceRow) => {
+    if (row.isCancelled) {
+      setErrorMsg('This invoice was cancelled. Printing is disabled.');
+      return;
+    }
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
     setPrintInvoiceData(convertSaleToInvoiceData(raw));
@@ -642,6 +724,10 @@ export default function SalesInvoicingPageInner() {
   }, []);
 
   const openPreviewFlow = useCallback((row: UnifiedInvoiceRow) => {
+    if (row.isCancelled) {
+      setErrorMsg('This invoice was cancelled. Preview is disabled.');
+      return;
+    }
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
     setInvoiceSale(raw);
@@ -649,14 +735,24 @@ export default function SalesInvoicingPageInner() {
   }, []);
 
   const handleCreateInvoiceFromEnquiryRow = useCallback(
-    (row: UnifiedInvoiceRow) => {
+    async (row: UnifiedInvoiceRow) => {
       if (row.kind !== 'enquiry_pending' || !row.derivedEnquiry) return;
+      resetProductForm();
+      let suggested = '';
+      let forceCustom = false;
+      try {
+        suggested = await peekNextInvoiceNumber(db);
+      } catch (e) {
+        console.error('peekNextInvoiceNumber:', e);
+        setErrorMsg('Could not load the next invoice number. Enter a custom invoice number to save (the sequence will not advance).');
+        forceCustom = true;
+      }
+      setInvoiceNumberTouchedByUser(forceCustom);
       const pre = prefillSaleFromDerivedEnquiry(row.derivedEnquiry, {
-        invoiceNumber: generateInvoiceNumber(),
+        invoiceNumber: suggested,
         salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
       });
       setCurrentSale({ ...(pre as unknown as Sale), accessories: [] });
-      resetProductForm();
       setOpenDialog(true);
     },
     [user, userProfile]
@@ -727,7 +823,67 @@ export default function SalesInvoicingPageInner() {
           onCreateFromEnquiry={handleCreateInvoiceFromEnquiryRow}
           isAdmin={!!isAdmin}
           highlightedRowId={highlightedRowId}
+          onCancelSaved={
+            isAdmin ? (row) => {
+              setCancelDialogRow(row);
+              setCancelReasonInput('');
+            } : undefined
+          }
         />
+
+        <Dialog
+          open={!!cancelDialogRow}
+          onClose={() => {
+            if (!cancellingInvoice) {
+              setCancelDialogRow(null);
+              setCancelReasonInput('');
+            }
+          }}
+          maxWidth="sm"
+          fullWidth
+          PaperProps={{ sx: { borderRadius: 2 } }}
+        >
+          <DialogTitle fontWeight={700}>Cancel invoice</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              This voids the invoice for reporting purposes. The document stays in the database for audit. Enquiry-linked
+              visits can be invoiced again after cancellation.
+            </Typography>
+            {cancelDialogRow && (
+              <Typography variant="body2" sx={{ mb: 2 }}>
+                <strong>{cancelDialogRow.invoiceNumber || '—'}</strong>
+                {' · '}
+                {cancelDialogRow.clientName}
+              </Typography>
+            )}
+            <TextField
+              label="Reason (optional)"
+              fullWidth
+              multiline
+              minRows={2}
+              value={cancelReasonInput}
+              onChange={(e) => setCancelReasonInput(e.target.value)}
+              disabled={cancellingInvoice}
+              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button
+              onClick={() => {
+                if (!cancellingInvoice) {
+                  setCancelDialogRow(null);
+                  setCancelReasonInput('');
+                }
+              }}
+              disabled={cancellingInvoice}
+            >
+              Back
+            </Button>
+            <Button variant="contained" color="warning" onClick={handleConfirmCancelInvoice} disabled={cancellingInvoice}>
+              {cancellingInvoice ? 'Cancelling…' : 'Cancel invoice'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
         <SalesInvoiceCommandPalette
           open={paletteOpen}
@@ -768,7 +924,17 @@ export default function SalesInvoicingPageInner() {
         )}
 
       {/* ════════════════════════ SALE DIALOG ════════════════════════ */}
-      <Dialog open={openDialog} onClose={() => { setOpenDialog(false); setCurrentSale(null); }} maxWidth="lg" fullWidth PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden' } }}>
+      <Dialog
+        open={openDialog}
+        onClose={() => {
+          setOpenDialog(false);
+          setCurrentSale(null);
+          setInvoiceNumberTouchedByUser(false);
+        }}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden' } }}
+      >
         {/* Dialog header with gradient */}
         <Box sx={{ background: `linear-gradient(135deg, ${theme.palette.primary.main} 0%, ${theme.palette.primary.dark} 100%)`, color: 'white', px: 3, py: 2.5 }}>
           <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -821,7 +987,11 @@ export default function SalesInvoicingPageInner() {
                     <FormControl fullWidth size="small">
                       <InputLabel>Payment Method</InputLabel>
                       <Select value={currentSale.paymentMethod || 'cash'} label="Payment Method" onChange={(e) => updateSaleField('paymentMethod', e.target.value)}>
-                        {PAYMENT_METHODS.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
+                        {paymentMethodOptions.map((m) => (
+                          <MenuItem key={m.optionValue} value={m.optionValue}>
+                            {m.optionLabel}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </FormControl>
                   </Grid>
@@ -829,7 +999,24 @@ export default function SalesInvoicingPageInner() {
                     <TextField label="Doctor Referral" size="small" fullWidth value={currentSale.referenceDoctor?.name || ''} onChange={(e) => updateSaleField('referenceDoctor', { ...currentSale.referenceDoctor, name: e.target.value })} InputProps={{ startAdornment: <InputAdornment position="start"><DoctorIcon fontSize="small" color="action" /></InputAdornment> }} />
                   </Grid>
                   <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
-                    <TextField label="Invoice Number" size="small" fullWidth value={currentSale.invoiceNumber || ''} onChange={(e) => updateSaleField('invoiceNumber', e.target.value)} InputProps={{ sx: { fontFamily: 'monospace' } }} />
+                    <TextField
+                      label="Invoice Number"
+                      size="small"
+                      fullWidth
+                      value={currentSale.invoiceNumber || ''}
+                      onChange={(e) => {
+                        if (!currentSale.id) setInvoiceNumberTouchedByUser(true);
+                        updateSaleField('invoiceNumber', e.target.value);
+                      }}
+                      InputProps={{ sx: { fontFamily: 'monospace' } }}
+                      helperText={
+                        currentSale.id
+                          ? undefined
+                          : invoiceNumberTouchedByUser
+                            ? 'Custom number — saving will not advance the global sequence.'
+                            : 'Next in sequence — edit this field to use a custom number without advancing the sequence.'
+                      }
+                    />
                   </Grid>
                   <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
                     <FormControl fullWidth size="small">
@@ -839,9 +1026,11 @@ export default function SalesInvoicingPageInner() {
                         label="Payment status"
                         onChange={(e) => updateSaleField('paymentStatus', e.target.value)}
                       >
-                        <MenuItem value="paid">Paid</MenuItem>
-                        <MenuItem value="pending">Pending</MenuItem>
-                        <MenuItem value="overdue">Overdue</MenuItem>
+                        {salePaymentStatusOptions.map((o) => (
+                          <MenuItem key={o.optionValue} value={o.optionValue}>
+                            {o.optionLabel}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </FormControl>
                   </Grid>

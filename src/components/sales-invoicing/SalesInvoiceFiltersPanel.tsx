@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Drawer,
   Box,
@@ -18,13 +18,10 @@ import {
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import type { PaymentStatus } from '@/lib/sales-invoicing/types';
+import type { InvoiceTablePaymentFilter } from '@/lib/sales-invoicing/types';
+import { useFieldOptions } from '@/hooks/useFieldOptions';
 
-const PAYMENT_OPTIONS: { value: PaymentStatus; label: string }[] = [
-  { value: 'paid', label: 'Paid' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'overdue', label: 'Overdue' },
-];
+const FILTER_PAYMENT_VALUES: InvoiceTablePaymentFilter[] = ['paid', 'pending', 'overdue', 'cancelled'];
 
 interface SalesInvoiceFiltersPanelProps {
   open: boolean;
@@ -33,8 +30,8 @@ interface SalesInvoiceFiltersPanelProps {
   dateTo: Date | null;
   onDateFrom: (d: Date | null) => void;
   onDateTo: (d: Date | null) => void;
-  paymentStatuses: PaymentStatus[];
-  onPaymentStatuses: (v: PaymentStatus[]) => void;
+  paymentStatuses: InvoiceTablePaymentFilter[];
+  onPaymentStatuses: (v: InvoiceTablePaymentFilter[]) => void;
   source: 'all' | 'manual' | 'enquiry';
   onSource: (v: 'all' | 'manual' | 'enquiry') => void;
   onClear: () => void;
@@ -53,6 +50,14 @@ export default function SalesInvoiceFiltersPanel({
   onSource,
   onClear,
 }: SalesInvoiceFiltersPanelProps) {
+  const { options: paymentStatusOpts } = useFieldOptions('invoices', 'payment_status');
+  const paymentOptions = useMemo(() => {
+    const allowed = new Set(FILTER_PAYMENT_VALUES);
+    return paymentStatusOpts
+      .filter((o) => allowed.has(o.optionValue as InvoiceTablePaymentFilter))
+      .map((o) => ({ value: o.optionValue as InvoiceTablePaymentFilter, label: o.optionLabel }));
+  }, [paymentStatusOpts]);
+
   return (
     <Drawer anchor="right" open={open} onClose={onClose} PaperProps={{ sx: { width: { xs: '100%', sm: 380 }, borderRadius: '12px 0 0 12px' } }}>
       <Box sx={{ p: 3 }}>
@@ -77,17 +82,17 @@ export default function SalesInvoiceFiltersPanel({
           <Select
             multiple
             value={paymentStatuses}
-            onChange={(e) => onPaymentStatuses(e.target.value as PaymentStatus[])}
+            onChange={(e) => onPaymentStatuses(e.target.value as InvoiceTablePaymentFilter[])}
             input={<OutlinedInput label="Payment status" />}
             renderValue={(selected) => (
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                {(selected as PaymentStatus[]).map((v) => (
-                  <Chip key={v} size="small" label={PAYMENT_OPTIONS.find((o) => o.value === v)?.label || v} />
+                {(selected as InvoiceTablePaymentFilter[]).map((v) => (
+                  <Chip key={v} size="small" label={paymentOptions.find((o) => o.value === v)?.label || v} />
                 ))}
               </Box>
             )}
           >
-            {PAYMENT_OPTIONS.map((o) => (
+            {paymentOptions.map((o) => (
               <MenuItem key={o.value} value={o.value}>
                 {o.label}
               </MenuItem>

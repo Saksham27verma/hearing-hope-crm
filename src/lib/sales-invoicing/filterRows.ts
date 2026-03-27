@@ -1,4 +1,4 @@
-import type { PaymentStatus, UnifiedInvoiceRow } from './types';
+import type { InvoiceTablePaymentFilter, PaymentStatus, UnifiedInvoiceRow } from './types';
 import { timestampToMs } from './timestamps';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -8,7 +8,7 @@ export function filterUnifiedRows(
   opts: {
     dateFrom: Date | null;
     dateTo: Date | null;
-    paymentStatuses: PaymentStatus[];
+    paymentStatuses: InvoiceTablePaymentFilter[];
     source: 'all' | 'manual' | 'enquiry';
   }
 ): UnifiedInvoiceRow[] {
@@ -42,6 +42,9 @@ export function filterUnifiedRows(
 
   if (opts.paymentStatuses.length > 0) {
     out = out.filter((r) => {
+      if (r.isCancelled || r.savedSale?.cancelled) {
+        return opts.paymentStatuses.includes('cancelled');
+      }
       if (r.kind === 'enquiry_pending') {
         return opts.paymentStatuses.includes('pending');
       }

@@ -73,6 +73,8 @@ export interface EnquiryFilterSectionProps {
   enquiryTypeOptions: string[];
   activeFormTypeOptions: string[];
   referenceOptions: string[];
+  /** Settings-driven option lists (Firestore / built-in). Keys are filter `field` paths. */
+  filterCatalogOverrides: Partial<Record<string, { value: string; label: string }[]>>;
   filterPresets: { id: string; name: string }[];
   currentPreset: string;
   onLoadPreset: (presetId: string) => void;
@@ -129,10 +131,21 @@ function enumOptionsForField(
     | 'enquiryTypeOptions'
     | 'activeFormTypeOptions'
     | 'referenceOptions'
+    | 'filterCatalogOverrides'
   >
 ): { value: string; label: string }[] {
   if (!meta) return [];
-  if (meta.staticOptions?.length) return meta.staticOptions;
+  const ov = meta.field ? props.filterCatalogOverrides?.[meta.field] : undefined;
+  if (
+    ov?.length &&
+    meta.field !== 'visitorType' &&
+    meta.field !== 'enquiryType' &&
+    meta.field !== 'activeFormTypes' &&
+    meta.field !== 'reference'
+  ) {
+    return ov;
+  }
+  if (meta.staticOptions?.length && !ov?.length) return meta.staticOptions;
   const mapStrings = (arr: string[]) =>
     arr.filter(Boolean).map(s => ({ value: String(s).trim(), label: String(s).trim() }));
   switch (meta.enumSource) {
@@ -140,8 +153,24 @@ function enumOptionsForField(
       return mapStrings(props.assignedToOptions);
     case 'telecaller':
       return mapStrings(props.telecallerOptions);
-    case 'visitorType':
-      return mapStrings(props.visitorTypeOptions);
+    case 'visitorType': {
+      const seen = new Set<string>();
+      const out: { value: string; label: string }[] = [];
+      (props.filterCatalogOverrides?.visitorType ?? []).forEach((o) => {
+        if (!seen.has(o.value)) {
+          seen.add(o.value);
+          out.push(o);
+        }
+      });
+      props.visitorTypeOptions.forEach((v) => {
+        const s = String(v || '').trim();
+        if (s && !seen.has(s)) {
+          seen.add(s);
+          out.push({ value: s, label: s });
+        }
+      });
+      return out.sort((a, b) => a.label.localeCompare(b.label));
+    }
     case 'visitTypeRoot':
       return mapStrings(props.visitTypeRootOptions);
     case 'visitStatusRoot':
@@ -149,13 +178,16 @@ function enumOptionsForField(
     case 'enquiryType': {
       const seen = new Set<string>();
       const out: { value: string; label: string }[] = [];
-      ENQUIRY_TYPE_OPTIONS.forEach(o => {
+      const base = props.filterCatalogOverrides?.enquiryType?.length
+        ? props.filterCatalogOverrides.enquiryType!
+        : ENQUIRY_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }));
+      base.forEach((o) => {
         if (!seen.has(o.value)) {
           seen.add(o.value);
           out.push(o);
         }
       });
-      props.enquiryTypeOptions.forEach(v => {
+      props.enquiryTypeOptions.forEach((v) => {
         const s = String(v || '').trim();
         if (s && !seen.has(s)) {
           seen.add(s);
@@ -179,11 +211,16 @@ function enumOptionsForField(
           repair: 'Repair',
           counselling: 'Counselling',
         } as Record<string, string>)[slug] || slug;
-      MEDICAL_SERVICE_SLUGS.forEach(slug => {
-        seen.add(slug);
-        out.push({ value: slug, label: labelFor(slug) });
+      const base = props.filterCatalogOverrides?.activeFormTypes?.length
+        ? props.filterCatalogOverrides.activeFormTypes!
+        : MEDICAL_SERVICE_SLUGS.map((slug) => ({ value: slug, label: labelFor(slug) }));
+      base.forEach((o) => {
+        if (!seen.has(o.value)) {
+          seen.add(o.value);
+          out.push(o);
+        }
       });
-      props.activeFormTypeOptions.forEach(v => {
+      props.activeFormTypeOptions.forEach((v) => {
         const s = String(v || '').trim();
         if (s && !seen.has(s)) {
           seen.add(s);
@@ -195,13 +232,16 @@ function enumOptionsForField(
     case 'reference': {
       const seen = new Set<string>();
       const out: { value: string; label: string }[] = [];
-      REFERENCE_OPTION_OBJECTS.forEach(o => {
+      const base = props.filterCatalogOverrides?.reference?.length
+        ? props.filterCatalogOverrides.reference!
+        : REFERENCE_OPTION_OBJECTS;
+      base.forEach((o) => {
         if (!seen.has(o.value)) {
           seen.add(o.value);
           out.push(o);
         }
       });
-      props.referenceOptions.forEach(r => {
+      props.referenceOptions.forEach((r) => {
         const s = String(r || '').trim();
         if (s && !seen.has(s)) {
           seen.add(s);
@@ -234,6 +274,7 @@ export default function EnquiryFilterSection({
   enquiryTypeOptions,
   activeFormTypeOptions,
   referenceOptions,
+  filterCatalogOverrides,
   filterPresets,
   currentPreset,
   onLoadPreset,
@@ -301,6 +342,7 @@ export default function EnquiryFilterSection({
     enquiryTypeOptions,
     activeFormTypeOptions,
     referenceOptions,
+    filterCatalogOverrides,
   });
   const isEnumField = enumOpts.length > 0;
 
@@ -927,6 +969,7 @@ export default function EnquiryFilterSection({
                     enquiryTypeOptions,
                     activeFormTypeOptions,
                     referenceOptions,
+                    filterCatalogOverrides,
                   });
                   return opts.find(o => String(o.value) === String(v))?.label || v;
                 })

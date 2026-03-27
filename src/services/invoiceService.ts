@@ -584,7 +584,7 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
     companyEmail: 'info@hopehearing.com',
     companyGST: 'GST Number Here',
 
-    invoiceNumber: sale.invoiceNumber || `INV-${Date.now()}`,
+    invoiceNumber: sale.invoiceNumber || '—',
     invoiceDate,
     dueDate: dueStr || undefined,
 

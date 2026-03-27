@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef, startTransition, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import UniversalSearch from '@/components/universal-search/UniversalSearch';
@@ -9,6 +9,7 @@ import CrmSidebar from '@/components/Layout/CrmSidebar';
 import CrmHeader from '@/components/Layout/CrmHeader';
 import { filterCrmNavForUser } from '@/components/Layout/crm-nav-config';
 import { CRM_ACCENT, CRM_PAGE_BG, HEADER_HEIGHT, mainOffsetLeftPx } from '@/components/Layout/crm-theme';
+import SqueezeLoader from '@/components/ui/loading-indicator';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
@@ -22,6 +23,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const hasRedirectedRef = useRef<string | null>(null);
+  const redirectFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isDesktop, setIsDesktop] = useState(false);
 
   const shouldHideSidebar = pathname?.includes('/enquiries/new') || pathname?.includes('/enquiries/edit');
@@ -190,27 +192,31 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       if (hasRedirectedRef.current !== redirectKey) {
         hasRedirectedRef.current = redirectKey;
         setIsRedirecting(true);
-        startTransition(() => {
-          router.push('/dashboard');
-        });
+        if (redirectFailsafeRef.current) clearTimeout(redirectFailsafeRef.current);
+        redirectFailsafeRef.current = setTimeout(() => {
+          redirectFailsafeRef.current = null;
+          setIsRedirecting(false);
+        }, 8000);
+        // replace avoids stacking forbidden URLs in history (back-button loops with full-screen "Redirecting…")
+        router.replace('/dashboard');
       }
     } else if (isAllowed) {
       hasRedirectedRef.current = null;
+      if (redirectFailsafeRef.current) {
+        clearTimeout(redirectFailsafeRef.current);
+        redirectFailsafeRef.current = null;
+      }
       setIsRedirecting(false);
     }
   }, [userProfile, pathname, shouldHideSidebar, loading, router]);
 
-  const mainOffset = mainOffsetLeftPx(shouldHideSidebar, isDesktop, drawerOpen);
+  useEffect(() => {
+    return () => {
+      if (redirectFailsafeRef.current) clearTimeout(redirectFailsafeRef.current);
+    };
+  }, []);
 
-  const loadingContainer: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    height: '50vh',
-    fontSize: 18,
-    color: '#64748b',
-    fontFamily: 'var(--font-inter), system-ui, sans-serif',
-  };
+  const mainOffset = mainOffsetLeftPx(shouldHideSidebar, isDesktop, drawerOpen);
 
   const errorContainer: React.CSSProperties = {
     backgroundColor: CRM_ACCENT,
@@ -225,17 +231,27 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   if (loading) {
     return (
-      <div style={loadingContainer}>
-        <div>Loading your dashboard…</div>
-      </div>
+      <SqueezeLoader
+        caption="Signing you in…"
+        subcaption="Checking your account"
+        backgroundColor={CRM_PAGE_BG}
+        size={64}
+        spinDuration={10}
+        squeezeDuration={3}
+      />
     );
   }
 
   if (isRedirecting) {
     return (
-      <div style={loadingContainer}>
-        <div>Redirecting to allowed page…</div>
-      </div>
+      <SqueezeLoader
+        caption="Opening your workspace…"
+        subcaption="This page is not available for your role."
+        backgroundColor={CRM_PAGE_BG}
+        size={56}
+        spinDuration={8}
+        squeezeDuration={2.5}
+      />
     );
   }
 
@@ -275,19 +291,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     if (typeof window !== 'undefined') {
       router.push('/login');
     }
-    return (
-      <div style={loadingContainer}>
-        <div>Redirecting to login…</div>
-      </div>
-    );
-  }
-
-  if (loading && !user) {
-    return (
-      <div style={loadingContainer}>
-        <div>Loading your dashboard…</div>
-      </div>
-    );
+    return <SqueezeLoader caption="Redirecting to login…" subcaption="Please wait" backgroundColor={CRM_PAGE_BG} size={56} />;
   }
 
   return (

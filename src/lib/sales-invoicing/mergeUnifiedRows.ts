@@ -34,6 +34,7 @@ function statusChip(status: PaymentStatus): { label: string; variant: UnifiedInv
 }
 
 function isDerivedCoveredBySale(sale: SaleRecord, d: DerivedEnquirySale): boolean {
+  if (sale.cancelled) return false;
   const vIdx = sale.enquiryVisitIndex;
   if (typeof vIdx === 'number' && vIdx === d.visitIndex) {
     if (sale.enquiryId && d.enquiryId && sale.enquiryId === d.enquiryId) return true;
@@ -56,6 +57,24 @@ export function buildUnifiedInvoiceRows(sales: SaleRecord[], derived: DerivedEnq
   const rows: UnifiedInvoiceRow[] = [];
 
   for (const s of sales) {
+    if (s.cancelled) {
+      rows.push({
+        kind: 'saved',
+        rowId: `sale-${s.id}`,
+        invoiceNumber: s.invoiceNumber || null,
+        date: s.saleDate,
+        clientName: s.patientName || '—',
+        clientPhone: s.phone,
+        linkedEnquiryRef: s.enquiryId || s.visitorId || null,
+        total: saleGrandTotal(s),
+        statusLabel: 'Cancelled',
+        statusVariant: 'cancelled',
+        isCancelled: true,
+        source: s.source === 'enquiry' ? 'enquiry' : 'manual',
+        savedSale: s,
+      });
+      continue;
+    }
     const ps = effectivePaymentStatus(s);
     const { label, variant } = statusChip(ps);
     rows.push({
@@ -69,6 +88,7 @@ export function buildUnifiedInvoiceRows(sales: SaleRecord[], derived: DerivedEnq
       total: saleGrandTotal(s),
       statusLabel: label,
       statusVariant: variant,
+      isCancelled: false,
       source: s.source === 'enquiry' ? 'enquiry' : 'manual',
       savedSale: s,
     });

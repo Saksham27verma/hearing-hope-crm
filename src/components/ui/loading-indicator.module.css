@@ -1,0 +1,106 @@
+@keyframes squeezeLoaderSqueeze {
+  0% {
+    inset: 0 2em 2em 0;
+  }
+  12.5% {
+    inset: 0 2em 0 0;
+  }
+  25% {
+    inset: 2em 2em 0 0;
+  }
+  37.5% {
+    inset: 2em 0 0 0;
+  }
+  50% {
+    inset: 2em 0 0 2em;
+  }
+  62.5% {
+    inset: 0 0 0 2em;
+  }
+  75% {
+    inset: 0 0 2em 2em;
+  }
+  87.5% {
+    inset: 0 0 2em 0;
+  }
+  100% {
+    inset: 0 2em 2em 0;
+  }
+}
+
+@keyframes squeezeLoaderSpin {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+.containerFullscreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+
+.containerInline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 220px;
+  padding: 24px 0;
+  box-sizing: border-box;
+}
+
+.inner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.textBlock {
+  margin-top: 28px;
+  text-align: center;
+  max-width: 320px;
+  font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+.caption {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.subcaption {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #94a3b8;
+}
+
+.orbit {
+  position: relative;
+  animation-name: squeezeLoaderSpin;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.blob {
+  position: absolute;
+  animation-name: squeezeLoaderSqueeze;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.blobRound {
+  position: absolute;
+  border-radius: 9999px;
+  animation-name: squeezeLoaderSqueeze;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}

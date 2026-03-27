@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useEffect } from 'react';
+import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
 import { useRouter } from 'next/navigation';
 import { 
   Box, 
@@ -430,6 +431,17 @@ interface VisitSchedule {
 export default function EnquiriesPage() {
   const router = useRouter();
   const { userProfile } = useAuth();
+  const { optionsByField } = useEnquiryOptionsByField();
+  const wizardReferenceOpts = optionsByField.reference ?? [];
+  const wizardVisitingCenterOpts = optionsByField.visiting_center ?? [];
+  const wizardHaStatusOpts = optionsByField.hearing_aid_details_status ?? [];
+  const wizardPriorityOpts = optionsByField.priority ?? [];
+  const wizardPatientVisitOpts = optionsByField.patient_root_visit_status ?? [];
+  const wizardLegacyVisitPurposeOpts = optionsByField.legacy_visit_purpose ?? [];
+  const wizardLegacyScheduledStatusOpts = optionsByField.legacy_scheduled_visit_status ?? [];
+  const wizardHearingTestTypeOpts = optionsByField.hearing_test_type ?? [];
+  const wizardVisitLocationOpts = optionsByField.visit_location ?? [];
+
   // State with proper typing
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [filteredEnquiries, setFilteredEnquiries] = useState<Enquiry[]>([]);
@@ -599,6 +611,31 @@ export default function EnquiriesPage() {
     });
     return uniq(out);
   }, [enquiries]);
+
+  const filterCatalogOverrides = useMemo(() => {
+    const m = (fk: string) =>
+      (optionsByField[fk] ?? []).map((o) => ({ value: o.optionValue, label: o.optionLabel }));
+    const o: Partial<Record<string, { value: string; label: string }[]>> = {};
+    const set = (path: string, fk: string) => {
+      const arr = m(fk);
+      if (arr.length) o[path] = arr;
+    };
+    set('reference', 'reference');
+    set('paymentForAny', 'payment_for');
+    set('paymentModeAny', 'payment_mode');
+    set('financialSummary.paymentStatus', 'enquiry_financial_payment_status');
+    set('visitLocationAny', 'visit_location');
+    const ha = [
+      ...(optionsByField.visit_hearing_aid_status ?? []),
+      ...(optionsByField.trial_result ?? []),
+    ].map((x) => ({ value: x.optionValue, label: x.optionLabel }));
+    if (ha.length) o.hearingAidStatusAny = ha;
+    set('visitorType', 'visitor_type');
+    set('enquiryType', 'enquiry_type');
+    set('activeFormTypes', 'medical_service_slugs');
+    return o;
+  }, [optionsByField]);
+
   const [activeVisitTab, setActiveVisitTab] = useState<number>(0);
   const [activeFollowUpTab, setActiveFollowUpTab] = useState<number>(0);
   
@@ -2977,11 +3014,11 @@ export default function EnquiriesPage() {
                     label="Visiting Center"
                     onChange={handleInputChange}
                   >
-                    <MenuItem value="main">Main Center</MenuItem>
-                    <MenuItem value="north">North Branch</MenuItem>
-                    <MenuItem value="south">South Branch</MenuItem>
-                    <MenuItem value="east">East Branch</MenuItem>
-                    <MenuItem value="west">West Branch</MenuItem>
+                    {wizardVisitingCenterOpts.map((o) => (
+                      <MenuItem key={o.optionValue} value={o.optionValue}>
+                        {o.optionLabel}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -2995,28 +3032,11 @@ export default function EnquiriesPage() {
                     onChange={handleInputChange}
                     required
                   >
-                    <MenuItem value="Camp">Camp</MenuItem>
-                    <MenuItem value="CGHS/DGEHS/ Any Govt. deptt">CGHS/DGEHS/ Any Govt. deptt</MenuItem>
-                    <MenuItem value="converted">converted</MenuItem>
-                    <MenuItem value="Dealer">Dealer</MenuItem>
-                    <MenuItem value="Dr Deepika Ref.">Dr Deepika Ref.</MenuItem>
-                    <MenuItem value="Dr Yogesh Kansal Ref.">Dr Yogesh Kansal Ref.</MenuItem>
-                    <MenuItem value="existing">existing</MenuItem>
-                    <MenuItem value="Gautam dhamija">Gautam dhamija</MenuItem>
-                    <MenuItem value="GN RESOUND ENQUIRY">GN RESOUND ENQUIRY</MenuItem>
-                    <MenuItem value="Google Adwords">Google Adwords</MenuItem>
-                    <MenuItem value="Hear.com">Hear.com</MenuItem>
-                    <MenuItem value="home service">home service</MenuItem>
-                    <MenuItem value="INDIAMART">INDIAMART</MenuItem>
-                    <MenuItem value="just dial">just dial</MenuItem>
-                    <MenuItem value="Medical Store Reference">Medical Store Reference</MenuItem>
-                    <MenuItem value="must and more">must and more</MenuItem>
-                    <MenuItem value="Nath brother ( chemist )">Nath brother ( chemist )</MenuItem>
-                    <MenuItem value="Online">Online</MenuItem>
-                    <MenuItem value="Other Doctor Referenes">Other Doctor Referenes</MenuItem>
-                    <MenuItem value="reference existing patient">reference existing patient</MenuItem>
-                    <MenuItem value="Visit Health">Visit Health</MenuItem>
-                    <MenuItem value="walking">walking</MenuItem>
+                    {wizardReferenceOpts.map((o) => (
+                      <MenuItem key={o.optionValue} value={o.optionValue}>
+                        {o.optionLabel}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -3252,14 +3272,11 @@ export default function EnquiriesPage() {
                                   hearingAidDetails: { ...newEnquiry.hearingAidDetails, status: e.target.value as any }
                                 })}
                               >
-                                <MenuItem value="enquiry">Enquiry</MenuItem>
-                                <MenuItem value="quotation_sent">Quotation Sent</MenuItem>
-                                <MenuItem value="trial_scheduled">Trial Scheduled</MenuItem>
-                                <MenuItem value="trial_ongoing">Trial Ongoing</MenuItem>
-                                <MenuItem value="trial_completed">Trial Completed</MenuItem>
-                                <MenuItem value="purchased">Purchased</MenuItem>
-                                <MenuItem value="fitted">Fitted</MenuItem>
-                                <MenuItem value="delivered">Delivered</MenuItem>
+                                {wizardHaStatusOpts.map((o) => (
+                                  <MenuItem key={o.optionValue} value={o.optionValue}>
+                                    {o.optionLabel}
+                                  </MenuItem>
+                                ))}
                               </Select>
                             </FormControl>
                           </Grid>
@@ -3274,9 +3291,11 @@ export default function EnquiriesPage() {
                                   hearingAidDetails: { ...newEnquiry.hearingAidDetails, priority: e.target.value as any }
                                 })}
                               >
-                                <MenuItem value="low">Low</MenuItem>
-                                <MenuItem value="medium">Medium</MenuItem>
-                                <MenuItem value="high">High</MenuItem>
+                                {wizardPriorityOpts.map((o) => (
+                                  <MenuItem key={o.optionValue} value={o.optionValue}>
+                                    {o.optionLabel}
+                                  </MenuItem>
+                                ))}
                               </Select>
                             </FormControl>
                           </Grid>
@@ -3832,6 +3851,7 @@ export default function EnquiriesPage() {
         enquiryTypeOptions={enquiryTypeOptions}
         activeFormTypeOptions={activeFormTypeOptions}
         referenceOptions={referenceOptions}
+        filterCatalogOverrides={filterCatalogOverrides}
         filterPresets={filterPresets}
         currentPreset={currentPreset}
         onLoadPreset={loadFilterPreset}
@@ -4476,11 +4496,11 @@ export default function EnquiriesPage() {
                           label="Visiting Center"
                           onChange={handleInputChange}
                         >
-                          <MenuItem value="main">Main Center</MenuItem>
-                          <MenuItem value="north">North Branch</MenuItem>
-                          <MenuItem value="south">South Branch</MenuItem>
-                          <MenuItem value="east">East Branch</MenuItem>
-                          <MenuItem value="west">West Branch</MenuItem>
+                          {wizardVisitingCenterOpts.map((o) => (
+                            <MenuItem key={o.optionValue} value={o.optionValue}>
+                              {o.optionLabel}
+                            </MenuItem>
+                          ))}
                         </Select>
                       </FormControl>
                     </Grid>
@@ -4495,28 +4515,11 @@ export default function EnquiriesPage() {
                           required
                           sx={{ minWidth: 200 }}
                         >
-                          <MenuItem value="Camp">Camp</MenuItem>
-                          <MenuItem value="CGHS/DGEHS/ Any Govt. deptt">CGHS/DGEHS/ Any Govt. deptt</MenuItem>
-                          <MenuItem value="converted">converted</MenuItem>
-                          <MenuItem value="Dealer">Dealer</MenuItem>
-                          <MenuItem value="Dr Deepika Ref.">Dr Deepika Ref.</MenuItem>
-                          <MenuItem value="Dr Yogesh Kansal Ref.">Dr Yogesh Kansal Ref.</MenuItem>
-                          <MenuItem value="existing">existing</MenuItem>
-                          <MenuItem value="Gautam dhamija">Gautam dhamija</MenuItem>
-                          <MenuItem value="GN RESOUND ENQUIRY">GN RESOUND ENQUIRY</MenuItem>
-                          <MenuItem value="Google Adwords">Google Adwords</MenuItem>
-                          <MenuItem value="Hear.com">Hear.com</MenuItem>
-                          <MenuItem value="home service">home service</MenuItem>
-                          <MenuItem value="INDIAMART">INDIAMART</MenuItem>
-                          <MenuItem value="just dial">just dial</MenuItem>
-                          <MenuItem value="Medical Store Reference">Medical Store Reference</MenuItem>
-                          <MenuItem value="must and more">must and more</MenuItem>
-                          <MenuItem value="Nath brother ( chemist )">Nath brother ( chemist )</MenuItem>
-                          <MenuItem value="Online">Online</MenuItem>
-                          <MenuItem value="Other Doctor Referenes">Other Doctor Referenes</MenuItem>
-                          <MenuItem value="reference existing patient">reference existing patient</MenuItem>
-                          <MenuItem value="Visit Health">Visit Health</MenuItem>
-                          <MenuItem value="walking">walking</MenuItem>
+                          {wizardReferenceOpts.map((o) => (
+                            <MenuItem key={o.optionValue} value={o.optionValue}>
+                              {o.optionLabel}
+                            </MenuItem>
+                          ))}
                         </Select>
                       </FormControl>
                     </Grid>
@@ -4542,10 +4545,11 @@ export default function EnquiriesPage() {
                         label="Patient Visit Status"
                         onChange={handleInputChange}
                       >
-                        <MenuItem value="enquiry">Enquiry Only</MenuItem>
-                        <MenuItem value="scheduled">Visit Scheduled</MenuItem>
-                        <MenuItem value="visited">Patient Visited</MenuItem>
-                        <MenuItem value="completed">Treatment Completed</MenuItem>
+                        {wizardPatientVisitOpts.map((o) => (
+                          <MenuItem key={o.optionValue} value={o.optionValue}>
+                            {o.optionLabel}
+                          </MenuItem>
+                        ))}
                       </Select>
                     </FormControl>
                   </Grid>
@@ -4828,15 +4832,11 @@ export default function EnquiriesPage() {
                                     })}
                                     sx={{ minWidth: 200 }}
                                   >
-                                    <MenuItem value="PTA">PTA</MenuItem>
-                                    <MenuItem value="BERA">BERA</MenuItem>
-                                    <MenuItem value="Aided audiometry">Aided audiometry</MenuItem>
-                                    <MenuItem value="Impedence">Impedence</MenuItem>
-                                    <MenuItem value="OAE">OAE</MenuItem>
-                                    <MenuItem value="Others">Others</MenuItem>
-                                    <MenuItem value="Speech Discrimination test">Speech Discrimination test</MenuItem>
-                                    <MenuItem value="Free Field Audiometry">Free Field Audiometry</MenuItem>
-                                    <MenuItem value="BOA">BOA</MenuItem>
+                                    {wizardHearingTestTypeOpts.map((o) => (
+                                      <MenuItem key={o.optionValue} value={o.optionValue}>
+                                        {o.optionLabel}
+                                      </MenuItem>
+                                    ))}
                                   </Select>
                                 </FormControl>
                               </Grid>
@@ -5180,8 +5180,11 @@ export default function EnquiriesPage() {
                                 onChange={(e) => updateVisitSchedule(activeVisitScheduleTab, 'visitType', e.target.value)}
                                 label="Visit Type"
                               >
-                                <MenuItem value="center">Visit Center</MenuItem>
-                                <MenuItem value="home">Home Visit</MenuItem>
+                                {wizardVisitLocationOpts.map((o) => (
+                                  <MenuItem key={o.optionValue} value={o.optionValue}>
+                                    {o.optionLabel}
+                                  </MenuItem>
+                                ))}
                               </Select>
                             </FormControl>
                           </Grid>
@@ -5635,11 +5638,11 @@ export default function EnquiriesPage() {
                       label="Visit Type"
                       onChange={handleVisitorDataChange}
                     >
-                      <MenuItem value="consultation">General Consultation</MenuItem>
-                      <MenuItem value="test">Hearing Test</MenuItem>
-                      <MenuItem value="trial">Device Trial</MenuItem>
-                      <MenuItem value="fitting">Device Fitting</MenuItem>
-                      <MenuItem value="followup">Follow-up Visit</MenuItem>
+                      {wizardLegacyVisitPurposeOpts.map((o) => (
+                        <MenuItem key={o.optionValue} value={o.optionValue}>
+                          {o.optionLabel}
+                        </MenuItem>
+                      ))}
                     </Select>
                   </FormControl>
                 </Grid>
@@ -5653,11 +5656,11 @@ export default function EnquiriesPage() {
                       label="Center"
                       onChange={handleVisitorDataChange}
                     >
-                      <MenuItem value="main">Main Center</MenuItem>
-                      <MenuItem value="north">North Branch</MenuItem>
-                      <MenuItem value="south">South Branch</MenuItem>
-                      <MenuItem value="east">East Branch</MenuItem>
-                      <MenuItem value="west">West Branch</MenuItem>
+                      {wizardVisitingCenterOpts.map((o) => (
+                        <MenuItem key={o.optionValue} value={o.optionValue}>
+                          {o.optionLabel}
+                        </MenuItem>
+                      ))}
                     </Select>
                   </FormControl>
                 </Grid>
@@ -5697,10 +5700,11 @@ export default function EnquiriesPage() {
                       label="Status"
                       onChange={handleVisitorDataChange}
                     >
-                      <MenuItem value="scheduled">Scheduled</MenuItem>
-                      <MenuItem value="completed">Completed</MenuItem>
-                      <MenuItem value="cancelled">Cancelled</MenuItem>
-                      <MenuItem value="no-show">No Show</MenuItem>
+                      {wizardLegacyScheduledStatusOpts.map((o) => (
+                        <MenuItem key={o.optionValue} value={o.optionValue}>
+                          {o.optionLabel}
+                        </MenuItem>
+                      ))}
                     </Select>
                   </FormControl>
                 </Grid>

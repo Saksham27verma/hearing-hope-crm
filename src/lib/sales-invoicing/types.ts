@@ -4,6 +4,9 @@ export type InvoiceSource = 'manual' | 'enquiry';
 
 export type PaymentStatus = 'paid' | 'pending' | 'overdue';
 
+/** Payment status filter in the invoice table (includes voided invoices). */
+export type InvoiceTablePaymentFilter = PaymentStatus | 'cancelled';
+
 export interface ManualLineItem {
   id: string;
   description: string;
@@ -44,6 +47,11 @@ export interface SaleRecord {
   enquiryVisitIndex?: number;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
+  /** Soft void — invoice stays in DB for audit; excluded from covering enquiry-derived pending rows. */
+  cancelled?: boolean;
+  cancelledAt?: Timestamp;
+  cancelledByUid?: string;
+  cancelReason?: string;
 }
 
 export interface DerivedEnquirySale {
@@ -72,7 +80,9 @@ export interface UnifiedInvoiceRow {
   linkedEnquiryRef: string | null;
   total: number;
   statusLabel: string;
-  statusVariant: 'paid' | 'pending' | 'overdue' | 'uninvoiced';
+  statusVariant: 'paid' | 'pending' | 'overdue' | 'uninvoiced' | 'cancelled';
+  /** True when the saved sale document is cancelled (voided). */
+  isCancelled?: boolean;
   source: InvoiceSource | 'enquiry_pending';
   savedSale?: SaleRecord;
   derivedEnquiry?: DerivedEnquirySale;

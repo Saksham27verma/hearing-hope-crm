@@ -5,7 +5,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
-import { ENQUIRY_REFERENCE_OPTIONS } from '@/components/enquiries/enquiryFormFieldOptions';
+import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
 import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
@@ -561,7 +561,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const { userProfile } = useAuth();
   const isAdmin = userProfile?.role === 'admin';
   const isAudiologist = userProfile?.role === 'audiologist';
-  
+  const { optionsByField } = useEnquiryOptionsByField();
+  const referenceFieldOptions = optionsByField.reference ?? [];
+  const visitLocationOpts = optionsByField.visit_location ?? [];
+  const visitHaStatusOpts = optionsByField.visit_hearing_aid_status ?? [];
+  const trialLocationOpts = optionsByField.trial_location_type ?? [];
+  const earSideOpts = optionsByField.ear_side ?? [];
+  const deviceConditionOpts = optionsByField.device_return_condition ?? [];
+  const serviceLineOpts = optionsByField.simplified_service_line ?? [];
+  const paymentModeOpts = optionsByField.payment_mode ?? [];
+
   const [step, setStep] = useState(0);
   const [activeVisit, setActiveVisit] = useState(-1);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
@@ -2462,7 +2471,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 {(selected as string[]).map((value) => (
                                   <Chip
                                     key={value}
-                                    label={value}
+                                    label={
+                                      referenceFieldOptions.find((o) => o.optionValue === value)?.optionLabel ?? value
+                                    }
                                     size="small"
                                     sx={{ borderRadius: 1 }}
                                   />
@@ -2477,13 +2488,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               }
                             }}
                           >
-                            {ENQUIRY_REFERENCE_OPTIONS.map(option => (
-                              <MenuItem key={option} value={option}>
+                            {referenceFieldOptions.map((option) => (
+                              <MenuItem key={option.optionValue} value={option.optionValue}>
                                 <Checkbox
-                                  checked={Array.isArray(field.value) && field.value.includes(option)}
+                                  checked={Array.isArray(field.value) && field.value.includes(option.optionValue)}
                                   sx={{ mr: 1 }}
                                 />
-                                {option}
+                                {option.optionLabel}
                               </MenuItem>
                             ))}
                           </Select>
@@ -2829,8 +2840,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             disabled={isAudiologist}
                             sx={{ borderRadius: 2, minWidth: '200px' }}
                           >
-                            <MenuItem value="center">Center Visit</MenuItem>
-                            <MenuItem value="home">Home Visit</MenuItem>
+                            {visitLocationOpts.map((o) => (
+                              <MenuItem key={o.optionValue} value={o.optionValue}>
+                                {o.optionLabel}
+                              </MenuItem>
+                            ))}
                           </Select>
                         </FormControl>
                       </Grid>
@@ -3518,9 +3532,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
-                                  <MenuItem value="left">Left</MenuItem>
-                                  <MenuItem value="right">Right</MenuItem>
-                                  <MenuItem value="both">Both</MenuItem>
+                                  {earSideOpts.map((o) => (
+                                    <MenuItem key={o.optionValue} value={o.optionValue}>
+                                      {o.optionLabel}
+                                    </MenuItem>
+                                  ))}
                                 </Select>
                               </FormControl>
                             </Grid>
@@ -3681,9 +3697,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
-                                  <MenuItem value="left">Left</MenuItem>
-                                  <MenuItem value="right">Right</MenuItem>
-                                  <MenuItem value="both">Both</MenuItem>
+                                  {earSideOpts.map((o) => (
+                                    <MenuItem key={o.optionValue} value={o.optionValue}>
+                                      {o.optionLabel}
+                                    </MenuItem>
+                                  ))}
                                 </Select>
                               </FormControl>
                             </Grid>
@@ -3739,8 +3757,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   label="Trial Type"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
-                                  <MenuItem value="in_office">In-Office Trial</MenuItem>
-                                  <MenuItem value="home">Home Trial</MenuItem>
+                                  {trialLocationOpts.map((o) => (
+                                    <MenuItem key={o.optionValue} value={o.optionValue}>
+                                      {o.optionLabel}
+                                    </MenuItem>
+                                  ))}
                                 </Select>
                               </FormControl>
                             </Grid>
@@ -4089,9 +4110,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
-                                    <MenuItem value="left">Left</MenuItem>
-                                    <MenuItem value="right">Right</MenuItem>
-                                    <MenuItem value="both">Both</MenuItem>
+                                    {earSideOpts.map((o) => (
+                                      <MenuItem key={o.optionValue} value={o.optionValue}>
+                                        {o.optionLabel}
+                                      </MenuItem>
+                                    ))}
                                   </Select>
                                 </FormControl>
                               </Grid>
@@ -4369,9 +4392,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
-                                  <MenuItem value="left">Left</MenuItem>
-                                  <MenuItem value="right">Right</MenuItem>
-                                  <MenuItem value="both">Both</MenuItem>
+                                  {earSideOpts.map((o) => (
+                                    <MenuItem key={o.optionValue} value={o.optionValue}>
+                                      {o.optionLabel}
+                                    </MenuItem>
+                                  ))}
                                 </Select>
                               </FormControl>
                             </Grid>
@@ -4384,10 +4409,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     label="Status"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
-                                    <MenuItem value="trial_given">Trial Given</MenuItem>
-                                    <MenuItem value="booked">Booked</MenuItem>
-                                    <MenuItem value="sold">Sold</MenuItem>
-                                    <MenuItem value="not_interested">Not Interested</MenuItem>
+                                    {visitHaStatusOpts.map((o) => (
+                                      <MenuItem key={o.optionValue} value={o.optionValue}>
+                                        {o.optionLabel}
+                                      </MenuItem>
+                                    ))}
                                   </Select>
                               </FormControl>
                             </Grid>
@@ -4421,8 +4447,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       label="Trial Type"
                                       sx={{ borderRadius: 2, minWidth: '200px' }}
                                     >
-                                      <MenuItem value="in_office">In-Office Trial</MenuItem>
-                                      <MenuItem value="home">Home Trial</MenuItem>
+                                      {trialLocationOpts.map((o) => (
+                                        <MenuItem key={o.optionValue} value={o.optionValue}>
+                                          {o.optionLabel}
+                                        </MenuItem>
+                                      ))}
                                     </Select>
                                   </FormControl>
                                 </Grid>
@@ -5244,10 +5273,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   onChange={(e) => updateVisit(activeVisit, 'returnCondition', e.target.value)}
                                   sx={{ borderRadius: 2 }}
                                 >
-                                  <MenuItem value="excellent">Excellent - Like New</MenuItem>
-                                  <MenuItem value="good">Good - Minor wear</MenuItem>
-                                  <MenuItem value="fair">Fair - Some damage</MenuItem>
-                                  <MenuItem value="poor">Poor - Significant damage</MenuItem>
+                                  {deviceConditionOpts.map((o) => (
+                                    <MenuItem key={o.optionValue} value={o.optionValue}>
+                                      {o.optionLabel}
+                                    </MenuItem>
+                                  ))}
                                 </Select>
                               </FormControl>
                             </Grid>
@@ -5925,9 +5955,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     label="Session Type"
                                     sx={{ borderRadius: 2 }}
                                   >
-                                    <MenuItem value="counselling">💬 Hearing Aid Counselling</MenuItem>
-                                    <MenuItem value="speech_therapy">🗣️ Speech Therapy</MenuItem>
-                                    <MenuItem value="general_enquiry">❓ General Enquiry</MenuItem>
+                                    {serviceLineOpts.map((o) => (
+                                      <MenuItem key={o.optionValue} value={o.optionValue}>
+                                        {o.optionLabel}
+                                      </MenuItem>
+                                    ))}
                                   </Select>
                                 </FormControl>
                               </Grid>
@@ -6377,12 +6409,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           label="Payment Mode"
                           sx={{ borderRadius: 2 }}
                         >
-                          <MenuItem value="Cash">💵 Cash</MenuItem>
-                          <MenuItem value="Card">💳 Card</MenuItem>
-                          <MenuItem value="UPI">📱 UPI</MenuItem>
-                          <MenuItem value="Net Banking">🏦 Net Banking</MenuItem>
-                          <MenuItem value="Cheque">📝 Cheque</MenuItem>
-                          <MenuItem value="NEFT/RTGS">🏛️ NEFT/RTGS</MenuItem>
+                          {paymentModeOpts.map((o) => (
+                            <MenuItem key={o.optionValue} value={o.optionValue}>
+                              {o.optionLabel}
+                            </MenuItem>
+                          ))}
                         </Select>
                       </FormControl>
                     </Grid>
