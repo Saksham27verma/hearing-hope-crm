@@ -10,6 +10,8 @@ import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
 import PureToneAudiogram from './PureToneAudiogram';
+import ExternalPtaReportPicker from './ExternalPtaReportPicker';
+import type { ExternalPtaReportLink } from '@/lib/ptaIntegration';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import {
   TextField, Button, Typography, Box, Paper,
@@ -19,7 +21,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Tabs, Tab, Chip, InputAdornment, Switch, FormControlLabel,
   Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox, Radio,
-  List, ListItem, ListItemButton, ListItemText, ListSubheader, Badge
+  List, ListItem, ListItemButton, ListItemText, ListSubheader, Badge, Link as MuiLink
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -287,6 +289,8 @@ interface Visit {
     leftMasking: boolean[];
     notes?: string;
   };
+  /** Linked PTA report from external Vercel PTA app (stored under hearingTestDetails on save). */
+  externalPtaReport?: ExternalPtaReportLink;
   hearingAidProductId: string;
   hearingAidType: string;
   hearingAidBrand: string;
@@ -558,9 +562,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   fullPage = true, // Always full page now
   isSubmitting = false
 }) => {
-  const { userProfile } = useAuth();
+  const { userProfile, user } = useAuth();
   const isAdmin = userProfile?.role === 'admin';
   const isAudiologist = userProfile?.role === 'audiologist';
+  const getPtaIdToken = useCallback(async () => {
+    try {
+      return user ? await user.getIdToken() : null;
+    } catch {
+      return null;
+    }
+  }, [user]);
   const { optionsByField } = useEnquiryOptionsByField();
   const referenceFieldOptions = optionsByField.reference ?? [];
   const visitLocationOpts = optionsByField.visit_location ?? [];
@@ -1281,6 +1292,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           recommendations: visit.hearingTestDetails?.recommendations || '',
           testPrice: visit.hearingTestDetails?.testPrice || 0,
           audiogramData: visit.hearingTestDetails?.audiogramData || undefined,
+          externalPtaReport:
+            visit.hearingTestDetails?.externalPtaReport || visit.externalPtaReport || undefined,
           hearingAidType: visit.hearingAidDetails?.hearingAidSuggested || '',
           hearingAidBrand: visit.hearingAidDetails?.whoSold || '',
           hearingAidModel: visit.hearingAidDetails?.quotation || '',
@@ -1610,6 +1623,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       recommendations: '',
       testPrice: 0,
       audiogramData: undefined,
+      externalPtaReport: undefined,
       hearingAidProductId: '',
       hearingAidType: '',
       hearingAidBrand: '',
@@ -2184,7 +2198,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         if (visit.audiogramData !== undefined && visit.audiogramData !== null) {
           hearingTestDetails.audiogramData = visit.audiogramData;
         }
-        
+        if (visit.externalPtaReport !== undefined && visit.externalPtaReport !== null) {
+          hearingTestDetails.externalPtaReport = visit.externalPtaReport;
+        }
+
         return removeUndefined({
           id: visit.id,
           visitType: visit.visitType,
@@ -3159,6 +3176,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               readOnly={!isAudiologist}
                             />
                           </Box>
+                          <ExternalPtaReportPicker
+                            value={currentVisit.externalPtaReport}
+                            onChange={(next) => updateVisit(activeVisit, 'externalPtaReport', next)}
+                            getIdToken={getPtaIdToken}
+                            disabled={!isAudiologist && !isAdmin}
+                          />
                         </CardContent>
                       </Card>
                     )}
@@ -6931,6 +6954,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         editable={false}
                         readOnly={true}
                       />
+                    </Box>
+                  )}
+                  {visit.hearingTest && visit.externalPtaReport?.viewUrl && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="h6" sx={{ mb: 1, fontWeight: 600, color: 'primary.main' }}>
+                        External PTA report
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                        {visit.externalPtaReport.patientLabel} (ID: {visit.externalPtaReport.reportId})
+                      </Typography>
+                      <MuiLink href={visit.externalPtaReport.viewUrl} target="_blank" rel="noopener noreferrer" variant="body2">
+                        Open PTA report
+                      </MuiLink>
                     </Box>
                   )}
                 </Card>

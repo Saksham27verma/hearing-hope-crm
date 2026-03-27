@@ -1017,12 +1017,12 @@ export default function EnquiriesPage() {
               return true;
             }
             
-            // TERTIARY CHECK: Check if hearingTestDetails exists with audiogramData
-            // Only show if audiogram data exists (meaning hearing test was actually used)
-            if (visit.hearingTestDetails && visit.hearingTestDetails.audiogramData) {
+            // TERTIARY: hearing test details present (audiogram or linked external PTA)
+            const h = visit.hearingTestDetails;
+            if (h && (h.audiogramData || h.externalPtaReport?.viewUrl)) {
               return true;
             }
-            
+
             return false;
           });
           
@@ -1038,7 +1038,8 @@ export default function EnquiriesPage() {
             visitSchedules: filteredData[0].visitSchedules?.map((v: any) => ({
               medicalServices: v.medicalServices,
               medicalService: v.medicalService,
-              hasAudiogram: !!v.hearingTestDetails?.audiogramData
+              hasAudiogram: !!v.hearingTestDetails?.audiogramData,
+              hasExternalPta: !!v.hearingTestDetails?.externalPtaReport?.viewUrl,
             }))
           });
         }
@@ -1377,8 +1378,20 @@ export default function EnquiriesPage() {
         const visitsArr: any[] = Array.isArray((e as any).visits) ? (e as any).visits : [];
         const schedulesArr: any[] = Array.isArray((e as any).visitSchedules) ? (e as any).visitSchedules : [];
         const hasResults =
-          visitsArr.some(v => !!(v?.testDetails?.testResults || v?.testDetails?.audiogramData || v?.hearingTestDetails?.audiogramData)) ||
-          schedulesArr.some(v => !!(v?.hearingTestDetails?.audiogramData));
+          visitsArr.some(
+            v =>
+              !!(
+                v?.testDetails?.testResults ||
+                v?.testDetails?.audiogramData ||
+                v?.hearingTestDetails?.audiogramData ||
+                v?.hearingTestDetails?.externalPtaReport?.viewUrl ||
+                v?.externalPtaReport?.viewUrl
+              )
+          ) ||
+          schedulesArr.some(
+            v =>
+              !!(v?.hearingTestDetails?.audiogramData || v?.hearingTestDetails?.externalPtaReport?.viewUrl)
+          );
         return wantsResults ? hasResults : !hasResults;
       });
     }
@@ -1462,12 +1475,11 @@ export default function EnquiriesPage() {
             return true;
           }
           
-          // TERTIARY CHECK: Check if hearingTestDetails exists with audiogramData
-          // Only show if audiogram data exists (meaning hearing test was actually used)
-          if (visit.hearingTestDetails && visit.hearingTestDetails.audiogramData) {
+          const h = visit.hearingTestDetails;
+          if (h && (h.audiogramData || h.externalPtaReport?.viewUrl)) {
             return true;
           }
-          
+
           return false;
         });
         

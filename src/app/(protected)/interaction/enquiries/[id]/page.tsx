@@ -37,6 +37,7 @@ import {
   MenuItem,
   Menu,
   Tooltip,
+  Link,
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -658,6 +659,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const activeVisit = visits[activeVisitTab];
   const activeVisitAudiogramData =
     activeVisit?.hearingTestDetails?.audiogramData || activeVisit?.audiogramData;
+  const activeVisitExternalPta =
+    activeVisit?.hearingTestDetails?.externalPtaReport || activeVisit?.externalPtaReport;
 
   const renderVisitField = (label: string, value: any, color: string = 'text.primary') => {
     if (!hasValue(value)) return null;
@@ -1095,7 +1098,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.testDoneBy) ||
                         hasValue(activeVisit.testResults) ||
                         hasValue(activeVisit.recommendations) ||
-                        activeVisitAudiogramData) && (
+                        activeVisitAudiogramData ||
+                        hasValue(activeVisitExternalPta?.viewUrl)) && (
                         <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#0ea5e9', 0.14) }}>
                           <SectionHeading icon={<MedicalServicesIcon fontSize="small" />} title="Hearing Test" />
                           <Grid container spacing={2}>
@@ -1105,6 +1109,19 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             <Grid item xs={12}>{renderVisitField('Results', activeVisit.testResults)}</Grid>
                             <Grid item xs={12}>{renderVisitField('Recommendations', activeVisit.recommendations)}</Grid>
                           </Grid>
+                          {activeVisitExternalPta?.viewUrl && (
+                            <Box sx={{ mt: 2 }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                                PTA report (external)
+                              </Typography>
+                              <Typography variant="body1" sx={{ fontWeight: 500, mb: 1 }}>
+                                {activeVisitExternalPta.patientLabel || activeVisitExternalPta.reportId}
+                              </Typography>
+                              <Link href={activeVisitExternalPta.viewUrl} target="_blank" rel="noopener noreferrer" variant="body2">
+                                Open PTA report in new tab
+                              </Link>
+                            </Box>
+                          )}
                           {activeVisitAudiogramData && (
                             <Box sx={{ mt: 3 }}>
                               <PureToneAudiogram

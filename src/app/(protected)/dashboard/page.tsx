@@ -126,13 +126,14 @@ export default function DashboardPage() {
               return false;
             }
             
-            // Check if audiogram data is missing (this is what we want)
-            const hasAudiogramData = enquiry.visitSchedules.some((visit: any) => {
-              return visit.hearingTestDetails && visit.hearingTestDetails.audiogramData;
+            // Hearing test is “complete” if in-CRM audiogram exists OR an external PTA report is linked
+            const hasAudiogramOrExternalPta = enquiry.visitSchedules.some((visit: any) => {
+              const h = visit.hearingTestDetails;
+              if (!h) return false;
+              return Boolean(h.audiogramData || h.externalPtaReport?.viewUrl);
             });
-            
-            // Return true if hearing test is selected but audiogram data is NOT present
-            return !hasAudiogramData;
+
+            return !hasAudiogramOrExternalPta;
           })
           .sort((a: any, b: any) => {
             // Sort by createdAt descending
