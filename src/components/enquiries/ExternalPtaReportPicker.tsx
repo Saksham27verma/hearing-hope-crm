@@ -70,7 +70,14 @@ export default function ExternalPtaReportPicker({
           return;
         }
         if (!res.ok) {
-          setError(typeof data?.error === 'string' ? data.error : `Request failed (${res.status})`);
+          let msg = typeof data?.error === 'string' ? data.error : `Request failed (${res.status})`;
+          if (typeof data?.upstreamHint === 'string' && data.upstreamHint.trim()) {
+            msg += ` — ${data.upstreamHint.trim()}`;
+          }
+          if (typeof data?.requestedUrl === 'string' && data.requestedUrl) {
+            msg += ` [called: ${data.requestedUrl}]`;
+          }
+          setError(msg);
           setOptions([]);
           return;
         }
