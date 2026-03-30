@@ -72,7 +72,9 @@ export async function GET(req: Request) {
     const userSnap = await db.collection('users').doc(decoded.uid).get();
     if (!userSnap.exists) return jsonError('Forbidden', 403);
 
-    const role = (userSnap.data() as { role?: string })?.role;
+    const roleRaw = (userSnap.data() as { role?: string })?.role;
+    const role =
+      typeof roleRaw === 'string' ? roleRaw.trim().toLowerCase() : '';
     if (!role || !['admin', 'staff', 'audiologist'].includes(role)) {
       return jsonError('Forbidden', 403);
     }

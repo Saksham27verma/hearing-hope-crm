@@ -3395,7 +3395,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             value={currentVisit.externalPtaReport}
                             onChange={(next) => updateVisit(activeVisit, 'externalPtaReport', next)}
                             getIdToken={getPtaIdToken}
-                            disabled={!isAudiologist && !isAdmin}
+                            disabled={
+                              !userProfile ||
+                              !['admin', 'staff', 'audiologist'].includes(userProfile.role)
+                            }
                           />
                         </CardContent>
                       </Card>
