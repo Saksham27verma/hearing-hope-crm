@@ -90,6 +90,7 @@ import {
   type StaffRecord,
 } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
+import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
@@ -527,6 +528,22 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     return Boolean(value);
   };
 
+  /** Booking block only when this visit is actually a booking — not trial/sale device fields alone (default qty 1 was opening the section for every visit). */
+  const visitShowsBookingDetails = (v: any) => {
+    if (!v) return false;
+    const bookingService =
+      !!v.hearingAidBooked ||
+      (Array.isArray(v.medicalServices) && v.medicalServices.includes('hearing_aid_booked')) ||
+      v.medicalService === 'hearing_aid_booked';
+    if (bookingService) return true;
+    if (v.bookingFromTrial) return true;
+    if (Number(v.bookingAdvanceAmount) > 0) return true;
+    if (Number(v.bookingSellingPrice) > 0) return true;
+    if (hasValue(v.bookingDate)) return true;
+    if (Number(v.bookingQuantity) > 1) return true;
+    return false;
+  };
+
   // Receipt data
   const bookingReceipts = visits
     .map((visit: any, index: number) => ({ visit, index }))
@@ -584,8 +601,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const calculateDerivedTotalDue = () => {
     let total = 0;
     visits.forEach((visit: any) => {
-      if (visit.hearingTest && Number(visit.testPrice) > 0) {
-        total += Number(visit.testPrice) || 0;
+      if (visit.hearingTest) {
+        const ht = sumHearingTestEntryPrices(visit);
+        if (ht > 0) total += ht;
       }
       if (visit.hearingAidBooked && !visit.hearingAidSale) {
         total += getBookingTotal(visit);
@@ -646,7 +664,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       visit.programmingAmount ||
       visit.repairAmount ||
       visit.counsellingAmount ||
-      visit.testPrice
+      sumHearingTestEntryPrices(visit)
     );
   };
 
@@ -661,6 +679,25 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     activeVisit?.hearingTestDetails?.audiogramData || activeVisit?.audiogramData;
   const activeVisitExternalPta =
     activeVisit?.hearingTestDetails?.externalPtaReport || activeVisit?.externalPtaReport;
+
+  const activeVisitHearingTestTypesLabel = useMemo(() => {
+    const v = activeVisit;
+    if (!v) return '';
+    const ent = v.hearingTestDetails?.hearingTestEntries ?? v.hearingTestEntries;
+    if (Array.isArray(ent) && ent.length > 0) {
+      const parts = ent.map((e: any) => e?.testType).filter(Boolean);
+      if (parts.length) return parts.join(', ');
+    }
+    const t = v.hearingTestDetails?.testType ?? v.testType;
+    return typeof t === 'string' ? t : '';
+  }, [activeVisit]);
+
+  const activeVisitHearingTestEntries = useMemo(() => {
+    const v = activeVisit;
+    if (!v) return [] as { id?: string; testType?: string; price?: number; testPrice?: number }[];
+    const ent = v.hearingTestDetails?.hearingTestEntries ?? v.hearingTestEntries;
+    return Array.isArray(ent) ? ent : [];
+  }, [activeVisit]);
 
   const renderVisitField = (label: string, value: any, color: string = 'text.primary') => {
     if (!hasValue(value)) return null;
@@ -1094,7 +1131,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
                     <Box sx={{ mt: 3, display: 'grid', gap: 2 }}>
                       {(activeVisit.hearingTest ||
-                        hasValue(activeVisit.testType) ||
+                        hasValue(activeVisitHearingTestTypesLabel) ||
                         hasValue(activeVisit.testDoneBy) ||
                         hasValue(activeVisit.testResults) ||
                         hasValue(activeVisit.recommendations) ||
@@ -1103,92 +1140,173 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#0ea5e9', 0.14) }}>
                           <SectionHeading icon={<MedicalServicesIcon fontSize="small" />} title="Hearing Test" />
                           <Grid container spacing={2}>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Test Type', activeVisit.testType)}</Grid>
+                            <Grid item xs={12} sm={6}>{renderVisitField('Test type(s)', activeVisitHearingTestTypesLabel)}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Done By', activeVisit.testDoneBy)}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Price', formatCurrency(activeVisit.testPrice))}</Grid>
+                            {activeVisitHearingTestEntries.filter((e) => String(e?.testType || '').trim()).map(
+                              (e, idx) => (
+                                <Grid item xs={12} sm={6} key={String(e.id ?? `${e.testType}-${idx}`)}>
+                                  {renderVisitField(
+                                    String(e.testType || 'Test').trim() || 'Test',
+                                    formatCurrency(Number(e.price ?? e.testPrice) || 0)
+                                  )}
+                                </Grid>
+                              )
+                            )}
+                            {activeVisitHearingTestEntries.filter((e) => String(e?.testType || '').trim()).length >
+                              1 && (
+                              <Grid item xs={12} sm={6}>
+                                {renderVisitField(
+                                  'Total (tests)',
+                                  formatCurrency(sumHearingTestEntryPrices(activeVisit))
+                                )}
+                              </Grid>
+                            )}
+                            {activeVisitHearingTestEntries.filter((e) => String(e?.testType || '').trim())
+                              .length === 0 &&
+                              hasValue(sumHearingTestEntryPrices(activeVisit)) && (
+                                <Grid item xs={12} sm={6}>
+                                  {renderVisitField('Price', formatCurrency(sumHearingTestEntryPrices(activeVisit)))}
+                                </Grid>
+                              )}
                             <Grid item xs={12}>{renderVisitField('Results', activeVisit.testResults)}</Grid>
                             <Grid item xs={12}>{renderVisitField('Recommendations', activeVisit.recommendations)}</Grid>
                           </Grid>
-                          {activeVisitExternalPta?.viewUrl && (
-                            <Box sx={{ mt: 2 }}>
-                              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                                PTA report (external)
-                              </Typography>
-                              <Typography variant="body1" sx={{ fontWeight: 500, mb: 1 }}>
-                                {activeVisitExternalPta.patientLabel || activeVisitExternalPta.reportId}
-                              </Typography>
-                              <Link href={activeVisitExternalPta.viewUrl} target="_blank" rel="noopener noreferrer" variant="body2">
-                                Open PTA report in new tab
-                              </Link>
-                              {activeVisitExternalPta.audiogramData &&
-                              typeof activeVisitExternalPta.audiogramData === 'object' &&
-                              Object.keys(activeVisitExternalPta.audiogramData).length > 0 ? (
-                                <Box sx={{ mt: 2, maxWidth: 720, mx: 'auto' }}>
-                                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
-                                    Audiogram (from PTA)
-                                  </Typography>
-                                  <PureToneAudiogram
-                                    data={activeVisitExternalPta.audiogramData as any}
-                                    onChange={() => {}}
-                                    editable={false}
-                                    readOnly={true}
-                                    compact
-                                  />
-                                </Box>
-                              ) : (
-                                <Box sx={{ mt: 2 }}>
-                                  <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
-                                    PTA audiogram preview
-                                  </Typography>
+                          {(activeVisitExternalPta?.viewUrl || activeVisitAudiogramData) && (
+                            <Grid
+                              container
+                              spacing={2}
+                              sx={{
+                                mt: 2,
+                                alignItems: 'flex-start',
+                              }}
+                            >
+                              {activeVisitExternalPta?.viewUrl && (
+                                <Grid
+                                  item
+                                  xs={12}
+                                  md={activeVisitAudiogramData ? 6 : 12}
+                                >
+                                  <Box>
+                                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                                      PTA report (external)
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ fontWeight: 500, mb: 1 }}>
+                                      {activeVisitExternalPta.patientLabel || activeVisitExternalPta.reportId}
+                                    </Typography>
+                                    <Link
+                                      href={activeVisitExternalPta.viewUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      variant="body2"
+                                    >
+                                      Open PTA report in new tab
+                                    </Link>
+                                    {activeVisitExternalPta.audiogramData &&
+                                    typeof activeVisitExternalPta.audiogramData === 'object' &&
+                                    Object.keys(activeVisitExternalPta.audiogramData).length > 0 ? (
+                                      <Box
+                                        sx={{
+                                          mt: 2,
+                                          maxWidth: activeVisitAudiogramData ? '100%' : 720,
+                                          mx: activeVisitAudiogramData ? 0 : 'auto',
+                                        }}
+                                      >
+                                        <Typography
+                                          variant="subtitle2"
+                                          sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}
+                                        >
+                                          Audiogram (from PTA)
+                                        </Typography>
+                                        <PureToneAudiogram
+                                          data={activeVisitExternalPta.audiogramData as any}
+                                          onChange={() => {}}
+                                          editable={false}
+                                          readOnly={true}
+                                          compact
+                                        />
+                                      </Box>
+                                    ) : (
+                                      <Box sx={{ mt: 2 }}>
+                                        <Typography
+                                          variant="subtitle2"
+                                          sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}
+                                        >
+                                          PTA audiogram preview
+                                        </Typography>
+                                        <Box
+                                          sx={{
+                                            borderRadius: 2,
+                                            overflow: 'hidden',
+                                            border: 1,
+                                            borderColor: 'divider',
+                                            height: { xs: 260, sm: 300 },
+                                            bgcolor: 'grey.100',
+                                            maxWidth: '100%',
+                                          }}
+                                        >
+                                          <Box
+                                            component="iframe"
+                                            title={`PTA report ${activeVisitExternalPta.reportId}`}
+                                            src={activeVisitExternalPta.embedUrl || activeVisitExternalPta.viewUrl}
+                                            sx={{
+                                              width: '100%',
+                                              height: '100%',
+                                              border: 0,
+                                              display: 'block',
+                                            }}
+                                            sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                                          />
+                                        </Box>
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                          component="div"
+                                          sx={{ mt: 1 }}
+                                        >
+                                          Embedded PTA report. If this stays blank, your PTA app may block iframes (
+                                          <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                                            X-Frame-Options
+                                          </Box>
+                                          ) — use &quot;Open PTA report&quot; above, or add an embed URL (
+                                          <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                                            embedUrl
+                                          </Box>
+                                          ) in the list API.
+                                        </Typography>
+                                      </Box>
+                                    )}
+                                  </Box>
+                                </Grid>
+                              )}
+                              {activeVisitAudiogramData && (
+                                <Grid
+                                  item
+                                  xs={12}
+                                  md={activeVisitExternalPta?.viewUrl ? 6 : 12}
+                                >
                                   <Box
                                     sx={{
-                                      borderRadius: 2,
-                                      overflow: 'hidden',
-                                      border: 1,
-                                      borderColor: 'divider',
-                                      height: { xs: 260, sm: 300 },
-                                      bgcolor: 'grey.100',
-                                      maxWidth: '100%',
+                                      maxWidth: activeVisitExternalPta?.viewUrl ? '100%' : 720,
+                                      mx: activeVisitExternalPta?.viewUrl ? 0 : 'auto',
                                     }}
                                   >
-                                    <Box
-                                      component="iframe"
-                                      title={`PTA report ${activeVisitExternalPta.reportId}`}
-                                      src={activeVisitExternalPta.embedUrl || activeVisitExternalPta.viewUrl}
-                                      sx={{
-                                        width: '100%',
-                                        height: '100%',
-                                        border: 0,
-                                        display: 'block',
-                                      }}
-                                      sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                                    <Typography
+                                      variant="subtitle2"
+                                      sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}
+                                    >
+                                      Audiogram (CRM)
+                                    </Typography>
+                                    <PureToneAudiogram
+                                      data={activeVisitAudiogramData}
+                                      onChange={() => {}}
+                                      editable={false}
+                                      readOnly={true}
+                                      compact
                                     />
                                   </Box>
-                                  <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 1 }}>
-                                    Embedded PTA report. If this stays blank, your PTA app may block iframes (
-                                    <Box component="span" sx={{ fontFamily: 'monospace' }}>
-                                      X-Frame-Options
-                                    </Box>
-                                    ) — use &quot;Open PTA report&quot; above, or add an embed URL (
-                                    <Box component="span" sx={{ fontFamily: 'monospace' }}>
-                                      embedUrl
-                                    </Box>
-                                    ) in the list API.
-                                  </Typography>
-                                </Box>
+                                </Grid>
                               )}
-                            </Box>
-                          )}
-                          {activeVisitAudiogramData && (
-                            <Box sx={{ mt: 2, maxWidth: 720, mx: 'auto' }}>
-                              <PureToneAudiogram
-                                data={activeVisitAudiogramData}
-                                onChange={() => {}}
-                                editable={false}
-                                readOnly={true}
-                                compact
-                              />
-                            </Box>
+                            </Grid>
                           )}
                         </Paper>
                       )}
@@ -1262,13 +1380,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         </Paper>
                       )}
 
-                      {(activeVisit.hearingAidBooked ||
-                        hasValue(activeVisit.bookingAdvanceAmount) ||
-                        hasValue(activeVisit.bookingDate) ||
-                        hasValue(activeVisit.bookingSellingPrice) ||
-                        hasValue(activeVisit.bookingQuantity) ||
-                        hasValue(activeVisit.hearingAidBrand) ||
-                        hasValue(activeVisit.hearingAidModel)) && (
+                      {visitShowsBookingDetails(activeVisit) && (
                         <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#6366f1', 0.14) }}>
                           <SectionHeading icon={<ReceiptIcon fontSize="small" />} title="Booking Details" />
                           <Grid container spacing={2}>

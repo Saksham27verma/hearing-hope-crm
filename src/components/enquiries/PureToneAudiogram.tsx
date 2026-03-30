@@ -602,14 +602,16 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
           spacing={compact ? 1.5 : 3} 
           sx={{ 
             display: 'flex',
-            flexDirection: { xs: 'column', sm: 'row' },
-            alignItems: 'stretch'
+            /** Profile / compact: always show right + left ear charts in one row (readable side-by-side). */
+            flexDirection: compact ? 'row' : { xs: 'column', sm: 'row' },
+            flexWrap: compact ? 'nowrap' : 'wrap',
+            alignItems: 'stretch',
           }}
         >
           {/* Right Ear Audiogram */}
           <Grid 
             item 
-            xs={12} 
+            xs={compact ? 6 : 12} 
             sm={6} 
             md={6} 
             sx={{ 
@@ -624,7 +626,7 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
           {/* Left Ear Audiogram */}
           <Grid 
             item 
-            xs={12} 
+            xs={compact ? 6 : 12} 
             sm={6} 
             md={6} 
             sx={{ 

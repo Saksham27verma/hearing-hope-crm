@@ -11,6 +11,7 @@ import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquir
 import { useAuth } from '@/context/AuthContext';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
 import type { ExternalPtaReportLink } from '@/lib/ptaIntegration';
+import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import {
   TextField, Button, Typography, Box, Paper,
@@ -274,7 +275,10 @@ interface Visit {
   programming: boolean;
   repair: boolean;
   counselling: boolean;
+  /** @deprecated use hearingTestEntries; kept for save/backward compat (comma-separated) */
   testType: string;
+  /** Multiple tests in one visit — each row: type + price (₹) */
+  hearingTestEntries: { id: string; testType: string; price: number }[];
   testDoneBy: string;
   testResults: string;
   recommendations: string;
@@ -357,6 +361,40 @@ interface Visit {
   salesAfterTax: number;
   totalDiscountPercent: number;
 }
+
+function newHearingTestEntryId(): string {
+  return `ht-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Multiple tests per visit, or legacy single `testType` string. */
+function normalizeHearingTestEntriesFromSavedVisit(visit: any): { id: string; testType: string; price: number }[] {
+  const raw = visit?.hearingTestDetails?.hearingTestEntries ?? visit?.hearingTestEntries;
+  const legacyTotalPrice = Math.max(0, Number(visit?.hearingTestDetails?.testPrice ?? visit?.testPrice ?? 0) || 0);
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw.map((e: any, i: number) => ({
+      id: String(e?.id || `ht-${i}-${newHearingTestEntryId()}`),
+      testType: String(e?.testType ?? '').trim(),
+      price: Math.max(0, Number(e?.price ?? e?.testPrice ?? 0) || 0),
+    }));
+  }
+  const legacy = String(visit?.hearingTestDetails?.testType ?? visit?.testType ?? '').trim();
+  if (legacy) {
+    const types = legacy
+      .split(',')
+      .map((t: string) => t.trim())
+      .filter(Boolean);
+    if (types.length <= 1) {
+      return [{ id: newHearingTestEntryId(), testType: legacy, price: legacyTotalPrice }];
+    }
+    return types.map((t: string, i: number) => ({
+      id: newHearingTestEntryId(),
+      testType: t,
+      price: i === 0 ? legacyTotalPrice : 0,
+    }));
+  }
+  return [];
+}
+
 
 /** Home trial refundable security (₹) when type is home. */
 function visitHomeTrialSecurityAmount(visit: Visit): number {
@@ -580,6 +618,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const deviceConditionOpts = optionsByField.device_return_condition ?? [];
   const serviceLineOpts = optionsByField.simplified_service_line ?? [];
   const paymentModeOpts = optionsByField.payment_mode ?? [];
+  const hearingTestTypeOpts = optionsByField.hearing_test_type ?? [];
 
   const [step, setStep] = useState(0);
   const [activeVisit, setActiveVisit] = useState(-1);
@@ -835,9 +874,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
   const watchName = watch('name');
   const watchPhone = watch('phone');
+  const watchReference = watch('reference');
 
-  // Check if step 0 is valid
-  const isStep0Valid = watchName?.trim().length > 0 && watchPhone?.trim().length > 0 && selectedCenter?.trim().length > 0;
+  // Check if step 0 is valid (must match submit validation: center + reference required)
+  const isStep0Valid =
+    watchName?.trim().length > 0 &&
+    watchPhone?.trim().length > 0 &&
+    selectedCenter != null &&
+    String(selectedCenter).trim().length > 0 &&
+    Array.isArray(watchReference) &&
+    watchReference.length > 0;
 
   // Fetch products from Firebase
   useEffect(() => {
@@ -1285,11 +1331,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           programming: visit.medicalServices?.includes('programming') || false,
           repair: visit.medicalServices?.includes('repair') || false,
           counselling: visit.medicalServices?.includes('counselling') || false,
-          testType: visit.hearingTestDetails?.testType || '',
+          ...(() => {
+            const hearingTestEntries = normalizeHearingTestEntriesFromSavedVisit(visit);
+            const line = hearingTestEntries.map((x) => x.testType).filter(Boolean).join(', ');
+            const tp = sumHearingTestEntryPrices({
+              hearingTestDetails: {
+                hearingTestEntries,
+                testPrice: visit.hearingTestDetails?.testPrice,
+              },
+              testPrice: visit.testPrice,
+            });
+            return {
+              hearingTestEntries,
+              testType: line || visit.hearingTestDetails?.testType || '',
+              testPrice: tp,
+            };
+          })(),
           testDoneBy: visit.hearingTestDetails?.testDoneBy || '',
           testResults: visit.hearingTestDetails?.testResults || '',
           recommendations: visit.hearingTestDetails?.recommendations || '',
-          testPrice: visit.hearingTestDetails?.testPrice || 0,
           audiogramData: visit.hearingTestDetails?.audiogramData || undefined,
           externalPtaReport:
             visit.hearingTestDetails?.externalPtaReport || visit.externalPtaReport || undefined,
@@ -1617,6 +1677,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       repair: false,
       counselling: false,
       testType: '',
+      hearingTestEntries: [],
       testDoneBy: '',
       testResults: '',
       recommendations: '',
@@ -1895,8 +1956,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     let total = 0;
 
     visits.forEach((visit, visitIndex) => {
-      if (visit.hearingTest && visit.testPrice) {
-        total += visit.testPrice;
+      if (visit.hearingTest) {
+        const ht = sumHearingTestEntryPrices(visit);
+        if (ht > 0) total += ht;
       }
 
       if (visit.hearingAidBooked && !visit.hearingAidSale) {
@@ -1934,11 +1996,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     const options = [];
 
     visits.forEach((visit, visitIndex) => {
-      if (visit.hearingTest && visit.testPrice > 0) {
+      const htAmt = sumHearingTestEntryPrices(visit);
+      if (visit.hearingTest && htAmt > 0) {
         options.push({
           value: 'hearing_test',
           label: 'Hearing Test',
-          amount: visit.testPrice,
+          amount: htAmt,
           description: `Test on ${visit.visitDate || 'scheduled date'}`
         });
       }
@@ -2185,14 +2248,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       },
       visitSchedules: visitsForSave.map(visit => {
         // Build hearingTestDetails object, only including audiogramData if it exists
+        const htFiltered = (visit.hearingTestEntries || []).filter((e) => String(e.testType || '').trim());
+        const htSum = htFiltered.reduce(
+          (s, e) => s + Math.max(0, Number((e as { price?: number }).price) || 0),
+          0
+        );
+        const testTypesLine = htFiltered.length
+          ? htFiltered.map((e) => String(e.testType).trim()).join(', ')
+          : String(visit.testType || '').trim() || null;
+
         const hearingTestDetails: any = {
-          testType: visit.testType || null,
+          testType: testTypesLine,
           testDoneBy: visit.testDoneBy || null,
           testResults: visit.testResults || null,
           recommendations: visit.recommendations || null,
-          testPrice: visit.testPrice || null,
+          testPrice: htFiltered.length > 0 ? htSum : visit.testPrice || null,
         };
-        
+        if (htFiltered.length > 0) {
+          hearingTestDetails.hearingTestEntries = htFiltered.map((e) => ({
+            id: e.id,
+            testType: String(e.testType).trim(),
+            price: Math.max(0, Number((e as { price?: number }).price) || 0),
+          }));
+        }
+
         // Only add audiogramData if it exists and is not undefined
         if (visit.audiogramData !== undefined && visit.audiogramData !== null) {
           hearingTestDetails.audiogramData = visit.audiogramData;
@@ -2465,8 +2544,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     <Controller
                       name="reference"
                       control={control}
+                      rules={{
+                        validate: (v: string[]) =>
+                          (Array.isArray(v) && v.length > 0) || 'Select at least one reference',
+                      }}
                       render={({ field }) => (
-                        <FormControl fullWidth>
+                        <FormControl fullWidth required error={!!errors.reference}>
                           <InputLabel id="reference-label">Reference</InputLabel>
                           <Select
                             {...field}
@@ -2514,6 +2597,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </MenuItem>
                             ))}
                           </Select>
+                          {errors.reference && (
+                            <FormHelperText>{errors.reference.message as string}</FormHelperText>
+                          )}
                         </FormControl>
                       )}
                     />
@@ -2652,7 +2738,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     <Controller
                       name="center"
                       control={control}
-                      rules={{ required: 'Center is required' }}
+                      rules={{
+                        validate: (v: string) =>
+                          (v != null && String(v).trim() !== '') || 'Center is required',
+                      }}
                       render={({ field }) => (
                         <FormControl fullWidth error={!!errors.center} required>
                           <InputLabel id="center-label">Center</InputLabel>
@@ -2870,7 +2959,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             control={
                               <Switch
                                 checked={currentVisit.hearingTest}
-                                onChange={(e) => updateVisit(activeVisit, 'hearingTest', e.target.checked)}
+                                onChange={(e) => {
+                                  const on = e.target.checked;
+                                  if (!on) {
+                                    updateVisitFields(activeVisit, {
+                                      hearingTest: false,
+                                      hearingTestEntries: [],
+                                      testType: '',
+                                      testPrice: 0,
+                                    });
+                                  } else {
+                                    updateVisit(activeVisit, 'hearingTest', true);
+                                  }
+                                }}
                                 disabled={isAudiologist}
                                 color="primary"
                               />
@@ -3073,16 +3174,129 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Typography>
                           </Box>
                           <Grid container spacing={3}>
-                            <Grid item xs={12} md={4}>
-                              <TextField
-                                fullWidth
-                                label="Test Type"
-                                value={currentVisit.testType}
-                                onChange={(e) => updateVisit(activeVisit, 'testType', e.target.value)}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                              />
+                            <Grid item xs={12}>
+                              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
+                                Tests performed (this visit)
+                              </Typography>
+                              <Stack spacing={1.25}>
+                                {(currentVisit.hearingTestEntries || []).map((entry) => (
+                                  <Box
+                                    key={entry.id}
+                                    sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}
+                                  >
+                                    <FormControl size="small" sx={{ minWidth: 200, flex: 1, maxWidth: 420 }}>
+                                      <InputLabel id={`ht-type-${entry.id}`}>Test type</InputLabel>
+                                      <Select
+                                        labelId={`ht-type-${entry.id}`}
+                                        label="Test type"
+                                        value={entry.testType || ''}
+                                        onChange={(e) => {
+                                          const v = String(e.target.value);
+                                          const next = (currentVisit.hearingTestEntries || []).map((x) =>
+                                            x.id === entry.id ? { ...x, testType: v } : x
+                                          );
+                                          const line = next.map((x) => x.testType).filter(Boolean).join(', ');
+                                          const tp = sumHearingTestEntryPrices({
+                                            hearingTestEntries: next,
+                                            testPrice: currentVisit.testPrice,
+                                          });
+                                          updateVisitFields(activeVisit, {
+                                            hearingTestEntries: next,
+                                            testType: line,
+                                            testPrice: tp,
+                                          });
+                                        }}
+                                      >
+                                        <MenuItem value="">
+                                          <em>Select type</em>
+                                        </MenuItem>
+                                        {hearingTestTypeOpts.map((o) => (
+                                          <MenuItem key={o.optionValue} value={o.optionValue}>
+                                            {o.optionLabel}
+                                          </MenuItem>
+                                        ))}
+                                        {entry.testType &&
+                                          !hearingTestTypeOpts.some((o) => o.optionValue === entry.testType) && (
+                                            <MenuItem value={entry.testType}>{entry.testType} (saved)</MenuItem>
+                                          )}
+                                      </Select>
+                                    </FormControl>
+                                    <TextField
+                                      size="small"
+                                      label="Price"
+                                      type="number"
+                                      value={entry.price ?? ''}
+                                      onChange={(e) => {
+                                        const num = Math.max(0, Number(e.target.value) || 0);
+                                        const next = (currentVisit.hearingTestEntries || []).map((x) =>
+                                          x.id === entry.id ? { ...x, price: num } : x
+                                        );
+                                        const line = next.map((x) => x.testType).filter(Boolean).join(', ');
+                                        const tp = sumHearingTestEntryPrices({
+                                          hearingTestEntries: next,
+                                          testPrice: currentVisit.testPrice,
+                                        });
+                                        updateVisitFields(activeVisit, {
+                                          hearingTestEntries: next,
+                                          testType: line,
+                                          testPrice: tp,
+                                        });
+                                      }}
+                                      sx={{ width: 120 }}
+                                      InputProps={{
+                                        startAdornment: (
+                                          <InputAdornment position="start">
+                                            <RupeeIcon sx={{ fontSize: 18 }} />
+                                          </InputAdornment>
+                                        ),
+                                      }}
+                                    />
+                                    <IconButton
+                                      aria-label="Remove test"
+                                      size="small"
+                                      onClick={() => {
+                                        const next = (currentVisit.hearingTestEntries || []).filter(
+                                          (x) => x.id !== entry.id
+                                        );
+                                        const line = next.map((x) => x.testType).filter(Boolean).join(', ');
+                                        const tp = sumHearingTestEntryPrices({
+                                          hearingTestEntries: next,
+                                          testPrice: currentVisit.testPrice,
+                                        });
+                                        updateVisitFields(activeVisit, {
+                                          hearingTestEntries: next,
+                                          testType: line,
+                                          testPrice: tp,
+                                        });
+                                      }}
+                                      sx={{ mt: 0.5 }}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </Box>
+                                ))}
+                                <Button
+                                  type="button"
+                                  variant="outlined"
+                                  size="small"
+                                  startIcon={<AddIcon />}
+                                  onClick={() => {
+                                    const next = [
+                                      ...(currentVisit.hearingTestEntries || []),
+                                      { id: newHearingTestEntryId(), testType: '', price: 0 },
+                                    ];
+                                    const tp = sumHearingTestEntryPrices({
+                                      hearingTestEntries: next,
+                                      testPrice: currentVisit.testPrice,
+                                    });
+                                    updateVisitFields(activeVisit, { hearingTestEntries: next, testPrice: tp });
+                                  }}
+                                >
+                                  Add hearing test
+                                </Button>
+                              </Stack>
                             </Grid>
-                            <Grid item xs={12} md={4}>
+                            <Grid item xs={12} md={6}>
                               <Box sx={{ position: 'relative' }}>
                                 <FormControl fullWidth>
                                   <InputLabel>Test Done By</InputLabel>
@@ -3124,23 +3338,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 )}
                               </Box>
                             </Grid>
-                            <Grid item xs={12} md={4}>
-                              <TextField
-                                fullWidth
-                                label="Test Price"
-                                type="number"
-                                value={currentVisit.testPrice}
-                                onChange={(e) => updateVisit(activeVisit, 'testPrice', Number(e.target.value))}
-                                InputProps={{
-                                  startAdornment: (
-                                    <InputAdornment position="start">
-                                      <RupeeIcon />
-                                    </InputAdornment>
-                                  ),
-                                }}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                              />
-                            </Grid>
+                            {(currentVisit.hearingTestEntries || []).filter((e) =>
+                              String(e.testType || '').trim()
+                            ).length > 1 && (
+                              <Grid item xs={12}>
+                                <Typography variant="body2" color="text.secondary">
+                                  Total (hearing tests):{' '}
+                                  <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                                    {formatCurrency(sumHearingTestEntryPrices(currentVisit))}
+                                  </Box>
+                                </Typography>
+                              </Grid>
+                            )}
                             <Grid item xs={12} md={6}>
                               <TextField
                                 fullWidth
@@ -7154,7 +7363,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             {step === 0 && (
               <Typography variant="body2" color="text.secondary">
-                {isStep0Valid ? 'Ready to review' : 'Please fill required fields'}
+                {isStep0Valid
+                  ? 'Ready to review'
+                  : 'Name, phone, center, and at least one reference are required'}
               </Typography>
             )}
             {step === 0 ? (

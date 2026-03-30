@@ -62,6 +62,37 @@ const getVisitSchedules = (enquiry: any): any[] => {
   return [];
 };
 
+/**
+ * Saved visits use `medicalServices` + nested `hearingAidDetails`; journey derivation originally
+ * expected flat flags on the visit. Merge both shapes so last-visit status matches the CRM form.
+ */
+const expandVisitForJourney = (visit: any): any => {
+  if (!visit || typeof visit !== 'object') return visit;
+  const ha =
+    visit.hearingAidDetails && typeof visit.hearingAidDetails === 'object'
+      ? visit.hearingAidDetails
+      : {};
+  const ms = Array.isArray(visit.medicalServices) ? visit.medicalServices : [];
+  const has = (code: string) => ms.includes(code);
+
+  return {
+    ...visit,
+    hearingAidSale:
+      Boolean(visit.hearingAidSale) ||
+      has('hearing_aid_sale') ||
+      has('hearing_aid'),
+    hearingAidBooked: Boolean(visit.hearingAidBooked) || has('hearing_aid_booked'),
+    hearingAidTrial: Boolean(visit.hearingAidTrial) || has('hearing_aid_trial'),
+    hearingTest: Boolean(visit.hearingTest) || has('hearing_test'),
+    purchaseFromTrial: Boolean(visit.purchaseFromTrial) || Boolean(ha.purchaseFromTrial),
+    trialGiven: Boolean(visit.trialGiven) || Boolean(ha.trialGiven),
+    bookingAdvanceAmount:
+      Number(visit.bookingAdvanceAmount ?? ha.bookingAdvanceAmount ?? 0) || 0,
+    hearingAidStatus: visit.hearingAidStatus || ha.hearingAidStatus || '',
+    trialResult: visit.trialResult || ha.trialResult || '',
+  };
+};
+
 const getVisitSortTime = (visit: any): number => {
   const candidates = [visit?.visitDate, visit?.date, visit?.bookingDate, visit?.trialStartDate];
   for (const c of candidates) {
@@ -80,10 +111,11 @@ const isVisitCancelled = (visit: any): boolean =>
 
 const visitHasHaSignals = (visit: any): boolean => {
   if (!visit) return false;
-  if (visit.hearingAidSale || visit.purchaseFromTrial) return true;
-  if (visit.hearingAidBooked || Number(visit.bookingAdvanceAmount || 0) > 0) return true;
-  if (visit.hearingAidTrial || visit.trialGiven) return true;
-  const hs = normalize(visit.hearingAidStatus);
+  const v = expandVisitForJourney(visit);
+  if (v.hearingAidSale || v.purchaseFromTrial) return true;
+  if (v.hearingAidBooked || Number(v.bookingAdvanceAmount || 0) > 0) return true;
+  if (v.hearingAidTrial || v.trialGiven) return true;
+  const hs = normalize(v.hearingAidStatus);
   if (
     ['not_interested', 'sold', 'booked', 'trial_given', 'trial_completed', 'trial_extended'].includes(
       hs
@@ -91,7 +123,7 @@ const visitHasHaSignals = (visit: any): boolean => {
   ) {
     return true;
   }
-  const tr = normalize(visit.trialResult);
+  const tr = normalize(v.trialResult);
   if (['unsuccessful', 'ongoing', 'extended'].includes(tr)) return true;
   return false;
 };
@@ -129,13 +161,15 @@ const deriveFromLastVisit = (
     return journeyKeyToMeta('enquiry');
   }
 
-  const v = pickVisitForStatus(schedules);
-  if (!v) {
+  const raw = pickVisitForStatus(schedules);
+  if (!raw) {
     if (hasAnyProgress) return journeyKeyToMeta('in_process');
     return journeyKeyToMeta('enquiry');
   }
 
-  if (isVisitCancelled(v) && !visitHasHaSignals(v)) {
+  const v = expandVisitForJourney(raw);
+
+  if (isVisitCancelled(raw) && !visitHasHaSignals(raw)) {
     return { key: 'in_process', label: 'Latest visit cancelled', color: 'default' };
   }
 
@@ -163,11 +197,15 @@ const deriveFromLastVisit = (
     return journeyKeyToMeta('booked');
   }
 
+  const trNorm = normalize(v.trialResult);
+  const trialResultMeansActive =
+    ['ongoing', 'extended'].includes(trNorm) &&
+    (Boolean(v.hearingAidTrial) || Boolean(v.trialGiven));
   if (
     Boolean(v.hearingAidTrial) ||
     Boolean(v.trialGiven) ||
     ['trial_given', 'trial_completed', 'trial_extended'].includes(normalize(v.hearingAidStatus)) ||
-    ['ongoing', 'extended'].includes(normalize(v.trialResult))
+    trialResultMeansActive
   ) {
     return journeyKeyToMeta('in_trial');
   }
