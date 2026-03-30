@@ -1123,7 +1123,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                               {activeVisitExternalPta.audiogramData &&
                               typeof activeVisitExternalPta.audiogramData === 'object' &&
                               Object.keys(activeVisitExternalPta.audiogramData).length > 0 ? (
-                                <Box sx={{ mt: 2 }}>
+                                <Box sx={{ mt: 2, maxWidth: 720, mx: 'auto' }}>
                                   <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
                                     Audiogram (from PTA)
                                   </Typography>
@@ -1132,10 +1132,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                     onChange={() => {}}
                                     editable={false}
                                     readOnly={true}
+                                    compact
                                   />
                                 </Box>
                               ) : (
-                                <Box sx={{ mt: 2.5 }}>
+                                <Box sx={{ mt: 2 }}>
                                   <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
                                     PTA audiogram preview
                                   </Typography>
@@ -1145,7 +1146,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                       overflow: 'hidden',
                                       border: 1,
                                       borderColor: 'divider',
-                                      height: { xs: 420, sm: 520 },
+                                      height: { xs: 260, sm: 300 },
                                       bgcolor: 'grey.100',
                                       maxWidth: '100%',
                                     }}
@@ -1179,12 +1180,13 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             </Box>
                           )}
                           {activeVisitAudiogramData && (
-                            <Box sx={{ mt: 3 }}>
+                            <Box sx={{ mt: 2, maxWidth: 720, mx: 'auto' }}>
                               <PureToneAudiogram
                                 data={activeVisitAudiogramData}
                                 onChange={() => {}}
                                 editable={false}
                                 readOnly={true}
+                                compact
                               />
                             </Box>
                           )}

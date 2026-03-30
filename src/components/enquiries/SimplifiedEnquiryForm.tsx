@@ -9,7 +9,6 @@ import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
 import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
-import PureToneAudiogram from './PureToneAudiogram';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
 import type { ExternalPtaReportLink } from '@/lib/ptaIntegration';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
@@ -3167,15 +3166,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Grid>
                           </Grid>
 
-                          {/* Pure Tone Audiogram - Only for audiologists to edit, everyone can view */}
-                          <Box sx={{ mt: 3 }}>
-                            <PureToneAudiogram
-                              data={currentVisit.audiogramData}
-                              onChange={(data) => updateVisit(activeVisit, 'audiogramData', data)}
-                              editable={isAudiologist}
-                              readOnly={!isAudiologist}
-                            />
-                          </Box>
+                          {/* Pure Tone Audiogram — not shown in this form (create or edit); use PTA link + patient profile */}
+                          <Alert severity="info" sx={{ mt: 2 }} icon={false}>
+                            <Typography variant="body2">
+                              Audiogram charts are not shown here so the form stays compact. Link a PTA report below; after saving,
+                              open the patient profile to view charts.
+                              {enquiry?.id ? (
+                                <>
+                                  {' '}
+                                  <MuiLink href={`/interaction/enquiries/${enquiry.id}`} target="_blank" rel="noopener noreferrer">
+                                    Open patient profile
+                                  </MuiLink>
+                                  .
+                                </>
+                              ) : null}
+                            </Typography>
+                          </Alert>
                           <ExternalPtaReportPicker
                             value={currentVisit.externalPtaReport}
                             onChange={(next) => updateVisit(activeVisit, 'externalPtaReport', next)}
@@ -6942,19 +6948,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     )}
                   </Grid>
                   
-                  {/* Pure Tone Audiogram - Show in review for all users (read-only) */}
-                  {visit.hearingTest && visit.audiogramData && (
-                    <Box sx={{ mt: 3 }}>
-                      <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, color: 'primary.main' }}>
-                        Pure Tone Audiogram
-                      </Typography>
-                      <PureToneAudiogram
-                        data={visit.audiogramData}
-                        onChange={() => {}} // Read-only in review
-                        editable={false}
-                        readOnly={true}
-                      />
-                    </Box>
+                  {/* Audiogram — not on review step (same as main step); profile shows charts after save */}
+                  {visit.hearingTest && (visit.audiogramData || visit.externalPtaReport?.viewUrl) && (
+                    <Alert severity="info" sx={{ mt: 2 }}>
+                      Audiogram / PTA details are not previewed here — they appear on the patient profile after you save this
+                      enquiry.
+                    </Alert>
                   )}
                   {visit.hearingTest && visit.externalPtaReport?.viewUrl && (
                     <Box sx={{ mt: 2 }}>

@@ -42,13 +42,16 @@ interface PureToneAudiogramProps {
   onChange: (data: AudiogramData) => void;
   editable: boolean;
   readOnly?: boolean;
+  /** Smaller chart, tighter padding, short legend — for patient profile / dense layouts */
+  compact?: boolean;
 }
 
 const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
   data,
   onChange,
   editable,
-  readOnly = false
+  readOnly = false,
+  compact = false,
 }) => {
   // Helper function to validate and normalize audiogram data
   const normalizeAudiogramData = (rawData: any): AudiogramData => {
@@ -215,11 +218,15 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
   };
 
   const renderSingleAudiogram = (ear: 'right' | 'left', earColor: string) => {
-    const width = 420;
-    const height = 600;
-    const margin = { top: 60, right: 30, bottom: 80, left: 70 };
+    const width = compact ? 300 : 420;
+    const height = compact ? 400 : 600;
+    const margin = compact
+      ? { top: 40, right: 18, bottom: 54, left: 48 }
+      : { top: 60, right: 30, bottom: 80, left: 70 };
     const plotWidth = width;
     const plotHeight = height;
+    const fs = (n: number) => (compact ? Math.max(8, Math.round(n * 0.78)) : n);
+    const symR = compact ? 6 : 8;
     
     // Make the SVG responsive but maintain aspect ratio
     const svgWidth = plotWidth + margin.left + margin.right;
@@ -236,8 +243,8 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
         maxWidth: '100%',
         bgcolor: '#ffffff',
         borderRadius: 2,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        p: 2,
+        boxShadow: compact ? '0 1px 4px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.1)',
+        p: compact ? 1 : 2,
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center'
@@ -351,9 +358,9 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
                 <g key={`freq-label-${freq}`}>
                   <text
                     x={x}
-                    y={plotHeight + 35}
+                    y={plotHeight + (compact ? 28 : 35)}
                     textAnchor="middle"
-                    fontSize="14"
+                    fontSize={fs(14)}
                     fontWeight="600"
                     fill="#333"
                   >
@@ -361,9 +368,9 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
                   </text>
                   <text
                     x={x}
-                    y={plotHeight + 50}
+                    y={plotHeight + (compact ? 40 : 50)}
                     textAnchor="middle"
-                    fontSize="11"
+                    fontSize={fs(11)}
                     fill="#666"
                   >
                     Hz
@@ -386,10 +393,10 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
                     strokeWidth={2}
                   />
                   <text
-                    x={-15}
+                    x={compact ? -12 : -15}
                     y={y + 5}
                     textAnchor="end"
-                    fontSize="13"
+                    fontSize={fs(13)}
                     fontWeight="600"
                     fill="#333"
                   >
@@ -475,38 +482,38 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
                     <circle
                       cx={x}
                       cy={y}
-                      r={8}
+                      r={symR}
                       fill="#ffffff"
                       stroke={earColor}
-                      strokeWidth={3}
+                      strokeWidth={compact ? 2.5 : 3}
                     />
                   ) : (
                     <>
                       <line
-                        x1={x - 7}
-                        y1={y - 7}
-                        x2={x + 7}
-                        y2={y + 7}
+                        x1={x - symR - 1}
+                        y1={y - symR - 1}
+                        x2={x + symR + 1}
+                        y2={y + symR + 1}
                         stroke={earColor}
-                        strokeWidth={3}
+                        strokeWidth={compact ? 2.5 : 3}
                         strokeLinecap="round"
                       />
                       <line
-                        x1={x - 7}
-                        y1={y + 7}
-                        x2={x + 7}
-                        y2={y - 7}
+                        x1={x - symR - 1}
+                        y1={y + symR + 1}
+                        x2={x + symR + 1}
+                        y2={y - symR - 1}
                         stroke={earColor}
-                        strokeWidth={3}
+                        strokeWidth={compact ? 2.5 : 3}
                         strokeLinecap="round"
                       />
                     </>
                   )}
                   {masking[idx] && (
                     <text
-                      x={x + 12}
+                      x={x + (compact ? 10 : 12)}
                       y={y + 4}
-                      fontSize="11"
+                      fontSize={fs(11)}
                       fontWeight="bold"
                       fill={earColor}
                     >
@@ -539,9 +546,9 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
             {/* Axis labels - professional styling */}
             <text
               x={plotWidth / 2}
-              y={plotHeight + 70}
+              y={plotHeight + (compact ? 46 : 70)}
               textAnchor="middle"
-              fontSize="16"
+              fontSize={fs(16)}
               fontWeight="700"
               fill="#1a1a1a"
               letterSpacing="0.5px"
@@ -549,14 +556,14 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
               Frequency (Hz)
             </text>
             <text
-              x={-45}
+              x={compact ? -36 : -45}
               y={plotHeight / 2}
               textAnchor="middle"
-              fontSize="16"
+              fontSize={fs(16)}
               fontWeight="700"
               fill="#1a1a1a"
               letterSpacing="0.5px"
-              transform={`rotate(-90, -45, ${plotHeight / 2})`}
+              transform={`rotate(-90, ${compact ? -36 : -45}, ${plotHeight / 2})`}
             >
               Hearing Level (dB HL)
             </text>
@@ -564,9 +571,9 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
             {/* Title */}
             <text
               x={plotWidth / 2}
-              y={-25}
+              y={compact ? -14 : -25}
               textAnchor="middle"
-              fontSize="16"
+              fontSize={fs(16)}
               fontWeight="700"
               fill="#1a1a1a"
             >
@@ -587,12 +594,12 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
         overflow: 'auto',
         bgcolor: '#ffffff',
         borderRadius: 2,
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        p: 2
+        boxShadow: compact ? 'none' : '0 2px 8px rgba(0,0,0,0.1)',
+        p: compact ? 1 : 2
       }}>
         <Grid 
           container 
-          spacing={3} 
+          spacing={compact ? 1.5 : 3} 
           sx={{ 
             display: 'flex',
             flexDirection: { xs: 'column', sm: 'row' },
@@ -630,7 +637,12 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
           </Grid>
         </Grid>
 
-        {/* Professional Legend */}
+        {/* Legend — compact one-liner in dense mode */}
+        {compact ? (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block', px: 0.5 }}>
+            Right: circle / air, triangle bone · Left: X / air, △ bone · [M] masked
+          </Typography>
+        ) : (
         <Box sx={{ 
           mt: 3, 
           p: 2, 
@@ -744,6 +756,7 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
             </Box>
           </Box>
         </Box>
+        )}
       </Box>
     );
   };
@@ -757,28 +770,30 @@ const PureToneAudiogram: React.FC<PureToneAudiogramProps> = ({
 
   return (
     <Paper sx={{ 
-      p: 3, 
-      mt: 2, 
+      p: compact ? 1.5 : 3, 
+      mt: compact ? 1 : 2, 
       bgcolor: '#ffffff',
-      borderRadius: 3,
-      boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+      borderRadius: compact ? 2 : 3,
+      boxShadow: compact ? '0 1px 6px rgba(0,0,0,0.06)' : '0 4px 12px rgba(0,0,0,0.1)',
       border: '1px solid #e0e0e0'
     }}>
       <Box sx={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center', 
-        mb: 3,
-        pb: 2,
-        borderBottom: '2px solid #e0e0e0'
+        mb: compact ? 1.5 : 3,
+        pb: compact ? 1 : 2,
+        borderBottom: compact ? '1px solid #eee' : '2px solid #e0e0e0'
       }}>
         <Box>
-          <Typography variant="h5" sx={{ fontWeight: 700, color: '#1a1a1a', mb: 0.5 }}>
+          <Typography variant={compact ? 'subtitle1' : 'h5'} sx={{ fontWeight: 700, color: '#1a1a1a', mb: compact ? 0.25 : 0.5 }}>
             Pure Tone Audiogram (PTA)
           </Typography>
+          {!compact && (
           <Typography variant="body2" sx={{ color: '#666', fontSize: '0.85rem' }}>
             Standard audiometric assessment with air and bone conduction thresholds
           </Typography>
+          )}
         </Box>
         {editable && !readOnly && (
           <Box>
