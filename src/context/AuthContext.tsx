@@ -479,18 +479,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     'dashboard', 'products', 'inventory', 'appointment scheduler', 'appointments', 'interaction',
   ];
 
-  // Check module access: admin sees all; staff/audiologist use role-based lists; others use profile allowedModules
+  // Check module access: admin sees all; staff/audiologist use `allowedModules` when set, else role defaults
   const isAllowedModule = (moduleName: string) => {
     if (!userProfile) return false;
     if (userProfile.role === 'admin') return true;
     const key = moduleName.toLowerCase().trim();
+    const customMods = userProfile.allowedModules;
+    const useCustom =
+      Array.isArray(customMods) &&
+      customMods.length > 0 &&
+      !customMods.map((m) => m.toLowerCase()).includes('*');
     if (userProfile.role === 'staff') {
+      if (useCustom) {
+        return customMods!.map((m) => m.toLowerCase().trim()).includes(key);
+      }
       return STAFF_ALLOWED_MODULE_KEYS.includes(key);
     }
     if (userProfile.role === 'audiologist') {
+      if (useCustom) {
+        return customMods!.map((m) => m.toLowerCase().trim()).includes(key);
+      }
       return AUDIOLOGIST_ALLOWED_MODULE_KEYS.includes(key);
     }
-    return userProfile.allowedModules?.includes(moduleName) || false;
+    return userProfile.allowedModules?.some((m) => m.toLowerCase().trim() === key) || false;
   };
 
   return (

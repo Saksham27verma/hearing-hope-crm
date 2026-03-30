@@ -26,6 +26,7 @@ export async function POST(req: Request) {
     const email = (body?.email || '').toString().trim().toLowerCase();
     const displayName = (body?.displayName || '').toString().trim();
     const role = (body?.role || '').toString().trim() as UserRole;
+    const allowedModulesBody = body?.allowedModules;
 
     if (!email) return jsonError('Email is required', 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonError('Invalid email format', 400);
@@ -44,16 +45,39 @@ export async function POST(req: Request) {
     // Default module access (can be refined later in Users module)
     const defaultAllowedModulesByRole: Record<UserRole, string[]> = {
       admin: ['*'],
-      staff: ['inventory', 'products', 'materials', 'parties', 'interaction', 'sales', 'purchases', 'cash', 'centers', 'stock', 'reports'],
-      audiologist: ['interaction', 'appointments'],
+      staff: [
+        'dashboard',
+        'products',
+        'inventory',
+        'purchases',
+        'materials',
+        'deliveries',
+        'distribution sales',
+        'sales',
+        'invoice manager',
+        'parties',
+        'centers',
+        'interaction',
+        'stock transfer',
+        'cash register',
+        'appointment scheduler',
+        'appointments',
+        'reports',
+      ],
+      audiologist: ['dashboard', 'products', 'inventory', 'interaction', 'appointment scheduler', 'appointments'],
     };
+
+    let allowedModules: string[] = defaultAllowedModulesByRole[role];
+    if (Array.isArray(allowedModulesBody) && allowedModulesBody.length > 0) {
+      allowedModules = allowedModulesBody.map((x: unknown) => String(x).toLowerCase().trim()).filter(Boolean);
+    }
 
     const userProfile = {
       uid: newUser.uid,
       email,
       displayName: newUser.displayName || displayName || email.split('@')[0],
       role,
-      allowedModules: defaultAllowedModulesByRole[role],
+      allowedModules,
       createdAt: Date.now(),
       createdBy: decoded.uid,
     };

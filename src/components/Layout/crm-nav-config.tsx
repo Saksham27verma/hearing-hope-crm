@@ -19,7 +19,7 @@ import {
   BarChart3,
   UserCog,
   Settings,
-  KeyRound,
+  UsersRound,
   Sparkles,
 } from 'lucide-react';
 
@@ -74,9 +74,68 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
     ],
   },
   { text: 'Settings', path: '/settings', icon: Settings, adminOnly: true },
-  { text: 'Password Management', path: '/password-management', icon: KeyRound, adminOnly: true },
+  { text: 'User Management', path: '/user-management', icon: UsersRound, adminOnly: true },
   { text: 'Admin Cleanup', path: '/admin-cleanup', icon: Sparkles, adminOnly: true },
 ];
+
+/** Maps CRM nav item labels to access keys stored in `users/{uid}.allowedModules`. */
+export const NAV_ITEM_ACCESS_KEYS: Record<string, string[]> = {
+  Dashboard: ['dashboard'],
+  Products: ['products'],
+  Inventory: ['inventory'],
+  Purchases: ['purchases'],
+  'Material In': ['materials', 'material in'],
+  'Material Out': ['deliveries', 'material out'],
+  'Distribution Sales': ['distribution sales'],
+  'Sales & Invoicing': ['sales'],
+  'Invoice Manager': ['invoice manager'],
+  Parties: ['parties'],
+  Centers: ['centers'],
+  Companies: ['companies'],
+  Interaction: ['interaction'],
+  'Stock Transfer': ['stock transfer', 'stock'],
+  'Cash Register': ['cash register', 'cash'],
+  'Appointment Scheduler': ['appointment scheduler', 'appointments'],
+  Reports: ['reports'],
+  Staff: ['staff'],
+  Settings: ['settings'],
+  'User Management': ['user management'],
+  'Admin Cleanup': ['admin cleanup'],
+};
+
+/** Options for admin user-management UI (keys must align with `isAllowedModule` checks). */
+export const CRM_MODULE_ACCESS_OPTIONS: { key: string; label: string }[] = [
+  { key: 'dashboard', label: 'Dashboard' },
+  { key: 'products', label: 'Products' },
+  { key: 'inventory', label: 'Inventory' },
+  { key: 'purchases', label: 'Purchases' },
+  { key: 'materials', label: 'Material In' },
+  { key: 'deliveries', label: 'Material Out' },
+  { key: 'distribution sales', label: 'Distribution Sales' },
+  { key: 'sales', label: 'Sales & Invoicing' },
+  { key: 'invoice manager', label: 'Invoice Manager' },
+  { key: 'parties', label: 'Parties' },
+  { key: 'centers', label: 'Centers' },
+  { key: 'companies', label: 'Companies' },
+  { key: 'interaction', label: 'Interaction' },
+  { key: 'stock transfer', label: 'Stock Transfer' },
+  { key: 'cash register', label: 'Cash Register' },
+  { key: 'appointment scheduler', label: 'Appointment Scheduler' },
+  { key: 'appointments', label: 'Appointments' },
+  { key: 'reports', label: 'Reports' },
+  { key: 'staff', label: 'Staff' },
+  { key: 'settings', label: 'Settings' },
+];
+
+function navItemAllowedByKeys(
+  item: CrmNavItem,
+  allowedModules: string[],
+): boolean {
+  const lower = allowedModules.map((m) => m.toLowerCase().trim());
+  if (lower.includes('*')) return true;
+  const keys = NAV_ITEM_ACCESS_KEYS[item.text] ?? [item.text.toLowerCase()];
+  return keys.some((k) => lower.includes(k));
+}
 
 export const STAFF_ALLOWED_MODULES = [
   'Dashboard',
@@ -103,19 +162,32 @@ export type UserRole = 'admin' | 'staff' | 'audiologist' | string;
 
 /**
  * Returns nav items visible to the current user (same rules as legacy layout).
+ * When `allowedModules` is set on the profile (non-empty, not `*`), it overrides the default role lists.
  */
 export function filterCrmNavForUser(
-  userProfile: { role: UserRole } | null,
+  userProfile: { role: UserRole; allowedModules?: string[] } | null,
   isAllowedModule?: (moduleKey: string) => boolean,
 ): CrmNavItem[] {
   if (!userProfile) return [];
 
+  const customMods = userProfile.allowedModules;
+  const useCustomAccess =
+    Array.isArray(customMods) &&
+    customMods.length > 0 &&
+    !customMods.map((m) => m.toLowerCase()).includes('*');
+
   return CRM_NAV_ITEMS.filter((item) => {
     if (item.adminOnly && userProfile.role !== 'admin') return false;
     if (userProfile.role === 'staff') {
+      if (useCustomAccess) {
+        return navItemAllowedByKeys(item, customMods!);
+      }
       return (STAFF_ALLOWED_MODULES as readonly string[]).includes(item.text);
     }
     if (userProfile.role === 'audiologist') {
+      if (useCustomAccess) {
+        return navItemAllowedByKeys(item, customMods!);
+      }
       if (item.text === 'Interaction') return true;
       return (AUDIOLOGIST_ALLOWED_MODULES as readonly string[]).includes(item.text);
     }
