@@ -11,7 +11,12 @@ import {
   Typography,
   Alert,
 } from '@mui/material';
-import { listItemToStoredLink, type ExternalPtaReportLink, type PtaReportListItem } from '@/lib/ptaIntegration';
+import {
+  formatPtaTestDateForDisplay,
+  listItemToStoredLink,
+  type ExternalPtaReportLink,
+  type PtaReportListItem,
+} from '@/lib/ptaIntegration';
 
 type Props = {
   value: ExternalPtaReportLink | undefined;
@@ -39,8 +44,14 @@ export default function ExternalPtaReportPicker({
       id: value.reportId,
       patientName: value.patientLabel,
       viewUrl: value.viewUrl,
+      ...(value.testDate ? { testDate: value.testDate } : {}),
     };
   }, [value]);
+
+  const optionPrimaryLabel = (o: PtaReportListItem) => {
+    const date = formatPtaTestDateForDisplay(o.testDate || o.createdAt);
+    return date ? `${o.patientName} · ${date}` : o.patientName;
+  };
 
   const fetchReports = useCallback(
     async (q: string) => {
@@ -142,12 +153,32 @@ export default function ExternalPtaReportPicker({
         options={options}
         loading={loading}
         disabled={disabled}
-        getOptionLabel={(o) => (o?.patientName ? `${o.patientName} (${o.id})` : o?.id || '')}
+        getOptionLabel={(o) => {
+          if (!o?.id) return '';
+          return `${optionPrimaryLabel(o)} · ${o.id}`;
+        }}
         isOptionEqualToValue={(a, b) => a.id === b.id}
+        renderOption={(props, option) => (
+          <Box component="li" {...props} key={option.id} sx={{ py: 1 }}>
+            <Box>
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                {option.patientName}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                {[
+                  formatPtaTestDateForDisplay(option.testDate || option.createdAt) || null,
+                  `ID: ${option.id}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Typography>
+            </Box>
+          </Box>
+        )}
         renderInput={(params) => (
           <TextField
             {...params}
-            label="Search PTA reports by name"
+            label="Search PTA reports (name & date)"
             placeholder="Type to filter…"
             InputProps={{
               ...params.InputProps,

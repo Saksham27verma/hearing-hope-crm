@@ -10,7 +10,7 @@ import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
-import type { ExternalPtaReportLink } from '@/lib/ptaIntegration';
+import { formatPtaTestDateForDisplay, type ExternalPtaReportLink } from '@/lib/ptaIntegration';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import {
@@ -7171,6 +7171,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                         {visit.externalPtaReport.patientLabel} (ID: {visit.externalPtaReport.reportId})
+                        {visit.externalPtaReport.testDate
+                          ? ` · Test: ${formatPtaTestDateForDisplay(visit.externalPtaReport.testDate)}`
+                          : ''}
                       </Typography>
                       <MuiLink href={visit.externalPtaReport.viewUrl} target="_blank" rel="noopener noreferrer" variant="body2">
                         Open PTA report

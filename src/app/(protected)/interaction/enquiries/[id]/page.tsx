@@ -91,6 +91,7 @@ import {
 } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
+import { formatPtaTestDateForDisplay } from '@/lib/ptaIntegration';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
@@ -1190,9 +1191,14 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                     <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
                                       PTA report (external)
                                     </Typography>
-                                    <Typography variant="body1" sx={{ fontWeight: 500, mb: 1 }}>
+                                    <Typography variant="body1" sx={{ fontWeight: 500, mb: 0.5 }}>
                                       {activeVisitExternalPta.patientLabel || activeVisitExternalPta.reportId}
                                     </Typography>
+                                    {activeVisitExternalPta.testDate && (
+                                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                        Test date: {formatPtaTestDateForDisplay(activeVisitExternalPta.testDate)}
+                                      </Typography>
+                                    )}
                                     <Link
                                       href={activeVisitExternalPta.viewUrl}
                                       target="_blank"
