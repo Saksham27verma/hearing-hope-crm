@@ -4,6 +4,7 @@ import React from 'react';
 import { Box, Typography } from '@mui/material';
 import { Settings as SettingsIcon } from '@mui/icons-material';
 import FieldOptionsSettings from '@/components/settings/FieldOptionsSettings';
+import StaffPaymentNotifySettings from '@/components/settings/StaffPaymentNotifySettings';
 import { CRM_PAGE_BG } from '@/components/Layout/crm-theme';
 
 export default function SettingsPage() {
@@ -20,7 +21,10 @@ export default function SettingsPage() {
           Configure enquiry dropdowns (reference, visit status, payments, filters, and more). Invoice fields still use the
           same Firestore collection but are managed from code for now — this page is Enquiries-only.
         </Typography>
-        <FieldOptionsSettings />
+        <StaffPaymentNotifySettings />
+        <Box sx={{ mt: 3 }}>
+          <FieldOptionsSettings />
+        </Box>
       </Box>
     </Box>
   );

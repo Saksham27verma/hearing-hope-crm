@@ -13,10 +13,8 @@ import {
   type StaffTrialDetails,
 } from '@/server/staffEnquiryVisitMerge';
 import { docToCatalogProduct, type CatalogProductDoc } from '@/server/staffEnquiryCatalogHelpers';
-import {
-  parseNotifyEmails,
-  sendStaffPaymentNotifyEmail,
-} from '@/server/sendStaffPaymentNotifyEmail';
+import { sendStaffPaymentNotifyEmail } from '@/server/sendStaffPaymentNotifyEmail';
+import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmails';
 
 const TZ = 'Asia/Kolkata';
 
@@ -451,10 +449,12 @@ export async function POST(req: Request) {
       detailLines,
     });
 
-    const notify = parseNotifyEmails();
+    const notify = await getStaffPaymentNotifyEmailList();
     let emailSent = false;
     if (notify.length === 0) {
-      console.warn('collect-payment: STAFF_PAYMENT_NOTIFY_EMAILS not set; skipping email');
+      console.warn(
+        'collect-payment: no notify emails — set recipients in CRM Settings or STAFF_PAYMENT_NOTIFY_EMAILS; skipping email'
+      );
     } else {
       try {
         await sendStaffPaymentNotifyEmail({

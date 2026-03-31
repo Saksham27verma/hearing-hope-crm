@@ -49,11 +49,4 @@ export async function sendStaffPaymentNotifyEmail(payload: StaffPaymentEmailPayl
   });
 }
 
-export function parseNotifyEmails(): string[] {
-  const raw = process.env.STAFF_PAYMENT_NOTIFY_EMAILS?.trim() || '';
-  if (!raw) return [];
-  return raw
-    .split(/[,;\s]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+export { parseNotifyEmailsFromEnv as parseNotifyEmails, getStaffPaymentNotifyEmailList } from './staffPaymentNotifyEmails';
