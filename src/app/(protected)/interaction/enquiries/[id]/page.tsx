@@ -494,6 +494,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     ? enquiry.paymentRecords.map((payment: any) => ({
         label:
           payment.paymentType === 'hearing_aid_test' ? 'Test' :
+          payment.paymentType === 'staff_trial_request' ? 'Trial (staff request)' :
           payment.paymentType === 'hearing_aid_booking' ? 'Booking' :
           payment.paymentType === 'hearing_aid_sale' ? 'Sale' :
           payment.paymentType || 'Payment',
