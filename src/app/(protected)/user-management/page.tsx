@@ -63,7 +63,10 @@ const outlinedFieldSx = {
 } as const;
 
 interface User {
+  /** Firestore document ID (unique per row; may differ from Firebase Auth UID for legacy `addDoc` profiles) */
   uid: string;
+  /** Firebase Authentication user ID — use for Auth + admin APIs */
+  firebaseAuthUid: string;
   email: string;
   displayName?: string;
   role: 'admin' | 'staff' | 'audiologist';
@@ -71,6 +74,18 @@ interface User {
   centerId?: string | null;
   branchId?: string | null;
   isSuperAdmin?: boolean;
+}
+
+function mapUserSnapshot(docSnap: { id: string; data: () => Record<string, unknown> }): User {
+  const data = docSnap.data();
+  const docId = docSnap.id;
+  const authUid =
+    typeof data.uid === 'string' && String(data.uid).trim() ? String(data.uid).trim() : docId;
+  return {
+    ...(data as Omit<User, 'uid' | 'firebaseAuthUid'>),
+    uid: docId,
+    firebaseAuthUid: authUid,
+  } as User;
 }
 
 export default function UserManagementPage() {
@@ -132,7 +147,7 @@ export default function UserManagementPage() {
     return allUsers.filter((r) => normalizeCenterId(r) === effectiveScopeCenterId);
   }, [allUsers, effectiveScopeCenterId]);
 
-  const onlineMap = usePresenceOnlineMap(users.map((u) => u.uid));
+  const onlineMap = usePresenceOnlineMap(users.map((u) => u.firebaseAuthUid));
 
   useEffect(() => {
     if (createUserRole === 'admin') setCreateUserModules([]);
@@ -148,10 +163,7 @@ export default function UserManagementPage() {
     const unsub = onSnapshot(
       usersQuery,
       (snapshot) => {
-        const rows = snapshot.docs.map((docSnap) => ({
-          uid: docSnap.id,
-          ...docSnap.data(),
-        })) as User[];
+        const rows = snapshot.docs.map((docSnap) => mapUserSnapshot(docSnap));
         setAllUsers(rows);
         setUsersLoading(false);
       },
@@ -347,7 +359,7 @@ export default function UserManagementPage() {
       }
 
       setActionLoading(true);
-      await updateUserPassword(selectedUser.uid, userNewPassword);
+      await updateUserPassword(selectedUser.firebaseAuthUid, userNewPassword);
 
       enqueueSnackbar(`Password update queued for ${selectedUser.email}`, { variant: 'success' });
       setChangePasswordDialogOpen(false);
@@ -378,14 +390,14 @@ export default function UserManagementPage() {
       }
 
       setActionLoading(true);
-      if (userProfile?.role === 'admin' && selectedUser.uid !== user.uid) {
+      if (userProfile?.role === 'admin' && selectedUser.firebaseAuthUid !== user.uid) {
         await adminApi('/api/admin/update-user', {
           method: 'PATCH',
-          body: JSON.stringify({ uid: selectedUser.uid, email: userNewEmail.trim().toLowerCase() }),
+          body: JSON.stringify({ uid: selectedUser.firebaseAuthUid, email: userNewEmail.trim().toLowerCase() }),
         });
         enqueueSnackbar(`Email updated for ${selectedUser.email}`, { variant: 'success' });
       } else {
-        await updateUserEmail(selectedUser.uid, userNewEmail);
+        await updateUserEmail(selectedUser.firebaseAuthUid, userNewEmail);
         enqueueSnackbar('Email updated', { variant: 'success' });
       }
       setChangeEmailDialogOpen(false);
@@ -534,7 +546,7 @@ export default function UserManagementPage() {
       return;
     }
     const prevRows = allUsers;
-    const targetUid = selectedUser.uid;
+    const targetDocId = selectedUser.uid;
     const targetEmail = selectedUser.email;
     const optimistic: User = {
       ...selectedUser,
@@ -544,12 +556,12 @@ export default function UserManagementPage() {
       branchId: editCenterId || null,
       isSuperAdmin: editAccessRole === 'admin' ? editSuperAdmin : false,
     };
-    setAllUsers((list) => list.map((row) => (row.uid === targetUid ? optimistic : row)));
+    setAllUsers((list) => list.map((row) => (row.uid === targetDocId ? optimistic : row)));
     setAccessDialogOpen(false);
     setSelectedUser(null);
     try {
       const body: Record<string, unknown> = {
-        uid: targetUid,
+        uid: selectedUser.firebaseAuthUid,
         role: editAccessRole,
         centerId: editCenterId || null,
         isSuperAdmin: editAccessRole === 'admin' ? editSuperAdmin : false,
@@ -1123,7 +1135,7 @@ export default function UserManagementPage() {
               />
             </Box>
             <Typography variant="caption" color="text.secondary">
-              {userProfile?.role === 'admin' && selectedUser?.uid !== user?.uid
+              {userProfile?.role === 'admin' && selectedUser?.firebaseAuthUid !== user?.uid
                 ? 'Updates both Firebase Authentication and the user profile where supported.'
                 : 'Firestore may update immediately; Auth email changes may require a Cloud Function.'}
             </Typography>

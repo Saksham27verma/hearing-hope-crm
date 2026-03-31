@@ -51,14 +51,14 @@ import {
   VisibilityOff as VisibilityOffIcon,
 } from '@mui/icons-material';
 import { 
-  collection, 
-  getDocs, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp, 
-  query, 
+  collection,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  doc,
+  setDoc,
+  serverTimestamp,
+  query,
   orderBy,
   Timestamp,
   where,
@@ -353,20 +353,21 @@ const UsersPage = () => {
           });
           
           // Add to Firestore with UID reference
+          const authUid = userCredential.user.uid;
           const newUserData = {
             ...currentUser,
-            uid: userCredential.user.uid,
+            uid: authUid,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
-          
-          const docRef = await addDoc(collection(db, 'users'), newUserData);
-          
-          // Add to state with the new ID
+
+          // Document ID must match Firebase Auth UID so CRM / admin APIs have a single profile per login
+          await setDoc(doc(db, 'users', authUid), newUserData);
+
           const newUser = {
             ...currentUser,
-            id: docRef.id,
-            uid: userCredential.user.uid,
+            id: authUid,
+            uid: authUid,
             createdAt: Timestamp.now(),
             updatedAt: Timestamp.now(),
           };

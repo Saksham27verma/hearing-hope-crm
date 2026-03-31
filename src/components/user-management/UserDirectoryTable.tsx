@@ -32,7 +32,10 @@ import { keyframes } from '@mui/material/styles';
 import { normalizeCenterId } from '@/lib/tenant/centerScope';
 
 export type DirectoryUser = {
+  /** Firestore document ID */
   uid: string;
+  /** Firebase Auth UID (presence + “You”) */
+  firebaseAuthUid: string;
   email: string;
   displayName?: string;
   role: 'admin' | 'staff' | 'audiologist';
@@ -207,8 +210,8 @@ export default function UserDirectoryTable({
                   const centerLabel = centerKey
                     ? (centers.find((c) => c.id === centerKey)?.name ?? centerKey)
                     : null;
-                  const isSelf = u.uid === currentUserId;
-                  const online = Boolean(onlineMap[u.uid]);
+                  const isSelf = u.firebaseAuthUid === currentUserId;
+                  const online = Boolean(onlineMap[u.firebaseAuthUid]);
                   const roleLabel =
                     u.role === 'admin' ? 'Admin' : u.role === 'audiologist' ? 'Audiologist' : 'Staff';
                   const stripe = idx % 2 === 1;
@@ -448,7 +451,7 @@ export default function UserDirectoryTable({
             </MenuItem>
             <MenuItem
               dense
-              disabled={menu.user.uid === currentUserId}
+              disabled={menu.user.firebaseAuthUid === currentUserId}
               onClick={() => {
                 onPassword(menu.user);
                 closeMenu();
@@ -461,7 +464,7 @@ export default function UserDirectoryTable({
             </MenuItem>
             <MenuItem
               dense
-              disabled={menu.user.uid === currentUserId}
+              disabled={menu.user.firebaseAuthUid === currentUserId}
               onClick={() => {
                 onEmail(menu.user);
                 closeMenu();
@@ -487,7 +490,7 @@ export default function UserDirectoryTable({
             <Divider />
             <MenuItem
               dense
-              disabled={menu.user.uid === currentUserId}
+              disabled={menu.user.firebaseAuthUid === currentUserId}
               onClick={() => {
                 onDelete(menu.user);
                 closeMenu();
