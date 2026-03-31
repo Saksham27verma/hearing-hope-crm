@@ -30,11 +30,13 @@ const GoogleLogo = () => (
 
 const LoginPage = () => {
   const router = useRouter();
-  const { user, loading: authLoading, signIn, signInWithGoogle, error: authError } = useAuth();
+  const { user, loading: authLoading, signIn, signInWithGoogle, resetUserPassword, error: authError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
@@ -80,6 +82,25 @@ const LoginPage = () => {
     } catch {
       // Error handled by context
       setLoading(false);
+    }
+  };
+
+  const handleSendResetLink = async () => {
+    const trimmed = email.trim().toLowerCase();
+    setError(null);
+    setResetSent(false);
+    if (!trimmed) {
+      setError('Enter your email above, then tap Send reset link.');
+      return;
+    }
+    try {
+      setResetLoading(true);
+      await resetUserPassword(trimmed);
+      setResetSent(true);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not send reset email');
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -131,6 +152,11 @@ const LoginPage = () => {
             Login
           </Typography>
           
+          {resetSent && (
+            <Alert severity="success" sx={{ mb: 2 }} onClose={() => setResetSent(false)}>
+              Check your inbox for a link to set your password, then sign in with that password.
+            </Alert>
+          )}
           {error && (
             <Alert severity="error" sx={{ mb: 3 }}>
               {error}
@@ -201,9 +227,19 @@ const LoginPage = () => {
             Continue with Google
           </Button>
           
-          <Typography variant="body2" align="center" sx={{ mt: 2 }}>
-            Forgot password? Contact your administrator.
-          </Typography>
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Button
+              variant="text"
+              size="small"
+              disabled={resetLoading || loading || authLoading}
+              onClick={handleSendResetLink}
+            >
+              {resetLoading ? <CircularProgress size={18} /> : 'Send password reset link to my email'}
+            </Button>
+            <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 1 }}>
+              New accounts: use the link from the “set your password” email before your first login.
+            </Typography>
+          </Box>
         </CardContent>
       </Card>
       
