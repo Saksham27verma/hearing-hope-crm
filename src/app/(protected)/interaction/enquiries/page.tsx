@@ -109,6 +109,8 @@ import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
 import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
+import { useCenterScope } from '@/hooks/useCenterScope';
+import { enquiryMatchesDataScope } from '@/lib/tenant/centerScope';
 import {
   ENQUIRY_STATUS_OPTIONS,
   getEnquiryStatusMeta,
@@ -431,6 +433,7 @@ interface VisitSchedule {
 export default function EnquiriesPage() {
   const router = useRouter();
   const { userProfile } = useAuth();
+  const { effectiveScopeCenterId } = useCenterScope();
   const { optionsByField } = useEnquiryOptionsByField();
   const wizardReferenceOpts = optionsByField.reference ?? [];
   const wizardVisitingCenterOpts = optionsByField.visiting_center ?? [];
@@ -901,10 +904,13 @@ export default function EnquiriesPage() {
   const [selectedEnquiryForFollowUp, setSelectedEnquiryForFollowUp] = useState<Enquiry | null>(null);
   
   useEffect(() => {
-    fetchEnquiries();
     fetchCenters();
     fetchStaffNamesForFilters();
   }, []);
+
+  useEffect(() => {
+    fetchEnquiries();
+  }, [effectiveScopeCenterId]);
 
   // Column resize handlers
   const handleMouseDown = (columnKey: string, e: React.MouseEvent) => {
@@ -994,11 +1000,15 @@ export default function EnquiriesPage() {
         id: doc.id,
         ...doc.data()
       })) as Enquiry[];
-      
+
+      const scopeFiltered = enquiryData.filter((e) =>
+        enquiryMatchesDataScope(e as unknown as Record<string, unknown>, effectiveScopeCenterId),
+      );
+
       // Filter for audiologists: only show enquiries with hearing test services
-      let filteredData = enquiryData;
+      let filteredData = scopeFiltered;
       if (userProfile?.role === 'audiologist') {
-        filteredData = enquiryData.filter(enquiry => {
+        filteredData = scopeFiltered.filter(enquiry => {
           // Must have visitSchedules to be considered
           if (!enquiry.visitSchedules || !Array.isArray(enquiry.visitSchedules) || enquiry.visitSchedules.length === 0) {
             return false;
@@ -1029,7 +1039,7 @@ export default function EnquiriesPage() {
           return hasHearingTest;
         });
         
-        console.log(`[Audiologist Filter] Total enquiries: ${enquiryData.length}, Filtered: ${filteredData.length}`);
+        console.log(`[Audiologist Filter] Total enquiries: ${scopeFiltered.length}, Filtered: ${filteredData.length}`);
         // Debug: Log first few filtered enquiries to verify
         if (filteredData.length > 0) {
           console.log('[Audiologist Filter] Sample filtered enquiry:', {
@@ -1044,8 +1054,8 @@ export default function EnquiriesPage() {
           });
         }
       }
-      
-      setEnquiries(enquiryData);
+
+      setEnquiries(scopeFiltered);
       setFilteredEnquiries(filteredData);
     } catch (error) {
       console.error('Error fetching enquiries:', error);

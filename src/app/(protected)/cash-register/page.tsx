@@ -62,6 +62,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/hooks/useAuth';
+import { useCenterScope } from '@/hooks/useCenterScope';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -123,6 +124,7 @@ const formatCurrency = (amount: number) =>
 
 const CashRegisterPage = () => {
   const { user, userProfile, loading: authLoading } = useAuth();
+  const { effectiveScopeCenterId, lockedCenterId } = useCenterScope();
   const router = useRouter();
   const isAdmin = userProfile?.role === 'admin';
 
@@ -176,6 +178,22 @@ const CashRegisterPage = () => {
     loadAllSheets();
   }, [user, authLoading]);
 
+  const visibleCenters = useMemo(() => {
+    if (!effectiveScopeCenterId) return centers;
+    return centers.filter((c) => c.id === effectiveScopeCenterId);
+  }, [centers, effectiveScopeCenterId]);
+
+  const scopedSheets = useMemo(() => {
+    if (!effectiveScopeCenterId) return allSheets;
+    return allSheets.filter((s) => s.doc.centerId === effectiveScopeCenterId);
+  }, [allSheets, effectiveScopeCenterId]);
+
+  useEffect(() => {
+    if (!centers.length || !effectiveScopeCenterId) return;
+    const c = centers.find((x) => x.id === effectiveScopeCenterId);
+    if (c) setSelectedCenter(c);
+  }, [centers, effectiveScopeCenterId]);
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login');
@@ -196,14 +214,14 @@ const CashRegisterPage = () => {
     }
   };
 
-  // Sheets filtered to current center
+  // Sheets filtered to current center (data already limited by CRM scope when applicable)
   const centerSheets = useMemo(() => {
     if (!selectedCenter) return [];
-    return allSheets.filter((s) => {
+    return scopedSheets.filter((s) => {
       if (s.doc.centerId) return s.doc.centerId === selectedCenter.id;
       return false; // legacy sheets without centerId don't belong to any center
     });
-  }, [allSheets, selectedCenter]);
+  }, [scopedSheets, selectedCenter]);
 
   // --- Daily form helpers ---
   const addCashInRow = () =>
@@ -516,7 +534,7 @@ const CashRegisterPage = () => {
 
   // --- Overall admin view ---
   const renderOverallDashboard = () => {
-    const rangeFiltered = filterByRange(allSheets);
+    const rangeFiltered = filterByRange(scopedSheets);
     const overall = computeTotals(rangeFiltered);
 
     const byCenterId = new Map<string, { centerName: string; sheets: typeof allSheets }>();
@@ -583,7 +601,7 @@ const CashRegisterPage = () => {
           </TableContainer>
         </Paper>
 
-        {renderSavedSheetsTable(allSheets)}
+        {renderSavedSheetsTable(scopedSheets)}
       </Box>
     );
   };
@@ -596,9 +614,11 @@ const CashRegisterPage = () => {
     return (
       <Box>
         <Box display="flex" alignItems="center" gap={2} mb={3}>
-          <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={() => { setSelectedCenter(null); resetDailyForm(); }}>
-            Change Center
-          </Button>
+          {!lockedCenterId && (
+            <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={() => { setSelectedCenter(null); resetDailyForm(); }}>
+              Change Center
+            </Button>
+          )}
           <Chip icon={<StoreIcon />} label={selectedCenter?.name} color="primary" variant="outlined" sx={{ fontSize: '1rem', py: 2.5, px: 1 }} />
         </Box>
 
@@ -633,7 +653,7 @@ const CashRegisterPage = () => {
       <Typography variant="h5" fontWeight={700} mb={1}>Select Center</Typography>
       <Typography variant="body1" color="text.secondary" mb={4}>Choose a center to view and manage its cash register</Typography>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center', maxWidth: 800 }}>
-        {centers.map((c) => (
+        {visibleCenters.map((c) => (
           <Card
             key={c.id}
             variant="outlined"

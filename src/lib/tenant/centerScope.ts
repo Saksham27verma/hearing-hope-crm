@@ -36,3 +36,28 @@ export function getLockedCenterId(profile: UserProfile | null): string | null {
   if (profile.role === 'admin' && isSuperAdminViewer(profile)) return null;
   return normalizeCenterId(profile);
 }
+
+/**
+ * Whether an enquiry document should appear when the UI is scoped to `scopeCenterId`.
+ * `scopeCenterId === null` means no extra filter (super-admin “all centers” or equivalent).
+ */
+export function enquiryMatchesDataScope(
+  enquiry: Record<string, unknown>,
+  scopeCenterId: string | null,
+): boolean {
+  if (!scopeCenterId) return true;
+  const want = String(scopeCenterId);
+  const candidates: string[] = [];
+  const push = (v: unknown) => {
+    if (v !== undefined && v !== null && String(v).trim() !== '') candidates.push(String(v));
+  };
+  push(enquiry.center);
+  push(enquiry.visitingCenter);
+  const visits = Array.isArray(enquiry.visits) ? enquiry.visits : [];
+  for (const v of visits as Record<string, unknown>[]) {
+    push(v.center);
+    push(v.visitingCenter);
+  }
+  if (candidates.length === 0) return true;
+  return candidates.includes(want);
+}

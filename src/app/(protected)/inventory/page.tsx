@@ -68,6 +68,7 @@ import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 import { useAuth } from '@/context/AuthContext';
+import { useCenterScope } from '@/hooks/useCenterScope';
 import { useRouter } from 'next/navigation';
 // Temporarily disabled performance monitoring to prevent bundling issues
 // import { performanceMonitor, monitorFirebaseQuery } from '@/utils/performance';
@@ -206,6 +207,7 @@ const normalizeSerialNumber = (serialNumber: string) => serialNumber.trim().toUp
 
 export default function InventoryPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
+  const { effectiveScopeCenterId } = useCenterScope();
   const router = useRouter();
   
   // Helper to check if user is staff or audiologist (both have same restricted view)
@@ -1229,7 +1231,11 @@ export default function InventoryPage() {
           }
         });
 
-        const items = [...serialItems, ...nonSerialItems];
+        const mergedItems = [...serialItems, ...nonSerialItems];
+        const items =
+          effectiveScopeCenterId == null || effectiveScopeCenterId === ''
+            ? mergedItems
+            : mergedItems.filter((i) => String(i.location || '') === String(effectiveScopeCenterId));
 
         // Compute stats
         const inStock = items
@@ -1278,7 +1284,7 @@ export default function InventoryPage() {
         setLoading(false);
       }
     }
-  }, [user, isAllowedModule, refreshKey]);
+  }, [user, isAllowedModule, refreshKey, effectiveScopeCenterId]);
   
   // Apply filters and search
   useEffect(() => {
