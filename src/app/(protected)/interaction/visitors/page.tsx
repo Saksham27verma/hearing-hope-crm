@@ -60,6 +60,8 @@ import {
   ArrowForward as ArrowForwardIcon
 } from '@mui/icons-material';
 import { useAuth } from '@/context/AuthContext';
+import { useCenterScope } from '@/hooks/useCenterScope';
+import { visitorMatchesDataScope } from '@/lib/tenant/centerScope';
 import { useRouter } from 'next/navigation';
 import { db } from '@/firebase/config';
 import {
@@ -103,6 +105,7 @@ interface Center {
 
 export default function VisitorsPage() {
   const { user, userProfile } = useAuth();
+  const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const router = useRouter();
   const [visitors, setVisitors] = useState<Visitor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -131,7 +134,7 @@ export default function VisitorsPage() {
 
   useEffect(() => {
     fetchVisitors();
-  }, []);
+  }, [effectiveScopeCenterId, allowedCenterIds]);
 
   useEffect(() => {
     const fetchCenters = async () => {
@@ -155,10 +158,14 @@ export default function VisitorsPage() {
       setLoading(true);
       const q = query(collection(db, 'visitors'), orderBy('createdAt', 'desc'));
       const querySnapshot = await getDocs(q);
-      const visitorsData = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Visitor[];
+      const visitorsData = querySnapshot.docs
+        .map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        .filter((row) =>
+          visitorMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
+        ) as Visitor[];
       setVisitors(visitorsData);
     } catch (error) {
       console.error('Error fetching visitors:', error);
@@ -199,13 +206,19 @@ export default function VisitorsPage() {
     return (center?.name ?? centerValue) || '—';
   };
 
+  const defaultVisitingCenter = () => {
+    if (effectiveScopeCenterId) return effectiveScopeCenterId;
+    if (allowedCenterIds && allowedCenterIds.length > 0) return allowedCenterIds[0];
+    return centers.length > 0 ? centers[0].id : '';
+  };
+
   const handleOpenDialog = () => {
     setNewVisitor({
       name: '',
       phone: '',
       email: '',
       visitorType: 'general',
-      visitingCenter: centers.length > 0 ? centers[0].id : '',
+      visitingCenter: defaultVisitingCenter(),
       visitDate: new Date().toISOString().split('T')[0],
       visitTime: '',
       notes: '',

@@ -35,8 +35,8 @@ type Props = {
   setCreateUserRole: (v: Role) => void;
   createUserModules: string[];
   setCreateUserModules: React.Dispatch<React.SetStateAction<string[]>>;
-  createUserCenterId: string;
-  setCreateUserCenterId: (v: string) => void;
+  createUserCenterIds: string[];
+  setCreateUserCenterIds: React.Dispatch<React.SetStateAction<string[]>>;
   createUserSuperAdmin: boolean;
   setCreateUserSuperAdmin: (v: boolean) => void;
   actionLoading: boolean;
@@ -64,8 +64,8 @@ export default function CreateUserDialog({
   setCreateUserRole,
   createUserModules,
   setCreateUserModules,
-  createUserCenterId,
-  setCreateUserCenterId,
+  createUserCenterIds,
+  setCreateUserCenterIds,
   createUserSuperAdmin,
   setCreateUserSuperAdmin,
   actionLoading,
@@ -78,11 +78,8 @@ export default function CreateUserDialog({
   const showSuperAdmin =
     createUserRole === 'admin' && userProfile && isSuperAdminViewer(userProfile);
 
-  const centerOptions = [
-    { id: '', label: 'Not set (global / super admin only)' },
-    ...centers.map((c) => ({ id: c.id, label: c.name })),
-  ];
-  const selectedCenterOpt = centerOptions.find((o) => o.id === createUserCenterId) ?? centerOptions[0];
+  const centerOptions = centers.map((c) => ({ id: c.id, label: c.name }));
+  const selectedCenters = centerOptions.filter((o) => createUserCenterIds.includes(o.id));
 
   return (
     <Dialog
@@ -156,16 +153,17 @@ export default function CreateUserDialog({
 
           {!lockedCenterId ? (
             <Autocomplete
+              multiple
               options={centerOptions}
-              value={selectedCenterOpt}
-              onChange={(_, v) => setCreateUserCenterId(v?.id ?? '')}
+              value={selectedCenters}
+              onChange={(_, v) => setCreateUserCenterIds(v.map((x) => x.id))}
               getOptionLabel={(o) => o.label}
               isOptionEqualToValue={(a, b) => a.id === b.id}
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Center"
-                  placeholder="Search centers…"
+                  label="Centers (data scope)"
+                  placeholder="Select one or more centers…"
                   size="small"
                   sx={FIELD}
                 />

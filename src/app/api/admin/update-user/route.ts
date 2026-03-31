@@ -35,6 +35,7 @@ export async function PATCH(req: Request) {
     const allowedModules = body?.allowedModules !== undefined ? body.allowedModules : undefined;
     const email = body?.email !== undefined ? String(body.email).trim().toLowerCase() : undefined;
     const centerIdRaw = body?.centerId;
+    const centerIdsRaw = body?.centerIds;
     const isSuperAdminRaw = body?.isSuperAdmin;
 
     if (role !== undefined && !['admin', 'staff', 'audiologist'].includes(role)) {
@@ -48,13 +49,26 @@ export async function PATCH(req: Request) {
     }
 
     let nextCenterId: string | null | undefined;
-    if (centerIdRaw !== undefined) {
+    let nextCenterIds: string[] | undefined;
+    if (centerIdsRaw !== undefined) {
+      if (Array.isArray(centerIdsRaw) && centerIdsRaw.length > 0) {
+        nextCenterIds = [...new Set(centerIdsRaw.map((x: unknown) => String(x).trim()).filter(Boolean))];
+        nextCenterId = nextCenterIds[0];
+        assertCanSetCenter(requester, nextCenterId, nextCenterIds);
+      } else {
+        nextCenterIds = [];
+        nextCenterId = null;
+        assertCanSetCenter(requester, null, null);
+      }
+    } else if (centerIdRaw !== undefined) {
       if (centerIdRaw === null || centerIdRaw === '') {
         nextCenterId = null;
+        assertCanSetCenter(requester, null, null);
       } else {
         nextCenterId = String(centerIdRaw);
+        nextCenterIds = [nextCenterId];
+        assertCanSetCenter(requester, nextCenterId, nextCenterIds);
       }
-      assertCanSetCenter(requester, nextCenterId);
     }
 
     if (isSuperAdminRaw !== undefined) {
@@ -69,6 +83,13 @@ export async function PATCH(req: Request) {
     if (nextCenterId !== undefined) {
       updates.centerId = nextCenterId;
       updates.branchId = nextCenterId;
+    }
+    if (nextCenterIds !== undefined) {
+      if (nextCenterIds.length > 0) {
+        updates.centerIds = nextCenterIds;
+      } else {
+        updates.centerIds = [];
+      }
     }
     if (isSuperAdminRaw !== undefined) updates.isSuperAdmin = Boolean(isSuperAdminRaw);
 

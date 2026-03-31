@@ -69,6 +69,7 @@ import { getHeadOfficeId } from '@/utils/centerUtils';
 import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 import { useAuth } from '@/context/AuthContext';
 import { useCenterScope } from '@/hooks/useCenterScope';
+import { inventoryItemMatchesDataScope } from '@/lib/tenant/centerScope';
 import { useRouter } from 'next/navigation';
 // Temporarily disabled performance monitoring to prevent bundling issues
 // import { performanceMonitor, monitorFirebaseQuery } from '@/utils/performance';
@@ -207,7 +208,7 @@ const normalizeSerialNumber = (serialNumber: string) => serialNumber.trim().toUp
 
 export default function InventoryPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
-  const { effectiveScopeCenterId } = useCenterScope();
+  const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const router = useRouter();
   
   // Helper to check if user is staff or audiologist (both have same restricted view)
@@ -1232,10 +1233,9 @@ export default function InventoryPage() {
         });
 
         const mergedItems = [...serialItems, ...nonSerialItems];
-        const items =
-          effectiveScopeCenterId == null || effectiveScopeCenterId === ''
-            ? mergedItems
-            : mergedItems.filter((i) => String(i.location || '') === String(effectiveScopeCenterId));
+        const items = mergedItems.filter((i) =>
+          inventoryItemMatchesDataScope(i.location, effectiveScopeCenterId, allowedCenterIds),
+        );
 
         // Compute stats
         const inStock = items
@@ -1284,7 +1284,7 @@ export default function InventoryPage() {
         setLoading(false);
       }
     }
-  }, [user, isAllowedModule, refreshKey, effectiveScopeCenterId]);
+  }, [user, isAllowedModule, refreshKey, effectiveScopeCenterId, allowedCenterIds]);
   
   // Apply filters and search
   useEffect(() => {

@@ -19,6 +19,8 @@ export interface UserProfile {
   branchId?: string;
   /** Firestore `centers/{id}` — when set, user is scoped to that center (unless super admin). */
   centerId?: string | null;
+  /** Multiple centers for data scope; when set, takes precedence with `centerId` synced to the first entry for legacy code. */
+  centerIds?: string[] | null;
   /** Explicit super-admin flag; see `isSuperAdminViewer` in `@/lib/tenant/centerScope`. */
   isSuperAdmin?: boolean;
 }

@@ -37,7 +37,13 @@ import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { CRM_MODULE_ACCESS_OPTIONS } from '@/components/Layout/crm-nav-config';
 import { useCenterScope } from '@/hooks/useCenterScope';
-import { isSuperAdminViewer, normalizeCenterId } from '@/lib/tenant/centerScope';
+import {
+  isGlobalDataScope,
+  isSuperAdminViewer,
+  normalizeCenterId,
+  normalizeCenterIdsFromProfile,
+  userRowMatchesDataScope,
+} from '@/lib/tenant/centerScope';
 import { useUserPresenceHeartbeat, usePresenceOnlineMap } from '@/components/user-management/useUserPresence';
 import UserDirectoryTable from '@/components/user-management/UserDirectoryTable';
 import CreateUserDialog from '@/components/user-management/CreateUserDialog';
@@ -72,6 +78,7 @@ interface User {
   role: 'admin' | 'staff' | 'audiologist';
   allowedModules?: string[];
   centerId?: string | null;
+  centerIds?: string[] | null;
   branchId?: string | null;
   isSuperAdmin?: boolean;
 }
@@ -91,7 +98,7 @@ function mapUserSnapshot(docSnap: { id: string; data: () => Record<string, unkno
 export default function UserManagementPage() {
   const { user, userProfile, changePassword, changeEmail, resetUserPassword, updateUserPassword, updateUserEmail, loading: authLoading } = useAuth();
   const { enqueueSnackbar } = useSnackbar();
-  const { effectiveScopeCenterId, centers, lockedCenterId } = useCenterScope();
+  const { effectiveScopeCenterId, allowedCenterIds, centers, lockedCenterId } = useCenterScope();
   const scopeHeaderCenterId = effectiveScopeCenterId ?? null;
   useUserPresenceHeartbeat(user, Boolean(user));
   
@@ -126,7 +133,7 @@ export default function UserManagementPage() {
   const [createUserName, setCreateUserName] = useState('');
   const [createUserRole, setCreateUserRole] = useState<'admin' | 'staff' | 'audiologist'>('staff');
   const [createUserModules, setCreateUserModules] = useState<string[]>([]);
-  const [createUserCenterId, setCreateUserCenterId] = useState<string>('');
+  const [createUserCenterIds, setCreateUserCenterIds] = useState<string[]>([]);
   const [createUserSuperAdmin, setCreateUserSuperAdmin] = useState(false);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -143,9 +150,9 @@ export default function UserManagementPage() {
   const [actionLoading, setActionLoading] = useState(false);
 
   const users = useMemo(() => {
-    if (!effectiveScopeCenterId) return allUsers;
-    return allUsers.filter((r) => normalizeCenterId(r) === effectiveScopeCenterId);
-  }, [allUsers, effectiveScopeCenterId]);
+    if (isGlobalDataScope(effectiveScopeCenterId, allowedCenterIds)) return allUsers;
+    return allUsers.filter((r) => userRowMatchesDataScope(r, effectiveScopeCenterId, allowedCenterIds));
+  }, [allUsers, effectiveScopeCenterId, allowedCenterIds]);
 
   const onlineMap = usePresenceOnlineMap(users.map((u) => u.firebaseAuthUid));
 
@@ -177,10 +184,19 @@ export default function UserManagementPage() {
   }, [userProfile?.role, enqueueSnackbar]);
 
   useEffect(() => {
-    if (lockedCenterId && !createUserCenterId) {
-      setCreateUserCenterId(lockedCenterId);
+    if (lockedCenterId && createUserCenterIds.length === 0) {
+      setCreateUserCenterIds([lockedCenterId]);
     }
-  }, [lockedCenterId, createUserCenterId]);
+  }, [lockedCenterId, createUserCenterIds.length]);
+
+  const inviteCenters = useMemo(() => {
+    if (lockedCenterId) return centers.filter((c) => c.id === lockedCenterId);
+    if (userProfile && !isSuperAdminViewer(userProfile)) {
+      const ids = normalizeCenterIdsFromProfile(userProfile);
+      if (ids.length > 0) return centers.filter((c) => ids.includes(c.id));
+    }
+    return centers;
+  }, [centers, lockedCenterId, userProfile]);
 
   const filteredCentersForEdit = useMemo(() => {
     const q = editCenterSearch.trim().toLowerCase();
@@ -430,8 +446,20 @@ export default function UserManagementPage() {
         enqueueSnackbar('You must be signed in as admin', { variant: 'warning' });
         return;
       }
-      if (lockedCenterId && createUserCenterId && createUserCenterId !== lockedCenterId) {
+      const resolvedCenterIds = lockedCenterId
+        ? [lockedCenterId]
+        : createUserCenterIds.length > 0
+          ? createUserCenterIds
+          : effectiveScopeCenterId
+            ? [effectiveScopeCenterId]
+            : [];
+      if (lockedCenterId && resolvedCenterIds.some((id) => id !== lockedCenterId)) {
         enqueueSnackbar('Center must match your assigned center', { variant: 'warning' });
+        return;
+      }
+      const needsCenters = role !== 'admin' || (role === 'admin' && !createUserSuperAdmin);
+      if (needsCenters && resolvedCenterIds.length === 0) {
+        enqueueSnackbar('Select at least one center for this user', { variant: 'warning' });
         return;
       }
 
@@ -444,9 +472,9 @@ export default function UserManagementPage() {
       if (role === 'admin') {
         payload.isSuperAdmin = createUserSuperAdmin;
       }
-      const centerPayload = lockedCenterId || createUserCenterId || effectiveScopeCenterId || undefined;
-      if (centerPayload) {
-        payload.centerId = centerPayload;
+      if (resolvedCenterIds.length > 0) {
+        payload.centerIds = resolvedCenterIds;
+        payload.centerId = resolvedCenterIds[0];
       }
       const createHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -476,7 +504,7 @@ export default function UserManagementPage() {
       setCreateUserName('');
       setCreateUserRole('staff');
       setCreateUserModules([]);
-      setCreateUserCenterId('');
+      setCreateUserCenterIds([]);
       setCreateUserSuperAdmin(false);
       setActionLoading(false);
     } catch (error: unknown) {
@@ -929,7 +957,7 @@ export default function UserManagementPage() {
           onlineMap={onlineMap}
           currentUserId={user?.uid ?? null}
           usersLoading={usersLoading}
-          scopeKey={effectiveScopeCenterId ?? 'all'}
+          scopeKey={`${effectiveScopeCenterId ?? 'all'}:${(allowedCenterIds ?? []).join(',')}`}
           onAddUser={() => setCreateUserDialogOpen(true)}
           onAccess={(u) => openAccessDialog(u as User)}
           onPassword={(u) => {
@@ -1330,7 +1358,7 @@ export default function UserManagementPage() {
       <CreateUserDialog
         open={createUserDialogOpen}
         onOpenChange={setCreateUserDialogOpen}
-        centers={centers}
+        centers={inviteCenters}
         lockedCenterId={lockedCenterId}
         userProfile={userProfile ?? null}
         createUserEmail={createUserEmail}
@@ -1341,8 +1369,8 @@ export default function UserManagementPage() {
         setCreateUserRole={setCreateUserRole}
         createUserModules={createUserModules}
         setCreateUserModules={setCreateUserModules}
-        createUserCenterId={createUserCenterId}
-        setCreateUserCenterId={setCreateUserCenterId}
+        createUserCenterIds={createUserCenterIds}
+        setCreateUserCenterIds={setCreateUserCenterIds}
         createUserSuperAdmin={createUserSuperAdmin}
         setCreateUserSuperAdmin={setCreateUserSuperAdmin}
         actionLoading={actionLoading}

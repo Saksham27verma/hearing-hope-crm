@@ -43,6 +43,16 @@ import {
 import { collection, getDocs, query, orderBy, limit, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
+import { useCenterScope } from '@/hooks/useCenterScope';
+import {
+  appointmentMatchesDataScope,
+  enquiryMatchesDataScope,
+  inventoryCollectionDocMatchesScope,
+  isGlobalDataScope,
+  resolveDataScope,
+  saleMatchesDataScope,
+  stockTransferMatchesDataScope,
+} from '@/lib/tenant/centerScope';
 import { useRouter } from 'next/navigation';
 
 // Format currency
@@ -66,6 +76,7 @@ const formatDate = (timestamp: Timestamp) => {
 
 export default function DashboardPage() {
   const { user, userProfile } = useAuth();
+  const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -103,6 +114,9 @@ export default function DashboardPage() {
             id: doc.id,
             ...doc.data()
           }))
+          .filter((enquiry: any) =>
+            enquiryMatchesDataScope(enquiry as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
+          )
           .filter((enquiry: any) => {
             // Must have visitSchedules
             if (!enquiry.visitSchedules || !Array.isArray(enquiry.visitSchedules) || enquiry.visitSchedules.length === 0) {
@@ -178,11 +192,12 @@ export default function DashboardPage() {
         where('saleDate', '>=', firstDayTimestamp)
       );
       const monthlySalesSnapshot = await getDocs(monthlySalesQuery);
-      
+
       let monthlyRevenue = 0;
-      monthlySalesSnapshot.forEach(doc => {
-        const saleData = doc.data();
-        monthlyRevenue += saleData.totalAmount || 0;
+      monthlySalesSnapshot.forEach((doc) => {
+        const saleData = doc.data() as Record<string, unknown>;
+        if (!saleMatchesDataScope(saleData, effectiveScopeCenterId, allowedCenterIds)) return;
+        monthlyRevenue += Number(saleData.totalAmount) || 0;
       });
       
       // Recent sales
@@ -192,10 +207,9 @@ export default function DashboardPage() {
         limit(5)
       );
       const recentSalesSnapshot = await getDocs(recentSalesQuery);
-      const recentSalesData = recentSalesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const recentSalesData = recentSalesSnapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((row) => saleMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
       
       // Recent enquiries - For other users, show recent enquiries as before
       const recentEnquiriesQuery = query(
@@ -204,10 +218,9 @@ export default function DashboardPage() {
         limit(5)
       );
       const recentEnquiriesSnapshot = await getDocs(recentEnquiriesQuery);
-      const recentEnquiriesData = recentEnquiriesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const recentEnquiriesData = recentEnquiriesSnapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((row) => enquiryMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
       
       // Recent stock transfers
       const recentTransfersQuery = query(
@@ -216,10 +229,9 @@ export default function DashboardPage() {
         limit(5)
       );
       const recentTransfersSnapshot = await getDocs(recentTransfersQuery);
-      const recentTransfersData = recentTransfersSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const recentTransfersData = recentTransfersSnapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((row) => stockTransferMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
       
       // Fetch upcoming appointments (for staff)
       const today = new Date();
@@ -227,7 +239,8 @@ export default function DashboardPage() {
       
       const allAppointmentsSnapshot = await getDocs(collection(db, 'appointments'));
       const upcomingAppointmentsData = allAppointmentsSnapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((appt: any) => appointmentMatchesDataScope(appt as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
         .filter((appt: any) => {
           if (!appt.start) return false;
           const apptDate = new Date(appt.start);
@@ -245,8 +258,11 @@ export default function DashboardPage() {
       const followUpPatientsData: any[] = [];
       const todayDateStr = today.toISOString().split('T')[0];
       
-      allEnquiriesForFollowUp.docs.forEach(doc => {
+      allEnquiriesForFollowUp.docs.forEach((doc) => {
         const enquiry: any = { id: doc.id, ...doc.data() };
+        if (!enquiryMatchesDataScope(enquiry as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds)) {
+          return;
+        }
         if (enquiry.followUps && Array.isArray(enquiry.followUps) && enquiry.followUps.length > 0) {
           // Get the most recent follow-up
           const sortedFollowUps = [...enquiry.followUps].sort((a: any, b: any) => {
@@ -283,16 +299,41 @@ export default function DashboardPage() {
         return dateA - dateB;
       });
       
+      const scopeActive = !isGlobalDataScope(effectiveScopeCenterId, allowedCenterIds);
+      const enquiriesRows = enquiriesSnapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((row) => enquiryMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
+      const salesRows = salesSnapshot.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((row) => saleMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
+      const monthlySalesScoped = monthlySalesSnapshot.docs.filter((d) =>
+        saleMatchesDataScope(d.data() as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
+      ).length;
+      const inventoryRows = inventorySnapshot.docs.filter((d) =>
+        inventoryCollectionDocMatchesScope(d.data() as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
+      );
+      const transfersRows = transfersSnapshot.docs.filter((d) =>
+        stockTransferMatchesDataScope(d.data() as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
+      );
+
+      const centersMode = resolveDataScope(effectiveScopeCenterId, allowedCenterIds);
+      const totalCentersStat =
+        centersMode.type === 'global'
+          ? centersSnapshot.size
+          : centersMode.type === 'union'
+            ? centersMode.centerIds.length
+            : 1;
+
       setStats({
         totalProducts: productsSnapshot.size,
-        totalEnquiries: enquiriesSnapshot.size,
-        totalSales: salesSnapshot.size,
-        monthlySales: monthlySalesSnapshot.size,
+        totalEnquiries: scopeActive ? enquiriesRows.length : enquiriesSnapshot.size,
+        totalSales: scopeActive ? salesRows.length : salesSnapshot.size,
+        monthlySales: scopeActive ? monthlySalesScoped : monthlySalesSnapshot.size,
         monthlyRevenue,
-        totalInventory: inventorySnapshot.size,
-        totalStockTransfers: transfersSnapshot.size,
+        totalInventory: scopeActive ? inventoryRows.length : inventorySnapshot.size,
+        totalStockTransfers: scopeActive ? transfersRows.length : transfersSnapshot.size,
         totalParties: partiesSnapshot.size,
-        totalCenters: centersSnapshot.size,
+        totalCenters: totalCentersStat,
       });
       
       setRecentSales(recentSalesData);
@@ -312,7 +353,7 @@ export default function DashboardPage() {
     if (user) {
       fetchDashboardData();
     }
-  }, [user]);
+  }, [user, userProfile?.role, effectiveScopeCenterId, allowedCenterIds]);
 
   if (loading) {
     return (

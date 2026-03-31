@@ -33,6 +33,7 @@ export async function POST(req: Request) {
     const role = (body?.role || '').toString().trim() as UserRole;
     const allowedModulesBody = body?.allowedModules;
     const centerIdRaw = body?.centerId;
+    const centerIdsRaw = body?.centerIds;
     const isSuperAdminRaw = body?.isSuperAdmin;
 
     if (!email) return jsonError('Email is required', 400);
@@ -79,11 +80,18 @@ export async function POST(req: Request) {
       allowedModules = allowedModulesBody.map((x: unknown) => String(x).toLowerCase().trim()).filter(Boolean);
     }
 
-    let centerId: string | null = null;
-    if (centerIdRaw !== undefined && centerIdRaw !== null && centerIdRaw !== '') {
-      centerId = String(centerIdRaw);
+    let centerIds: string[] = [];
+    if (Array.isArray(centerIdsRaw) && centerIdsRaw.length > 0) {
+      centerIds = [...new Set(centerIdsRaw.map((x: unknown) => String(x).trim()).filter(Boolean))];
     }
-    assertCanSetCenter(requester, centerId);
+    let centerId: string | null = null;
+    if (centerIds.length > 0) {
+      centerId = centerIds[0];
+    } else if (centerIdRaw !== undefined && centerIdRaw !== null && centerIdRaw !== '') {
+      centerId = String(centerIdRaw);
+      centerIds = [centerId];
+    }
+    assertCanSetCenter(requester, centerId, centerIds.length > 0 ? centerIds : null);
     const isSuperAdmin = Boolean(isSuperAdminRaw);
     assertCanSetSuperAdmin(requester, isSuperAdmin);
 
@@ -97,6 +105,7 @@ export async function POST(req: Request) {
       createdBy: decoded.uid,
       centerId,
       branchId: centerId,
+      ...(centerIds.length > 0 ? { centerIds } : {}),
       isSuperAdmin: role === 'admin' ? isSuperAdmin : false,
     };
 

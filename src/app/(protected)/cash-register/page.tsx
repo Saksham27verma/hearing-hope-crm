@@ -63,6 +63,7 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/hooks/useAuth';
 import { useCenterScope } from '@/hooks/useCenterScope';
+import { resolveDataScope } from '@/lib/tenant/centerScope';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -124,7 +125,7 @@ const formatCurrency = (amount: number) =>
 
 const CashRegisterPage = () => {
   const { user, userProfile, loading: authLoading } = useAuth();
-  const { effectiveScopeCenterId, lockedCenterId } = useCenterScope();
+  const { effectiveScopeCenterId, allowedCenterIds, lockedCenterId } = useCenterScope();
   const router = useRouter();
   const isAdmin = userProfile?.role === 'admin';
 
@@ -179,20 +180,30 @@ const CashRegisterPage = () => {
   }, [user, authLoading]);
 
   const visibleCenters = useMemo(() => {
-    if (!effectiveScopeCenterId) return centers;
-    return centers.filter((c) => c.id === effectiveScopeCenterId);
-  }, [centers, effectiveScopeCenterId]);
+    const mode = resolveDataScope(effectiveScopeCenterId, allowedCenterIds);
+    if (mode.type === 'global') return centers;
+    if (mode.type === 'union') {
+      return centers.filter((c) => mode.centerIds.includes(c.id));
+    }
+    return centers.filter((c) => c.id === mode.centerId);
+  }, [centers, effectiveScopeCenterId, allowedCenterIds]);
 
   const scopedSheets = useMemo(() => {
-    if (!effectiveScopeCenterId) return allSheets;
-    return allSheets.filter((s) => s.doc.centerId === effectiveScopeCenterId);
-  }, [allSheets, effectiveScopeCenterId]);
+    const mode = resolveDataScope(effectiveScopeCenterId, allowedCenterIds);
+    if (mode.type === 'global') return allSheets;
+    if (mode.type === 'union') {
+      return allSheets.filter((s) => s.doc.centerId && mode.centerIds.includes(s.doc.centerId));
+    }
+    return allSheets.filter((s) => s.doc.centerId === mode.centerId);
+  }, [allSheets, effectiveScopeCenterId, allowedCenterIds]);
 
   useEffect(() => {
-    if (!centers.length || !effectiveScopeCenterId) return;
-    const c = centers.find((x) => x.id === effectiveScopeCenterId);
+    if (!centers.length) return;
+    const mode = resolveDataScope(effectiveScopeCenterId, allowedCenterIds);
+    if (mode.type !== 'single') return;
+    const c = centers.find((x) => x.id === mode.centerId);
     if (c) setSelectedCenter(c);
-  }, [centers, effectiveScopeCenterId]);
+  }, [centers, effectiveScopeCenterId, allowedCenterIds]);
 
   useEffect(() => {
     if (!authLoading && !user) {

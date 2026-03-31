@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import type { DocumentSnapshot, Firestore, QuerySnapshot } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
-import { normalizeCenterId } from '@/lib/tenant/centerScope';
+import type { UserProfile } from '@/context/AuthContext';
+import { normalizeCenterIdsFromProfile } from '@/lib/tenant/centerScope';
+import type { RequesterTenant } from '@/server/tenant/requesterTenant';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -50,17 +52,19 @@ async function collectDuplicateUserDocIds(
   return ids;
 }
 
-function assertCenterScopeForDocs(
-  requester: { isSuperAdmin?: boolean; centerId?: string | null },
-  snapshots: DocumentSnapshot[],
-): string | null {
-  if (requester.isSuperAdmin || !requester.centerId) return null;
+function assertCenterScopeForDocs(requester: RequesterTenant, snapshots: DocumentSnapshot[]): string | null {
+  if (requester.isSuperAdmin) return null;
+  const allowed =
+    requester.centerIds.length > 0 ? requester.centerIds : requester.centerId ? [requester.centerId] : [];
+  if (allowed.length === 0) return null;
   for (const s of snapshots) {
     if (!s.exists) continue;
-    const t = s.data() as UserDoc;
-    const tCenter = normalizeCenterId(t);
-    if (tCenter !== requester.centerId) {
-      return 'Cannot delete users outside your center';
+    const t = s.data() as Record<string, unknown>;
+    const targetCenters = normalizeCenterIdsFromProfile(t as UserProfile);
+    if (targetCenters.length === 0) continue;
+    const ok = targetCenters.some((c) => allowed.includes(c));
+    if (!ok) {
+      return 'Cannot delete users outside your center(s)';
     }
   }
   return null;

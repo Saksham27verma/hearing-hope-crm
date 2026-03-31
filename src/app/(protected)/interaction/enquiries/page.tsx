@@ -433,7 +433,7 @@ interface VisitSchedule {
 export default function EnquiriesPage() {
   const router = useRouter();
   const { userProfile } = useAuth();
-  const { effectiveScopeCenterId } = useCenterScope();
+  const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const { optionsByField } = useEnquiryOptionsByField();
   const wizardReferenceOpts = optionsByField.reference ?? [];
   const wizardVisitingCenterOpts = optionsByField.visiting_center ?? [];
@@ -910,7 +910,7 @@ export default function EnquiriesPage() {
 
   useEffect(() => {
     fetchEnquiries();
-  }, [effectiveScopeCenterId]);
+  }, [effectiveScopeCenterId, allowedCenterIds]);
 
   // Column resize handlers
   const handleMouseDown = (columnKey: string, e: React.MouseEvent) => {
@@ -1002,7 +1002,7 @@ export default function EnquiriesPage() {
       })) as Enquiry[];
 
       const scopeFiltered = enquiryData.filter((e) =>
-        enquiryMatchesDataScope(e as unknown as Record<string, unknown>, effectiveScopeCenterId),
+        enquiryMatchesDataScope(e as unknown as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
       );
 
       // Filter for audiologists: only show enquiries with hearing test services
