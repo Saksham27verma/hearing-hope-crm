@@ -87,6 +87,26 @@ function mapReceiptTypeToPaymentType(receiptType: ReceiptType): string {
   }
 }
 
+/** Aligns with SimplifiedEnquiryForm `PaymentRecord.paymentFor` so the enquiry Payments section shows the row. */
+function mapStaffReceiptToCrmPaymentFor(
+  receiptType: ReceiptType,
+  trial?: StaffTrialDetails
+): 'booking_advance' | 'hearing_aid' | 'trial_home_security_deposit' | 'other' {
+  if (receiptType === 'booking') return 'booking_advance';
+  if (receiptType === 'invoice') return 'hearing_aid';
+  if (receiptType === 'trial') {
+    return trial?.trialLocationType === 'home' ? 'trial_home_security_deposit' : 'other';
+  }
+  return 'other';
+}
+
+function mapBodyPaymentModeToCrm(mode: string): 'Cash' | 'Card' | 'UPI' {
+  const m = mode.toLowerCase();
+  if (m === 'upi') return 'UPI';
+  if (m === 'card') return 'Card';
+  return 'Cash';
+}
+
 function parseWhichEar(raw: unknown): 'left' | 'right' | 'both' {
   const whichEarRaw = String(raw ?? 'both').toLowerCase();
   return whichEarRaw === 'left' || whichEarRaw === 'right' || whichEarRaw === 'both' ? whichEarRaw : 'both';
@@ -335,9 +355,15 @@ export async function POST(req: Request) {
       sale = s;
     }
 
+    const requestId = uuidv4();
+    const paymentDate = new Date().toISOString();
+    const paymentMethod =
+      paymentMode === 'cash' ? 'Cash' : paymentMode === 'upi' ? 'UPI' : 'Card';
+
     const merged = mergeStaffSubmissionIntoEnquiry({
       enquiry: enquiryData,
       appointment: appt,
+      appointmentId,
       receiptType,
       amount,
       booking,
@@ -349,10 +375,19 @@ export async function POST(req: Request) {
       saleDeviceType,
     });
 
-    const requestId = uuidv4();
-    const paymentDate = new Date().toISOString();
-    const paymentMethod =
-      paymentMode === 'cash' ? 'Cash' : paymentMode === 'upi' ? 'UPI' : 'Card';
+    const lastVisit = merged.visits[merged.visits.length - 1] as Record<string, unknown> | undefined;
+    const relatedVisitId = String(lastVisit?.id ?? '').trim();
+
+    const crmPaymentEntry = deepStripUndefined({
+      id: requestId,
+      paymentDate: paymentDate.slice(0, 10),
+      amount,
+      paymentFor: mapStaffReceiptToCrmPaymentFor(receiptType, trial),
+      paymentMode: mapBodyPaymentModeToCrm(paymentMode),
+      referenceNumber: appointmentId,
+      remarks: `Staff app · ${receiptType} · visit ${relatedVisitId || '—'}`,
+      ...(relatedVisitId ? { relatedVisitId } : {}),
+    }) as Record<string, unknown>;
 
     const paymentRecord = {
       id: requestId,
@@ -381,6 +416,7 @@ export async function POST(req: Request) {
       visitSchedules: deepStripUndefined(merged.visitSchedules) as unknown[],
       financialSummary: deepStripUndefined(merged.financialSummary) as Record<string, unknown>,
       paymentRecords: FieldValue.arrayUnion(paymentRecord),
+      payments: FieldValue.arrayUnion(crmPaymentEntry),
       updatedAt: FieldValue.serverTimestamp(),
     });
 

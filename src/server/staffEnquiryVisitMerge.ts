@@ -56,12 +56,6 @@ function formatTimeFromStart(start: unknown): string {
   }).format(d);
 }
 
-function visitDateMatchesToday(visitDate: unknown, todayYmd: string): boolean {
-  if (typeof visitDate !== 'string' || !visitDate.trim()) return false;
-  const part = visitDate.trim().slice(0, 10);
-  return part === todayYmd;
-}
-
 /** Booking: catalog device + booking amounts — brand/model/type come from `bookingProduct` (CRM catalogue). */
 export type StaffBookingDetails = {
   whichEar: 'left' | 'right' | 'both';
@@ -318,6 +312,8 @@ function defaultVisitShell(appointment: Record<string, unknown>): Record<string,
 export function mergeStaffSubmissionIntoEnquiry(args: {
   enquiry: Record<string, unknown>;
   appointment: Record<string, unknown>;
+  /** Firestore appointment doc id — stored in visit notes for CRM traceability. */
+  appointmentId: string;
   receiptType: 'trial' | 'booking' | 'invoice';
   amount: number;
   booking?: StaffBookingDetails;
@@ -329,16 +325,15 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
   whoSoldName: string;
   saleDeviceType?: string;
 }): { visits: Record<string, unknown>[]; visitSchedules: Record<string, unknown>[]; financialSummary: Record<string, unknown> } {
+  const enquiry = args.enquiry;
   const todayYmd = formatDateYmdInIST(new Date());
   const visitsRaw = Array.isArray(enquiry.visits) ? [...(enquiry.visits as Record<string, unknown>[])] : [];
-  let idx = visitsRaw.findIndex((v) => visitDateMatchesToday(v.visitDate, todayYmd));
 
-  if (idx < 0) {
-    visitsRaw.push(defaultVisitShell(args.appointment));
-    idx = visitsRaw.length - 1;
-  }
-
-  const v = { ...(visitsRaw[idx] as Record<string, unknown>) };
+  /** Always append a new visit for staff-app payments so we never overwrite an existing same-day CRM visit. */
+  const v = {
+    ...(defaultVisitShell(args.appointment) as Record<string, unknown>),
+    visitNotes: `Staff app — appointment ${args.appointmentId} — ${args.receiptType} (payment logged).`,
+  };
 
   if (args.receiptType === 'booking' && args.booking && args.bookingProduct) {
     const b = args.booking;
@@ -449,15 +444,15 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
     });
   }
 
-  visitsRaw[idx] = removeUndefined(v) as Record<string, unknown>;
+  visitsRaw.push(removeUndefined(v) as Record<string, unknown>);
 
   const visitSchedules = visitsRaw.map((visit) => mapVisitToVisitSchedule(visit));
 
   const fs = (enquiry.financialSummary as Record<string, unknown>) || {};
+  const totalDue = Number(fs.totalDue ?? 0);
   const prevPaid = Number(fs.totalPaid || 0);
-  const prevDue = Number(fs.totalDue || 0);
   const nextPaid = prevPaid + args.amount;
-  const nextOutstanding = Math.max(0, prevDue - nextPaid);
+  const nextOutstanding = Math.max(0, totalDue - nextPaid);
 
   const financialSummary = {
     ...fs,
