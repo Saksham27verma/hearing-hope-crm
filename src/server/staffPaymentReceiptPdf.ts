@@ -1,5 +1,18 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
+/**
+ * Standard Helvetica in pdf-lib uses WinAnsI — cannot encode ₹, em dashes, or most non‑Latin text.
+ */
+function toPdfSafeWinAnsi(text: string): string {
+  return text
+    .replace(/\u20b9/g, 'Rs.') // ₹
+    .replace(/\u2014/g, '-') // em dash
+    .replace(/\u2013/g, '-') // en dash
+    .replace(/\u00a0/g, ' ') // nbsp
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"');
+}
+
 export type StaffPaymentReceiptPdfInput = {
   receiptLabel: string;
   patientName: string;
@@ -28,7 +41,8 @@ export async function buildStaffPaymentReceiptPdfBuffer(input: StaffPaymentRecei
   const line = (text: string, opts?: { size?: number; bold?: boolean }) => {
     const size = opts?.size ?? 10;
     const bold = opts?.bold ?? false;
-    page.drawText(text, {
+    const safe = toPdfSafeWinAnsi(text);
+    page.drawText(safe, {
       x: 48,
       y,
       size,
@@ -39,14 +53,14 @@ export async function buildStaffPaymentReceiptPdfBuffer(input: StaffPaymentRecei
     y -= size + (opts?.bold ? 10 : 6);
   };
 
-  line('Hope Hearing — Staff payment request', { size: 16, bold: true });
+  line('Hope Hearing - Staff payment request', { size: 16, bold: true });
   y -= 6;
   line('Pending admin verification. Not valid as a final tax invoice.', { size: 9 });
   y -= 14;
 
   line(`Document: ${input.receiptLabel}`, { bold: true });
   line(`Patient: ${input.patientName}`);
-  line(`Amount: ₹${input.amount.toFixed(2)}`);
+  line(`Amount: Rs.${input.amount.toFixed(2)}`);
   line(`Payment mode: ${input.paymentMode}`);
   line(`Receipt type: ${input.receiptType}`);
   y -= 8;
