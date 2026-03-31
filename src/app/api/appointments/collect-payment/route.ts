@@ -230,6 +230,9 @@ export async function POST(req: Request) {
     const amountRaw = body?.amount;
     const paymentMode = (body?.paymentMode ?? '').toString().trim().toLowerCase();
     const receiptType = (body?.receiptType ?? '').toString().trim().toLowerCase() as ReceiptType;
+    const htmlTemplateIdFromClient = (body?.htmlTemplateId ?? body?.receiptHtmlTemplateId ?? '')
+      .toString()
+      .trim();
 
     if (!appointmentId) {
       return jsonError('appointmentId is required', 400);
@@ -438,7 +441,7 @@ export async function POST(req: Request) {
       whoSoldName: staffName,
     });
 
-    const pdfBuffer = await buildStaffCrmStyleReceiptPdfBuffer({
+    const { buffer: pdfBuffer, templateId: htmlTemplateIdUsed } = await buildStaffCrmStyleReceiptPdfBuffer({
       receiptType,
       enquiry: enquiryData,
       lastVisit: (merged.visits[merged.visits.length - 1] || {}) as Record<string, unknown>,
@@ -447,6 +450,7 @@ export async function POST(req: Request) {
       staffName,
       staffId: uid,
       requestId,
+      htmlTemplateId: htmlTemplateIdFromClient || undefined,
       fallbackInput: {
         receiptLabel,
         patientName,
@@ -461,6 +465,12 @@ export async function POST(req: Request) {
         detailLines,
       },
     });
+
+    if (htmlTemplateIdFromClient && htmlTemplateIdUsed && htmlTemplateIdFromClient !== htmlTemplateIdUsed) {
+      console.warn(
+        `collect-payment: client htmlTemplateId=${htmlTemplateIdFromClient} but PDF used templateId=${htmlTemplateIdUsed} (override missing/invalid — server fell back)`
+      );
+    }
 
     const notify = await getStaffPaymentNotifyEmailList();
     let emailSent = false;
@@ -516,6 +526,7 @@ ${detailLines?.length ? `<pre style="font-size:12px;white-space:pre-wrap">${esca
               enquiryUpdated: true,
               emailSent: false,
               emailError,
+              htmlTemplateIdUsed: htmlTemplateIdUsed ?? null,
               warning:
                 'Payment recorded but email to admins failed. Fix SMTP on the server or use Settings → Send test email to see the error.',
             },
@@ -531,6 +542,7 @@ ${detailLines?.length ? `<pre style="font-size:12px;white-space:pre-wrap">${esca
         enquiryUpdated: true,
         emailSent,
         requestId,
+        htmlTemplateIdUsed: htmlTemplateIdUsed ?? null,
       })
     );
   } catch (err: unknown) {

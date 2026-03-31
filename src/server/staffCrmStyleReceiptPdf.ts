@@ -64,8 +64,16 @@ export type StaffCrmPdfArgs = {
   staffName: string;
   staffId: string;
   requestId: string;
+  /** Same Firestore id the staff app showed (Invoice Manager pin); server tries this before routing doc. */
+  htmlTemplateId?: string | null;
   /** Fallback when CRM-style PDF cannot be built. */
   fallbackInput: StaffPaymentReceiptPdfInput;
+};
+
+export type StaffCrmStylePdfResult = {
+  buffer: Buffer;
+  /** Firestore `invoiceTemplates` id used for HTML→PDF, when CRM-style path succeeded. */
+  templateId?: string;
 };
 
 /**
@@ -73,16 +81,17 @@ export type StaffCrmPdfArgs = {
  * rendered server-side. Falls back to the legacy minimal pdf-lib document if Chromium/Puppeteer fails
  * or no HTML template exists for the document type.
  */
-export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs): Promise<Buffer> {
+export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs): Promise<StaffCrmStylePdfResult> {
   const origin = publicSiteOrigin();
   const footerLine = `Generated in staff app by ${args.staffName} (ID: ${args.staffId}) · Request ${args.requestId.slice(0, 8)}…`;
+  const override = args.htmlTemplateId;
 
   const enquiry = args.enquiry as EnquiryLike;
   const visit = args.lastVisit as VisitLike;
 
   try {
     if (args.receiptType === 'booking') {
-      const template = await getResolvedHtmlTemplateAdmin('booking_receipt');
+      const template = await getResolvedHtmlTemplateAdmin('booking_receipt', { overrideTemplateId: override });
       if (!template?.htmlContent) {
         throw new Error('no booking HTML template in invoiceTemplates (need non-visual HTML + documentType booking)');
       }
@@ -95,11 +104,12 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       });
       const inner = buildBookingReceiptHtmlString(template, data, { logoPublicOrigin: origin });
       const html = wrapFragmentInDocument(inner, footerLine);
-      return await renderHtmlToPdfBuffer(html);
+      const buffer = await renderHtmlToPdfBuffer(html);
+      return { buffer, templateId: template.id };
     }
 
     if (args.receiptType === 'trial') {
-      const template = await getResolvedHtmlTemplateAdmin('trial_receipt');
+      const template = await getResolvedHtmlTemplateAdmin('trial_receipt', { overrideTemplateId: override });
       if (!template?.htmlContent) throw new Error('no trial HTML template');
       const centerName = await resolveCenterDisplayNameAdmin(args.enquiry, args.lastVisit);
       const data = buildTrialReceiptData(enquiry, visit, {
@@ -108,11 +118,12 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       });
       const inner = buildTrialReceiptHtmlString(template, data, { logoPublicOrigin: origin });
       const html = wrapFragmentInDocument(inner, footerLine);
-      return await renderHtmlToPdfBuffer(html);
+      const buffer = await renderHtmlToPdfBuffer(html);
+      return { buffer, templateId: template.id };
     }
 
     if (args.receiptType === 'invoice') {
-      const template = await getResolvedHtmlTemplateAdmin('invoice');
+      const template = await getResolvedHtmlTemplateAdmin('invoice', { overrideTemplateId: override });
       if (!template?.htmlContent) throw new Error('no invoice HTML template');
       const sale: Record<string, unknown> = {
         ...enquiryVisitToInvoiceSalePayload(args.enquiry, args.lastVisit),
@@ -128,7 +139,8 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       };
       let html = processInvoiceHtmlTemplate(template.htmlContent, invoiceData, template);
       html = appendGeneratedByFooter(html, footerLine);
-      return await renderHtmlToPdfBuffer(html);
+      const buffer = await renderHtmlToPdfBuffer(html);
+      return { buffer, templateId: template.id };
     }
   } catch (e) {
     console.warn(
@@ -137,5 +149,6 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
     );
   }
 
-  return buildStaffPaymentReceiptPdfBuffer(args.fallbackInput);
+  const buffer = await buildStaffPaymentReceiptPdfBuffer(args.fallbackInput);
+  return { buffer };
 }

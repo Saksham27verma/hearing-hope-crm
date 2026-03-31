@@ -1,3 +1,4 @@
+import type { Firestore } from 'firebase-admin/firestore';
 import {
   CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION,
   CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID,
@@ -33,14 +34,55 @@ export async function getPreferredHtmlTemplateAdmin(
   return pickPreferredHtmlTemplate(templates, documentType, (t) => t);
 }
 
+async function loadHtmlTemplateByIdForStaffPdf(
+  db: Firestore,
+  id: string
+): Promise<StoredInvoiceHtmlTemplate | null> {
+  const trimmed = String(id).trim();
+  if (!trimmed) return null;
+  try {
+    const docSnap = await db.collection('invoiceTemplates').doc(trimmed).get();
+    if (!docSnap.exists) return null;
+    const t = { id: docSnap.id, ...docSnap.data() } as StoredInvoiceHtmlTemplate;
+    if (!isHtmlTemplateRecord(t)) return null;
+    return t;
+  } catch (e) {
+    console.warn('loadHtmlTemplateByIdForStaffPdf:', e);
+    return null;
+  }
+}
+
+export type ResolveHtmlTemplateOptions = {
+  /** From staff app body — same Firestore id the app showed; takes precedence over CRM routing doc. */
+  overrideTemplateId?: string | null;
+};
+
 /**
- * Staff collect-payment PDFs: use the template explicitly chosen in Invoice Manager
- * (`crmSettings/documentTemplateRouting`), otherwise the same auto-pick as the CRM (default → favorite → newest).
+ * Staff collect-payment PDFs: optional **app override** id first, then Invoice Manager routing
+ * (`crmSettings/documentTemplateRouting`), then the same auto-pick as the CRM browser flow.
  */
 export async function getResolvedHtmlTemplateAdmin(
-  documentType: ManagedDocumentType
+  documentType: ManagedDocumentType,
+  options?: ResolveHtmlTemplateOptions
 ): Promise<StoredInvoiceHtmlTemplate | null> {
   const db = adminDb();
+  const override = options?.overrideTemplateId;
+  if (override != null && String(override).trim()) {
+    const t = await loadHtmlTemplateByIdForStaffPdf(db, String(override));
+    if (t) {
+      if (!templateMatchesDocumentType(t, documentType)) {
+        console.warn(
+          `getResolvedHtmlTemplateAdmin: override template ${t.id} documentType=${JSON.stringify(t.documentType)} (expected ${documentType}) — using anyway (explicit app/CRM choice)`
+        );
+      }
+      console.info(`getResolvedHtmlTemplateAdmin: using overrideTemplateId=${t.id} for ${documentType}`);
+      return t;
+    }
+    console.warn(
+      `getResolvedHtmlTemplateAdmin: overrideTemplateId ${override} not found or not HTML; falling back to routing`
+    );
+  }
+
   let preferredId: string | null | undefined;
   try {
     const routingSnap = await db
@@ -56,29 +98,17 @@ export async function getResolvedHtmlTemplateAdmin(
 
   const id = preferredId != null ? String(preferredId).trim() : '';
   if (id) {
-    try {
-      const docSnap = await db.collection('invoiceTemplates').doc(id).get();
-      if (docSnap.exists) {
-        const t = { id: docSnap.id, ...docSnap.data() } as StoredInvoiceHtmlTemplate;
-        // Pinned from Invoice Manager: field name (`bookingReceiptTemplateId`, etc.) is authoritative.
-        if (isHtmlTemplateRecord(t)) {
-          if (templateMatchesDocumentType(t, documentType)) {
-            return t;
-          }
-          console.warn(
-            `getResolvedHtmlTemplateAdmin: pinned template ${id} has documentType=${JSON.stringify(t.documentType)} (expected ${documentType}) — using it anyway because it was explicitly set for staff PDFs`
-          );
-          return t;
-        }
+    const t = await loadHtmlTemplateByIdForStaffPdf(db, id);
+    if (t) {
+      if (!templateMatchesDocumentType(t, documentType)) {
         console.warn(
-          `getResolvedHtmlTemplateAdmin: routing id ${id} is not usable as HTML (missing html or visual-only); falling back to auto-pick`
+          `getResolvedHtmlTemplateAdmin: pinned template ${id} has documentType=${JSON.stringify(t.documentType)} (expected ${documentType}) — using it anyway (CRM routing)`
         );
-      } else {
-        console.warn(`getResolvedHtmlTemplateAdmin: routing template ${id} not found; falling back to auto-pick`);
       }
-    } catch (e) {
-      console.warn('getResolvedHtmlTemplateAdmin: failed to load routed template:', e);
+      console.info(`getResolvedHtmlTemplateAdmin: using crmSettings routing id=${t.id} for ${documentType}`);
+      return t;
     }
+    console.warn(`getResolvedHtmlTemplateAdmin: routing template ${id} not found or invalid HTML; falling back to auto-pick`);
   }
 
   return getPreferredHtmlTemplateAdmin(documentType);
