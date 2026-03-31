@@ -8,9 +8,11 @@ import { buildStaffPaymentReceiptPdfBuffer } from '@/server/staffPaymentReceiptP
 import {
   mergeStaffSubmissionIntoEnquiry,
   type StaffBookingDetails,
+  type StaffSaleDetails,
   type StaffSaleProductLine,
   type StaffTrialDetails,
 } from '@/server/staffEnquiryVisitMerge';
+import { docToCatalogProduct, type CatalogProductDoc } from '@/server/staffEnquiryCatalogHelpers';
 import {
   parseNotifyEmails,
   sendStaffPaymentNotifyEmail,
@@ -85,26 +87,25 @@ function mapReceiptTypeToPaymentType(receiptType: ReceiptType): string {
   }
 }
 
-function parseBookingDetails(raw: unknown): StaffBookingDetails | null {
+function parseWhichEar(raw: unknown): 'left' | 'right' | 'both' {
+  const whichEarRaw = String(raw ?? 'both').toLowerCase();
+  return whichEarRaw === 'left' || whichEarRaw === 'right' || whichEarRaw === 'both' ? whichEarRaw : 'both';
+}
+
+function parseBookingDetails(raw: unknown): (StaffBookingDetails & { catalogProductId: string }) | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const hearingAidBrand = String(o.hearingAidBrand ?? '').trim();
-  const hearingAidModel = String(o.hearingAidModel ?? '').trim();
-  const hearingAidType = String(o.hearingAidType ?? '').trim();
-  const whichEarRaw = String(o.whichEar ?? 'both').toLowerCase();
-  const whichEar =
-    whichEarRaw === 'left' || whichEarRaw === 'right' || whichEarRaw === 'both' ? whichEarRaw : 'both';
+  const catalogProductId = String(o.catalogProductId ?? '').trim();
+  const whichEar = parseWhichEar(o.whichEar);
   const hearingAidPrice = Number(o.hearingAidPrice);
   const bookingSellingPrice = Number(o.bookingSellingPrice);
   const bookingQuantity = Number(o.bookingQuantity);
-  if (!hearingAidBrand || !hearingAidModel || !hearingAidType) return null;
+  if (!catalogProductId) return null;
   if (!Number.isFinite(hearingAidPrice) || hearingAidPrice < 0) return null;
   if (!Number.isFinite(bookingSellingPrice) || bookingSellingPrice < 0) return null;
   if (!Number.isFinite(bookingQuantity) || bookingQuantity < 1) return null;
   return {
-    hearingAidBrand,
-    hearingAidModel,
-    hearingAidType,
+    catalogProductId,
     whichEar,
     hearingAidPrice,
     bookingSellingPrice,
@@ -112,51 +113,67 @@ function parseBookingDetails(raw: unknown): StaffBookingDetails | null {
   };
 }
 
-function parseTrialDetails(raw: unknown): StaffTrialDetails | null {
+function parseTrialDetails(raw: unknown): (StaffTrialDetails & { catalogProductId: string }) | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const trialHearingAidBrand = String(o.trialHearingAidBrand ?? '').trim();
-  const trialHearingAidModel = String(o.trialHearingAidModel ?? '').trim();
-  const trialHearingAidType = String(o.trialHearingAidType ?? '').trim();
-  const trialSerialNumber = String(o.trialSerialNumber ?? '').trim();
+  const catalogProductId = String(o.catalogProductId ?? '').trim();
+  const loc = String(o.trialLocationType ?? o.trialHearingAidType ?? '').trim().toLowerCase();
+  const trialLocationType = loc === 'home' ? 'home' : loc === 'in_office' ? 'in_office' : null;
+  const whichEar = parseWhichEar(o.whichEar);
+  const hearingAidPrice = Number(o.hearingAidPrice);
+  const trialDuration = Number(o.trialDuration);
   const trialStartDate = String(o.trialStartDate ?? '').trim();
   const trialEndDate = String(o.trialEndDate ?? '').trim();
+  const trialSerialNumber = String(o.trialSerialNumber ?? '').trim();
   const trialNotes = String(o.trialNotes ?? '').trim();
-  const trialHomeSecurityDepositAmount = Number(o.trialHomeSecurityDepositAmount);
-  if (!trialHearingAidBrand || !trialHearingAidModel || !trialHearingAidType) return null;
-  if (!trialStartDate || !trialEndDate) return null;
+  const trialHomeSecurityDepositAmount = Number(o.trialHomeSecurityDepositAmount ?? 0);
+
+  if (!catalogProductId || !trialLocationType) return null;
+  if (!Number.isFinite(hearingAidPrice) || hearingAidPrice < 0) return null;
   if (!Number.isFinite(trialHomeSecurityDepositAmount) || trialHomeSecurityDepositAmount < 0) return null;
+
+  if (trialLocationType === 'home') {
+    if (!Number.isFinite(trialDuration) || trialDuration < 1) return null;
+    if (!trialStartDate || !trialEndDate) return null;
+    if (!trialSerialNumber) return null;
+  }
+
   return {
-    trialHearingAidBrand,
-    trialHearingAidModel,
-    trialHearingAidType,
-    trialSerialNumber,
-    trialStartDate,
-    trialEndDate,
-    trialHomeSecurityDepositAmount,
+    catalogProductId,
+    trialLocationType,
+    whichEar,
+    hearingAidPrice,
+    trialDuration: trialLocationType === 'home' ? Math.floor(trialDuration) : 0,
+    trialStartDate: trialLocationType === 'home' ? trialStartDate : '',
+    trialEndDate: trialLocationType === 'home' ? trialEndDate : '',
+    trialSerialNumber: trialLocationType === 'home' ? trialSerialNumber : '',
+    trialHomeSecurityDepositAmount: trialLocationType === 'home' ? trialHomeSecurityDepositAmount : 0,
     trialNotes,
   };
 }
 
-function parseSaleDetails(raw: unknown): StaffSaleProductLine | null {
+function parseSaleDetails(raw: unknown): StaffSaleDetails | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const productId = String(o.productId ?? '').trim();
-  const name = String(o.name ?? '').trim();
-  const serialNumber = String(o.serialNumber ?? '').trim();
-  const company = String(o.company ?? '').trim();
-  const mrp = Number(o.mrp);
-  const sellingPrice = Number(o.sellingPrice);
-  const discountPercent = Number(o.discountPercent);
-  const gstPercent = Number(o.gstPercent);
-  const quantity = Number(o.quantity);
+  const inner = (o.sale ?? o.product) as Record<string, unknown> | undefined;
+  const src = inner && typeof inner === 'object' ? inner : o;
+  const productId = String(src.productId ?? '').trim();
+  const name = String(src.name ?? '').trim();
+  const serialNumber = String(src.serialNumber ?? '').trim();
+  const company = String(src.company ?? '').trim();
+  const mrp = Number(src.mrp);
+  const sellingPrice = Number(src.sellingPrice);
+  const discountPercent = Number(src.discountPercent);
+  const gstPercent = Number(src.gstPercent);
+  const quantity = Number(src.quantity);
+  const whichEar = parseWhichEar(o.whichEar ?? src.whichEar);
   if (!productId || !name || !serialNumber) return null;
   if (!Number.isFinite(mrp) || mrp < 0) return null;
   if (!Number.isFinite(sellingPrice) || sellingPrice < 0) return null;
   if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) return null;
   if (!Number.isFinite(gstPercent) || gstPercent < 0) return null;
   if (!Number.isFinite(quantity) || quantity < 1) return null;
-  return {
+  const product: StaffSaleProductLine = {
     productId,
     name,
     company,
@@ -167,11 +184,19 @@ function parseSaleDetails(raw: unknown): StaffSaleProductLine | null {
     gstPercent,
     quantity: Math.floor(quantity),
   };
+  return { product, whichEar };
 }
 
 async function assertSerialAvailableForSale(productId: string, serialNumber: string): Promise<boolean> {
   const rows = await listAvailableHearingAidSerialRows();
   return rows.some((r) => r.productId === productId && r.serialNumber === serialNumber);
+}
+
+async function loadCatalogProduct(productId: string): Promise<CatalogProductDoc | null> {
+  const db = adminDb();
+  const snap = await db.collection('products').doc(productId).get();
+  if (!snap.exists) return null;
+  return docToCatalogProduct(snap.id, snap.data()!);
 }
 
 export async function POST(req: Request) {
@@ -251,40 +276,63 @@ export async function POST(req: Request) {
     const details = body?.details;
 
     let booking: StaffBookingDetails | undefined;
+    let bookingProduct: CatalogProductDoc | undefined;
     let trial: StaffTrialDetails | undefined;
-    let sale: { product: StaffSaleProductLine } | undefined;
+    let trialProduct: CatalogProductDoc | undefined;
+    let sale: StaffSaleDetails | undefined;
+    let saleDeviceType: string | undefined;
 
     if (receiptType === 'booking') {
       const b = parseBookingDetails(details?.booking ?? details);
       if (!b) {
         return jsonError(
-          'Missing or invalid booking details (brand, model, type, ear, MRP, selling price, quantity)',
+          'Missing or invalid booking details (catalogProductId, whichEar, MRP, selling price, quantity)',
           400
         );
       }
-      booking = b;
+      const { catalogProductId, ...rest } = b;
+      const p = await loadCatalogProduct(catalogProductId);
+      if (!p) {
+        return jsonError('Catalog product not found', 400);
+      }
+      booking = rest;
+      bookingProduct = p;
     } else if (receiptType === 'trial') {
       const t = parseTrialDetails(details?.trial ?? details);
       if (!t) {
         return jsonError(
-          'Missing or invalid trial details (device brand/model/type, dates, security deposit)',
+          'Missing or invalid trial details (catalogProductId, trialLocationType in_office|home, whichEar, MRP, home: duration/dates/serial/deposit)',
           400
         );
       }
-      trial = t;
+      const { catalogProductId, ...rest } = t;
+      const p = await loadCatalogProduct(catalogProductId);
+      if (!p) {
+        return jsonError('Catalog product not found', 400);
+      }
+      if (rest.trialLocationType === 'home') {
+        const okSerial = await assertSerialAvailableForSale(catalogProductId, rest.trialSerialNumber);
+        if (!okSerial) {
+          return jsonError('Trial serial is not available in inventory', 400);
+        }
+      }
+      trial = rest;
+      trialProduct = p;
     } else {
-      const product = parseSaleDetails(details?.sale ?? details?.product ?? details);
-      if (!product) {
+      const s = parseSaleDetails(details?.sale ?? details?.product ?? details);
+      if (!s) {
         return jsonError(
-          'Missing or invalid sale details (product, serial, MRP, selling price, discount %, GST %, quantity)',
+          'Missing or invalid sale details (product, whichEar, serial, MRP, selling price, discount %, GST %, quantity)',
           400
         );
       }
-      const ok = await assertSerialAvailableForSale(product.productId, product.serialNumber);
+      const ok = await assertSerialAvailableForSale(s.product.productId, s.product.serialNumber);
       if (!ok) {
         return jsonError('Selected serial is not available in inventory (may already be sold or out)', 400);
       }
-      sale = { product };
+      const prodDoc = await loadCatalogProduct(s.product.productId);
+      saleDeviceType = prodDoc?.type || '';
+      sale = s;
     }
 
     const merged = mergeStaffSubmissionIntoEnquiry({
@@ -293,8 +341,12 @@ export async function POST(req: Request) {
       receiptType,
       amount,
       booking,
+      bookingProduct,
       trial,
+      trialProduct,
       sale,
+      whoSoldName: staffName,
+      saleDeviceType,
     });
 
     const requestId = uuidv4();
@@ -316,8 +368,11 @@ export async function POST(req: Request) {
       createdAt: Timestamp.now(),
       staffPayload: removeUndefined({
         booking,
+        bookingProductId: bookingProduct?.id,
         trial,
+        trialProductId: trialProduct?.id,
         sale,
+        saleDeviceType,
       }),
     };
 
@@ -337,7 +392,14 @@ export async function POST(req: Request) {
           ? 'Booking receipt request'
           : 'Invoice request';
 
-    const detailLines = buildPdfDetailLines(receiptType, { booking, trial, sale });
+    const detailLines = buildPdfDetailLines(receiptType, {
+      booking,
+      bookingProduct,
+      trial,
+      trialProduct,
+      sale,
+      whoSoldName: staffName,
+    });
 
     const pdfBuffer = await buildStaffPaymentReceiptPdfBuffer({
       receiptLabel,
@@ -465,28 +527,37 @@ function buildPdfDetailLines(
   receiptType: ReceiptType,
   args: {
     booking?: StaffBookingDetails;
+    bookingProduct?: CatalogProductDoc;
     trial?: StaffTrialDetails;
-    sale?: { product: StaffSaleProductLine };
+    trialProduct?: CatalogProductDoc;
+    sale?: StaffSaleDetails;
+    whoSoldName: string;
   }
 ): string[] {
-  if (receiptType === 'booking' && args.booking) {
+  if (receiptType === 'booking' && args.booking && args.bookingProduct) {
     const b = args.booking;
+    const p = args.bookingProduct;
     return [
-      `Brand: ${b.hearingAidBrand}`,
-      `Model: ${b.hearingAidModel}`,
-      `Type: ${b.hearingAidType}`,
+      `Catalog: ${p.company} ${p.name} (${p.type})`,
       `Ear: ${b.whichEar}`,
       `MRP (per unit): ₹${b.hearingAidPrice}`,
       `Selling price (per unit): ₹${b.bookingSellingPrice}`,
       `Quantity: ${b.bookingQuantity}`,
     ];
   }
-  if (receiptType === 'trial' && args.trial) {
+  if (receiptType === 'trial' && args.trial && args.trialProduct) {
     const t = args.trial;
+    const p = args.trialProduct;
+    const loc = t.trialLocationType === 'home' ? 'Home trial' : 'In-office trial';
     return [
-      `Trial device: ${t.trialHearingAidBrand} ${t.trialHearingAidModel} (${t.trialHearingAidType})`,
-      t.trialSerialNumber ? `Serial: ${t.trialSerialNumber}` : 'Serial: —',
-      `Trial: ${t.trialStartDate} → ${t.trialEndDate}`,
+      `Trial type: ${loc}`,
+      `Device: ${p.company} ${p.name} (${p.type})`,
+      `Ear: ${t.whichEar}`,
+      `MRP (per unit): ₹${t.hearingAidPrice}`,
+      t.trialLocationType === 'home' ? `Serial: ${t.trialSerialNumber}` : 'Serial: —',
+      t.trialLocationType === 'home'
+        ? `Period: ${t.trialStartDate} → ${t.trialEndDate} (${t.trialDuration} days)`
+        : '',
       `Security deposit (recorded): ₹${t.trialHomeSecurityDepositAmount}`,
       t.trialNotes ? `Notes: ${t.trialNotes}` : '',
     ].filter(Boolean);
@@ -494,6 +565,8 @@ function buildPdfDetailLines(
   if (receiptType === 'invoice' && args.sale) {
     const p = args.sale.product;
     return [
+      `Which ear: ${args.sale.whichEar}`,
+      `Who sold (CRM field): ${args.whoSoldName}`,
       `Product: ${p.name}`,
       `Company: ${p.company || '—'}`,
       `Serial: ${p.serialNumber}`,

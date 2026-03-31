@@ -1,4 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
+import {
+  buildCatalogHearingAidProductLine,
+  sumHearingAidVisitTotalsFromProducts,
+  type CatalogProductDoc,
+} from '@/server/staffEnquiryCatalogHelpers';
 
 const TZ = 'Asia/Kolkata';
 
@@ -57,23 +62,26 @@ function visitDateMatchesToday(visitDate: unknown, todayYmd: string): boolean {
   return part === todayYmd;
 }
 
+/** Booking: catalog device + booking amounts — brand/model/type come from `bookingProduct` (CRM catalogue). */
 export type StaffBookingDetails = {
-  hearingAidBrand: string;
-  hearingAidModel: string;
-  hearingAidType: string;
   whichEar: 'left' | 'right' | 'both';
   hearingAidPrice: number;
   bookingSellingPrice: number;
   bookingQuantity: number;
 };
 
+/**
+ * Trial: `trialLocationType` maps to visit `trialHearingAidType` (`in_office` | `home`) like CRM "Trial Type".
+ * Device fields mirror `applyCatalogHearingAidSelection` using `trialProduct`.
+ */
 export type StaffTrialDetails = {
-  trialHearingAidBrand: string;
-  trialHearingAidModel: string;
-  trialHearingAidType: string;
-  trialSerialNumber: string;
+  trialLocationType: 'in_office' | 'home';
+  whichEar: 'left' | 'right' | 'both';
+  hearingAidPrice: number;
+  trialDuration: number;
   trialStartDate: string;
   trialEndDate: string;
+  trialSerialNumber: string;
   trialHomeSecurityDepositAmount: number;
   trialNotes: string;
 };
@@ -88,6 +96,11 @@ export type StaffSaleProductLine = {
   discountPercent: number;
   gstPercent: number;
   quantity: number;
+};
+
+export type StaffSaleDetails = {
+  product: StaffSaleProductLine;
+  whichEar: 'left' | 'right' | 'both';
 };
 
 function buildHearingAidProductFromSaleLine(line: StaffSaleProductLine, saleDate: string) {
@@ -308,8 +321,13 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
   receiptType: 'trial' | 'booking' | 'invoice';
   amount: number;
   booking?: StaffBookingDetails;
+  bookingProduct?: CatalogProductDoc;
   trial?: StaffTrialDetails;
-  sale?: { product: StaffSaleProductLine };
+  trialProduct?: CatalogProductDoc;
+  sale?: StaffSaleDetails;
+  /** CRM sale visit: `hearingAidBrand` is "Who Sold" (staff), not device manufacturer. */
+  whoSoldName: string;
+  saleDeviceType?: string;
 }): { visits: Record<string, unknown>[]; visitSchedules: Record<string, unknown>[]; financialSummary: Record<string, unknown> } {
   const todayYmd = formatDateYmdInIST(new Date());
   const visitsRaw = Array.isArray(enquiry.visits) ? [...(enquiry.visits as Record<string, unknown>[])] : [];
@@ -322,13 +340,24 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
 
   const v = { ...(visitsRaw[idx] as Record<string, unknown>) };
 
-  if (args.receiptType === 'booking' && args.booking) {
+  if (args.receiptType === 'booking' && args.booking && args.bookingProduct) {
     const b = args.booking;
+    const p = args.bookingProduct;
+    const line = buildCatalogHearingAidProductLine({
+      product: p,
+      saleDateYmd: todayYmd,
+      mrpPerUnit: b.hearingAidPrice,
+      quantity: b.bookingQuantity,
+    });
+    const products = [line];
+    const totals = sumHearingAidVisitTotalsFromProducts(products);
+
     Object.assign(v, {
       hearingAidBooked: true,
-      hearingAidBrand: b.hearingAidBrand.trim(),
-      hearingAidModel: b.hearingAidModel.trim(),
-      hearingAidType: b.hearingAidType.trim(),
+      hearingAidProductId: p.id,
+      hearingAidBrand: (p.company || '').trim(),
+      hearingAidModel: (p.name || '').trim(),
+      hearingAidType: (p.type || '').trim(),
       whichEar: b.whichEar,
       hearingAidPrice: Number(b.hearingAidPrice) || 0,
       bookingSellingPrice: Number(b.bookingSellingPrice) || 0,
@@ -338,29 +367,60 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
       bookingFromTrial: false,
       hearingAidStatus: 'booked',
       journeyStage: 'booking',
+      products,
+      grossMRP: totals.grossMRP,
+      grossSalesBeforeTax: totals.grossSalesBeforeTax,
+      taxAmount: totals.taxAmount,
+      salesAfterTax: totals.salesAfterTax,
     });
   }
 
-  if (args.receiptType === 'trial' && args.trial) {
+  if (args.receiptType === 'trial' && args.trial && args.trialProduct) {
     const t = args.trial;
+    const p = args.trialProduct;
+    const line = buildCatalogHearingAidProductLine({
+      product: p,
+      saleDateYmd: todayYmd,
+      mrpPerUnit: t.hearingAidPrice,
+      quantity: 1,
+    });
+    const products = [line];
+    const totals = sumHearingAidVisitTotalsFromProducts(products);
+
+    const isHome = t.trialLocationType === 'home';
+
     Object.assign(v, {
       hearingAidTrial: true,
       trialGiven: true,
-      trialHearingAidBrand: t.trialHearingAidBrand.trim(),
-      trialHearingAidModel: t.trialHearingAidModel.trim(),
-      trialHearingAidType: t.trialHearingAidType.trim(),
-      trialSerialNumber: t.trialSerialNumber.trim(),
-      trialStartDate: t.trialStartDate.trim(),
-      trialEndDate: t.trialEndDate.trim(),
-      trialHomeSecurityDepositAmount: Number(t.trialHomeSecurityDepositAmount) || 0,
-      trialNotes: t.trialNotes.trim(),
+      hearingAidProductId: p.id,
+      hearingAidBrand: (p.company || '').trim(),
+      hearingAidModel: (p.name || '').trim(),
+      hearingAidType: (p.type || '').trim(),
+      whichEar: t.whichEar,
+      hearingAidPrice: Number(t.hearingAidPrice) || 0,
+      trialHearingAidBrand: (p.company || '').trim(),
+      trialHearingAidModel: (p.name || '').trim(),
+      trialHearingAidType: t.trialLocationType,
+      trialDuration: isHome ? Math.max(0, Math.floor(Number(t.trialDuration) || 0)) : 0,
+      trialStartDate: isHome ? String(t.trialStartDate || '').trim() : '',
+      trialEndDate: isHome ? String(t.trialEndDate || '').trim() : '',
+      trialSerialNumber: isHome ? String(t.trialSerialNumber || '').trim() : '',
+      trialHomeSecurityDepositAmount: isHome ? Number(t.trialHomeSecurityDepositAmount) || 0 : 0,
+      trialNotes: String(t.trialNotes || '').trim(),
       trialResult: 'ongoing',
       journeyStage: 'trial',
+      hearingAidStatus: 'trial_given',
+      products,
+      grossMRP: totals.grossMRP,
+      grossSalesBeforeTax: totals.grossSalesBeforeTax,
+      taxAmount: totals.taxAmount,
+      salesAfterTax: totals.salesAfterTax,
     });
   }
 
   if (args.receiptType === 'invoice' && args.sale) {
     const line = args.sale.product;
+    const whichEar = args.sale.whichEar;
     const saleDate = todayYmd;
     const productRow = buildHearingAidProductFromSaleLine(line, saleDate);
     const products = [productRow];
@@ -371,7 +431,11 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
 
     Object.assign(v, {
       hearingAidSale: true,
+      hearingAidBrand: args.whoSoldName.trim(),
+      hearingAidModel: line.name,
+      hearingAidType: (args.saleDeviceType || '').trim(),
       hearingAidProductId: line.productId,
+      whichEar,
       trialSerialNumber: line.serialNumber,
       products,
       grossMRP,
@@ -381,6 +445,7 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
       purchaseDate: saleDate,
       purchaseFromTrial: false,
       journeyStage: 'sale',
+      hearingAidStatus: 'sold',
     });
   }
 
