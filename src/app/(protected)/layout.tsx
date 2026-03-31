@@ -9,10 +9,16 @@ import CrmSidebar from '@/components/Layout/CrmSidebar';
 import CrmHeader from '@/components/Layout/CrmHeader';
 import { filterCrmNavForUser } from '@/components/Layout/crm-nav-config';
 import { CRM_ACCENT, CRM_PAGE_BG, HEADER_HEIGHT, mainOffsetLeftPx } from '@/components/Layout/crm-theme';
+import { useCenterScope } from '@/hooks/useCenterScope';
+import CenterScopeToolbar from '@/components/Layout/CenterScopeToolbar';
+
+const SCOPE_TOOLBAR_HEIGHT = 42;
 import SqueezeLoader from '@/components/ui/loading-indicator';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
+  const { canOverrideScope, lockedCenterId } = useCenterScope();
+  const showScopeToolbar = canOverrideScope || !!lockedCenterId;
   const router = useRouter();
   const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -217,6 +223,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }, []);
 
   const mainOffset = mainOffsetLeftPx(shouldHideSidebar, isDesktop, drawerOpen);
+  const scopeBarOffset = showScopeToolbar ? SCOPE_TOOLBAR_HEIGHT : 0;
 
   const errorContainer: React.CSSProperties = {
     backgroundColor: CRM_ACCENT,
@@ -360,16 +367,30 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         onSignOut={handleSignOut}
       />
 
+      {showScopeToolbar && (
+        <div
+          style={{
+            position: 'fixed',
+            top: HEADER_HEIGHT,
+            left: shouldHideSidebar ? 0 : isDesktop ? mainOffset : 0,
+            right: 0,
+            zIndex: 1140,
+          }}
+        >
+          <CenterScopeToolbar />
+        </div>
+      )}
+
       <UniversalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
       <LazyHopeAIDrawer open={hopeAiOpen} onClose={() => setHopeAiOpen(false)} />
 
       <main
         style={{
           marginLeft: shouldHideSidebar ? 0 : isDesktop ? mainOffset : 0,
-          marginTop: HEADER_HEIGHT,
+          marginTop: HEADER_HEIGHT + scopeBarOffset,
           padding: 28,
           transition: 'margin-left 0.32s cubic-bezier(0.4, 0, 0.2, 1)',
-          minHeight: `calc(100vh - ${HEADER_HEIGHT}px)`,
+          minHeight: `calc(100vh - ${HEADER_HEIGHT + scopeBarOffset}px)`,
           width: '100%',
           boxSizing: 'border-box',
         }}

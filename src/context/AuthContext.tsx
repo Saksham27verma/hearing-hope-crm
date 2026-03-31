@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import type { User as FirebaseUser } from 'firebase/auth';
 import { useRouter, usePathname } from 'next/navigation';
 
 // Define user role type
@@ -14,12 +15,17 @@ export interface UserProfile {
   role: UserRole;
   allowedModules?: string[];
   createdAt: number;
+  /** @deprecated Prefer `centerId` — same semantics, migration in progress */
   branchId?: string;
+  /** Firestore `centers/{id}` — when set, user is scoped to that center (unless super admin). */
+  centerId?: string | null;
+  /** Explicit super-admin flag; see `isSuperAdminViewer` in `@/lib/tenant/centerScope`. */
+  isSuperAdmin?: boolean;
 }
 
 // Auth context interface
 interface AuthContextInterface {
-  user: any | null;
+  user: FirebaseUser | null;
   userProfile: UserProfile | null;
   /** True only until the first Firebase auth + user profile resolution (not used for random mutations). */
   loading: boolean;
@@ -58,7 +64,7 @@ const AuthContext = createContext<AuthContextInterface>({
 
 // Provider component
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   /** True until Firebase has delivered the first auth state (avoids flash to /login on refresh). */
   const [loading, setLoading] = useState(true);
@@ -72,6 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   /** Next.js `useRouter()` identity can change across navigations; never re-subscribe auth because of it. */
   const routerRef = useRef(router);
   routerRef.current = router;
+  const profileUnsubRef = useRef<(() => void) | null>(null);
 
   // Single long-lived auth listener — deps must stay empty: pathname via pathnameRef, router via routerRef.
   useEffect(() => {
@@ -84,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const firebaseModule = await import('../firebase/config');
         const { auth, db } = firebaseModule;
         const { onAuthStateChanged, signOut: firebaseSignOut } = await import('firebase/auth');
-        const { doc, getDoc } = await import('firebase/firestore');
+        const { doc, onSnapshot } = await import('firebase/firestore');
 
         if (!auth) {
           console.error('Firebase Auth not initialized');
@@ -93,44 +100,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        unsubscribe = onAuthStateChanged(auth, async (authUser) => {
+        unsubscribe = onAuthStateChanged(auth, (authUser) => {
+          if (profileUnsubRef.current) {
+            profileUnsubRef.current();
+            profileUnsubRef.current = null;
+          }
+
           if (authUser) {
             setUser(authUser);
 
             if (!db) {
-              await firebaseSignOut(auth);
-              setUser(null);
-              setUserProfile(null);
-              setError('Database not available. Please try again.');
-              setLoading(false);
-              routerRef.current.push('/login');
-              return;
-            }
-
-            try {
-              const userDoc = await getDoc(doc(db, 'users', authUser.uid));
-              if (!userDoc.exists()) {
+              void (async () => {
                 await firebaseSignOut(auth);
                 setUser(null);
                 setUserProfile(null);
-                setError('Not authorized. Ask admin to add your user first.');
+                setError('Database not available. Please try again.');
                 setLoading(false);
                 routerRef.current.push('/login');
-                return;
-              }
-
-              setUserProfile(userDoc.data() as UserProfile);
-              setLoading(false);
-            } catch (err) {
-              console.warn('Profile fetch failed:', err);
-              await firebaseSignOut(auth);
-              setUser(null);
-              setUserProfile(null);
-              setError('Failed to load your access profile. Please try again.');
-              setLoading(false);
-              routerRef.current.push('/login');
+              })();
               return;
             }
+
+            const userRef = doc(db, 'users', authUser.uid);
+            profileUnsubRef.current = onSnapshot(
+              userRef,
+              async (snap) => {
+                if (!snap.exists()) {
+                  await firebaseSignOut(auth);
+                  setUser(null);
+                  setUserProfile(null);
+                  setError('Not authorized. Ask admin to add your user first.');
+                  setLoading(false);
+                  routerRef.current.push('/login');
+                  return;
+                }
+                setUserProfile(snap.data() as UserProfile);
+                setLoading(false);
+                setError(null);
+              },
+              async (err) => {
+                console.warn('Profile realtime listener error:', err);
+                await firebaseSignOut(auth);
+                setUser(null);
+                setUserProfile(null);
+                setError('Failed to load your access profile. Please try again.');
+                setLoading(false);
+                routerRef.current.push('/login');
+              },
+            );
           } else {
             setUser(null);
             setUserProfile(null);
@@ -152,6 +169,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAuth();
 
     return () => {
+      if (profileUnsubRef.current) {
+        profileUnsubRef.current();
+        profileUnsubRef.current = null;
+      }
       if (unsubscribe) unsubscribe();
     };
   }, []);
@@ -211,7 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         const existing = snap.docs[0];
-        const existingData: any = existing.data();
+        const existingData = existing.data() as Partial<UserProfile> & Record<string, unknown>;
 
         // Create a new profile for the Google UID, copying permissions from the allowlisted record.
         const migratedProfile: UserProfile = {
@@ -222,6 +243,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           allowedModules: existingData.allowedModules || [],
           createdAt: existingData.createdAt || Date.now(),
           branchId: existingData.branchId,
+          centerId: existingData.centerId ?? existingData.branchId ?? null,
+          isSuperAdmin: existingData.isSuperAdmin,
         };
 
         await setDoc(byUidRef, {
@@ -229,13 +252,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           migratedFromUid: existing.id,
           authProvider: 'google',
           updatedAt: Date.now(),
-        } as any, { merge: true });
+        } as Record<string, unknown>, { merge: true });
 
         // Keep the old doc for history, but mark it as migrated.
         await setDoc(doc(db, 'users', existing.id), {
           migratedToUid: authUser.uid,
           migratedAt: Date.now(),
-        } as any, { merge: true });
+        } as Record<string, unknown>, { merge: true });
       }
 
       router.push('/dashboard');

@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
+import {
+  assertAdmin,
+  assertCanSetCenter,
+  assertCanSetSuperAdmin,
+  getRequesterTenant,
+} from '@/server/tenant/requesterTenant';
 
 type UserRole = 'admin' | 'staff' | 'audiologist';
 
@@ -16,17 +22,18 @@ export async function POST(req: Request) {
     const idToken = match[1];
     const decoded = await adminAuth().verifyIdToken(idToken);
 
-    // Authorize via Firestore user profile role (this app stores roles in `users/{uid}`)
-    const db = adminDb();
-    const requesterSnap = await db.collection('users').doc(decoded.uid).get();
-    const requesterRole = (requesterSnap.exists ? (requesterSnap.data() as any)?.role : null) as UserRole | null;
-    if (requesterRole !== 'admin') return jsonError('Forbidden', 403);
+    const requester = await getRequesterTenant(decoded.uid);
+    if (!requester) return jsonError('Forbidden', 403);
+    assertAdmin(requester);
 
-    const body = await req.json().catch(() => null);
+    const db = adminDb();
+    const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
     const email = (body?.email || '').toString().trim().toLowerCase();
     const displayName = (body?.displayName || '').toString().trim();
     const role = (body?.role || '').toString().trim() as UserRole;
     const allowedModulesBody = body?.allowedModules;
+    const centerIdRaw = body?.centerId;
+    const isSuperAdminRaw = body?.isSuperAdmin;
 
     if (!email) return jsonError('Email is required', 400);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonError('Invalid email format', 400);
@@ -72,7 +79,15 @@ export async function POST(req: Request) {
       allowedModules = allowedModulesBody.map((x: unknown) => String(x).toLowerCase().trim()).filter(Boolean);
     }
 
-    const userProfile = {
+    let centerId: string | null = null;
+    if (centerIdRaw !== undefined && centerIdRaw !== null && centerIdRaw !== '') {
+      centerId = String(centerIdRaw);
+    }
+    assertCanSetCenter(requester, centerId);
+    const isSuperAdmin = Boolean(isSuperAdminRaw);
+    assertCanSetSuperAdmin(requester, isSuperAdmin);
+
+    const userProfile: Record<string, unknown> = {
       uid: newUser.uid,
       email,
       displayName: newUser.displayName || displayName || email.split('@')[0],
@@ -80,18 +95,21 @@ export async function POST(req: Request) {
       allowedModules,
       createdAt: Date.now(),
       createdBy: decoded.uid,
+      centerId,
+      branchId: centerId,
+      isSuperAdmin: role === 'admin' ? isSuperAdmin : false,
     };
 
     await db.collection('users').doc(newUser.uid).set(userProfile, { merge: true });
 
     return NextResponse.json({ ok: true, uid: newUser.uid, email });
-  } catch (err: any) {
-    const message = err?.message || 'Failed to create user';
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to create user';
     console.error('create-user error:', err);
-    // Handle "email already exists" nicely
-    if (String(err?.code || '').includes('auth/email-already-exists')) {
+    if (String((err as { code?: string }).code || '').includes('auth/email-already-exists')) {
       return jsonError('A user with this email already exists', 409);
     }
+    if (message === 'Forbidden') return jsonError(message, 403);
     return jsonError(message, 500);
   }
 }

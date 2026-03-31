@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
     serverActions: {
       allowedOrigins: ['localhost:3000'],
     },
+    /** Smaller server/client modules from barrel imports — reduces flaky missing-chunk issues in dev */
+    optimizePackageImports: ['lucide-react', '@mui/material', '@mui/icons-material'],
   },
   
   eslint: {

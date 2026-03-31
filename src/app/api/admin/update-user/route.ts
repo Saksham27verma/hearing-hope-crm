@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
+import {
+  assertAdmin,
+  assertCanSetCenter,
+  assertCanSetSuperAdmin,
+  getRequesterTenant,
+} from '@/server/tenant/requesterTenant';
 
 type UserRole = 'admin' | 'staff' | 'audiologist';
 
@@ -16,19 +22,20 @@ export async function PATCH(req: Request) {
     const idToken = match[1];
     const decoded = await adminAuth().verifyIdToken(idToken);
 
-    const db = adminDb();
-    const requesterSnap = await db.collection('users').doc(decoded.uid).get();
-    const requesterRole = (requesterSnap.exists ? (requesterSnap.data() as any)?.role : null) as UserRole | null;
-    if (requesterRole !== 'admin') return jsonError('Forbidden', 403);
+    const requester = await getRequesterTenant(decoded.uid);
+    if (!requester) return jsonError('Forbidden', 403);
+    assertAdmin(requester);
 
-    const body = await req.json().catch(() => null);
-    const uid = (body?.uid || '').toString().trim();
+    const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
+    const uid = (body?.uid ?? '').toString().trim();
     if (!uid) return jsonError('uid is required', 400);
 
     const displayName = body?.displayName !== undefined ? String(body.displayName).trim() : undefined;
     const role = body?.role !== undefined ? (String(body.role).trim() as UserRole) : undefined;
     const allowedModules = body?.allowedModules !== undefined ? body.allowedModules : undefined;
     const email = body?.email !== undefined ? String(body.email).trim().toLowerCase() : undefined;
+    const centerIdRaw = body?.centerId;
+    const isSuperAdminRaw = body?.isSuperAdmin;
 
     if (role !== undefined && !['admin', 'staff', 'audiologist'].includes(role)) {
       return jsonError('Invalid role', 400);
@@ -40,26 +47,46 @@ export async function PATCH(req: Request) {
       return jsonError('Invalid email format', 400);
     }
 
+    let nextCenterId: string | null | undefined;
+    if (centerIdRaw !== undefined) {
+      if (centerIdRaw === null || centerIdRaw === '') {
+        nextCenterId = null;
+      } else {
+        nextCenterId = String(centerIdRaw);
+      }
+      assertCanSetCenter(requester, nextCenterId);
+    }
+
+    if (isSuperAdminRaw !== undefined) {
+      assertCanSetSuperAdmin(requester, Boolean(isSuperAdminRaw));
+    }
+
     const auth = adminAuth();
     const updates: Record<string, unknown> = { updatedAt: Date.now(), updatedBy: decoded.uid };
     if (displayName !== undefined) updates.displayName = displayName || null;
     if (role !== undefined) updates.role = role;
     if (allowedModules !== undefined) updates.allowedModules = allowedModules;
+    if (nextCenterId !== undefined) {
+      updates.centerId = nextCenterId;
+      updates.branchId = nextCenterId;
+    }
+    if (isSuperAdminRaw !== undefined) updates.isSuperAdmin = Boolean(isSuperAdminRaw);
 
     if (email !== undefined && email) {
       await auth.updateUser(uid, { email });
       updates.email = email;
     }
 
-    await db.collection('users').doc(uid).set(updates, { merge: true });
+    await adminDb().collection('users').doc(uid).set(updates, { merge: true });
 
     return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    const message = err?.message || 'Failed to update user';
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to update user';
     console.error('update-user error:', err);
-    if (String(err?.code || '').includes('auth/email-already-exists')) {
+    if (String((err as { code?: string }).code || '').includes('auth/email-already-exists')) {
       return jsonError('A user with this email already exists', 409);
     }
+    if (message === 'Forbidden') return jsonError(message, 403);
     return jsonError(message, 500);
   }
 }

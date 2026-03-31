@@ -1,12 +1,18 @@
 import './globals.css';
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Inter, Plus_Jakarta_Sans } from 'next/font/google';
 import ClientProviders from './ClientProviders';
 
 const inter = Inter({
   subsets: ['latin'],
   display: 'swap',
   variable: '--font-inter',
+});
+
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-display',
 });
 
 const ICON_VERSION = '1';
@@ -28,7 +34,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={inter.variable} style={{ fontFamily: 'var(--font-inter), system-ui, sans-serif' }}>
+      <body
+        className={`${inter.variable} ${plusJakarta.variable}`}
+        style={{ fontFamily: 'var(--font-inter), system-ui, sans-serif' }}
+      >
         <ClientProviders>{children}</ClientProviders>
       </body>
     </html>

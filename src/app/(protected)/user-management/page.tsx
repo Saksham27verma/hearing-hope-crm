@@ -1,57 +1,66 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import KeyRoundIcon from '@mui/icons-material/VpnKey';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import {
+  Alert,
   Box,
-  Typography,
-  Paper,
   Button,
-  TextField,
+  Checkbox,
+  Container,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Snackbar,
-  Alert,
-  CircularProgress,
-  InputAdornment,
-  IconButton,
-  Stack,
-  Grid,
-  Divider,
-  Card,
-  CardContent,
-  LinearProgress,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
   FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  Checkbox,
   FormControlLabel,
   FormGroup,
-  Chip,
+  IconButton,
+  InputAdornment,
+  InputLabel,
+  LinearProgress,
+  MenuItem,
+  Paper,
+  Select,
+  Skeleton,
+  Stack,
+  TextField,
+  Typography,
 } from '@mui/material';
-import {
-  Lock as LockIcon,
-  Visibility as VisibilityIcon,
-  VisibilityOff as VisibilityOffIcon,
-  CheckCircle as CheckCircleIcon,
-  Cancel as CancelIcon,
-  Security as SecurityIcon,
-  Email as EmailIcon,
-  Person as PersonIcon,
-  Add as AddIcon,
-  DeleteOutline as DeleteOutlineIcon,
-  Tune as TuneIcon,
-} from '@mui/icons-material';
+import { useSnackbar } from 'notistack';
 import { useAuth } from '@/context/AuthContext';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { CRM_MODULE_ACCESS_OPTIONS } from '@/components/Layout/crm-nav-config';
+import { useCenterScope } from '@/hooks/useCenterScope';
+import { isSuperAdminViewer, normalizeCenterId } from '@/lib/tenant/centerScope';
+import { useUserPresenceHeartbeat, usePresenceOnlineMap } from '@/components/user-management/useUserPresence';
+import UserDirectoryTable from '@/components/user-management/UserDirectoryTable';
+import CreateUserDialog from '@/components/user-management/CreateUserDialog';
+
+const PAGE_BG = '#f8f9fa';
+const CARD_BG = '#ffffff';
+const BORDER = '1px solid #e0e2e6';
+const SHADOW = '0px 4px 20px rgba(0, 0, 0, 0.03)';
+const BRAND = '#0d9488';
+const BRAND_HOVER = '#0f766e';
+
+const cardPaperSx = {
+  elevation: 0,
+  border: BORDER,
+  boxShadow: SHADOW,
+  bgcolor: CARD_BG,
+  borderRadius: 2,
+  p: 4,
+} as const;
+
+const outlinedFieldSx = {
+  '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+} as const;
 
 interface User {
   uid: string;
@@ -59,10 +68,17 @@ interface User {
   displayName?: string;
   role: 'admin' | 'staff' | 'audiologist';
   allowedModules?: string[];
+  centerId?: string | null;
+  branchId?: string | null;
+  isSuperAdmin?: boolean;
 }
 
 export default function UserManagementPage() {
   const { user, userProfile, changePassword, changeEmail, resetUserPassword, updateUserPassword, updateUserEmail, loading: authLoading } = useAuth();
+  const { enqueueSnackbar } = useSnackbar();
+  const { effectiveScopeCenterId, centers, lockedCenterId } = useCenterScope();
+  const scopeHeaderCenterId = effectiveScopeCenterId ?? null;
+  useUserPresenceHeartbeat(user, Boolean(user));
   
   // Own password change
   const [currentPassword, setCurrentPassword] = useState('');
@@ -77,8 +93,8 @@ export default function UserManagementPage() {
   const [emailPassword, setEmailPassword] = useState('');
   const [showEmailPassword, setShowEmailPassword] = useState(false);
   
-  // User password/email management
-  const [users, setUsers] = useState<User[]>([]);
+  // User password/email management (allUsers = full snapshot; users = scoped for display)
+  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [changePasswordDialogOpen, setChangePasswordDialogOpen] = useState(false);
@@ -95,56 +111,85 @@ export default function UserManagementPage() {
   const [createUserName, setCreateUserName] = useState('');
   const [createUserRole, setCreateUserRole] = useState<'admin' | 'staff' | 'audiologist'>('staff');
   const [createUserModules, setCreateUserModules] = useState<string[]>([]);
+  const [createUserCenterId, setCreateUserCenterId] = useState<string>('');
+  const [createUserSuperAdmin, setCreateUserSuperAdmin] = useState(false);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteTypeConfirm, setDeleteTypeConfirm] = useState('');
   const [accessDialogOpen, setAccessDialogOpen] = useState(false);
   const [editAccessRole, setEditAccessRole] = useState<'admin' | 'staff' | 'audiologist'>('staff');
   const [editAccessModules, setEditAccessModules] = useState<string[]>([]);
+  const [editCenterId, setEditCenterId] = useState<string>('');
+  const [editSuperAdmin, setEditSuperAdmin] = useState(false);
+  const [editCenterSearch, setEditCenterSearch] = useState('');
 
   // UI state
   const [usersLoading, setUsersLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [successMsg, setSuccessMsg] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
 
-  useEffect(() => {
-    if (userProfile?.role === 'admin') {
-      fetchUsers();
-    }
-  }, [userProfile]);
+  const users = useMemo(() => {
+    if (!effectiveScopeCenterId) return allUsers;
+    return allUsers.filter((r) => normalizeCenterId(r) === effectiveScopeCenterId);
+  }, [allUsers, effectiveScopeCenterId]);
+
+  const onlineMap = usePresenceOnlineMap(users.map((u) => u.uid));
 
   useEffect(() => {
     if (createUserRole === 'admin') setCreateUserModules([]);
   }, [createUserRole]);
 
-  const fetchUsers = async () => {
-    try {
-      setUsersLoading(true);
-      const usersQuery = query(collection(db, 'users'), orderBy('email', 'asc'));
-      const snapshot = await getDocs(usersQuery);
-      const usersData = snapshot.docs.map(doc => ({
-        uid: doc.id,
-        ...doc.data(),
-      })) as User[];
-      setUsers(usersData);
-      setUsersLoading(false);
-    } catch (error) {
-      console.error('Error fetching users:', error);
-      setErrorMsg('Failed to load users');
-      setUsersLoading(false);
+  useEffect(() => {
+    if (userProfile?.role !== 'admin' || !db) {
+      setAllUsers([]);
+      return;
     }
-  };
+    setUsersLoading(true);
+    const usersQuery = query(collection(db, 'users'), orderBy('email', 'asc'));
+    const unsub = onSnapshot(
+      usersQuery,
+      (snapshot) => {
+        const rows = snapshot.docs.map((docSnap) => ({
+          uid: docSnap.id,
+          ...docSnap.data(),
+        })) as User[];
+        setAllUsers(rows);
+        setUsersLoading(false);
+      },
+      (error) => {
+        console.error('users snapshot error:', error);
+        enqueueSnackbar('Failed to load users', { variant: 'error' });
+        setUsersLoading(false);
+      },
+    );
+    return () => unsub();
+  }, [userProfile?.role, enqueueSnackbar]);
+
+  useEffect(() => {
+    if (lockedCenterId && !createUserCenterId) {
+      setCreateUserCenterId(lockedCenterId);
+    }
+  }, [lockedCenterId, createUserCenterId]);
+
+  const filteredCentersForEdit = useMemo(() => {
+    const q = editCenterSearch.trim().toLowerCase();
+    if (!q) return centers;
+    return centers.filter((c) => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q));
+  }, [centers, editCenterSearch]);
 
   const adminApi = async (path: string, init: RequestInit) => {
     if (!user) throw new Error('Not signed in');
     const token = await user.getIdToken();
+    const baseHeaders: Record<string, string> = {
+      ...(init.headers as Record<string, string>),
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (scopeHeaderCenterId) {
+      baseHeaders['X-CRM-Data-Scope-Center-Id'] = scopeHeaderCenterId;
+    }
     const res = await fetch(path, {
       ...init,
-      headers: {
-        ...(init.headers as Record<string, string>),
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: baseHeaders,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.ok) {
@@ -189,9 +234,9 @@ export default function UserManagementPage() {
   };
 
   const getPasswordStrengthColor = (strength: number): string => {
-    if (strength < 40) return '#f44336';
-    if (strength < 80) return '#ff9800';
-    return '#4caf50';
+    if (strength < 40) return '#ef4444';
+    if (strength < 80) return '#d97706';
+    return '#0d9488';
   };
 
   const getPasswordStrengthLabel = (strength: number): string => {
@@ -202,66 +247,60 @@ export default function UserManagementPage() {
 
   const handleChangeOwnPassword = async () => {
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
-
       if (!currentPassword || !newPassword || !confirmPassword) {
-        setErrorMsg('Please fill in all fields');
+        enqueueSnackbar('Please fill in all fields', { variant: 'warning' });
         return;
       }
 
       if (newPassword !== confirmPassword) {
-        setErrorMsg('New passwords do not match');
+        enqueueSnackbar('New passwords do not match', { variant: 'warning' });
         return;
       }
 
       const validation = validatePassword(newPassword);
       if (!validation.valid) {
-        setErrorMsg(`Password requirements not met: ${validation.errors.join(', ')}`);
+        enqueueSnackbar(`Password requirements not met: ${validation.errors.join(', ')}`, { variant: 'warning' });
         return;
       }
 
       setActionLoading(true);
       await changePassword(currentPassword, newPassword);
-      
-      setSuccessMsg('Password changed successfully!');
+
+      enqueueSnackbar('Password changed successfully', { variant: 'success' });
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
       setActionLoading(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error changing password:', error);
-      setErrorMsg(error.message || 'Failed to change password');
+      enqueueSnackbar(error instanceof Error ? error.message : 'Failed to change password', { variant: 'error' });
       setActionLoading(false);
     }
   };
 
   const handleChangeOwnEmail = async () => {
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
-
       if (!newEmail || !emailPassword) {
-        setErrorMsg('Please fill in all fields');
+        enqueueSnackbar('Please fill in all fields', { variant: 'warning' });
         return;
       }
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(newEmail)) {
-        setErrorMsg('Invalid email format');
+        enqueueSnackbar('Invalid email format', { variant: 'warning' });
         return;
       }
 
       setActionLoading(true);
       await changeEmail(newEmail, emailPassword);
-      
-      setSuccessMsg('Email changed successfully!');
+
+      enqueueSnackbar('Email changed successfully', { variant: 'success' });
       setNewEmail('');
       setEmailPassword('');
       setActionLoading(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error changing email:', error);
-      setErrorMsg(error.message || 'Failed to change email');
+      enqueueSnackbar(error instanceof Error ? error.message : 'Failed to change email', { variant: 'error' });
       setActionLoading(false);
     }
   };
@@ -270,19 +309,19 @@ export default function UserManagementPage() {
     if (!selectedUser) return;
 
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
       setActionLoading(true);
 
       await resetUserPassword(selectedUser.email);
-      
-      setSuccessMsg(`Password reset email sent to ${selectedUser.email}`);
+
+      enqueueSnackbar(`Password reset email sent to ${selectedUser.email}`, { variant: 'success' });
       setResetDialogOpen(false);
       setSelectedUser(null);
       setActionLoading(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error resetting password:', error);
-      setErrorMsg(error.message || 'Failed to send password reset email');
+      enqueueSnackbar(error instanceof Error ? error.message : 'Failed to send password reset email', {
+        variant: 'error',
+      });
       setActionLoading(false);
     }
   };
@@ -291,37 +330,34 @@ export default function UserManagementPage() {
     if (!selectedUser) return;
 
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
-
       if (!userNewPassword || !userConfirmPassword) {
-        setErrorMsg('Please fill in all fields');
+        enqueueSnackbar('Please fill in all fields', { variant: 'warning' });
         return;
       }
 
       if (userNewPassword !== userConfirmPassword) {
-        setErrorMsg('Passwords do not match');
+        enqueueSnackbar('Passwords do not match', { variant: 'warning' });
         return;
       }
 
       const validation = validatePassword(userNewPassword);
       if (!validation.valid) {
-        setErrorMsg(`Password requirements not met: ${validation.errors.join(', ')}`);
+        enqueueSnackbar(`Password requirements not met: ${validation.errors.join(', ')}`, { variant: 'warning' });
         return;
       }
 
       setActionLoading(true);
       await updateUserPassword(selectedUser.uid, userNewPassword);
-      
-      setSuccessMsg(`Password updated for ${selectedUser.email}`);
+
+      enqueueSnackbar(`Password update queued for ${selectedUser.email}`, { variant: 'success' });
       setChangePasswordDialogOpen(false);
       setSelectedUser(null);
       setUserNewPassword('');
       setUserConfirmPassword('');
       setActionLoading(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error changing user password:', error);
-      setErrorMsg(error.message || 'Failed to update user password');
+      enqueueSnackbar(error instanceof Error ? error.message : 'Failed to update user password', { variant: 'error' });
       setActionLoading(false);
     }
   };
@@ -330,17 +366,14 @@ export default function UserManagementPage() {
     if (!selectedUser || !user) return;
 
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
-
       if (!userNewEmail) {
-        setErrorMsg('Please enter a new email address');
+        enqueueSnackbar('Please enter a new email address', { variant: 'warning' });
         return;
       }
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(userNewEmail)) {
-        setErrorMsg('Invalid email format');
+        enqueueSnackbar('Invalid email format', { variant: 'warning' });
         return;
       }
 
@@ -350,48 +383,43 @@ export default function UserManagementPage() {
           method: 'PATCH',
           body: JSON.stringify({ uid: selectedUser.uid, email: userNewEmail.trim().toLowerCase() }),
         });
-        setSuccessMsg(`Email updated for ${selectedUser.email}.`);
+        enqueueSnackbar(`Email updated for ${selectedUser.email}`, { variant: 'success' });
       } else {
         await updateUserEmail(selectedUser.uid, userNewEmail);
-        setSuccessMsg(`Email updated. Note: some auth changes may still require a Cloud Function.`);
+        enqueueSnackbar('Email updated', { variant: 'success' });
       }
       setChangeEmailDialogOpen(false);
       setSelectedUser(null);
       setUserNewEmail('');
-      await fetchUsers();
       setActionLoading(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error changing user email:', error);
-      setErrorMsg(error.message || 'Failed to update user email');
+      enqueueSnackbar(error instanceof Error ? error.message : 'Failed to update user email', { variant: 'error' });
       setActionLoading(false);
     }
   };
 
-  const handleCloseSnackbar = () => {
-    setSuccessMsg('');
-    setErrorMsg('');
-  };
-
   const handleCreateUser = async () => {
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
-
       const email = createUserEmail.trim().toLowerCase();
       const displayName = createUserName.trim();
       const role = createUserRole;
 
       if (!email) {
-        setErrorMsg('Please enter an email address');
+        enqueueSnackbar('Please enter an email address', { variant: 'warning' });
         return;
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
-        setErrorMsg('Invalid email format');
+        enqueueSnackbar('Invalid email format', { variant: 'warning' });
         return;
       }
       if (!user) {
-        setErrorMsg('You must be signed in as admin');
+        enqueueSnackbar('You must be signed in as admin', { variant: 'warning' });
+        return;
+      }
+      if (lockedCenterId && createUserCenterId && createUserCenterId !== lockedCenterId) {
+        enqueueSnackbar('Center must match your assigned center', { variant: 'warning' });
         return;
       }
 
@@ -401,57 +429,68 @@ export default function UserManagementPage() {
       if (role !== 'admin' && createUserModules.length > 0) {
         payload.allowedModules = createUserModules;
       }
+      if (role === 'admin') {
+        payload.isSuperAdmin = createUserSuperAdmin;
+      }
+      const centerPayload = lockedCenterId || createUserCenterId || effectiveScopeCenterId || undefined;
+      if (centerPayload) {
+        payload.centerId = centerPayload;
+      }
+      const createHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      };
+      if (scopeHeaderCenterId) {
+        createHeaders['X-CRM-Data-Scope-Center-Id'] = scopeHeaderCenterId;
+      }
       const res = await fetch('/api/admin/create-user', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: createHeaders,
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!res.ok || !data?.ok) {
-        setErrorMsg(data?.error || 'Failed to create user');
+        enqueueSnackbar(data?.error || 'Failed to create user', { variant: 'error' });
         setActionLoading(false);
         return;
       }
 
-      // Send password setup email (Firebase password reset)
       await resetUserPassword(email);
 
-      setSuccessMsg(`User created: ${email}. Password setup email sent.`);
+      enqueueSnackbar(`User created: ${email}. Password setup email sent.`, { variant: 'success' });
       setCreateUserDialogOpen(false);
       setCreateUserEmail('');
       setCreateUserName('');
       setCreateUserRole('staff');
       setCreateUserModules([]);
-      await fetchUsers();
+      setCreateUserCenterId('');
+      setCreateUserSuperAdmin(false);
       setActionLoading(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error creating user:', error);
-      setErrorMsg(error?.message || 'Failed to create user');
+      enqueueSnackbar(error instanceof Error ? error.message : 'Failed to create user', { variant: 'error' });
       setActionLoading(false);
     }
   };
 
   const handleDeleteUser = async () => {
-    if (!selectedUser) return;
+    if (!selectedUser || deleteTypeConfirm !== 'DELETE') return;
+    const removedUid = selectedUser.uid;
+    const removedEmail = selectedUser.email;
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
       setActionLoading(true);
-      await adminApi('/api/admin/delete-user', {
+      await adminApi(`/api/admin/delete-user?uid=${encodeURIComponent(removedUid)}`, {
         method: 'DELETE',
-        body: JSON.stringify({ uid: selectedUser.uid }),
       });
-      setSuccessMsg(`User ${selectedUser.email} was removed.`);
+      setAllUsers((rows) => rows.filter((r) => r.uid !== removedUid));
+      enqueueSnackbar(`User ${removedEmail} was removed`, { variant: 'success' });
       setDeleteDialogOpen(false);
+      setDeleteTypeConfirm('');
       setSelectedUser(null);
-      await fetchUsers();
       setActionLoading(false);
-    } catch (e: any) {
-      setErrorMsg(e?.message || 'Failed to delete user');
+    } catch (e: unknown) {
+      enqueueSnackbar(e instanceof Error ? e.message : 'Failed to delete user', { variant: 'error' });
       setActionLoading(false);
     }
   };
@@ -459,6 +498,9 @@ export default function UserManagementPage() {
   const openAccessDialog = (u: User) => {
     setSelectedUser(u);
     setEditAccessRole(u.role);
+    setEditCenterId(normalizeCenterId(u) || '');
+    setEditSuperAdmin(u.role === 'admin' && u.isSuperAdmin === true);
+    setEditCenterSearch('');
     const raw = u.allowedModules?.map((m) => m.toLowerCase()) ?? [];
     if (u.role === 'admin' || raw.includes('*')) {
       setEditAccessModules([]);
@@ -477,16 +519,40 @@ export default function UserManagementPage() {
   const handleSaveAccess = async () => {
     if (!selectedUser) return;
     if (editAccessRole !== 'admin' && editAccessModules.length === 0) {
-      setErrorMsg('Select at least one module, or assign the Admin role for full access.');
+      enqueueSnackbar('Select at least one module, or assign the Admin role for full access.', { variant: 'warning' });
       return;
     }
+    if (
+      editAccessRole === 'admin' &&
+      editSuperAdmin &&
+      !selectedUser.isSuperAdmin &&
+      typeof window !== 'undefined' &&
+      !window.confirm(
+        'Grant super-admin access? This user can view all centers and use global data scope. Continue?',
+      )
+    ) {
+      return;
+    }
+    const prevRows = allUsers;
+    const targetUid = selectedUser.uid;
+    const targetEmail = selectedUser.email;
+    const optimistic: User = {
+      ...selectedUser,
+      role: editAccessRole,
+      allowedModules: editAccessRole === 'admin' ? ['*'] : editAccessModules,
+      centerId: editCenterId || null,
+      branchId: editCenterId || null,
+      isSuperAdmin: editAccessRole === 'admin' ? editSuperAdmin : false,
+    };
+    setAllUsers((list) => list.map((row) => (row.uid === targetUid ? optimistic : row)));
+    setAccessDialogOpen(false);
+    setSelectedUser(null);
     try {
-      setErrorMsg('');
-      setSuccessMsg('');
-      setActionLoading(true);
       const body: Record<string, unknown> = {
-        uid: selectedUser.uid,
+        uid: targetUid,
         role: editAccessRole,
+        centerId: editCenterId || null,
+        isSuperAdmin: editAccessRole === 'admin' ? editSuperAdmin : false,
       };
       if (editAccessRole === 'admin') {
         body.allowedModules = ['*'];
@@ -497,163 +563,220 @@ export default function UserManagementPage() {
         method: 'PATCH',
         body: JSON.stringify(body),
       });
-      setSuccessMsg(`Access updated for ${selectedUser.email}. They may need to refresh the app.`);
-      setAccessDialogOpen(false);
-      setSelectedUser(null);
-      await fetchUsers();
-      setActionLoading(false);
-    } catch (e: any) {
-      setErrorMsg(e?.message || 'Failed to update access');
-      setActionLoading(false);
+      enqueueSnackbar(`Access updated for ${targetEmail}`, { variant: 'success' });
+    } catch (e: unknown) {
+      setAllUsers(prevRows);
+      enqueueSnackbar(e instanceof Error ? e.message : 'Failed to update access', { variant: 'error' });
     }
   };
 
   if (authLoading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
+      <Box sx={{ bgcolor: PAGE_BG, minHeight: '100vh', py: 4 }}>
+        <Container maxWidth="lg">
+          <Stack spacing={2} sx={{ mb: 3 }}>
+            <Skeleton variant="rounded" width={160} height={24} />
+            <Skeleton variant="rounded" width={320} height={40} />
+            <Skeleton variant="rounded" width="100%" height={20} />
+          </Stack>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={3}>
+            <Skeleton variant="rounded" sx={{ flex: 1, borderRadius: 2, height: 420 }} />
+            <Skeleton variant="rounded" sx={{ flex: 1, borderRadius: 2, height: 420 }} />
+          </Stack>
+          <Skeleton variant="rounded" sx={{ mt: 3, borderRadius: 2, height: 280 }} />
+        </Container>
       </Box>
     );
   }
 
   const passwordStrength = getPasswordStrength(newPassword);
-  const passwordValidation = validatePassword(newPassword);
+
+  const pwAdornment = (visible: boolean, toggle: () => void) => (
+    <InputAdornment position="end">
+      <IconButton
+        edge="end"
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        onClick={toggle}
+        size="small"
+        sx={{ color: 'text.secondary' }}
+      >
+        {visible ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+      </IconButton>
+    </InputAdornment>
+  );
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
-        <SecurityIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-        User Management
-      </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Manage your sign-in details and (as admin) add or remove users, roles, module access, email, and passwords.
-      </Typography>
+    <Box sx={{ bgcolor: PAGE_BG, minHeight: '100vh', py: { xs: 3, md: 4 }, fontFamily: 'inherit' }}>
+      <Container maxWidth="lg">
+        <Stack spacing={3}>
+          <Box sx={{ borderBottom: '1px solid #e8eaed', pb: 3 }}>
+            <Typography variant="overline" sx={{ fontWeight: 700, letterSpacing: '0.12em', color: 'text.secondary' }}>
+              Administration
+            </Typography>
+            <Typography variant="h4" sx={{ fontWeight: 700, letterSpacing: '-0.02em', mt: 1, color: 'text.primary' }}>
+              User Management
+            </Typography>
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 1, maxWidth: 560, lineHeight: 1.6 }}>
+              Credentials, email, and access control for your organization. Changes sync in real time.
+            </Typography>
+          </Box>
 
-      <Grid container spacing={3}>
-        {/* Change Own Password */}
-        <Grid item xs={12} md={6}>
-          <Card elevation={3}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-                <LockIcon sx={{ mr: 1, color: 'primary.main' }} />
-                <Typography variant="h6" fontWeight="bold">
-                  Change Your Password
-                </Typography>
-              </Box>
-              <Divider sx={{ mb: 3 }} />
-
-              <Stack spacing={2}>
-                <TextField
-                  fullWidth
-                  label="Current Password"
-                  type={showCurrentPassword ? 'text' : 'password'}
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                          edge="end"
-                        >
-                          {showCurrentPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' },
+              gap: 3,
+            }}
+          >
+            <Paper elevation={0} sx={cardPaperSx}>
+              <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
+                <Box
+                  sx={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 2,
+                    border: BORDER,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    bgcolor: CARD_BG,
+                    boxShadow: SHADOW,
                   }}
-                />
+                >
+                  <KeyRoundIcon sx={{ color: 'text.secondary', fontSize: 24 }} />
+                </Box>
+                <Box>
+                  <Typography variant="h6" sx={{ fontWeight: 700, letterSpacing: '-0.02em' }}>
+                    Password
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Update your sign-in password
+                  </Typography>
+                </Box>
+              </Stack>
 
-                <TextField
-                  fullWidth
-                  label="New Password"
-                  type={showNewPassword ? 'text' : 'password'}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          onClick={() => setShowNewPassword(!showNewPassword)}
-                          edge="end"
-                        >
-                          {showNewPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                />
+              <Stack spacing={2.5}>
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                    Current password
+                  </Typography>
+                  <TextField
+                    id="um-cur-pw"
+                    fullWidth
+                    size="small"
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    autoComplete="current-password"
+                    variant="outlined"
+                    InputProps={{ endAdornment: pwAdornment(showCurrentPassword, () => setShowCurrentPassword(!showCurrentPassword)) }}
+                    sx={outlinedFieldSx}
+                  />
+                </Box>
 
-                {newPassword && (
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                    New password
+                  </Typography>
+                  <TextField
+                    id="um-new-pw"
+                    fullWidth
+                    size="small"
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                    variant="outlined"
+                    InputProps={{ endAdornment: pwAdornment(showNewPassword, () => setShowNewPassword(!showNewPassword)) }}
+                    sx={outlinedFieldSx}
+                  />
+                </Box>
+
+                {newPassword ? (
                   <Box>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="caption" color="text.secondary">
-                        Password Strength
+                    <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                        Strength
                       </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{ color: getPasswordStrengthColor(passwordStrength), fontWeight: 'bold' }}
-                      >
+                      <Typography variant="caption" sx={{ fontWeight: 700, color: getPasswordStrengthColor(passwordStrength) }}>
                         {getPasswordStrengthLabel(passwordStrength)}
                       </Typography>
-                    </Box>
+                    </Stack>
                     <LinearProgress
                       variant="determinate"
                       value={passwordStrength}
                       sx={{
-                        height: 8,
+                        height: 6,
                         borderRadius: 1,
-                        bgcolor: 'grey.200',
+                        bgcolor: '#e8eaed',
                         '& .MuiLinearProgress-bar': {
+                          borderRadius: 1,
                           bgcolor: getPasswordStrengthColor(passwordStrength),
                         },
                       }}
                     />
                   </Box>
-                )}
+                ) : null}
 
-                <TextField
-                  fullWidth
-                  label="Confirm New Password"
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  error={confirmPassword !== '' && newPassword !== confirmPassword}
-                  helperText={
-                    confirmPassword !== '' && newPassword !== confirmPassword
-                      ? 'Passwords do not match'
-                      : ''
-                  }
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                          edge="end"
-                        >
-                          {showConfirmPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                />
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                    Confirm new password
+                  </Typography>
+                  <TextField
+                    id="um-confirm-pw"
+                    fullWidth
+                    size="small"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                    error={confirmPassword !== '' && newPassword !== confirmPassword}
+                    variant="outlined"
+                    InputProps={{ endAdornment: pwAdornment(showConfirmPassword, () => setShowConfirmPassword(!showConfirmPassword)) }}
+                    sx={outlinedFieldSx}
+                  />
+                  {confirmPassword !== '' && newPassword !== confirmPassword ? (
+                    <Typography variant="caption" color="error" sx={{ mt: 0.5, display: 'block' }}>
+                      Passwords do not match
+                    </Typography>
+                  ) : null}
+                </Box>
 
                 <Button
                   variant="contained"
+                  disableElevation
                   fullWidth
+                  size="large"
                   onClick={handleChangeOwnPassword}
                   disabled={actionLoading || !currentPassword || !newPassword || !confirmPassword}
-                  sx={{ mt: 2 }}
+                  sx={{
+                    mt: 1,
+                    py: 1.25,
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    borderRadius: 1.5,
+                    bgcolor: BRAND,
+                    '&:hover': { bgcolor: BRAND_HOVER },
+                  }}
                 >
-                  Change Password
+                  Update password
                 </Button>
               </Stack>
 
-              {/* Password Requirements */}
-              <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
-                <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                  Password Requirements:
+              <Paper
+                elevation={0}
+                sx={{
+                  mt: 3,
+                  p: 2.5,
+                  bgcolor: '#f8f9fa',
+                  border: '1px solid #eceef1',
+                  borderRadius: 1.5,
+                }}
+              >
+                <Typography variant="caption" sx={{ fontWeight: 700, letterSpacing: '0.08em', color: 'text.secondary' }}>
+                  REQUIREMENTS
                 </Typography>
-                <List dense>
+                <Stack spacing={1.25} sx={{ mt: 2 }}>
                   {[
                     { label: 'At least 8 characters', test: newPassword.length >= 8 },
                     { label: 'One lowercase letter', test: /(?=.*[a-z])/.test(newPassword) },
@@ -661,426 +784,441 @@ export default function UserManagementPage() {
                     { label: 'One number', test: /(?=.*\d)/.test(newPassword) },
                     { label: 'One special character (@$!%*?&)', test: /(?=.*[@$!%*?&])/.test(newPassword) },
                   ].map((req, index) => (
-                    <ListItem key={index} sx={{ py: 0.5 }}>
-                      <ListItemIcon sx={{ minWidth: 32 }}>
-                        {req.test ? (
-                          <CheckCircleIcon sx={{ color: 'success.main', fontSize: 20 }} />
-                        ) : (
-                          <CancelIcon sx={{ color: 'error.main', fontSize: 20 }} />
-                        )}
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={req.label}
-                        primaryTypographyProps={{
-                          variant: 'caption',
-                          sx: { color: req.test ? 'success.main' : 'text.secondary' },
-                        }}
-                      />
-                    </ListItem>
+                    <Stack direction="row" spacing={1.5} alignItems="center" key={index}>
+                      {req.test ? (
+                        <CheckCircleIcon sx={{ fontSize: 18, color: BRAND }} />
+                      ) : (
+                        <Box sx={{ width: 18, height: 18, borderRadius: '50%', border: '1px solid #dadce0' }} />
+                      )}
+                      <Typography variant="body2" color={req.test ? 'text.primary' : 'text.secondary'} sx={{ fontWeight: req.test ? 600 : 400 }}>
+                        {req.label}
+                      </Typography>
+                    </Stack>
                   ))}
-                </List>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
+                </Stack>
+              </Paper>
+            </Paper>
 
-        {/* Change Own Email */}
-        <Grid item xs={12} md={6}>
-          <Card elevation={3}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-                <EmailIcon sx={{ mr: 1, color: 'primary.main' }} />
-                <Typography variant="h6" fontWeight="bold">
-                  Change Your Email
-                </Typography>
-              </Box>
-              <Divider sx={{ mb: 3 }} />
-
-              <Stack spacing={2}>
-                <TextField
-                  fullWidth
-                  label="Current Email"
-                  value={user?.email || ''}
-                  disabled
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <EmailIcon />
-                      </InputAdornment>
-                    ),
+            <Paper elevation={0} sx={cardPaperSx}>
+              <Stack direction="row" spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
+                <Box
+                  sx={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 2,
+                    border: BORDER,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    bgcolor: CARD_BG,
+                    boxShadow: SHADOW,
                   }}
-                />
+                >
+                  <EmailOutlinedIcon sx={{ color: 'text.secondary', fontSize: 24 }} />
+                </Box>
+                <Box>
+                  <Typography variant="h6" sx={{ fontWeight: 700, letterSpacing: '-0.02em' }}>
+                    Email
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Change your sign-in email
+                  </Typography>
+                </Box>
+              </Stack>
 
-                <TextField
-                  fullWidth
-                  label="New Email"
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="Enter new email address"
-                />
+              <Stack spacing={2.5}>
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                    Current email
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    type="email"
+                    value={user?.email || ''}
+                    disabled
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <EmailOutlinedIcon sx={{ color: 'action.disabled', fontSize: 20 }} />
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={outlinedFieldSx}
+                  />
+                </Box>
 
-                <TextField
-                  fullWidth
-                  label="Confirm Password"
-                  type={showEmailPassword ? 'text' : 'password'}
-                  value={emailPassword}
-                  onChange={(e) => setEmailPassword(e.target.value)}
-                  helperText="Enter your current password to confirm email change"
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          onClick={() => setShowEmailPassword(!showEmailPassword)}
-                          edge="end"
-                        >
-                          {showEmailPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                />
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                    New email
+                  </Typography>
+                  <TextField
+                    id="um-new-email"
+                    fullWidth
+                    size="small"
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    placeholder="you@company.com"
+                    autoComplete="email"
+                    variant="outlined"
+                    sx={outlinedFieldSx}
+                  />
+                </Box>
+
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                    Current password (confirm)
+                  </Typography>
+                  <TextField
+                    id="um-email-pw"
+                    fullWidth
+                    size="small"
+                    type={showEmailPassword ? 'text' : 'password'}
+                    value={emailPassword}
+                    onChange={(e) => setEmailPassword(e.target.value)}
+                    autoComplete="current-password"
+                    variant="outlined"
+                    InputProps={{ endAdornment: pwAdornment(showEmailPassword, () => setShowEmailPassword(!showEmailPassword)) }}
+                    sx={outlinedFieldSx}
+                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+                    Required to verify this change.
+                  </Typography>
+                </Box>
 
                 <Button
                   variant="contained"
+                  disableElevation
                   fullWidth
+                  size="large"
                   onClick={handleChangeOwnEmail}
                   disabled={actionLoading || !newEmail || !emailPassword}
-                  sx={{ mt: 2 }}
+                  sx={{
+                    mt: 1,
+                    py: 1.25,
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    borderRadius: 1.5,
+                    bgcolor: BRAND,
+                    '&:hover': { bgcolor: BRAND_HOVER },
+                  }}
                 >
-                  Change Email
+                  Update email
                 </Button>
               </Stack>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+            </Paper>
+          </Box>
 
-      {/* User Management Section (Admin Only) */}
-      {userProfile?.role === 'admin' && (
-        <Box sx={{ mt: 4 }}>
-          <Card elevation={3}>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-                <PersonIcon sx={{ mr: 1, color: 'primary.main' }} />
-                <Typography variant="h6" fontWeight="bold">
-                  Users
-                </Typography>
-              </Box>
-              <Divider sx={{ mb: 3 }} />
-
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Add users, set roles and module access, update email and passwords, or remove accounts.
-              </Typography>
-
-              <Box sx={{ mb: 2 }}>
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={() => setCreateUserDialogOpen(true)}
-                >
-                  Add user
-                </Button>
-              </Box>
-
-              {usersLoading ? (
-                <Box sx={{ py: 4, display: 'flex', justifyContent: 'center' }}>
-                  <CircularProgress size={32} />
-                </Box>
-              ) : (
-              <Box sx={{ maxHeight: 560, overflow: 'auto' }}>
-                <List>
-                  {users.map((u) => (
-                    <ListItem
-                      key={u.uid}
-                      alignItems="flex-start"
-                      sx={{
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        borderRadius: 1,
-                        mb: 1,
-                        flexDirection: 'column',
-                        alignItems: 'stretch',
-                        '&:hover': { bgcolor: 'action.hover' },
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', width: '100%', gap: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                        <ListItemIcon sx={{ minWidth: 40 }}>
-                          <PersonIcon color="primary" />
-                        </ListItemIcon>
-                        <Box sx={{ flex: 1, minWidth: 200 }}>
-                          <Typography variant="subtitle1" fontWeight={600}>
-                            {u.displayName || u.email}
-                          </Typography>
-                          <Typography variant="caption" display="block" color="text.secondary">
-                            {u.email}
-                          </Typography>
-                          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
-                            <Chip
-                              size="small"
-                              label={u.role === 'admin' ? 'Admin' : u.role === 'audiologist' ? 'Audiologist' : 'Staff'}
-                              color={u.role === 'admin' ? 'error' : u.role === 'audiologist' ? 'info' : 'default'}
-                              variant="outlined"
-                            />
-                            {u.uid === user?.uid && (
-                              <Chip size="small" label="You" color="primary" variant="outlined" />
-                            )}
-                          </Stack>
-                        </Box>
-                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ justifyContent: 'flex-end' }}>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<TuneIcon />}
-                            onClick={() => openAccessDialog(u)}
-                          >
-                            Access
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<LockIcon />}
-                            disabled={u.uid === user?.uid}
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setChangePasswordDialogOpen(true);
-                            }}
-                          >
-                            Password
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<EmailIcon />}
-                            disabled={u.uid === user?.uid}
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setUserNewEmail(u.email);
-                              setChangeEmailDialogOpen(true);
-                            }}
-                          >
-                            Email
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="secondary"
-                            startIcon={<EmailIcon />}
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setResetDialogOpen(true);
-                            }}
-                          >
-                            Reset link
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="error"
-                            startIcon={<DeleteOutlineIcon />}
-                            disabled={u.uid === user?.uid}
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setDeleteDialogOpen(true);
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </Stack>
-                      </Box>
-                    </ListItem>
-                  ))}
-                </List>
-              </Box>
-              )}
-            </CardContent>
-          </Card>
-        </Box>
-      )}
+          {userProfile?.role === 'admin' && (
+        <UserDirectoryTable
+          users={users}
+          centers={centers}
+          onlineMap={onlineMap}
+          currentUserId={user?.uid ?? null}
+          usersLoading={usersLoading}
+          scopeKey={effectiveScopeCenterId ?? 'all'}
+          onAddUser={() => setCreateUserDialogOpen(true)}
+          onAccess={(u) => openAccessDialog(u as User)}
+          onPassword={(u) => {
+            setSelectedUser(u as User);
+            setChangePasswordDialogOpen(true);
+          }}
+          onEmail={(u) => {
+            setSelectedUser(u as User);
+            setUserNewEmail(u.email);
+            setChangeEmailDialogOpen(true);
+          }}
+          onReset={(u) => {
+            setSelectedUser(u as User);
+            setResetDialogOpen(true);
+          }}
+          onDelete={(u) => {
+            setSelectedUser(u as User);
+            setDeleteDialogOpen(true);
+          }}
+        />
+          )}
+        </Stack>
+      </Container>
 
       {/* Reset Password Confirmation Dialog */}
-      <Dialog open={resetDialogOpen} onClose={() => setResetDialogOpen(false)}>
-        <DialogTitle>Send Password Reset Email</DialogTitle>
+      <Dialog
+        open={resetDialogOpen}
+        onClose={() => setResetDialogOpen(false)}
+        slotProps={{ paper: { sx: { borderRadius: 2, border: BORDER, boxShadow: '0px 8px 32px rgba(0,0,0,0.08)' } } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>Send password reset email</DialogTitle>
         <DialogContent>
-          <Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.7 }}>
             Send a password reset email to <strong>{selectedUser?.email}</strong>?
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
             The user will receive an email with instructions to reset their password.
           </Typography>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setResetDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleResetUserPassword} variant="contained" color="primary">
-            Send Reset Email
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setResetDialogOpen(false)} sx={{ textTransform: 'none', fontWeight: 600, color: 'text.secondary' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disableElevation
+            onClick={handleResetUserPassword}
+            sx={{ textTransform: 'none', fontWeight: 700, bgcolor: BRAND, '&:hover': { bgcolor: BRAND_HOVER } }}
+          >
+            Send reset email
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Change User Password Dialog */}
-      <Dialog open={changePasswordDialogOpen} onClose={() => setChangePasswordDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Change Password for {selectedUser?.email}</DialogTitle>
+      <Dialog
+        open={changePasswordDialogOpen}
+        onClose={() => setChangePasswordDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 2, border: BORDER, boxShadow: '0px 8px 32px rgba(0,0,0,0.08)' } } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>Change password — {selectedUser?.email}</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField
-              fullWidth
-              label="New Password"
-              type={showUserPassword ? 'text' : 'password'}
-              value={userNewPassword}
-              onChange={(e) => setUserNewPassword(e.target.value)}
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      onClick={() => setShowUserPassword(!showUserPassword)}
-                      edge="end"
-                    >
-                      {showUserPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
-            <TextField
-              fullWidth
-              label="Confirm New Password"
-              type={showUserConfirmPassword ? 'text' : 'password'}
-              value={userConfirmPassword}
-              onChange={(e) => setUserConfirmPassword(e.target.value)}
-              error={userConfirmPassword !== '' && userNewPassword !== userConfirmPassword}
-              helperText={
-                userConfirmPassword !== '' && userNewPassword !== userConfirmPassword
-                  ? 'Passwords do not match'
-                  : ''
-              }
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      onClick={() => setShowUserConfirmPassword(!showUserConfirmPassword)}
-                      edge="end"
-                    >
-                      {showUserConfirmPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
-            {userNewPassword && (
+          <Stack spacing={2.5} sx={{ pt: 1 }}>
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                New password
+              </Typography>
+              <TextField
+                id="um-admin-new-pw"
+                fullWidth
+                size="small"
+                type={showUserPassword ? 'text' : 'password'}
+                value={userNewPassword}
+                onChange={(e) => setUserNewPassword(e.target.value)}
+                autoComplete="new-password"
+                variant="outlined"
+                InputProps={{ endAdornment: pwAdornment(showUserPassword, () => setShowUserPassword(!showUserPassword)) }}
+                sx={outlinedFieldSx}
+              />
+            </Box>
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                Confirm new password
+              </Typography>
+              <TextField
+                id="um-admin-confirm-pw"
+                fullWidth
+                size="small"
+                type={showUserConfirmPassword ? 'text' : 'password'}
+                value={userConfirmPassword}
+                onChange={(e) => setUserConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+                error={userConfirmPassword !== '' && userNewPassword !== userConfirmPassword}
+                variant="outlined"
+                InputProps={{
+                  endAdornment: pwAdornment(showUserConfirmPassword, () => setShowUserConfirmPassword(!showUserConfirmPassword)),
+                }}
+                sx={outlinedFieldSx}
+              />
+              {userConfirmPassword !== '' && userNewPassword !== userConfirmPassword ? (
+                <Typography variant="caption" color="error" sx={{ mt: 0.5, display: 'block' }}>
+                  Passwords do not match
+                </Typography>
+              ) : null}
+            </Box>
+            {userNewPassword ? (
               <Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Password Strength
+                <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                    Strength
                   </Typography>
                   <Typography
                     variant="caption"
-                    sx={{ color: getPasswordStrengthColor(getPasswordStrength(userNewPassword)), fontWeight: 'bold' }}
+                    sx={{ fontWeight: 700, color: getPasswordStrengthColor(getPasswordStrength(userNewPassword)) }}
                   >
                     {getPasswordStrengthLabel(getPasswordStrength(userNewPassword))}
                   </Typography>
-                </Box>
+                </Stack>
                 <LinearProgress
                   variant="determinate"
                   value={getPasswordStrength(userNewPassword)}
                   sx={{
                     height: 8,
                     borderRadius: 1,
-                    bgcolor: 'grey.200',
+                    bgcolor: '#e8eaed',
                     '& .MuiLinearProgress-bar': {
+                      borderRadius: 1,
                       bgcolor: getPasswordStrengthColor(getPasswordStrength(userNewPassword)),
                     },
                   }}
                 />
               </Box>
-            )}
+            ) : null}
             <Typography variant="caption" color="text.secondary">
-              Note: Password update requires a Cloud Function to process. The request will be stored in Firestore.
+              Password updates are processed via your backend; the request may be stored in Firestore until completed.
             </Typography>
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => {
-            setChangePasswordDialogOpen(false);
-            setUserNewPassword('');
-            setUserConfirmPassword('');
-          }}>Cancel</Button>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button
-            onClick={handleChangeUserPassword}
-            variant="contained"
-            color="primary"
-            disabled={!userNewPassword || !userConfirmPassword || userNewPassword !== userConfirmPassword}
+            onClick={() => {
+              setChangePasswordDialogOpen(false);
+              setUserNewPassword('');
+              setUserConfirmPassword('');
+            }}
+            sx={{ textTransform: 'none', fontWeight: 600, color: 'text.secondary' }}
           >
-            Update Password
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disableElevation
+            onClick={handleChangeUserPassword}
+            disabled={!userNewPassword || !userConfirmPassword || userNewPassword !== userConfirmPassword}
+            sx={{ textTransform: 'none', fontWeight: 700, bgcolor: BRAND, '&:hover': { bgcolor: BRAND_HOVER } }}
+          >
+            Update password
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Change User Email Dialog */}
-      <Dialog open={changeEmailDialogOpen} onClose={() => setChangeEmailDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Change Email for {selectedUser?.displayName || selectedUser?.email}</DialogTitle>
+      <Dialog
+        open={changeEmailDialogOpen}
+        onClose={() => setChangeEmailDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 2, border: BORDER, boxShadow: '0px 8px 32px rgba(0,0,0,0.08)' } } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>Change email — {selectedUser?.displayName || selectedUser?.email}</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField
-              fullWidth
-              label="Current Email"
-              value={selectedUser?.email || ''}
-              disabled
-            />
-            <TextField
-              fullWidth
-              label="New Email"
-              type="email"
-              value={userNewEmail}
-              onChange={(e) => setUserNewEmail(e.target.value)}
-              placeholder="Enter new email address"
-            />
+          <Stack spacing={2.5} sx={{ pt: 1 }}>
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                Current email
+              </Typography>
+              <TextField
+                fullWidth
+                size="small"
+                type="email"
+                value={selectedUser?.email || ''}
+                disabled
+                sx={{ ...outlinedFieldSx, '& .MuiInputBase-input': { bgcolor: '#f8f9fa' } }}
+              />
+            </Box>
+            <Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
+                New email
+              </Typography>
+              <TextField
+                id="um-admin-new-email"
+                fullWidth
+                size="small"
+                type="email"
+                value={userNewEmail}
+                onChange={(e) => setUserNewEmail(e.target.value)}
+                placeholder="name@company.com"
+                autoComplete="email"
+                variant="outlined"
+                sx={outlinedFieldSx}
+              />
+            </Box>
             <Typography variant="caption" color="text.secondary">
               {userProfile?.role === 'admin' && selectedUser?.uid !== user?.uid
-                ? 'Updates both Firebase Authentication and the user profile.'
-                : 'Note: Email update in Firestore will be immediate. Auth email update may require a Cloud Function.'}
+                ? 'Updates both Firebase Authentication and the user profile where supported.'
+                : 'Firestore may update immediately; Auth email changes may require a Cloud Function.'}
             </Typography>
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => {
-            setChangeEmailDialogOpen(false);
-            setUserNewEmail('');
-          }}>Cancel</Button>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button
-            onClick={handleChangeUserEmail}
-            variant="contained"
-            color="primary"
-            disabled={!userNewEmail || userNewEmail === selectedUser?.email}
+            onClick={() => {
+              setChangeEmailDialogOpen(false);
+              setUserNewEmail('');
+            }}
+            sx={{ textTransform: 'none', fontWeight: 600, color: 'text.secondary' }}
           >
-            Update Email
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disableElevation
+            onClick={handleChangeUserEmail}
+            disabled={!userNewEmail || userNewEmail === selectedUser?.email}
+            sx={{ textTransform: 'none', fontWeight: 700, bgcolor: BRAND, '&:hover': { bgcolor: BRAND_HOVER } }}
+          >
+            Update email
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Delete user */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
-        <DialogTitle>Delete user</DialogTitle>
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => {
+          setDeleteDialogOpen(false);
+          setDeleteTypeConfirm('');
+        }}
+        slotProps={{ paper: { sx: { borderRadius: 2, border: BORDER, boxShadow: '0px 8px 32px rgba(0,0,0,0.08)' } } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>Delete user</DialogTitle>
         <DialogContent>
-          <Typography>
-            Permanently remove <strong>{selectedUser?.email}</strong> from Authentication and the CRM user list? This cannot be undone.
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.7 }}>
+            Permanently remove <strong>{selectedUser?.email}</strong> from Authentication and the CRM user list? This cannot
+            be undone.
           </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+            Type <strong>DELETE</strong> to confirm.
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            value={deleteTypeConfirm}
+            onChange={(e) => setDeleteTypeConfirm(e.target.value)}
+            placeholder="DELETE"
+            autoComplete="off"
+            inputProps={{ 'aria-label': 'Type DELETE to confirm' }}
+            variant="outlined"
+            sx={outlinedFieldSx}
+          />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={handleDeleteUser} disabled={actionLoading}>
-            Delete
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => {
+              setDeleteDialogOpen(false);
+              setDeleteTypeConfirm('');
+            }}
+            sx={{ textTransform: 'none', fontWeight: 600, color: 'text.secondary' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disableElevation
+            color="error"
+            onClick={handleDeleteUser}
+            disabled={actionLoading || deleteTypeConfirm !== 'DELETE'}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            Delete permanently
           </Button>
         </DialogActions>
       </Dialog>
 
       {/* Role & module access */}
-      <Dialog open={accessDialogOpen} onClose={() => setAccessDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Role &amp; access — {selectedUser?.email}</DialogTitle>
+      <Dialog
+        open={accessDialogOpen}
+        onClose={() => setAccessDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 2, border: BORDER, boxShadow: '0px 8px 32px rgba(0,0,0,0.08)' } } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>Role &amp; access · {selectedUser?.email}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
-            <FormControl fullWidth>
-              <InputLabel>Role</InputLabel>
+            <FormControl fullWidth size="small">
+              <InputLabel id="edit-role-label">Role</InputLabel>
               <Select
+                labelId="edit-role-label"
                 value={editAccessRole}
                 label="Role"
                 onChange={(e) => setEditAccessRole(e.target.value as 'admin' | 'staff' | 'audiologist')}
@@ -1090,11 +1228,57 @@ export default function UserManagementPage() {
                 <MenuItem value="admin">Admin</MenuItem>
               </Select>
             </FormControl>
+            {!lockedCenterId && (
+              <>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Search centers"
+                  value={editCenterSearch}
+                  onChange={(e) => setEditCenterSearch(e.target.value)}
+                  sx={outlinedFieldSx}
+                />
+                <FormControl fullWidth size="small">
+                  <InputLabel id="edit-center-label">Center</InputLabel>
+                  <Select
+                    labelId="edit-center-label"
+                    value={editCenterId}
+                    label="Center"
+                    onChange={(e) => setEditCenterId(e.target.value as string)}
+                  >
+                    <MenuItem value="">
+                      <em>None (global)</em>
+                    </MenuItem>
+                    {filteredCentersForEdit.map((c) => (
+                      <MenuItem key={c.id} value={c.id}>
+                        {c.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </>
+            )}
+            {editAccessRole === 'admin' && userProfile && isSuperAdminViewer(userProfile) && (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={editSuperAdmin}
+                    onChange={(e) => setEditSuperAdmin(e.target.checked)}
+                    sx={{ color: BRAND, '&.Mui-checked': { color: BRAND } }}
+                  />
+                }
+                label="Super admin"
+              />
+            )}
             {editAccessRole === 'admin' ? (
-              <Alert severity="info">Administrators have full access to every module.</Alert>
+              <Alert severity="info" sx={{ borderRadius: 1.5 }}>
+                Administrators have full access to every module.
+              </Alert>
             ) : (
               <>
-                <Typography variant="subtitle2">Modules</Typography>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  Modules
+                </Typography>
                 <FormGroup sx={{ maxHeight: 280, overflow: 'auto', pl: 0.5 }}>
                   {CRM_MODULE_ACCESS_OPTIONS.map((opt) => (
                     <FormControlLabel
@@ -1104,6 +1288,7 @@ export default function UserManagementPage() {
                           size="small"
                           checked={editAccessModules.includes(opt.key)}
                           onChange={() => toggleEditModule(opt.key)}
+                          sx={{ color: BRAND, '&.Mui-checked': { color: BRAND } }}
                         />
                       }
                       label={opt.label}
@@ -1114,107 +1299,44 @@ export default function UserManagementPage() {
             )}
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setAccessDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveAccess} disabled={actionLoading}>
-            Save
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setAccessDialogOpen(false)} sx={{ textTransform: 'none', fontWeight: 600, color: 'text.secondary' }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disableElevation
+            onClick={handleSaveAccess}
+            disabled={actionLoading}
+            sx={{ textTransform: 'none', fontWeight: 700, bgcolor: BRAND, '&:hover': { bgcolor: BRAND_HOVER } }}
+          >
+            Save changes
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Create User Dialog (Admin) */}
-      <Dialog open={createUserDialogOpen} onClose={() => setCreateUserDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Create New User</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ mt: 1 }}>
-            <TextField
-              fullWidth
-              label="Email"
-              type="email"
-              value={createUserEmail}
-              onChange={(e) => setCreateUserEmail(e.target.value)}
-              placeholder="new.user@example.com"
-            />
-            <TextField
-              fullWidth
-              label="Display Name (optional)"
-              value={createUserName}
-              onChange={(e) => setCreateUserName(e.target.value)}
-              placeholder="New User"
-            />
-            <FormControl fullWidth>
-              <InputLabel>Role</InputLabel>
-              <Select
-                value={createUserRole}
-                label="Role"
-                onChange={(e) => setCreateUserRole(e.target.value as 'admin' | 'staff' | 'audiologist')}
-              >
-                <MenuItem value="staff">Staff</MenuItem>
-                <MenuItem value="audiologist">Audiologist</MenuItem>
-                <MenuItem value="admin">Admin</MenuItem>
-              </Select>
-            </FormControl>
-            {(createUserRole === 'staff' || createUserRole === 'audiologist') && (
-              <>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Module access (optional — defaults apply if none selected)
-                </Typography>
-                <FormGroup sx={{ maxHeight: 220, overflow: 'auto', pl: 0.5 }}>
-                  {CRM_MODULE_ACCESS_OPTIONS.map((opt) => (
-                    <FormControlLabel
-                      key={opt.key}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={createUserModules.includes(opt.key)}
-                          onChange={() => {
-                            setCreateUserModules((prev) =>
-                              prev.includes(opt.key) ? prev.filter((k) => k !== opt.key) : [...prev, opt.key],
-                            );
-                          }}
-                        />
-                      }
-                      label={opt.label}
-                    />
-                  ))}
-                </FormGroup>
-              </>
-            )}
-            <Alert severity="info">
-              After creation, the user will receive a password setup email (password reset link).
-            </Alert>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateUserDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateUser} disabled={actionLoading || !createUserEmail.trim()}>
-            Create & Send Email
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <CreateUserDialog
+        open={createUserDialogOpen}
+        onOpenChange={setCreateUserDialogOpen}
+        centers={centers}
+        lockedCenterId={lockedCenterId}
+        userProfile={userProfile ?? null}
+        createUserEmail={createUserEmail}
+        setCreateUserEmail={setCreateUserEmail}
+        createUserName={createUserName}
+        setCreateUserName={setCreateUserName}
+        createUserRole={createUserRole}
+        setCreateUserRole={setCreateUserRole}
+        createUserModules={createUserModules}
+        setCreateUserModules={setCreateUserModules}
+        createUserCenterId={createUserCenterId}
+        setCreateUserCenterId={setCreateUserCenterId}
+        createUserSuperAdmin={createUserSuperAdmin}
+        setCreateUserSuperAdmin={setCreateUserSuperAdmin}
+        actionLoading={actionLoading}
+        onSubmit={handleCreateUser}
+      />
 
-      {/* Success/Error Snackbars */}
-      <Snackbar
-        open={!!successMsg}
-        autoHideDuration={6000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert onClose={handleCloseSnackbar} severity="success" sx={{ width: '100%' }}>
-          {successMsg}
-        </Alert>
-      </Snackbar>
-
-      <Snackbar
-        open={!!errorMsg}
-        autoHideDuration={6000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-      >
-        <Alert onClose={handleCloseSnackbar} severity="error" sx={{ width: '100%' }}>
-          {errorMsg}
-        </Alert>
-      </Snackbar>
     </Box>
   );
 }
