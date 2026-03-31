@@ -50,6 +50,7 @@ export function getTimestampValueForTemplate(value: unknown): number {
 }
 
 export type TemplateSortable = {
+  isDefault?: boolean;
   isFavorite?: boolean;
   updatedAt?: unknown;
   createdAt?: unknown;
@@ -69,6 +70,8 @@ export function pickPreferredHtmlTemplate<T extends TemplateSortable>(
     return isHtmlTemplateRecord(f) && templateMatchesDocumentType(f, documentType);
   });
   filtered.sort((a, b) => {
+    const defaultDelta = Number(Boolean(b.isDefault)) - Number(Boolean(a.isDefault));
+    if (defaultDelta !== 0) return defaultDelta;
     const favoriteDelta = Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite));
     if (favoriteDelta !== 0) return favoriteDelta;
     return (

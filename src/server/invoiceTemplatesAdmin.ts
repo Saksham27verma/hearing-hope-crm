@@ -1,6 +1,16 @@
+import {
+  CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION,
+  CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID,
+  type DocumentTemplateRoutingDoc,
+  routingFieldForDocumentType,
+} from '@/lib/crmSettings/documentTemplateRouting';
 import { adminDb } from '@/server/firebaseAdmin';
 import type { ManagedDocumentType, TemplateImage } from '@/utils/documentTemplateUtils';
-import { pickPreferredHtmlTemplate } from '@/utils/invoiceTemplateSelection';
+import {
+  isHtmlTemplateRecord,
+  pickPreferredHtmlTemplate,
+  templateMatchesDocumentType,
+} from '@/utils/invoiceTemplateSelection';
 
 export type StoredInvoiceHtmlTemplate = {
   id: string;
@@ -8,6 +18,7 @@ export type StoredInvoiceHtmlTemplate = {
   documentType?: ManagedDocumentType;
   htmlContent?: string;
   images?: TemplateImage[];
+  isDefault?: boolean;
   isFavorite?: boolean;
   updatedAt?: unknown;
   createdAt?: unknown;
@@ -20,6 +31,50 @@ export async function getPreferredHtmlTemplateAdmin(
   const snapshot = await adminDb().collection('invoiceTemplates').get();
   const templates = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as StoredInvoiceHtmlTemplate));
   return pickPreferredHtmlTemplate(templates, documentType, (t) => t);
+}
+
+/**
+ * Staff collect-payment PDFs: use the template explicitly chosen in Invoice Manager
+ * (`crmSettings/documentTemplateRouting`), otherwise the same auto-pick as the CRM (default → favorite → newest).
+ */
+export async function getResolvedHtmlTemplateAdmin(
+  documentType: ManagedDocumentType
+): Promise<StoredInvoiceHtmlTemplate | null> {
+  const db = adminDb();
+  let preferredId: string | null | undefined;
+  try {
+    const routingSnap = await db
+      .collection(CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION)
+      .doc(CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID)
+      .get();
+    const routing = routingSnap.data() as DocumentTemplateRoutingDoc | undefined;
+    const field = routingFieldForDocumentType(documentType);
+    preferredId = routing?.[field] as string | undefined;
+  } catch (e) {
+    console.warn('getResolvedHtmlTemplateAdmin: could not read crmSettings routing:', e);
+  }
+
+  const id = preferredId != null ? String(preferredId).trim() : '';
+  if (id) {
+    try {
+      const docSnap = await db.collection('invoiceTemplates').doc(id).get();
+      if (docSnap.exists) {
+        const t = { id: docSnap.id, ...docSnap.data() } as StoredInvoiceHtmlTemplate;
+        if (isHtmlTemplateRecord(t) && templateMatchesDocumentType(t, documentType)) {
+          return t;
+        }
+        console.warn(
+          `getResolvedHtmlTemplateAdmin: routing id ${id} is not a valid ${documentType} HTML template; falling back to auto-pick`
+        );
+      } else {
+        console.warn(`getResolvedHtmlTemplateAdmin: routing template ${id} not found; falling back to auto-pick`);
+      }
+    } catch (e) {
+      console.warn('getResolvedHtmlTemplateAdmin: failed to load routed template:', e);
+    }
+  }
+
+  return getPreferredHtmlTemplateAdmin(documentType);
 }
 
 export async function resolveCenterDisplayNameAdmin(

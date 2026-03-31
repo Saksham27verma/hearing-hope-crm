@@ -1,5 +1,5 @@
 import { buildStaffPaymentReceiptPdfBuffer, type StaffPaymentReceiptPdfInput } from '@/server/staffPaymentReceiptPdf';
-import { getPreferredHtmlTemplateAdmin, resolveCenterDisplayNameAdmin } from '@/server/invoiceTemplatesAdmin';
+import { getResolvedHtmlTemplateAdmin, resolveCenterDisplayNameAdmin } from '@/server/invoiceTemplatesAdmin';
 import { renderHtmlToPdfBuffer } from '@/server/htmlToPdfBuffer';
 import {
   buildBookingReceiptData,
@@ -82,7 +82,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
 
   try {
     if (args.receiptType === 'booking') {
-      const template = await getPreferredHtmlTemplateAdmin('booking_receipt');
+      const template = await getResolvedHtmlTemplateAdmin('booking_receipt');
       if (!template?.htmlContent) {
         throw new Error('no booking HTML template in invoiceTemplates (need non-visual HTML + documentType booking)');
       }
@@ -98,7 +98,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
     }
 
     if (args.receiptType === 'trial') {
-      const template = await getPreferredHtmlTemplateAdmin('trial_receipt');
+      const template = await getResolvedHtmlTemplateAdmin('trial_receipt');
       if (!template?.htmlContent) throw new Error('no trial HTML template');
       const centerName = await resolveCenterDisplayNameAdmin(args.enquiry, args.lastVisit);
       const data = buildTrialReceiptData(enquiry, visit, {
@@ -111,7 +111,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
     }
 
     if (args.receiptType === 'invoice') {
-      const template = await getPreferredHtmlTemplateAdmin('invoice');
+      const template = await getResolvedHtmlTemplateAdmin('invoice');
       if (!template?.htmlContent) throw new Error('no invoice HTML template');
       const sale: Record<string, unknown> = {
         ...enquiryVisitToInvoiceSalePayload(args.enquiry, args.lastVisit),

@@ -3,11 +3,21 @@ import { pdf } from '@react-pdf/renderer';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import {
+  CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION,
+  CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID,
+  type DocumentTemplateRoutingDoc,
+  routingFieldForDocumentType,
+} from '@/lib/crmSettings/documentTemplateRouting';
 import BookingReceiptTemplate from '@/components/receipts/BookingReceiptTemplate';
 import TrialReceiptTemplate from '@/components/receipts/TrialReceiptTemplate';
 import { db } from '@/firebase/config';
 import { ManagedDocumentType, type TemplateImage } from '@/utils/documentTemplateUtils';
-import { pickPreferredHtmlTemplate } from '@/utils/invoiceTemplateSelection';
+import {
+  isHtmlTemplateRecord,
+  pickPreferredHtmlTemplate,
+  templateMatchesDocumentType,
+} from '@/utils/invoiceTemplateSelection';
 import {
   buildBookingReceiptHtmlString,
   buildTrialReceiptHtmlString,
@@ -27,6 +37,7 @@ type StoredDocumentTemplate = {
   documentType?: ManagedDocumentType;
   htmlContent?: string;
   images?: TemplateImage[];
+  isDefault?: boolean;
   isFavorite?: boolean;
   updatedAt?: unknown;
   createdAt?: unknown;
@@ -79,6 +90,20 @@ const getPreferredCustomTemplate = async (documentType: ManagedDocumentType): Pr
   try {
     const snapshot = await getDocs(collection(db, 'invoiceTemplates'));
     const templates = snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as StoredDocumentTemplate));
+
+    const routingSnap = await getDoc(
+      doc(db, CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION, CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID)
+    );
+    const routing = routingSnap.data() as DocumentTemplateRoutingDoc | undefined;
+    const field = routingFieldForDocumentType(documentType);
+    const routedId = routing?.[field];
+    if (routedId != null && String(routedId).trim()) {
+      const match = templates.find((t) => t.id === String(routedId).trim());
+      if (match && isHtmlTemplateRecord(match) && templateMatchesDocumentType(match, documentType)) {
+        return match;
+      }
+    }
+
     return pickPreferredHtmlTemplate(templates, documentType, (t) => t);
   } catch (error) {
     console.error(`Error fetching ${documentType} template:`, error);

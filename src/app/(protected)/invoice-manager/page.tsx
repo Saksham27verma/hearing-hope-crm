@@ -50,7 +50,17 @@ import {
   Close as CloseIcon,
 } from '@mui/icons-material';
 import { useAuth } from '@/hooks/useAuth';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import InvoiceBuilder from '@/components/invoice-builder/InvoiceBuilder';
 import APIIntegrations from '@/components/invoice-integrations/APIIntegrations';
@@ -62,6 +72,12 @@ import {
   getTemplatePreviewHtml,
   ManagedDocumentType,
 } from '@/utils/documentTemplateUtils';
+import {
+  CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION,
+  CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID,
+  type DocumentTemplateRoutingDoc,
+  routingFieldForDocumentType,
+} from '@/lib/crmSettings/documentTemplateRouting';
 
 // Types
 interface InvoiceTemplate {
@@ -161,6 +177,8 @@ const InvoiceManagerPage = () => {
   const [previewTemplate, setPreviewTemplate] = useState<InvoiceTemplate | null>(null);
   const [successMsg, setSuccessMsg] = useState('');
   const [creatingDocumentType, setCreatingDocumentType] = useState<ManagedDocumentType>('invoice');
+  /** Which HTML template is pinned for staff collect-payment PDFs (see `getResolvedHtmlTemplateAdmin`). */
+  const [documentTemplateRouting, setDocumentTemplateRouting] = useState<DocumentTemplateRoutingDoc | null>(null);
 
   // Default templates
   const defaultTemplates: Partial<InvoiceTemplate>[] = [
@@ -296,6 +314,13 @@ const InvoiceManagerPage = () => {
       } else {
         setTemplates(userTemplates);
       }
+
+      const routingSnap = await getDoc(
+        doc(db, CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION, CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID)
+      );
+      setDocumentTemplateRouting(
+        routingSnap.exists() ? (routingSnap.data() as DocumentTemplateRoutingDoc) : {}
+      );
     } catch (error) {
       console.error('Error fetching templates:', error);
     } finally {
@@ -449,6 +474,37 @@ const InvoiceManagerPage = () => {
     }
   };
 
+  const isStaffPdfTemplateActive = (template: InvoiceTemplate) => {
+    if (template.templateType !== 'html' || !String(template.htmlContent ?? '').trim() || !template.documentType) {
+      return false;
+    }
+    const field = routingFieldForDocumentType(template.documentType);
+    const id = documentTemplateRouting?.[field];
+    return id != null && String(id) === template.id;
+  };
+
+  const handleSetStaffPdfTemplate = async (template: InvoiceTemplate) => {
+    if (!user || !template.documentType || template.templateType !== 'html') return;
+    try {
+      const field = routingFieldForDocumentType(template.documentType);
+      await setDoc(
+        doc(db, CRM_DOCUMENT_TEMPLATE_ROUTING_COLLECTION, CRM_DOCUMENT_TEMPLATE_ROUTING_DOC_ID),
+        { [field]: template.id, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      setDocumentTemplateRouting((prev) => ({
+        ...(prev || {}),
+        [field]: template.id,
+      }));
+      setSuccessMsg(
+        `${getDocumentTypeLabel(template.documentType)} — this template is now used for staff app PDFs (collect payment).`
+      );
+    } catch (error) {
+      console.error('Error saving staff PDF template:', error);
+      setSuccessMsg('Could not save staff PDF template. Try again.');
+    }
+  };
+
   const handleMenuClick = (event: React.MouseEvent<HTMLElement>, template: InvoiceTemplate) => {
     setMenuAnchor(event.currentTarget);
     setSelectedTemplate(template);
@@ -491,7 +547,8 @@ const InvoiceManagerPage = () => {
                   Invoice Manager
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
-                  Create, customize, and manage invoice, booking receipt, and trial receipt templates
+                  Create and manage templates. For HTML templates, use &quot;Use for staff app PDF&quot; to choose which
+                  design staff collect-payment emails use (booking, trial, or invoice).
                 </Typography>
               </Box>
             </Box>
@@ -650,46 +707,70 @@ const InvoiceManagerPage = () => {
                     </Box>
                   </CardContent>
 
-                  <CardActions sx={{ p: 2, pt: 0 }}>
-                    <Button
-                      size="small"
-                      startIcon={<PreviewIcon />}
-                      onClick={() => {
-                        setPreviewTemplate(template);
-                        setPreviewDialogOpen(true);
-                      }}
-                    >
-                      Preview
-                    </Button>
-                    <Button
-                      size="small"
-                      startIcon={<EditIcon />}
-                      onClick={() => {
-                        if (template.templateType === 'html') {
-                          // For HTML templates, open the HTML creator in edit mode
-                          setEditingTemplate(template);
-                          setCreatingDocumentType(template.documentType || 'invoice');
-                          setHtmlCreatorOpen(true);
-                        } else {
-                          setEditingTemplate(template);
-                          setBuilderOpen(true);
-                        }
-                      }}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="small"
-                      startIcon={<CopyIcon />}
-                      onClick={() => {
-                        // Copy template ID to clipboard for use in sales
-                        navigator.clipboard.writeText(template.id);
-                        setSuccessMsg('Template ID copied! Use it in sales module.');
-                      }}
-                      variant="contained"
-                    >
-                      Use
-                    </Button>
+                  <CardActions sx={{ p: 2, pt: 0, flexDirection: 'column', alignItems: 'stretch', gap: 1 }}>
+                    <Box display="flex" flexWrap="wrap" gap={1}>
+                      <Button
+                        size="small"
+                        startIcon={<PreviewIcon />}
+                        onClick={() => {
+                          setPreviewTemplate(template);
+                          setPreviewDialogOpen(true);
+                        }}
+                      >
+                        Preview
+                      </Button>
+                      <Button
+                        size="small"
+                        startIcon={<EditIcon />}
+                        onClick={() => {
+                          if (template.templateType === 'html') {
+                            setEditingTemplate(template);
+                            setCreatingDocumentType(template.documentType || 'invoice');
+                            setHtmlCreatorOpen(true);
+                          } else {
+                            setEditingTemplate(template);
+                            setBuilderOpen(true);
+                          }
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="small"
+                        startIcon={<CopyIcon />}
+                        onClick={() => {
+                          navigator.clipboard.writeText(template.id);
+                          setSuccessMsg('Template ID copied! Use it in sales module.');
+                        }}
+                        variant="contained"
+                      >
+                        Use
+                      </Button>
+                    </Box>
+                    {template.templateType === 'html' &&
+                      String(template.htmlContent ?? '').trim() &&
+                      template.documentType && (
+                        <>
+                          {isStaffPdfTemplateActive(template) ? (
+                            <Chip
+                              size="small"
+                              color="success"
+                              label="Active for staff app PDF"
+                              sx={{ alignSelf: 'center' }}
+                            />
+                          ) : (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="secondary"
+                              fullWidth
+                              onClick={() => handleSetStaffPdfTemplate(template)}
+                            >
+                              Use for staff app PDF
+                            </Button>
+                          )}
+                        </>
+                      )}
                   </CardActions>
                 </Card>
               </Grid>
