@@ -83,7 +83,9 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
   try {
     if (args.receiptType === 'booking') {
       const template = await getPreferredHtmlTemplateAdmin('booking_receipt');
-      if (!template?.htmlContent) throw new Error('no booking HTML template');
+      if (!template?.htmlContent) {
+        throw new Error('no booking HTML template in invoiceTemplates (need non-visual HTML + documentType booking)');
+      }
       const centerName = await resolveCenterDisplayNameAdmin(args.enquiry, args.lastVisit);
       const data = buildBookingReceiptData(enquiry, visit, {
         receiptNumber: `BR-STAFF-${args.requestId.slice(0, 8)}`,
@@ -128,7 +130,10 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       return await renderHtmlToPdfBuffer(html);
     }
   } catch (e) {
-    console.warn('staffCrmStyleReceiptPdf: falling back to minimal PDF:', e);
+    console.warn(
+      'staffCrmStyleReceiptPdf: falling back to minimal PDF (check Firestore invoiceTemplates + Puppeteer logs):',
+      e
+    );
   }
 
   return buildStaffPaymentReceiptPdfBuffer(args.fallbackInput);

@@ -7,6 +7,7 @@ import BookingReceiptTemplate from '@/components/receipts/BookingReceiptTemplate
 import TrialReceiptTemplate from '@/components/receipts/TrialReceiptTemplate';
 import { db } from '@/firebase/config';
 import { ManagedDocumentType, type TemplateImage } from '@/utils/documentTemplateUtils';
+import { pickPreferredHtmlTemplate } from '@/utils/invoiceTemplateSelection';
 import {
   buildBookingReceiptHtmlString,
   buildTrialReceiptHtmlString,
@@ -29,15 +30,6 @@ type StoredDocumentTemplate = {
   isFavorite?: boolean;
   updatedAt?: unknown;
   createdAt?: unknown;
-};
-
-const getTimestampValue = (value: unknown) => {
-  if (!value) return 0;
-  const v = value as { toMillis?: () => number; seconds?: number };
-  if (typeof v?.toMillis === 'function') return v.toMillis();
-  if (typeof v?.seconds === 'number') return v.seconds * 1000;
-  const parsed = new Date(value as string).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 /** html2canvas often fails to paint external SVGs; inline as data URL before capture. */
@@ -86,21 +78,8 @@ async function resolveCenterDisplayName(enquiry: EnquiryLike, visit: VisitLike):
 const getPreferredCustomTemplate = async (documentType: ManagedDocumentType): Promise<StoredDocumentTemplate | null> => {
   try {
     const snapshot = await getDocs(collection(db, 'invoiceTemplates'));
-    const templates = snapshot.docs
-      .map((item) => ({ id: item.id, ...item.data() } as StoredDocumentTemplate))
-      .filter(
-        (template) => template.templateType === 'html' && template.documentType === documentType && template.htmlContent
-      )
-      .sort((a, b) => {
-        const favoriteDelta = Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite));
-        if (favoriteDelta !== 0) return favoriteDelta;
-        return (
-          (getTimestampValue(b.updatedAt) || getTimestampValue(b.createdAt)) -
-          (getTimestampValue(a.updatedAt) || getTimestampValue(a.createdAt))
-        );
-      });
-
-    return templates[0] ?? null;
+    const templates = snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as StoredDocumentTemplate));
+    return pickPreferredHtmlTemplate(templates, documentType, (t) => t);
   } catch (error) {
     console.error(`Error fetching ${documentType} template:`, error);
     return null;
