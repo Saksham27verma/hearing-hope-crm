@@ -40,6 +40,13 @@ export function processInvoiceHtmlTemplate(
   }
 
   processed = processed
+    .replace(/\{\{COMPANY_NAME\}\}/g, invoiceData.companyName || '')
+    .replace(/\{\{COMPANY_ADDRESS\}\}/g, (invoiceData.companyAddress || '').replace(/\n/g, '<br/>'))
+    .replace(/\{\{COMPANY_PHONE\}\}/g, invoiceData.companyPhone || '')
+    .replace(/\{\{COMPANY_EMAIL\}\}/g, invoiceData.companyEmail || '')
+    .replace(/\{\{COMPANY_GSTIN\}\}/g, invoiceData.companyGST || 'N/A');
+
+  processed = processed
     .replace(/\{\{CUSTOMER_NAME\}\}/g, invoiceData.customerName || '')
     .replace(/\{\{CUSTOMER_ADDRESS\}\}/g, invoiceData.customerAddress || '')
     .replace(/\{\{CUSTOMER_PHONE\}\}/g, invoiceData.customerPhone || '')
@@ -54,7 +61,10 @@ export function processInvoiceHtmlTemplate(
     .replace(/\{\{SUBTOTAL\}\}/g, formatCurrency(invoiceData.subtotal || 0))
     .replace(/\{\{TAX_RATE\}\}/g, String((invoiceData as { taxRate?: number }).taxRate || 0))
     .replace(/\{\{TAX_AMOUNT\}\}/g, formatCurrency((invoiceData as { taxAmount?: number }).taxAmount || 0))
-    .replace(/\{\{TOTAL\}\}/g, formatCurrency((invoiceData as { total?: number }).total || invoiceData.grandTotal || 0));
+    .replace(/\{\{TOTAL\}\}/g, formatCurrency((invoiceData as { total?: number }).total || invoiceData.grandTotal || 0))
+    .replace(/\{\{TERMS_TEXT\}\}/g, (invoiceData.terms || '').replace(/\n/g, '<br/>'))
+    .replace(/\{\{SALESPERSON\}\}/g, invoiceData.salesperson || '')
+    .replace(/\{\{REFERENCE_DOCTOR\}\}/g, invoiceData.referenceDoctor || '');
 
   if (invoiceData.items && invoiceData.items.length > 0) {
     const itemsHTML = invoiceData.items

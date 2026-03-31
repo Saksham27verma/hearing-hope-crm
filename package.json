@@ -54,6 +54,7 @@
     "nodemailer": "^8.0.4",
     "notistack": "^3.0.2",
     "pdf-lib": "^1.17.1",
+    "puppeteer": "^24.40.0",
     "react": "^19.0.0",
     "react-barcode-reader": "^0.0.2",
     "react-dom": "^19.0.0",

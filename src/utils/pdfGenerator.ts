@@ -9,6 +9,11 @@ import {
   type InvoiceConfig,
   type InvoicePdfTemplateId,
 } from '@/utils/invoicePdfPreferences';
+import {
+  convertSaleToInvoiceData,
+  mergeInvoiceConfigIntoData,
+  enquiryVisitToInvoiceSalePayload as enquiryVisitToInvoiceSalePayloadImpl,
+} from '@/utils/invoiceSaleToData';
 
 export type { InvoiceConfig, InvoicePdfTemplateId } from '@/utils/invoicePdfPreferences';
 export {
@@ -25,35 +30,11 @@ export type InvoicePdfGenerationOptions = {
   config?: Partial<InvoiceConfig>;
 };
 
-function formatInvoiceDateLabel(value: unknown): string {
-  if (value == null) return new Date().toLocaleDateString('en-IN');
-  const v = value as any;
-  if (typeof v?.toDate === 'function') return v.toDate().toLocaleDateString('en-IN');
-  if (v?.seconds != null) return new Date(v.seconds * 1000).toLocaleDateString('en-IN');
-  if (typeof value === 'string' && value.trim()) {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? new Date().toLocaleDateString('en-IN') : d.toLocaleDateString('en-IN');
-  }
-  if (value instanceof Date) return value.toLocaleDateString('en-IN');
-  return new Date().toLocaleDateString('en-IN');
-}
-
-/** Map enquiry + visit into the shape expected by `convertSaleToInvoiceData` / invoice PDF. */
 export function enquiryVisitToInvoiceSalePayload(enquiry: any, visit: any) {
-  const visitKey = visit?.id ?? visit?.visitDate ?? visit?.purchaseDate ?? 'sale';
-  return {
-    products: visit?.products || [],
-    gstAmount: Number(visit?.taxAmount) || 0,
-    totalAmount: Number(visit?.salesAfterTax) || 0,
-    patientName: enquiry?.name || 'Patient',
-    phone: enquiry?.phone || '',
-    email: enquiry?.email || '',
-    address: enquiry?.address || '',
-    saleDate: visit?.purchaseDate || visit?.visitDate || visit?.date || new Date().toISOString().slice(0, 10),
-    // Provisional label only — does not use the global sales sequence (no Firestore write).
-    invoiceNumber: `PROV-${String(enquiry?.id || 'enquiry').slice(0, 8)}-${String(visitKey).slice(0, 12)}`,
-    notes: visit?.saleNotes || visit?.notes || '',
-  };
+  return enquiryVisitToInvoiceSalePayloadImpl(
+    enquiry as Record<string, unknown>,
+    visit as Record<string, unknown>
+  );
 }
 
 export async function openEnquirySaleInvoicePDF(
@@ -75,17 +56,7 @@ export async function downloadEnquirySaleInvoicePDF(
   return downloadInvoicePDF(payload, safeName, opts);
 }
 
-export function mergeInvoiceConfigIntoData(data: InvoiceData, config: InvoiceConfig): InvoiceData {
-  const next = { ...data };
-  if (config.companyName) next.companyName = config.companyName;
-  if (config.companyAddress) next.companyAddress = config.companyAddress;
-  if (config.companyPhone) next.companyPhone = config.companyPhone;
-  if (config.companyEmail) next.companyEmail = config.companyEmail;
-  if (config.companyGST !== undefined && config.companyGST !== '') next.companyGST = config.companyGST;
-  if (config.customTerms && config.customTerms.trim()) next.terms = config.customTerms.trim();
-  if (config.customFooter && config.customFooter.trim()) next.footerNote = config.customFooter.trim();
-  return next;
-}
+export { mergeInvoiceConfigIntoData, convertSaleToInvoiceData } from '@/utils/invoiceSaleToData';
 
 export function createInvoicePdfElement(data: InvoiceData, rendererId: 'classic' | 'modern'): ReactElement {
   if (rendererId === 'modern') {
@@ -93,75 +64,6 @@ export function createInvoicePdfElement(data: InvoiceData, rendererId: 'classic'
   }
   return createElement(InvoiceTemplate, { data });
 }
-
-// Function to convert sale data to invoice data format
-export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
-  const subtotal =
-    sale.products?.reduce((sum: number, product: any) => {
-      return sum + (product.sellingPrice || product.finalAmount || 0) * (product.quantity || 1);
-    }, 0) || 0;
-
-  const totalGST = sale.gstAmount || 0;
-  const totalDiscount =
-    sale.products?.reduce((sum: number, product: any) => {
-      const mrp = product.mrp || 0;
-      const sellingPrice = product.sellingPrice || product.finalAmount || 0;
-      const discount = (mrp - sellingPrice) * (product.quantity || 1);
-      return sum + (discount > 0 ? discount : 0);
-    }, 0) || 0;
-
-  const grandTotal = sale.totalAmount || subtotal + totalGST;
-
-  const items =
-    sale.products?.map((product: any, index: number) => ({
-      id: product.id || `item-${index}`,
-      name: product.name || 'Unknown Product',
-      description: product.type || '',
-      serialNumber: product.serialNumber || '',
-      quantity: product.quantity || 1,
-      rate: product.sellingPrice || product.finalAmount || 0,
-      mrp: product.mrp || 0,
-      discount: product.discount || 0,
-      gstPercent: product.gstPercent || sale.gstPercentage || 0,
-      amount: (product.sellingPrice || product.finalAmount || 0) * (product.quantity || 1),
-    })) || [];
-
-  const invoiceNumber = sale.invoiceNumber || '—';
-  const invoiceDate = formatInvoiceDateLabel(sale.saleDate);
-
-  return {
-    companyName: 'Hope Hearing Solutions',
-    companyAddress: 'Your Company Address\nCity, State - PIN Code',
-    companyPhone: '+91 XXXXX XXXXX',
-    companyEmail: 'info@hopehearing.com',
-    companyGST: 'GST Number Here',
-    invoiceNumber,
-    invoiceDate,
-    customerName: sale.patientName || 'Walk-in Customer',
-    customerAddress: sale.address || '',
-    customerPhone: sale.phone || '',
-    customerEmail: sale.email || '',
-    items,
-    subtotal,
-    totalDiscount: totalDiscount > 0 ? totalDiscount : undefined,
-    totalGST: totalGST > 0 ? totalGST : undefined,
-    grandTotal,
-    referenceDoctor: sale.referenceDoctor?.name || '',
-    salesperson: sale.salesperson?.name || '',
-    branch: sale.branch || '',
-    paymentMethod: sale.paymentMethod || '',
-    notes: sale.notes || '',
-    terms: getDefaultTermsAndConditions(),
-  };
-};
-
-const getDefaultTermsAndConditions = (): string => {
-  return `1. Payment is due within 30 days of invoice date.
-2. All sales are final unless otherwise specified.
-3. Warranty terms apply as per manufacturer guidelines.
-4. Please retain this invoice for warranty claims.
-5. For any queries, please contact us within 7 days.`;
-};
 
 export const generateInvoicePDF = async (sale: any, opts?: InvoicePdfGenerationOptions): Promise<Blob> => {
   const templateId = opts?.templateId ?? getInvoicePdfTemplate();

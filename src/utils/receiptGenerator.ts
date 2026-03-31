@@ -1,36 +1,24 @@
+import { createElement } from 'react';
 import { pdf } from '@react-pdf/renderer';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
-import BookingReceiptTemplate, { BookingReceiptData } from '@/components/receipts/BookingReceiptTemplate';
-import TrialReceiptTemplate, { TrialReceiptData } from '@/components/receipts/TrialReceiptTemplate';
+import BookingReceiptTemplate from '@/components/receipts/BookingReceiptTemplate';
+import TrialReceiptTemplate from '@/components/receipts/TrialReceiptTemplate';
 import { db } from '@/firebase/config';
+import { ManagedDocumentType, type TemplateImage } from '@/utils/documentTemplateUtils';
 import {
-  ManagedDocumentType,
-  replaceTemplateTokens,
-  TemplateImage,
-} from '@/utils/documentTemplateUtils';
+  buildBookingReceiptHtmlString,
+  buildTrialReceiptHtmlString,
+} from '@/utils/receiptTemplateHtml';
+import {
+  buildBookingReceiptData,
+  buildTrialReceiptData,
+  type EnquiryLike,
+  type VisitLike,
+} from '@/utils/receiptDataBuilders';
 
-const defaultCompany = {
-  companyName: 'Hope Digital Innovations Pvt Ltd',
-  companyAddress: 'G-14, Ground Floor, King Mall, Rohini, Delhi - 85',
-  companyPhone: '9711871169',
-  companyEmail: 'info@hopehearing.com',
-};
-
-const defaultBookingTerms = `1. This receipt is against advance payment for hearing aid booking.
-2. Balance amount to be paid as per agreed terms before delivery.
-3. Booking amount is non-refundable as per policy; exceptions at discretion of the center.`;
-
-const defaultTrialTerms = `1. Device is issued for trial and must be returned by the end date.
-2. Device should be returned in the same condition. Loss or damage may attract charges.
-3. Trial does not guarantee purchase; full payment required if you decide to buy.`;
-
-const defaultBookingFooter = `Thank you for your booking. Please retain this receipt for your records.`;
-
-const defaultTrialFooter = `This receipt confirms that the above hearing aid device has been issued for trial as on the start date.
-Please return the device in good condition by the end date. Damages or loss may attract charges.
-Thank you for choosing us.`;
+export type { EnquiryLike, VisitLike };
 
 type StoredDocumentTemplate = {
   id: string;
@@ -39,25 +27,17 @@ type StoredDocumentTemplate = {
   htmlContent?: string;
   images?: TemplateImage[];
   isFavorite?: boolean;
-  updatedAt?: any;
-  createdAt?: any;
+  updatedAt?: unknown;
+  createdAt?: unknown;
 };
 
-const LOGO_PLACEHOLDER_TOKEN = '{{LOGO_PLACEHOLDER}}';
-
-const getDefaultLogoUrl = (): string =>
-  typeof window === 'undefined' ? '/images/logohope.svg' : `${window.location.origin}/images/logohope.svg`;
-
-/** Ensures logo token resolves when the Firestore template has no uploaded logo. */
-const mergeTemplateImagesWithDefaultLogo = (images?: TemplateImage[]): TemplateImage[] => {
-  const list = [...(images ?? [])];
-  const hasLogo = list.some(
-    (im) => im.placeholder === LOGO_PLACEHOLDER_TOKEN && String(im.url ?? '').trim() !== ''
-  );
-  if (!hasLogo) {
-    list.push({ placeholder: LOGO_PLACEHOLDER_TOKEN, url: getDefaultLogoUrl() });
-  }
-  return list;
+const getTimestampValue = (value: unknown) => {
+  if (!value) return 0;
+  const v = value as { toMillis?: () => number; seconds?: number };
+  if (typeof v?.toMillis === 'function') return v.toMillis();
+  if (typeof v?.seconds === 'number') return v.seconds * 1000;
+  const parsed = new Date(value as string).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
 };
 
 /** html2canvas often fails to paint external SVGs; inline as data URL before capture. */
@@ -82,104 +62,8 @@ const inlineSvgImagesForHtml2Canvas = async (root: HTMLElement): Promise<void> =
   );
 };
 
-export type EnquiryLike = {
-  name?: string;
-  phone?: string;
-  email?: string;
-  address?: string;
-  /** Selected center document id (enquiry form) */
-  center?: string;
-  visitingCenter?: string;
-  centerId?: string;
-  payments?: Array<{
-    amount?: number;
-    paymentFor?: string;
-    paymentMode?: string;
-    paymentDate?: string;
-  }>;
-  paymentRecords?: Array<{
-    amount?: number;
-    paymentType?: string;
-    paymentMethod?: string;
-    paymentDate?: string;
-  }>;
-};
-
-export type VisitLike = {
-  id?: string;
-  visitDate?: string;
-  visitTime?: string;
-  centerId?: string;
-  hearingAidBooked?: boolean;
-  trialGiven?: boolean;
-  trialStartDate?: string;
-  trialEndDate?: string;
-  trialDuration?: number;
-  bookingDate?: string;
-  bookingAdvanceAmount?: number;
-  trialHearingAidBrand?: string;
-  trialHearingAidModel?: string;
-  trialHearingAidType?: string;
-  trialSerialNumber?: string;
-  whichEar?: string;
-  visitType?: string;
-  hearingAidBrand?: string;
-  hearingAidModel?: string;
-  hearingAidType?: string;
-  hearingAidPrice?: number;
-  bookingSellingPrice?: number;
-  bookingQuantity?: number;
-  products?: Array<{ name?: string; productName?: string; serialNumber?: string; brand?: string; model?: string }>;
-};
-
-const formatTrialType = (visit: VisitLike): string | undefined => {
-  const raw = String(visit.trialHearingAidType || visit.visitType || '').toLowerCase();
-  if (!raw) return undefined;
-  if (raw === 'home') return 'Home Trial';
-  if (raw === 'center' || raw === 'clinic') return 'Clinic Trial';
-  return raw;
-};
-
-const getBookingPaymentMode = (enquiry: EnquiryLike): string | undefined => {
-  const bookingPayment =
-    enquiry.payments?.find((payment) => payment.paymentFor === 'booking_advance') ||
-    enquiry.paymentRecords?.find((payment) => payment.paymentType === 'hearing_aid_booking');
-
-  return bookingPayment?.paymentMode || bookingPayment?.paymentMethod;
-};
-
-const getTimestampValue = (value: any) => {
-  if (!value) return 0;
-  if (typeof value?.toMillis === 'function') return value.toMillis();
-  if (typeof value?.seconds === 'number') return value.seconds * 1000;
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const escapeHtml = (value: string) =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-const formatHtmlText = (value?: string | number | null, multiline = false) => {
-  if (value == null || value === '') return '';
-  const text = escapeHtml(String(value));
-  return multiline ? text.replace(/\n/g, '<br/>') : text;
-};
-
-const formatCurrency = (amount?: number) =>
-  typeof amount === 'number' && !Number.isNaN(amount)
-    ? `Rs. ${amount.toLocaleString('en-IN')}`
-    : '';
-
 /** Resolve center display name from visit / enquiry ids (Firestore `centers` collection). */
-async function resolveCenterDisplayName(
-  enquiry: EnquiryLike,
-  visit: VisitLike
-): Promise<string | undefined> {
+async function resolveCenterDisplayName(enquiry: EnquiryLike, visit: VisitLike): Promise<string | undefined> {
   const raw =
     visit.centerId ||
     (enquiry as { visitingCenter?: string }).visitingCenter ||
@@ -199,45 +83,21 @@ async function resolveCenterDisplayName(
   return id;
 }
 
-/** One line for receipt: brand + model/product without repeating the same text twice. */
-function buildUniqueDeviceDescription(
-  visit: VisitLike,
-  product?: { name?: string; productName?: string; brand?: string; model?: string }
-): { brand?: string; model?: string; fullName?: string } {
-  const brand = (visit.hearingAidBrand || product?.brand || '').trim() || undefined;
-  const model = (visit.hearingAidModel || product?.model || '').trim() || undefined;
-  const prodName = (product?.name || product?.productName || '').trim() || undefined;
-
-  const parts: string[] = [];
-  const push = (s?: string) => {
-    const t = (s || '').trim();
-    if (!t) return;
-    if (!parts.some((p) => p.toLowerCase() === t.toLowerCase())) parts.push(t);
-  };
-
-  push(brand);
-  push(model);
-  if (prodName && prodName.toLowerCase() !== (brand || '').toLowerCase() && prodName.toLowerCase() !== (model || '').toLowerCase()) {
-    push(prodName);
-  }
-
-  const fullName = parts.length ? parts.join(' ') : undefined;
-  return { brand, model: model || undefined, fullName };
-}
-
 const getPreferredCustomTemplate = async (documentType: ManagedDocumentType): Promise<StoredDocumentTemplate | null> => {
   try {
     const snapshot = await getDocs(collection(db, 'invoiceTemplates'));
     const templates = snapshot.docs
       .map((item) => ({ id: item.id, ...item.data() } as StoredDocumentTemplate))
-      .filter((template) =>
-        template.templateType === 'html' && template.documentType === documentType && template.htmlContent
+      .filter(
+        (template) => template.templateType === 'html' && template.documentType === documentType && template.htmlContent
       )
       .sort((a, b) => {
         const favoriteDelta = Number(Boolean(b.isFavorite)) - Number(Boolean(a.isFavorite));
         if (favoriteDelta !== 0) return favoriteDelta;
-        return (getTimestampValue(b.updatedAt) || getTimestampValue(b.createdAt)) -
-          (getTimestampValue(a.updatedAt) || getTimestampValue(a.createdAt));
+        return (
+          (getTimestampValue(b.updatedAt) || getTimestampValue(b.createdAt)) -
+          (getTimestampValue(a.updatedAt) || getTimestampValue(a.createdAt))
+        );
       });
 
     return templates[0] ?? null;
@@ -246,82 +106,6 @@ const getPreferredCustomTemplate = async (documentType: ManagedDocumentType): Pr
     return null;
   }
 };
-
-const buildBookingReceiptHtml = (template: StoredDocumentTemplate, data: BookingReceiptData) => {
-  const qty = Number(data.quantity) || 1;
-  const unitSelling = Number(data.sellingPrice) || 0;
-  const totalAgreed = unitSelling * qty;
-  return replaceTemplateTokens(
-    template.htmlContent || '',
-    {
-      COMPANY_NAME: formatHtmlText(data.companyName),
-      COMPANY_ADDRESS: formatHtmlText(data.companyAddress, true),
-      COMPANY_PHONE: formatHtmlText(data.companyPhone),
-      COMPANY_EMAIL: formatHtmlText(data.companyEmail),
-      RECEIPT_NUMBER: formatHtmlText(data.receiptNumber),
-      RECEIPT_DATE: formatHtmlText(data.receiptDate),
-      PATIENT_NAME: formatHtmlText(data.patientName),
-      PATIENT_PHONE: formatHtmlText(data.patientPhone),
-      PATIENT_EMAIL: formatHtmlText(data.patientEmail),
-      PATIENT_ADDRESS: formatHtmlText(data.patientAddress, true),
-      BOOKING_DATE: formatHtmlText(data.bookingDate),
-      DEVICE_NAME: formatHtmlText(
-        data.deviceName ||
-          [data.deviceBrand, data.deviceModel].filter(Boolean).join(' ').trim()
-      ),
-      DEVICE_BRAND: formatHtmlText(data.deviceBrand),
-      DEVICE_MODEL: formatHtmlText(data.deviceModel),
-      MRP: formatHtmlText(formatCurrency(data.mrp)),
-      SELLING_PRICE: formatHtmlText(formatCurrency(data.sellingPrice)),
-      TOTAL_AGREED_VALUE: formatHtmlText(formatCurrency(totalAgreed)),
-      QUANTITY: formatHtmlText(data.quantity),
-      ADVANCE_AMOUNT: formatHtmlText(formatCurrency(data.advanceAmount)),
-      BALANCE_AMOUNT: formatHtmlText(formatCurrency(data.balanceAmount)),
-      PAYMENT_MODE: formatHtmlText(data.paymentMode),
-      CENTER_NAME: formatHtmlText(data.centerName),
-      VISIT_DATE: formatHtmlText(data.visitDate),
-      TERMS_TEXT: formatHtmlText(data.terms, true),
-      FOOTER_TEXT: formatHtmlText(defaultBookingFooter, true),
-      LOGO_PLACEHOLDER: '',
-      SIGNATURE_PLACEHOLDER: '',
-    },
-    mergeTemplateImagesWithDefaultLogo(template.images)
-  );
-};
-
-const buildTrialReceiptHtml = (template: StoredDocumentTemplate, data: TrialReceiptData) =>
-  replaceTemplateTokens(
-    template.htmlContent || '',
-    {
-      COMPANY_NAME: formatHtmlText(data.companyName),
-      COMPANY_ADDRESS: formatHtmlText(data.companyAddress, true),
-      COMPANY_PHONE: formatHtmlText(data.companyPhone),
-      COMPANY_EMAIL: formatHtmlText(data.companyEmail),
-      RECEIPT_NUMBER: formatHtmlText(data.receiptNumber),
-      RECEIPT_DATE: formatHtmlText(data.receiptDate),
-      PATIENT_NAME: formatHtmlText(data.patientName),
-      PATIENT_PHONE: formatHtmlText(data.patientPhone),
-      PATIENT_EMAIL: formatHtmlText(data.patientEmail),
-      PATIENT_ADDRESS: formatHtmlText(data.patientAddress, true),
-      TRIAL_DATE: formatHtmlText(data.trialDate),
-      TRIAL_START_DATE: formatHtmlText(data.trialStartDate),
-      TRIAL_END_DATE: formatHtmlText(data.trialEndDate),
-      TRIAL_DURATION_DAYS: formatHtmlText(
-        data.trialDurationDays != null ? `${data.trialDurationDays} days` : ''
-      ),
-      DEVICE_USED: formatHtmlText(data.deviceUsed),
-      TRIAL_TYPE: formatHtmlText(data.trialType),
-      SERIAL_NUMBER: formatHtmlText(data.serialNumber),
-      WHICH_EAR: formatHtmlText(data.whichEar),
-      CENTER_NAME: formatHtmlText(data.centerName),
-      VISIT_DATE: formatHtmlText(data.visitDate),
-      TERMS_TEXT: formatHtmlText(data.terms, true),
-      FOOTER_TEXT: formatHtmlText(defaultTrialFooter, true),
-      LOGO_PLACEHOLDER: '',
-      SIGNATURE_PLACEHOLDER: '',
-    },
-    mergeTemplateImagesWithDefaultLogo(template.images)
-  );
 
 const createPdfFromHtml = async (html: string): Promise<Blob> => {
   const container = document.createElement('div');
@@ -380,89 +164,13 @@ const createPdfFromHtml = async (html: string): Promise<Blob> => {
   }
 };
 
-/** Build booking receipt data from enquiry + visit. */
-export function buildBookingReceiptData(
-  enquiry: EnquiryLike,
-  visit: VisitLike,
-  options?: { receiptNumber?: string; centerName?: string }
-): BookingReceiptData {
-  const receiptDate = new Date().toLocaleDateString('en-IN');
-  const bookingDate = visit.bookingDate || visit.visitDate || receiptDate;
-  const product = visit.products?.[0];
-  const mrp = Number(visit.hearingAidPrice) || 0;
-  const advanceAmount = Number(visit.bookingAdvanceAmount) || 0;
-  const quantity = Number(visit.bookingQuantity) || 1;
-  const sellingPrice = Number(visit.bookingSellingPrice) || 0;
-  const bookingTotal = sellingPrice * quantity;
-  const { brand, model, fullName } = buildUniqueDeviceDescription(visit, product);
-  const deviceNameCombined = fullName;
-  return {
-    ...defaultCompany,
-    receiptNumber: options?.receiptNumber ?? `BR-${Date.now()}`,
-    receiptDate,
-    patientName: enquiry.name || 'Patient',
-    patientPhone: enquiry.phone,
-    patientEmail: enquiry.email,
-    patientAddress: enquiry.address,
-    bookingDate,
-    advanceAmount,
-    deviceBrand: brand,
-    deviceModel: model,
-    deviceName: deviceNameCombined,
-    mrp: mrp || undefined,
-    sellingPrice: sellingPrice || undefined,
-    quantity,
-    balanceAmount: bookingTotal > 0 ? Math.max(bookingTotal - advanceAmount, 0) : undefined,
-    paymentMode: getBookingPaymentMode(enquiry),
-    centerName: options?.centerName,
-    visitDate: visit.visitDate,
-    terms: defaultBookingTerms,
-  };
-}
-
-/** Build trial receipt data from enquiry + visit. */
-export function buildTrialReceiptData(
-  enquiry: EnquiryLike,
-  visit: VisitLike,
-  options?: { receiptNumber?: string; centerName?: string }
-): TrialReceiptData {
-  const receiptDate = new Date().toLocaleDateString('en-IN');
-  const product = visit.products?.[0];
-  const duration = visit.trialDuration ?? (visit.trialStartDate && visit.trialEndDate
-    ? Math.ceil((new Date(visit.trialEndDate).getTime() - new Date(visit.trialStartDate).getTime()) / (1000 * 60 * 60 * 24))
-    : undefined);
-  const trialType = formatTrialType(visit);
-  const isHomeTrial = trialType?.toLowerCase().includes('home');
-  return {
-    ...defaultCompany,
-    receiptNumber: options?.receiptNumber ?? `TR-${Date.now()}`,
-    receiptDate,
-    patientName: enquiry.name || 'Patient',
-    patientPhone: enquiry.phone,
-    patientEmail: enquiry.email,
-    patientAddress: enquiry.address,
-    trialDate: visit.visitDate,
-    trialStartDate: visit.trialStartDate || visit.visitDate || receiptDate,
-    trialEndDate: visit.trialEndDate,
-    trialDurationDays: duration,
-    deviceUsed: [
-      visit.trialHearingAidBrand || visit.hearingAidBrand || product?.brand,
-      visit.trialHearingAidModel || visit.hearingAidModel || product?.model,
-    ].filter(Boolean).join(' ').trim() || product?.name || product?.productName,
-    trialType,
-    serialNumber: isHomeTrial ? (visit.trialSerialNumber || product?.serialNumber) : undefined,
-    whichEar: visit.whichEar,
-    centerName: options?.centerName,
-    visitDate: visit.visitDate,
-    terms: defaultTrialTerms,
-  };
-}
+export { buildBookingReceiptData, buildTrialReceiptData } from '@/utils/receiptDataBuilders';
 
 /** Generate booking receipt PDF blob. */
 export async function generateBookingReceiptPDF(
   enquiry: EnquiryLike,
   visit: VisitLike,
-  options?: { receiptNumber?: string; centerName?: string }
+  options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
 ): Promise<Blob> {
   const centerName =
     options?.centerName !== undefined && options.centerName !== ''
@@ -471,13 +179,17 @@ export async function generateBookingReceiptPDF(
   const data = buildBookingReceiptData(enquiry, visit, {
     receiptNumber: options?.receiptNumber,
     centerName,
+    paymentMode: options?.paymentMode,
   });
   const customTemplate = await getPreferredCustomTemplate('booking_receipt');
   if (customTemplate?.htmlContent) {
-    return createPdfFromHtml(buildBookingReceiptHtml(customTemplate, data));
+    const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+    return createPdfFromHtml(
+      buildBookingReceiptHtmlString(customTemplate, data, { logoPublicOrigin: origin })
+    );
   }
-  const doc = BookingReceiptTemplate({ data });
-  return pdf(doc).toBlob();
+  const doc = createElement(BookingReceiptTemplate, { data });
+  return pdf(doc as Parameters<typeof pdf>[0]).toBlob();
 }
 
 /** Generate trial receipt PDF blob. */
@@ -496,10 +208,11 @@ export async function generateTrialReceiptPDF(
   });
   const customTemplate = await getPreferredCustomTemplate('trial_receipt');
   if (customTemplate?.htmlContent) {
-    return createPdfFromHtml(buildTrialReceiptHtml(customTemplate, data));
+    const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+    return createPdfFromHtml(buildTrialReceiptHtmlString(customTemplate, data, { logoPublicOrigin: origin }));
   }
-  const doc = TrialReceiptTemplate({ data });
-  return pdf(doc).toBlob();
+  const doc = createElement(TrialReceiptTemplate, { data });
+  return pdf(doc as Parameters<typeof pdf>[0]).toBlob();
 }
 
 /** Download booking receipt PDF. */
@@ -507,7 +220,7 @@ export async function downloadBookingReceiptPDF(
   enquiry: EnquiryLike,
   visit: VisitLike,
   filename?: string,
-  options?: { receiptNumber?: string; centerName?: string }
+  options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
 ): Promise<void> {
   const blob = await generateBookingReceiptPDF(enquiry, visit, options);
   const url = URL.createObjectURL(blob);
@@ -542,7 +255,7 @@ export async function downloadTrialReceiptPDF(
 export async function openBookingReceiptPDF(
   enquiry: EnquiryLike,
   visit: VisitLike,
-  options?: { receiptNumber?: string; centerName?: string }
+  options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
 ): Promise<void> {
   const blob = await generateBookingReceiptPDF(enquiry, visit, options);
   const url = URL.createObjectURL(blob);
