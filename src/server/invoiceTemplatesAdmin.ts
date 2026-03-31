@@ -60,11 +60,18 @@ export async function getResolvedHtmlTemplateAdmin(
       const docSnap = await db.collection('invoiceTemplates').doc(id).get();
       if (docSnap.exists) {
         const t = { id: docSnap.id, ...docSnap.data() } as StoredInvoiceHtmlTemplate;
-        if (isHtmlTemplateRecord(t) && templateMatchesDocumentType(t, documentType)) {
+        // Pinned from Invoice Manager: field name (`bookingReceiptTemplateId`, etc.) is authoritative.
+        if (isHtmlTemplateRecord(t)) {
+          if (templateMatchesDocumentType(t, documentType)) {
+            return t;
+          }
+          console.warn(
+            `getResolvedHtmlTemplateAdmin: pinned template ${id} has documentType=${JSON.stringify(t.documentType)} (expected ${documentType}) — using it anyway because it was explicitly set for staff PDFs`
+          );
           return t;
         }
         console.warn(
-          `getResolvedHtmlTemplateAdmin: routing id ${id} is not a valid ${documentType} HTML template; falling back to auto-pick`
+          `getResolvedHtmlTemplateAdmin: routing id ${id} is not usable as HTML (missing html or visual-only); falling back to auto-pick`
         );
       } else {
         console.warn(`getResolvedHtmlTemplateAdmin: routing template ${id} not found; falling back to auto-pick`);

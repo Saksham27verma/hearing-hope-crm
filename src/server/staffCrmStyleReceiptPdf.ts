@@ -86,6 +86,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       if (!template?.htmlContent) {
         throw new Error('no booking HTML template in invoiceTemplates (need non-visual HTML + documentType booking)');
       }
+      console.info(`staffCrmStyleReceiptPdf: booking template id=${template.id} len=${template.htmlContent.length}`);
       const centerName = await resolveCenterDisplayNameAdmin(args.enquiry, args.lastVisit);
       const data = buildBookingReceiptData(enquiry, visit, {
         receiptNumber: `BR-STAFF-${args.requestId.slice(0, 8)}`,

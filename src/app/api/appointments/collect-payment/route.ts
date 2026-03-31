@@ -16,6 +16,9 @@ import { docToCatalogProduct, type CatalogProductDoc } from '@/server/staffEnqui
 import { sendStaffPaymentNotifyEmail } from '@/server/sendStaffPaymentNotifyEmail';
 import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmails';
 
+/** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
+export const maxDuration = 60;
+
 const TZ = 'Asia/Kolkata';
 
 const CORS_HEADERS: Record<string, string> = {
