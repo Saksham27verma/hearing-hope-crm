@@ -492,13 +492,16 @@ ${detailLines?.length ? `<pre style="font-size:12px;white-space:pre-wrap">${esca
         emailSent = true;
       } catch (mailErr) {
         console.error('collect-payment: email failed', mailErr);
+        const emailError = mailErr instanceof Error ? mailErr.message : 'Email failed';
         return withCors(
           NextResponse.json(
             {
               ok: true,
               enquiryUpdated: true,
               emailSent: false,
-              warning: 'Payment recorded but email to admins failed. Check server logs and SMTP.',
+              emailError,
+              warning:
+                'Payment recorded but email to admins failed. Fix SMTP on the server or use Settings → Send test email to see the error.',
             },
             { status: 200 }
           )
