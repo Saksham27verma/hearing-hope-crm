@@ -664,6 +664,31 @@ export default function InventoryPage() {
           return Array.from(new Set(all.filter(Boolean)));
         };
 
+        const extractSerialLikeValuesDeep = (input: unknown, depth = 0): string[] => {
+          if (depth > 5 || input === null || input === undefined) return [];
+          if (typeof input === 'string' || typeof input === 'number') {
+            return splitSerialCandidates(String(input));
+          }
+          if (Array.isArray(input)) {
+            return Array.from(new Set(input.flatMap((v) => extractSerialLikeValuesDeep(v, depth + 1))));
+          }
+          if (typeof input === 'object') {
+            const out: string[] = [];
+            Object.entries(input as Record<string, unknown>).forEach(([k, v]) => {
+              const key = k.toLowerCase();
+              if (key.includes('serial')) {
+                out.push(...splitSerialCandidates(v));
+              }
+              // continue traversal for nested shapes
+              if (v && typeof v === 'object') {
+                out.push(...extractSerialLikeValuesDeep(v, depth + 1));
+              }
+            });
+            return Array.from(new Set(out));
+          }
+          return [];
+        };
+
         const serialCandidatesFromVisit = (visit: any): string[] => {
           const all: string[] = [];
           all.push(...splitSerialCandidates(visit?.trialSerialNumber));
@@ -812,7 +837,8 @@ export default function InventoryPage() {
           const docLevelSerials = splitSerialCandidates(
             data.serialNumber || data.trialSerialNumber || data.deviceSerial || data.hearingAidSerial
           );
-          docLevelSerials.forEach((serialNumber) => {
+          const deepDocSerials = extractSerialLikeValuesDeep(data);
+          Array.from(new Set([...docLevelSerials, ...deepDocSerials])).forEach((serialNumber) => {
             const key = makeSerialKey(data.productId || '', serialNumber);
             soldSerials.add(key);
             soldSerialOnly.add(normalizeSerialNumber(String(serialNumber || '')));
@@ -848,7 +874,10 @@ export default function InventoryPage() {
               const products: any[] = Array.isArray(visit.products)
                 ? visit.products
                 : (Array.isArray(visit?.hearingAidDetails?.products) ? visit.hearingAidDetails.products : []);
-              const visitLevelSerials = visitSerialCandidates;
+              const visitLevelSerials = Array.from(new Set([
+                ...visitSerialCandidates,
+                ...extractSerialLikeValuesDeep(visit),
+              ]));
               products.forEach((prod: any) => {
                 // Handle different product structures in enquiry visits
                 const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
