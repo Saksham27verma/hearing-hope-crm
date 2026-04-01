@@ -1067,7 +1067,7 @@ export default function InventoryPage() {
         soldSerialMetaByKey.forEach((meta, key) => {
           if (incomingMap.has(key)) return;
           const productRef = productById.get(meta.productId) || {};
-          const location = String(meta.centerId || headOfficeId || '').trim();
+          const location = String(meta.centerId || '').trim();
           incomingMap.set(key, {
             id: `sold-${key}`,
             productId: meta.productId,
@@ -1419,11 +1419,6 @@ export default function InventoryPage() {
         const businessCompanyMatch = item.company?.toLowerCase().includes(companyFilter.toLowerCase());
         return manufacturerMatch || businessCompanyMatch;
       });
-    }
-    
-    // For staff and audiologist users, filter out sold items
-    if (isRestrictedUser) {
-      filtered = filtered.filter(item => item.status !== 'Sold');
     }
     
     setFilteredInventory(filtered);
