@@ -675,6 +675,16 @@ export default function InventoryPage() {
               all.push(...serialCandidatesFromProduct(p));
             });
           }
+          if (Array.isArray(visit?.previousSales)) {
+            visit.previousSales.forEach((line: any) => {
+              all.push(...splitSerialCandidates(line?.serialNumber));
+            });
+          }
+          if (Array.isArray(visit?.hearingAidDetails?.previousSales)) {
+            visit.hearingAidDetails.previousSales.forEach((line: any) => {
+              all.push(...splitSerialCandidates(line?.serialNumber));
+            });
+          }
           return Array.from(new Set(all.filter(Boolean)));
         };
 
@@ -814,18 +824,31 @@ export default function InventoryPage() {
           const data: any = docSnap.data();
           const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
           visits.forEach((visit: any) => {
+            const visitSerialCandidates = serialCandidatesFromVisit(visit);
             const isSale = !!(
               visit?.hearingAidSale ||
               (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
               visit?.journeyStage === 'sale' ||
+              visit?.hearingAidDetails?.journeyStage === 'sale' ||
               visit?.hearingAidStatus === 'sold' ||
+              visit?.hearingAidDetails?.hearingAidStatus === 'sold' ||
+              String(visit?.invoiceNumber || '').trim() !== '' ||
+              String(visit?.salesInvoiceNumber || '').trim() !== '' ||
               (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
             );
-            if (isSale) {
+            const hasSoldSerialSignal = visitSerialCandidates.length > 0 && (
+              Number(visit?.salesAfterTax || 0) > 0 ||
+              Number(visit?.grossSalesBeforeTax || 0) > 0 ||
+              String(visit?.invoiceNumber || '').trim() !== '' ||
+              String(visit?.salesInvoiceNumber || '').trim() !== '' ||
+              visit?.hearingAidStatus === 'sold' ||
+              visit?.hearingAidDetails?.hearingAidStatus === 'sold'
+            );
+            if (isSale || hasSoldSerialSignal) {
               const products: any[] = Array.isArray(visit.products)
                 ? visit.products
                 : (Array.isArray(visit?.hearingAidDetails?.products) ? visit.hearingAidDetails.products : []);
-              const visitLevelSerials = serialCandidatesFromVisit(visit);
+              const visitLevelSerials = visitSerialCandidates;
               products.forEach((prod: any) => {
                 // Handle different product structures in enquiry visits
                 const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
