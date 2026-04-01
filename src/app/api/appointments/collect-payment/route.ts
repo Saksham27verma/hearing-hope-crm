@@ -19,6 +19,9 @@ import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmail
 /** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
 export const maxDuration = 60;
 
+/** Puppeteer / @sparticuz/chromium require Node (not Edge). */
+export const runtime = 'nodejs';
+
 const TZ = 'Asia/Kolkata';
 
 const CORS_HEADERS: Record<string, string> = {

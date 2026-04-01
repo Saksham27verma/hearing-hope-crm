@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /**
+   * Required for HTML→PDF on Vercel: without this, webpack bundles `@sparticuz/chromium` and
+   * `executablePath()` / brotli extraction break → collect-payment silently falls back to the minimal pdf-lib receipt.
+   */
+  serverExternalPackages: ["puppeteer", "puppeteer-core", "@sparticuz/chromium"],
+
   // Performance optimizations
   poweredByHeader: false,
   compress: true,

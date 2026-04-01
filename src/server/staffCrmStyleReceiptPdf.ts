@@ -143,9 +143,10 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       return { buffer, templateId: template.id };
     }
   } catch (e) {
-    console.warn(
-      'staffCrmStyleReceiptPdf: falling back to minimal PDF (check Firestore invoiceTemplates + Puppeteer logs):',
-      e
+    const detail = e instanceof Error ? `${e.message}\n${e.stack}` : String(e);
+    console.error(
+      'staffCrmStyleReceiptPdf: CRM HTML template path failed — email will use minimal pdf-lib receipt. Cause:',
+      detail
     );
   }
 
