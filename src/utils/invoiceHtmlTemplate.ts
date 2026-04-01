@@ -71,9 +71,13 @@ export function processInvoiceHtmlTemplate(
 
   if (invoiceData.items && invoiceData.items.length > 0) {
     const isSixColumnInvoiceTemplate =
-      /Description\s*&\s*Specification/i.test(html) &&
-      /GST\s*Amount/i.test(html) &&
-      /Total\s*Amount/i.test(html);
+      /class=["']item-table["']/i.test(html) &&
+      /Description\s*&(?:amp;)?\s*Specification/i.test(html) &&
+      /<th[^>]*>\s*HSN\s*<\/th>/i.test(html) &&
+      /<th[^>]*>\s*Qty\s*<\/th>/i.test(html) &&
+      /<th[^>]*>\s*Price\s*<\/th>/i.test(html) &&
+      /<th[^>]*>\s*GST\s*Amount\s*<\/th>/i.test(html) &&
+      /<th[^>]*>\s*Total\s*Amount\s*<\/th>/i.test(html);
     const itemsHTML = invoiceData.items
       .map((raw, index) => {
         const item = raw as InvoiceLineItem;
