@@ -232,7 +232,7 @@ function defaultVisitShell(appointment: Record<string, unknown>): Record<string,
     visitDate: today,
     visitTime,
     visitType,
-    visitNotes: 'Updated from staff app (appointment-linked payment / receipt request).',
+    visitNotes: 'Updated from staff app (appointment-linked visit / receipt request).',
     hearingTest: false,
     hearingAidTrial: false,
     hearingAidBooked: false,
@@ -307,6 +307,145 @@ function defaultVisitShell(appointment: Record<string, unknown>): Record<string,
     salesAfterTax: 0,
     totalDiscountPercent: 0,
   };
+}
+
+/** Non-payment visit logging from staff mobile / PWA — hearing test, accessory, programming, counselling. */
+export type StaffVisitServicesHearingTest = {
+  hearingTestEntries: { id: string; testType: string; price: number }[];
+  testDoneBy?: string;
+  testResults?: string;
+  recommendations?: string;
+};
+
+export type StaffVisitServicesAccessory = {
+  accessoryName: string;
+  accessoryDetails?: string;
+  accessoryFOC?: boolean;
+  accessoryAmount?: number;
+  accessoryQuantity?: number;
+};
+
+export type StaffVisitServicesProgramming = {
+  programmingReason?: string;
+  programmingAmount?: number;
+  programmingDoneBy?: string;
+  hearingAidPurchaseDate?: string;
+  hearingAidName?: string;
+  underWarranty?: boolean;
+  /** CRM visit `warranty` string */
+  warranty?: string;
+};
+
+export type StaffVisitServicesCounselling = {
+  notes?: string;
+};
+
+export type StaffVisitServicesPayload = {
+  hearingTest?: StaffVisitServicesHearingTest;
+  accessory?: StaffVisitServicesAccessory;
+  programming?: StaffVisitServicesProgramming;
+  counselling?: StaffVisitServicesCounselling;
+};
+
+function sumHearingTestEntryPricesFromEntries(
+  entries: { testType?: string; price?: number }[],
+  fallbackTestPrice: number
+): number {
+  const filtered = entries.filter((e) => String(e.testType || '').trim());
+  if (filtered.length === 0) return Math.max(0, Number(fallbackTestPrice) || 0);
+  return filtered.reduce((s, e) => s + Math.max(0, Number(e.price) || 0), 0);
+}
+
+/**
+ * Appends one visit with selected service flags/fields. Does not modify financialSummary or payments.
+ * At least one service key must be present in `services` (validated by API).
+ */
+export function mergeStaffVisitServicesIntoEnquiry(args: {
+  enquiry: Record<string, unknown>;
+  appointment: Record<string, unknown>;
+  appointmentId: string;
+  services: StaffVisitServicesPayload;
+}): { visits: Record<string, unknown>[]; visitSchedules: Record<string, unknown>[]; financialSummary: Record<string, unknown> } {
+  const { enquiry, appointment, appointmentId, services } = args;
+  const visitsRaw = Array.isArray(enquiry.visits) ? [...(enquiry.visits as Record<string, unknown>[])] : [];
+
+  const baseNote = `Staff app — appointment ${appointmentId} — visit services logged.`;
+  const extraLines: string[] = [];
+
+  const v = {
+    ...(defaultVisitShell(appointment) as Record<string, unknown>),
+    visitNotes: baseNote,
+  };
+
+  if (services.hearingTest) {
+    const ht = services.hearingTest;
+    const entries = (ht.hearingTestEntries || []).map((e) => ({
+      id: String(e.id || '').trim() || uuidv4(),
+      testType: String(e.testType || '').trim(),
+      price: Math.max(0, Number(e.price) || 0),
+    }));
+    const filtered = entries.filter((e) => e.testType);
+    const testTypeLine = filtered.map((e) => e.testType).join(', ');
+    const testPrice = sumHearingTestEntryPricesFromEntries(filtered, 0);
+
+    Object.assign(v, {
+      hearingTest: true,
+      hearingTestEntries: filtered,
+      testType: testTypeLine,
+      testPrice,
+      testDoneBy: String(ht.testDoneBy || '').trim(),
+      testResults: String(ht.testResults || '').trim(),
+      recommendations: String(ht.recommendations || '').trim(),
+    });
+  }
+
+  if (services.accessory) {
+    const a = services.accessory;
+    Object.assign(v, {
+      accessory: true,
+      accessoryName: String(a.accessoryName || '').trim(),
+      accessoryDetails: String(a.accessoryDetails || '').trim(),
+      accessoryFOC: Boolean(a.accessoryFOC),
+      accessoryAmount: Math.max(0, Number(a.accessoryAmount) || 0),
+      accessoryQuantity: Math.max(1, Math.floor(Number(a.accessoryQuantity) || 1)),
+    });
+  }
+
+  if (services.programming) {
+    const p = services.programming;
+    Object.assign(v, {
+      programming: true,
+      programmingReason: String(p.programmingReason || '').trim(),
+      programmingAmount: Math.max(0, Number(p.programmingAmount) || 0),
+      programmingDoneBy: String(p.programmingDoneBy || '').trim(),
+      hearingAidPurchaseDate: String(p.hearingAidPurchaseDate || '').trim(),
+      hearingAidName: String(p.hearingAidName || '').trim(),
+      underWarranty: Boolean(p.underWarranty),
+      warranty: String(p.warranty || '').trim(),
+    });
+  }
+
+  if (services.counselling) {
+    const c = services.counselling;
+    Object.assign(v, { counselling: true });
+    const n = String(c.notes || '').trim();
+    if (n) {
+      extraLines.push(`Counselling: ${n}`);
+    }
+  }
+
+  if (extraLines.length > 0) {
+    v.visitNotes = [String(v.visitNotes || baseNote), ...extraLines].join('\n\n');
+  }
+
+  visitsRaw.push(removeUndefined(v) as Record<string, unknown>);
+
+  const visitSchedules = visitsRaw.map((visit) => mapVisitToVisitSchedule(visit));
+
+  const fs = (enquiry.financialSummary as Record<string, unknown>) || {};
+  const financialSummary = { ...fs };
+
+  return { visits: visitsRaw, visitSchedules, financialSummary };
 }
 
 export function mergeStaffSubmissionIntoEnquiry(args: {
