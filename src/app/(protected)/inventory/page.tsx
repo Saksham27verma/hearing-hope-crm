@@ -294,8 +294,15 @@ export default function InventoryPage() {
         // Get head office ID for backward compatibility
         const headOfficeId = await getHeadOfficeId();
         
-        // Fetch all needed collections in parallel
-        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap] = await Promise.all([
+        // Fetch all needed collections in parallel, but don't fail entire page if one read is denied.
+        const [
+          productsRes,
+          materialInRes,
+          purchasesRes,
+          materialsOutRes,
+          salesRes,
+          enquiriesRes,
+        ] = await Promise.allSettled([
           getDocs(collection(db, 'products')),
           getDocs(collection(db, 'materialInward')),
           getDocs(collection(db, 'purchases')),
@@ -304,11 +311,24 @@ export default function InventoryPage() {
           getDocs(collection(db, 'enquiries')),
         ]);
 
+        const toDocs = (res: PromiseSettledResult<any>, label: string) => {
+          if (res.status === 'fulfilled') return res.value;
+          console.error(`Inventory source read failed: ${label}`, res.reason);
+          return { docs: [] as any[] };
+        };
+
+        const productsSnap = toDocs(productsRes, 'products');
+        const materialInSnap = toDocs(materialInRes, 'materialInward');
+        const purchasesSnap = toDocs(purchasesRes, 'purchases');
+        const materialsOutSnap = toDocs(materialsOutRes, 'materialsOut');
+        const salesSnap = toDocs(salesRes, 'sales');
+        const enquiriesSnap = toDocs(enquiriesRes, 'enquiries');
+
         // Products map
-        const productsList = productsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+        const productsList = productsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() as any) }));
         setProducts(productsList);
         const productById = new Map<string, any>();
-        productsList.forEach(p => productById.set(p.id, p));
+        productsList.forEach((p: any) => productById.set(p.id, p));
 
         const journeyMap = new Map<string, JourneyEvent[]>();
         const addJourneyEvent = (serialNumber: string, event: Omit<JourneyEvent, 'serialNumber' | 'sortOrder'>) => {
@@ -333,7 +353,7 @@ export default function InventoryPage() {
           };
         };
 
-        materialInSnap.docs.forEach(docSnap => {
+        materialInSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const supplierName = data.supplier?.name || '';
           const location = data.location || headOfficeId;
@@ -367,7 +387,7 @@ export default function InventoryPage() {
           });
         });
 
-        purchasesSnap.docs.forEach(docSnap => {
+        purchasesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const supplierName = data.party?.name || '';
           const location = data.location || headOfficeId;
@@ -398,7 +418,7 @@ export default function InventoryPage() {
           });
         });
 
-        materialsOutSnap.docs.forEach(docSnap => {
+        materialsOutSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const recipientName = data.recipient?.name || '';
           const location = data.location || headOfficeId;
@@ -442,7 +462,7 @@ export default function InventoryPage() {
           });
         });
 
-        salesSnap.docs.forEach(docSnap => {
+        salesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const patientName = data.patientName || 'Unknown patient';
           const location = data.centerId || data.branch || '';
@@ -473,7 +493,7 @@ export default function InventoryPage() {
           });
         });
 
-        enquiriesSnap.docs.forEach(docSnap => {
+        enquiriesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const patientName = data.name || 'Unknown patient';
           const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
@@ -715,7 +735,7 @@ export default function InventoryPage() {
 
         // Incoming serials for stock transfer tracking
         const stockTransferInSerials = new Set<string>();
-        materialInSnap.docs.forEach(docSnap => {
+        materialInSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const supplierName = data.supplier?.name || '';
           // Check if this is a stock transfer entry
@@ -735,7 +755,7 @@ export default function InventoryPage() {
         const pendingOutSerials = new Set<string>();
         const dispatchedOutSerials = new Set<string>();
         const stockTransferOutSerials = new Map<string, string>(); // key: serial key, value: source location
-        materialsOutSnap.docs.forEach(docSnap => {
+        materialsOutSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const rawStatus = (data.status as string) || '';
           const notes = data.notes || '';
@@ -794,7 +814,7 @@ export default function InventoryPage() {
         }>();
         
         // Process sales from sales collection
-        salesSnap.docs.forEach(docSnap => {
+        salesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const saleProducts: any[] = Array.isArray(data.products)
             ? data.products
@@ -846,7 +866,7 @@ export default function InventoryPage() {
         });
 
         // Also check enquiries collection for sales (to handle sales recorded in visits)
-        enquiriesSnap.docs.forEach(docSnap => {
+        enquiriesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
           visits.forEach((visit: any) => {
@@ -924,12 +944,12 @@ export default function InventoryPage() {
 
         // Build lookup maps for deep links
         const challanByNumber = new Map<string, string>();
-        materialInSnap.docs.forEach(d => {
+        materialInSnap.docs.forEach((d: any) => {
           const ch = (d.data() as any).challanNumber;
           if (ch) challanByNumber.set(ch, d.id);
         });
         const invoiceByNumber = new Map<string, string>();
-        purchasesSnap.docs.forEach(d => {
+        purchasesSnap.docs.forEach((d: any) => {
           const inv = (d.data() as any).invoiceNo;
           if (inv) invoiceByNumber.set(inv, d.id);
         });
@@ -942,7 +962,7 @@ export default function InventoryPage() {
         const nonSerialInByProduct = new Map<string, NonSerialAgg>(); // Legacy: for backward compatibility
 
         // Material Inward
-        materialInSnap.docs.forEach(docSnap => {
+        materialInSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const receivedDate = data.receivedDate;
           const supplierName = data.supplier?.name || '';
@@ -1036,7 +1056,7 @@ export default function InventoryPage() {
         });
 
         // Purchases (only add serials not already present from Material In)
-        purchasesSnap.docs.forEach(docSnap => {
+        purchasesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const purchaseDate = data.purchaseDate;
           const supplierName = data.party?.name || '';
@@ -1115,7 +1135,7 @@ export default function InventoryPage() {
         const nonSerialOutByProduct = new Map<string, number>(); // Global for sales (not location-specific)
         
         // Count materials out by location (for stock transfers)
-        materialsOutSnap.docs.forEach(docSnap => {
+        materialsOutSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const documentLocation = data.location || headOfficeId;
           const notes = data.notes || '';
@@ -1140,7 +1160,7 @@ export default function InventoryPage() {
         });
 
         // Count sales (both from sales collection and enquiries)
-        salesSnap.docs.forEach(docSnap => {
+        salesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           (data.products || []).forEach((prod: any) => {
             const productId = prod.productId || prod.id || '';
@@ -1155,7 +1175,7 @@ export default function InventoryPage() {
         });
 
         // Count sales from enquiries
-        enquiriesSnap.docs.forEach(docSnap => {
+        enquiriesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
           visits.forEach((visit: any) => {
@@ -1332,7 +1352,7 @@ export default function InventoryPage() {
 
         // Build non-serial items per product and location with remaining quantity
         // Aggregate incoming by product + location (populate the map declared above)
-        materialInSnap.docs.forEach(docSnap => {
+        materialInSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const documentLocation = data.location || headOfficeId;
           (data.products || []).forEach((prod: any) => {
@@ -1372,7 +1392,7 @@ export default function InventoryPage() {
         });
         
         // Also add purchases by location
-        purchasesSnap.docs.forEach(docSnap => {
+        purchasesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const documentLocation = data.location || headOfficeId;
           (data.products || []).forEach((prod: any) => {
