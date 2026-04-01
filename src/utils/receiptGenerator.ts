@@ -164,10 +164,57 @@ const createPdfFromHtml = async (html: string): Promise<Blob> => {
   }
 };
 
+async function generateReceiptPdfServer(
+  receiptType: 'booking' | 'trial',
+  enquiry: EnquiryLike,
+  visit: VisitLike,
+  options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
+): Promise<Blob> {
+  const res = await fetch('/api/receipts/render', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      receiptType,
+      enquiry,
+      visit,
+      options,
+    }),
+  });
+  if (!res.ok) {
+    let message = `Failed to render ${receiptType} receipt`;
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j?.error) message = j.error;
+    } catch {
+      // no-op
+    }
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
 export { buildBookingReceiptData, buildTrialReceiptData } from '@/utils/receiptDataBuilders';
 
 /** Generate booking receipt PDF blob. */
 export async function generateBookingReceiptPDF(
+  enquiry: EnquiryLike,
+  visit: VisitLike,
+  options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
+): Promise<Blob> {
+  return generateReceiptPdfServer('booking', enquiry, visit, options);
+}
+
+/** Generate trial receipt PDF blob. */
+export async function generateTrialReceiptPDF(
+  enquiry: EnquiryLike,
+  visit: VisitLike,
+  options?: { receiptNumber?: string; centerName?: string }
+): Promise<Blob> {
+  return generateReceiptPdfServer('trial', enquiry, visit, options);
+}
+
+/* Legacy client-side renderer retained for fallback/dev utility only. */
+async function _legacyClientBookingPdf(
   enquiry: EnquiryLike,
   visit: VisitLike,
   options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
@@ -191,8 +238,8 @@ export async function generateBookingReceiptPDF(
   );
 }
 
-/** Generate trial receipt PDF blob. */
-export async function generateTrialReceiptPDF(
+/* Legacy client-side renderer retained for fallback/dev utility only. */
+async function _legacyClientTrialPdf(
   enquiry: EnquiryLike,
   visit: VisitLike,
   options?: { receiptNumber?: string; centerName?: string }
