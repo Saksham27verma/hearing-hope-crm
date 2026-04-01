@@ -625,6 +625,17 @@ export default function InventoryPage() {
           });
         });
 
+        // Align inventory sold-serial truth with Product Journey:
+        // if a serial has a "sale" event in journey, treat it as sold in inventory too.
+        const soldFromJourneyOnly = new Set<string>();
+        journeyMap.forEach((events, serialKey) => {
+          if (events.some((e) => e.eventType === 'sale')) {
+            const normalized = normalizeSerialNumber(serialKey);
+            if (normalized) soldFromJourneyOnly.add(normalized);
+          }
+        });
+        soldFromJourneyOnly.forEach((sn) => soldSerialOnly.add(sn));
+
         const splitSerialCandidates = (raw: unknown): string[] => {
           if (Array.isArray(raw)) {
             return raw
