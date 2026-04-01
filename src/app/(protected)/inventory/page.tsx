@@ -621,6 +621,21 @@ export default function InventoryPage() {
           });
         });
 
+        const splitSerialCandidates = (raw: unknown): string[] => {
+          if (Array.isArray(raw)) {
+            return raw.map((v) => String(v || '').trim()).filter(Boolean);
+          }
+          const text = String(raw || '').trim();
+          if (!text) return [];
+          return text
+            .split(/[,\n;|]+/g)
+            .map((v) => v.trim())
+            .filter(Boolean);
+        };
+
+        const makeSerialKey = (productId: unknown, serialNumber: unknown): string =>
+          `${String(productId || '').trim()}|${String(serialNumber || '').trim().toUpperCase()}`;
+
         // Incoming serials for stock transfer tracking
         const stockTransferInSerials = new Set<string>();
         materialInSnap.docs.forEach(docSnap => {
@@ -629,11 +644,11 @@ export default function InventoryPage() {
           // Check if this is a stock transfer entry
           if (supplierName.includes('Stock Transfer from')) {
             (data.products || []).forEach((prod: any) => {
-              const serialArray: string[] = Array.isArray(prod.serialNumbers)
-                ? prod.serialNumbers
-                : (prod.serialNumber ? [prod.serialNumber] : []);
+              const serialArray: string[] = splitSerialCandidates(
+                Array.isArray(prod.serialNumbers) ? prod.serialNumbers : prod.serialNumber
+              );
               serialArray.forEach((sn: string) => {
-                stockTransferInSerials.add(`${prod.productId || prod.id || ''}|${sn}`);
+                stockTransferInSerials.add(makeSerialKey(prod.productId || prod.id || '', sn));
               });
             });
           }
@@ -652,11 +667,11 @@ export default function InventoryPage() {
           const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
           
           (data.products || []).forEach((prod: any) => {
-            const serialArray: string[] = Array.isArray(prod.serialNumbers)
-              ? prod.serialNumbers
-              : (prod.serialNumber ? [prod.serialNumber] : []);
+            const serialArray: string[] = splitSerialCandidates(
+              Array.isArray(prod.serialNumbers) ? prod.serialNumbers : prod.serialNumber
+            );
             serialArray.forEach((sn: string) => {
-              const key = `${prod.productId || prod.id || ''}|${sn}`;
+              const key = makeSerialKey(prod.productId || prod.id || '', sn);
               
               // For stock transfers, track which location the serial was transferred from
               if (isStockTransfer) {
@@ -686,12 +701,18 @@ export default function InventoryPage() {
           (data.products || []).forEach((prod: any) => {
             // Handle both sales collection structure and enquiry-derived sales
             const productId = prod.productId || prod.id || '';
-            const serialNumber = prod.serialNumber || '';
-            const key = `${productId}|${serialNumber}`;
-            if (serialNumber) {
-              soldSerials.add(key);
-              console.log(`Added sold serial: ${key} from sale ${docSnap.id}`);
-            }
+            const serialCandidates = splitSerialCandidates(
+              Array.isArray(prod.serialNumbers) && prod.serialNumbers.length > 0
+                ? prod.serialNumbers
+                : prod.serialNumber
+            );
+            serialCandidates.forEach((serialNumber) => {
+              const key = makeSerialKey(productId, serialNumber);
+              if (serialNumber) {
+                soldSerials.add(key);
+                console.log(`Added sold serial: ${key} from sale ${docSnap.id}`);
+              }
+            });
           });
         });
 
@@ -712,12 +733,16 @@ export default function InventoryPage() {
               products.forEach((prod: any) => {
                 // Handle different product structures in enquiry visits
                 const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
-                const serialNumber = prod.serialNumber || prod.trialSerialNumber || '';
-                const key = `${productId}|${serialNumber}`;
-                if (serialNumber && productId) {
-                  soldSerials.add(key);
-                  console.log(`Added sold serial from enquiry: ${key} from enquiry ${docSnap.id}`);
-                }
+                const serialCandidates = splitSerialCandidates(
+                  prod.serialNumber || prod.trialSerialNumber || ''
+                );
+                serialCandidates.forEach((serialNumber) => {
+                  const key = makeSerialKey(productId, serialNumber);
+                  if (serialNumber && productId) {
+                    soldSerials.add(key);
+                    console.log(`Added sold serial from enquiry: ${key} from enquiry ${docSnap.id}`);
+                  }
+                });
               });
             }
           });
@@ -781,7 +806,7 @@ export default function InventoryPage() {
               return;
             }
             serials.forEach((sn: string) => {
-              const key = `${productId}|${sn}`;
+              const key = makeSerialKey(productId, sn);
               const isStockTransferIn = supplierName.includes('Stock Transfer from');
               if (incomingMap.has(key)) {
                 // Stock transfer IN should override the current location/company (move item)
@@ -874,7 +899,7 @@ export default function InventoryPage() {
               return;
             }
             serials.forEach((sn: string) => {
-              const key = `${productId}|${sn}`;
+              const key = makeSerialKey(productId, sn);
               if (incomingMap.has(key)) return; // already from material in (converted)
               
               // Exclude items that were dispatched out (not available in inventory)
