@@ -58,6 +58,100 @@ function parseAppointmentStart(start: unknown): Date | null {
   return null;
 }
 
+function firstNonEmptyString(...values: unknown[]): string {
+  for (const v of values) {
+    const s = String(v ?? '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+function buildSalesDocFromStaffInvoice(args: {
+  enquiryId: string;
+  enquiryData: Record<string, unknown>;
+  visit: Record<string, unknown>;
+  visitIndex: number;
+  amountPaidNow: number;
+  staffUid: string;
+  staffName: string;
+  paymentMethod: string;
+}): Record<string, unknown> {
+  const products = Array.isArray(args.visit.products) ? args.visit.products : [];
+  const grossSalesBeforeTax = Number(args.visit.grossSalesBeforeTax) || 0;
+  const gstAmount = Number(args.visit.taxAmount) || 0;
+  const grandTotal = Number(args.visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+  const paymentStatus = args.amountPaidNow >= grandTotal ? 'paid' : 'pending';
+  const visitDate = firstNonEmptyString(args.visit.purchaseDate, args.visit.visitDate);
+  const saleDate = visitDate ? Timestamp.fromDate(new Date(`${visitDate}T00:00:00+05:30`)) : Timestamp.now();
+
+  const accessoryName = firstNonEmptyString(args.visit.accessoryName, (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryName);
+  const accessoryQty = Math.max(
+    1,
+    Number(
+      (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryQuantity ??
+        args.visit.accessoryQuantity ??
+        1
+    ) || 1
+  );
+  const accessoryFOC = Boolean(
+    (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryFOC ?? args.visit.accessoryFOC
+  );
+  const accessoryUnitAmount = accessoryFOC
+    ? 0
+    : Math.max(
+        0,
+        Number(
+          (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryAmount ??
+            args.visit.accessoryAmount ??
+            0
+        ) || 0
+      );
+  const accessories =
+    args.visit.accessory && accessoryName
+      ? [
+          {
+            id: 'visit-accessory',
+            name: accessoryName,
+            isFree: accessoryFOC,
+            quantity: accessoryQty,
+            price: accessoryUnitAmount,
+          },
+        ]
+      : [];
+
+  return {
+    invoiceNumber: firstNonEmptyString(args.visit.invoiceNumber),
+    patientName: firstNonEmptyString(args.enquiryData.name, args.enquiryData.patientName, 'Patient'),
+    phone: firstNonEmptyString(args.enquiryData.phone, args.enquiryData.mobile),
+    email: firstNonEmptyString(args.enquiryData.email),
+    address: firstNonEmptyString(args.enquiryData.address, args.enquiryData.location),
+    products,
+    accessories,
+    manualLineItems: [],
+    referenceDoctor: { name: '' },
+    salesperson: {
+      id: args.staffUid,
+      name: args.staffName,
+    },
+    totalAmount: grossSalesBeforeTax + accessories.reduce((s: number, a: any) => s + (a.isFree ? 0 : a.price * a.quantity), 0),
+    gstAmount,
+    gstPercentage: 0,
+    grandTotal,
+    netProfit: 0,
+    branch: '',
+    centerId: firstNonEmptyString(args.visit.centerId, args.enquiryData.visitingCenter, (args.enquiryData as { center?: string }).center),
+    paymentMethod: args.paymentMethod.toLowerCase(),
+    paymentStatus,
+    notes: `Generated from staff app invoice flow (visit ${firstNonEmptyString(args.visit.id)}).`,
+    saleDate,
+    source: 'enquiry',
+    enquiryId: args.enquiryId,
+    enquiryVisitIndex: args.visitIndex,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+}
+
 function isSameCalendarDayInKolkata(a: Date, b: Date): boolean {
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: TZ,
@@ -500,6 +594,30 @@ export async function POST(req: Request) {
       payments: FieldValue.arrayUnion(crmPaymentEntry),
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+    if (receiptType === 'invoice') {
+      const lastVisitIndex = merged.visits.length - 1;
+      const lastVisit = (merged.visits[lastVisitIndex] || {}) as Record<string, unknown>;
+      const existingSaleSnap = await db
+        .collection('sales')
+        .where('enquiryId', '==', enquiryId)
+        .where('enquiryVisitIndex', '==', lastVisitIndex)
+        .limit(1)
+        .get();
+      if (existingSaleSnap.empty) {
+        const saleDoc = buildSalesDocFromStaffInvoice({
+          enquiryId,
+          enquiryData,
+          visit: lastVisit,
+          visitIndex: lastVisitIndex,
+          amountPaidNow: amount,
+          staffUid: uid,
+          staffName,
+          paymentMethod,
+        });
+        await db.collection('sales').add(deepStripUndefined(saleDoc) as Record<string, unknown>);
+      }
+    }
 
     const patientName = ((appt.patientName as string) || (appt.title as string) || 'Patient').trim();
     const receiptLabel =

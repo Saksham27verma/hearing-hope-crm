@@ -1,5 +1,3 @@
-import { createElement } from 'react';
-import { pdf } from '@react-pdf/renderer';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -9,8 +7,6 @@ import {
   type DocumentTemplateRoutingDoc,
   routingFieldForDocumentType,
 } from '@/lib/crmSettings/documentTemplateRouting';
-import BookingReceiptTemplate from '@/components/receipts/BookingReceiptTemplate';
-import TrialReceiptTemplate from '@/components/receipts/TrialReceiptTemplate';
 import { db } from '@/firebase/config';
 import { ManagedDocumentType, type TemplateImage } from '@/utils/documentTemplateUtils';
 import {
@@ -186,14 +182,13 @@ export async function generateBookingReceiptPDF(
     paymentMode: options?.paymentMode,
   });
   const customTemplate = await getPreferredCustomTemplate('booking_receipt');
-  if (customTemplate?.htmlContent) {
-    const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
-    return createPdfFromHtml(
-      buildBookingReceiptHtmlString(customTemplate, data, { logoPublicOrigin: origin })
-    );
+  if (!customTemplate?.htmlContent) {
+    throw new Error('Booking receipt HTML template is not configured in Invoice Manager.');
   }
-  const doc = createElement(BookingReceiptTemplate, { data });
-  return pdf(doc as Parameters<typeof pdf>[0]).toBlob();
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  return createPdfFromHtml(
+    buildBookingReceiptHtmlString(customTemplate, data, { logoPublicOrigin: origin })
+  );
 }
 
 /** Generate trial receipt PDF blob. */
@@ -211,12 +206,11 @@ export async function generateTrialReceiptPDF(
     centerName,
   });
   const customTemplate = await getPreferredCustomTemplate('trial_receipt');
-  if (customTemplate?.htmlContent) {
-    const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
-    return createPdfFromHtml(buildTrialReceiptHtmlString(customTemplate, data, { logoPublicOrigin: origin }));
+  if (!customTemplate?.htmlContent) {
+    throw new Error('Trial receipt HTML template is not configured in Invoice Manager.');
   }
-  const doc = createElement(TrialReceiptTemplate, { data });
-  return pdf(doc as Parameters<typeof pdf>[0]).toBlob();
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  return createPdfFromHtml(buildTrialReceiptHtmlString(customTemplate, data, { logoPublicOrigin: origin }));
 }
 
 /** Download booking receipt PDF. */

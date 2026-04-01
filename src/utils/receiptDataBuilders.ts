@@ -46,6 +46,8 @@ export type EnquiryLike = {
 
 export type VisitLike = {
   id?: string;
+  bookingReceiptNumber?: string;
+  trialReceiptNumber?: string;
   visitDate?: string;
   visitTime?: string;
   centerId?: string;
@@ -80,6 +82,13 @@ export const formatTrialType = (visit: VisitLike): string | undefined => {
   if (raw === 'center' || raw === 'clinic' || raw === 'in_office') return 'Clinic Trial';
   return raw;
 };
+
+function stableReceiptNumber(prefix: 'BR' | 'TR', visit: VisitLike, fallbackDate: string): string {
+  const visitId = String(visit.id || '').trim();
+  if (visitId) return `${prefix}-${visitId}`;
+  const safeDate = String(fallbackDate || '').replace(/[^\d]/g, '');
+  return `${prefix}-${safeDate || Date.now()}`;
+}
 
 export const getBookingPaymentMode = (enquiry: EnquiryLike): string | undefined => {
   const fromPayments = enquiry.payments?.find((payment) => payment.paymentFor === 'booking_advance');
@@ -132,7 +141,10 @@ export function buildBookingReceiptData(
   const deviceNameCombined = fullName;
   return {
     ...receiptDefaultCompany,
-    receiptNumber: options?.receiptNumber ?? `BR-${Date.now()}`,
+    receiptNumber:
+      options?.receiptNumber ||
+      String(visit.bookingReceiptNumber || '').trim() ||
+      stableReceiptNumber('BR', visit, bookingDate),
     receiptDate,
     patientName: enquiry.name || 'Patient',
     patientPhone: enquiry.phone,
@@ -174,7 +186,10 @@ export function buildTrialReceiptData(
   const depositRaw = Number(visit.trialHomeSecurityDepositAmount);
   return {
     ...receiptDefaultCompany,
-    receiptNumber: options?.receiptNumber ?? `TR-${Date.now()}`,
+    receiptNumber:
+      options?.receiptNumber ||
+      String(visit.trialReceiptNumber || '').trim() ||
+      stableReceiptNumber('TR', visit, visit.trialStartDate || visit.visitDate || receiptDate),
     receiptDate,
     patientName: enquiry.name || 'Patient',
     patientPhone: enquiry.phone,

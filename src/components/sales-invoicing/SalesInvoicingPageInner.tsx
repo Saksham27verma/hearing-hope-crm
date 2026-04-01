@@ -665,9 +665,11 @@ export default function SalesInvoicingPageInner() {
     setCurrentSale({ ...currentSale, [field]: value });
   };
 
+  // Show only persisted sales invoices (CRM + staff/mobile created sales docs).
+  // Intentionally exclude enquiry-derived uninvoiced rows from this module.
   const unifiedRows = useMemo(
-    () => buildUnifiedInvoiceRows(sales as SaleRecord[], derivedEnquiryLines),
-    [sales, derivedEnquiryLines]
+    () => buildUnifiedInvoiceRows(sales as SaleRecord[], []),
+    [sales]
   );
 
   const filteredTableRows = useMemo(

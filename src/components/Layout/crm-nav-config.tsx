@@ -21,6 +21,7 @@ import {
   Settings,
   UsersRound,
   Sparkles,
+  ScrollText,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -45,6 +46,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { text: 'Material Out', path: '/material-out', icon: ArrowUpFromLine },
   { text: 'Distribution Sales', path: '/distribution-sales', icon: Truck },
   { text: 'Sales & Invoicing', path: '/sales', icon: CircleDollarSign },
+  { text: 'Receipts', path: '/receipts', icon: ScrollText },
   { text: 'Invoice Manager', path: '/invoice-manager', icon: FileText },
   { text: 'Parties', path: '/parties', icon: Handshake },
   { text: 'Centers', path: '/centers', icon: Building2 },
@@ -88,6 +90,7 @@ export const NAV_ITEM_ACCESS_KEYS: Record<string, string[]> = {
   'Material Out': ['deliveries', 'material out'],
   'Distribution Sales': ['distribution sales'],
   'Sales & Invoicing': ['sales'],
+  Receipts: ['receipts'],
   'Invoice Manager': ['invoice manager'],
   Parties: ['parties'],
   Centers: ['centers'],
@@ -113,6 +116,7 @@ export const CRM_MODULE_ACCESS_OPTIONS: { key: string; label: string }[] = [
   { key: 'deliveries', label: 'Material Out' },
   { key: 'distribution sales', label: 'Distribution Sales' },
   { key: 'sales', label: 'Sales & Invoicing' },
+  { key: 'receipts', label: 'Receipts' },
   { key: 'invoice manager', label: 'Invoice Manager' },
   { key: 'parties', label: 'Parties' },
   { key: 'centers', label: 'Centers' },
@@ -141,6 +145,7 @@ export const STAFF_ALLOWED_MODULES = [
   'Dashboard',
   'Products',
   'Sales & Invoicing',
+  'Receipts',
   'Interaction',
   'Stock Transfer',
   'Cash Register',
@@ -154,6 +159,7 @@ export const AUDIOLOGIST_ALLOWED_MODULES = [
   'Dashboard',
   'Products',
   'Inventory',
+  'Receipts',
   'Appointment Scheduler',
   'Interaction',
 ] as const;

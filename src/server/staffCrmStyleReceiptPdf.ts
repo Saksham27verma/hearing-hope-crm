@@ -1,4 +1,4 @@
-import { buildStaffPaymentReceiptPdfBuffer, type StaffPaymentReceiptPdfInput } from '@/server/staffPaymentReceiptPdf';
+import type { StaffPaymentReceiptPdfInput } from '@/server/staffPaymentReceiptPdf';
 import { getResolvedHtmlTemplateAdmin, resolveCenterDisplayNameAdmin } from '@/server/invoiceTemplatesAdmin';
 import { renderHtmlToPdfBuffer } from '@/server/htmlToPdfBuffer';
 import {
@@ -59,9 +59,8 @@ export type StaffCrmStylePdfResult = {
 };
 
 /**
- * PDF attached to staff payment notify email: same Firestore HTML templates as the CRM (Invoice Manager),
- * rendered server-side. Falls back to the legacy minimal pdf-lib document if Chromium/Puppeteer fails
- * or no HTML template exists for the document type.
+ * PDF attached to staff payment notify email: strict Invoice Manager HTML templates,
+ * rendered server-side so mobile and CRM produce identical documents.
  */
 export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs): Promise<StaffCrmStylePdfResult> {
   const origin = publicSiteOrigin();
@@ -74,12 +73,11 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
     if (args.receiptType === 'booking') {
       const template = await getResolvedHtmlTemplateAdmin('booking_receipt', { overrideTemplateId: override });
       if (!template?.htmlContent) {
-        throw new Error('no booking HTML template in invoiceTemplates (need non-visual HTML + documentType booking)');
+        throw new Error('booking_receipt HTML template is required in Invoice Manager.');
       }
       console.info(`staffCrmStyleReceiptPdf: booking template id=${template.id} len=${template.htmlContent.length}`);
       const centerName = await resolveCenterDisplayNameAdmin(args.enquiry, args.lastVisit);
       const data = buildBookingReceiptData(enquiry, visit, {
-        receiptNumber: `BR-STAFF-${args.requestId.slice(0, 8)}`,
         centerName,
         paymentMode: args.paymentMethod,
       });
@@ -91,10 +89,9 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
 
     if (args.receiptType === 'trial') {
       const template = await getResolvedHtmlTemplateAdmin('trial_receipt', { overrideTemplateId: override });
-      if (!template?.htmlContent) throw new Error('no trial HTML template');
+      if (!template?.htmlContent) throw new Error('trial_receipt HTML template is required in Invoice Manager.');
       const centerName = await resolveCenterDisplayNameAdmin(args.enquiry, args.lastVisit);
       const data = buildTrialReceiptData(enquiry, visit, {
-        receiptNumber: `TR-STAFF-${args.requestId.slice(0, 8)}`,
         centerName,
       });
       const inner = buildTrialReceiptHtmlString(template, data, { logoPublicOrigin: origin });
@@ -105,7 +102,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
 
     if (args.receiptType === 'invoice') {
       const template = await getResolvedHtmlTemplateAdmin('invoice', { overrideTemplateId: override });
-      if (!template?.htmlContent) throw new Error('no invoice HTML template');
+      if (!template?.htmlContent) throw new Error('invoice HTML template is required in Invoice Manager.');
       const sale: Record<string, unknown> = {
         ...enquiryVisitToInvoiceSalePayload(args.enquiry, args.lastVisit),
         paymentMethod: args.paymentMethod,
@@ -122,14 +119,11 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       const buffer = await renderHtmlToPdfBuffer(html);
       return { buffer, templateId: template.id };
     }
+
+    throw new Error(`Unsupported receiptType: ${String(args.receiptType)}`);
   } catch (e) {
     const detail = e instanceof Error ? `${e.message}\n${e.stack}` : String(e);
-    console.error(
-      'staffCrmStyleReceiptPdf: CRM HTML template path failed — email will use minimal pdf-lib receipt. Cause:',
-      detail
-    );
+    console.error('staffCrmStyleReceiptPdf: strict template rendering failed:', detail);
+    throw e;
   }
-
-  const buffer = await buildStaffPaymentReceiptPdfBuffer(args.fallbackInput);
-  return { buffer };
 }
