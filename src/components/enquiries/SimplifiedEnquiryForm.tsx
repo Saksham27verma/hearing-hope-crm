@@ -76,6 +76,35 @@ interface Product {
   updatedAt: any;
 }
 
+/** Product types eligible for the enquiry "Accessory" medical service picker (matches products module categories). */
+const ACCESSORY_SERVICE_PRODUCT_TYPES: readonly string[] = [
+  'Accessory',
+  'Battery',
+  'Charger',
+  'Other',
+];
+
+function isAccessoryServiceProductType(type: string | undefined): boolean {
+  return !!type && ACCESSORY_SERVICE_PRODUCT_TYPES.includes(type);
+}
+
+function accessoryServiceProductChipColor(
+  type: string
+): 'primary' | 'secondary' | 'success' | 'warning' | 'default' {
+  switch (type) {
+    case 'Accessory':
+      return 'primary';
+    case 'Battery':
+      return 'warning';
+    case 'Charger':
+      return 'success';
+    case 'Other':
+      return 'secondary';
+    default:
+      return 'default';
+  }
+}
+
 /** Token-based match: every word must appear somewhere in product fields (dynamic search). */
 function productMatchesCatalogSearch(p: Product, queryLower: string): boolean {
   const q = queryLower.trim();
@@ -908,8 +937,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         });
         setProducts(productsData);
         // Debug: Log accessory products to help troubleshoot
-        const accessoryProducts = productsData.filter(p => p.type === 'Accessory' || p.type === 'Other');
-        console.log('🔄 Loaded accessory products:', accessoryProducts.length, 'available products:', accessoryProducts.map(p => `${p.name} (${p.type})`));
+        const accessoryProducts = productsData.filter((p) => isAccessoryServiceProductType(p.type));
+        console.log('🔄 Loaded accessory-service products:', accessoryProducts.length, 'available products:', accessoryProducts.map(p => `${p.name} (${p.type})`));
       } catch (error) {
         console.error('Error fetching products:', error);
       }
@@ -5650,7 +5679,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     
                                     const selectedAccessory = products.find(p => 
                                       p.name === selectedValue && 
-                                      (p.type === 'Accessory' || p.type === 'Other')
+                                      isAccessoryServiceProductType(p.type)
                                     );
                                     console.log('Found accessory in products:', selectedAccessory);
                                     
@@ -5698,7 +5727,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     </Typography>
                                   </MenuItem>
                                   {products
-                                    .filter(product => product.type === 'Accessory' || product.type === 'Other')
+                                    .filter((product) => isAccessoryServiceProductType(product.type))
                                     .length === 0 ? (
                                     <MenuItem disabled>
                                       <Typography color="text.secondary" sx={{ fontStyle: 'italic' }}>
@@ -5707,7 +5736,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     </MenuItem>
                                   ) : (
                                     products
-                                      .filter(product => product.type === 'Accessory' || product.type === 'Other')
+                                      .filter((product) => isAccessoryServiceProductType(product.type))
                                       .map(product => (
                                         <MenuItem key={product.id} value={product.name}>
                                           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
@@ -5716,7 +5745,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                               <Chip 
                                                 label={product.type} 
                                                 size="small" 
-                                                color={product.type === 'Accessory' ? 'primary' : 'secondary'} 
+                                                color={accessoryServiceProductChipColor(product.type)} 
                                                 variant="outlined"
                                                 sx={{ fontSize: '0.7rem' }}
                                               />
@@ -5783,7 +5812,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         // If unchecking FOC and an accessory is selected, restore its MRP
                                         const selectedAccessory = products.find(p => 
                                           p.name === currentVisitData?.accessoryName && 
-                                          (p.type === 'Accessory' || p.type === 'Other')
+                                          isAccessoryServiceProductType(p.type)
                                         );
                                         updatedVisits[activeVisit] = {
                                           ...currentVisitData,
@@ -5892,7 +5921,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
                                       {accessoryName}
                                     </Typography>
-                                    {products.find(p => p.name === accessoryName && (p.type === 'Accessory' || p.type === 'Other')) && (
+                                    {products.find(p => p.name === accessoryName && isAccessoryServiceProductType(p.type)) && (
                                       <Chip 
                                         label="From Product Catalog" 
                                         size="small" 
