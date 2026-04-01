@@ -575,7 +575,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const visitList = Array.isArray(enquiry?.[visitsKey]) ? [...enquiry[visitsKey]] : [];
     const currentVisit = visitList[visitIndex] || {};
     const existing = String(currentVisit.invoiceNumber || '').trim();
-    if (existing) return existing;
+    const isProvisionalExisting = /^PROV-/i.test(existing);
+    if (existing && !isProvisionalExisting) return existing;
     const nextNumber = await allocateNextInvoiceNumber(db);
     visitList[visitIndex] = { ...currentVisit, invoiceNumber: nextNumber };
     if (resolvedParams?.id) {

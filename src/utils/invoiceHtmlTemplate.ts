@@ -60,13 +60,20 @@ export function processInvoiceHtmlTemplate(
     .replace(/\{\{TRIAL_PERIOD\}\}/g, (invoiceData as { trialPeriod?: string }).trialPeriod || '7')
     .replace(/\{\{SUBTOTAL\}\}/g, formatCurrency(invoiceData.subtotal || 0))
     .replace(/\{\{TAX_RATE\}\}/g, String((invoiceData as { taxRate?: number }).taxRate || 0))
-    .replace(/\{\{TAX_AMOUNT\}\}/g, formatCurrency((invoiceData as { taxAmount?: number }).taxAmount || 0))
+    .replace(
+      /\{\{TAX_AMOUNT\}\}/g,
+      formatCurrency((invoiceData as { taxAmount?: number }).taxAmount ?? invoiceData.totalGST ?? 0)
+    )
     .replace(/\{\{TOTAL\}\}/g, formatCurrency((invoiceData as { total?: number }).total || invoiceData.grandTotal || 0))
     .replace(/\{\{TERMS_TEXT\}\}/g, (invoiceData.terms || '').replace(/\n/g, '<br/>'))
     .replace(/\{\{SALESPERSON\}\}/g, invoiceData.salesperson || '')
     .replace(/\{\{REFERENCE_DOCTOR\}\}/g, invoiceData.referenceDoctor || '');
 
   if (invoiceData.items && invoiceData.items.length > 0) {
+    const isSixColumnInvoiceTemplate =
+      /Description\s*&\s*Specification/i.test(html) &&
+      /GST\s*Amount/i.test(html) &&
+      /Total\s*Amount/i.test(html);
     const itemsHTML = invoiceData.items
       .map((raw, index) => {
         const item = raw as InvoiceLineItem;
@@ -83,31 +90,51 @@ export function processInvoiceHtmlTemplate(
         const gstAmount = (totalSellingPrice * gstPercent) / 100;
         const hsn = item.hsnCode || '9021';
 
-        return `
+        if (isSixColumnInvoiceTemplate) {
+          const lineTotal = totalSellingPrice + gstAmount;
+          return `
         <tr>
-          <td style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:25px" valign="top"><b>${index + 1}</b></td>
-          <td style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc"><b><font size="2">${item.name || item.description || ''}</font></b><br><pre wrap="soft" style="width:150px">${item.description || ''}</pre></td>
-          <td valign="top" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:80px">${item.serialNumber || 'N/A'}</td>
-          <td valign="top" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc">${hsn}</td>
-          <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:80px">${formatCurrency(mrpUnit)}</td>
-          <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:25px">${quantity}</td>
-          <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:80px">${formatCurrency(totalMRP)}</td>
-          <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc">${discountPct}%</td>
-          <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:90px">${formatCurrency(totalSellingPrice)}</td>
-          <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:27px">${gstPercent}%</td>
-          <td valign="top" align="right" style="border-bottom:2px dotted #c0c6cc">${formatCurrency(gstAmount)}</td>
+          <td>
+            <div class="product-title">${index + 1}. ${item.name || item.description || ''}</div>
+            <div class="product-meta">
+              ${item.description ? `${item.description}<br/>` : ''}
+              ${item.serialNumber ? `S/N: ${item.serialNumber}` : ''}
+            </div>
+          </td>
+          <td>${hsn}</td>
+          <td class="text-center">${quantity}</td>
+          <td class="text-right">${formatCurrency(unitSelling)}</td>
+          <td class="text-right">${formatCurrency(gstAmount)}</td>
+          <td class="text-right">${formatCurrency(lineTotal)}</td>
         </tr>
         `;
+        }
+
+        return `
+      <tr>
+        <td style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:25px" valign="top"><b>${index + 1}</b></td>
+        <td style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc"><b><font size="2">${item.name || item.description || ''}</font></b><br><pre wrap="soft" style="width:150px">${item.description || ''}</pre></td>
+        <td valign="top" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:80px">${item.serialNumber || 'N/A'}</td>
+        <td valign="top" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc">${hsn}</td>
+        <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:80px">${formatCurrency(mrpUnit)}</td>
+        <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:25px">${quantity}</td>
+        <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:80px">${formatCurrency(totalMRP)}</td>
+        <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc">${discountPct}%</td>
+        <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:90px">${formatCurrency(totalSellingPrice)}</td>
+        <td valign="top" align="right" style="border-right: 1px dotted gray;border-bottom:2px dotted #c0c6cc;width:27px">${gstPercent}%</td>
+        <td valign="top" align="right" style="border-bottom:2px dotted #c0c6cc">${formatCurrency(gstAmount)}</td>
+      </tr>
+      `;
       })
       .join('');
     processed = processed.replace(/\{\{ITEMS_PLACEHOLDER\}\}/g, itemsHTML);
   }
 
-  // Guardrail: remove accidental pasted Firebase Storage links from template body text.
-  // Keep URL values used inside attributes (e.g. src="...") intact.
+  // Guardrail: remove accidental pasted Firebase Storage links from text nodes only.
+  // Do not touch URLs used inside attributes (src/href), otherwise protected image tokens break.
   processed = processed
-    .replace(/(^|[\s>])(https:\/\/firebasestorage\.googleapis\.com\/[^\s<>"']+)/g, '$1')
-    .replace(/\balt=media&token=[^\s<>"']+/g, '');
+    .replace(/>\s*https:\/\/firebasestorage\.googleapis\.com\/[^<]*</g, '><')
+    .replace(/>\s*alt=media&token=[^<\s]+\s*</g, '><');
 
   return processed;
 }

@@ -74,6 +74,62 @@ function isAppointmentTodayServer(start: unknown): boolean {
   return isSameCalendarDayInKolkata(d, new Date());
 }
 
+function normalizeInvoiceNumberSettingsServer(raw: Record<string, unknown> | undefined): {
+  prefix: string;
+  suffix: string;
+  next_number: number;
+  padding: number;
+} {
+  const d = raw || {};
+  const pad =
+    typeof d.padding === 'number' && d.padding >= 1 ? Math.min(Math.floor(d.padding), 12) : 4;
+  let next =
+    typeof d.next_number === 'number' && Number.isFinite(d.next_number)
+      ? Math.floor(d.next_number)
+      : 1;
+  if (next < 1) next = 1;
+  return {
+    prefix: typeof d.prefix === 'string' ? d.prefix : 'INV-',
+    suffix: typeof d.suffix === 'string' ? d.suffix : `/${new Date().getFullYear()}`,
+    next_number: next,
+    padding: pad,
+  };
+}
+
+function formatInvoiceNumberServer(
+  settings: { prefix: string; suffix: string; padding: number },
+  sequenceValue: number
+): string {
+  const n = Math.max(1, Math.floor(sequenceValue));
+  return `${settings.prefix}${String(n).padStart(settings.padding, '0')}${settings.suffix}`;
+}
+
+async function allocateNextInvoiceNumberAdminServer(
+  db: FirebaseFirestore.Firestore
+): Promise<string> {
+  const ref = db.collection('invoiceSettings').doc('default');
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const settings = normalizeInvoiceNumberSettingsServer(
+      snap.exists ? (snap.data() as Record<string, unknown>) : undefined
+    );
+    const n = settings.next_number;
+    const formatted = formatInvoiceNumberServer(settings, n);
+    tx.set(
+      ref,
+      {
+        prefix: settings.prefix,
+        suffix: settings.suffix,
+        padding: settings.padding,
+        next_number: n + 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return formatted;
+  });
+}
+
 type ReceiptType = 'trial' | 'booking' | 'invoice';
 const RECEIPT_TYPES: ReceiptType[] = ['trial', 'booking', 'invoice'];
 const PAYMENT_MODES = ['cash', 'upi', 'card'] as const;
@@ -381,6 +437,24 @@ export async function POST(req: Request) {
       whoSoldName: staffName,
       saleDeviceType,
     });
+
+    if (receiptType === 'invoice') {
+      const lastIdx = merged.visits.length - 1;
+      if (lastIdx >= 0) {
+        const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
+        const existingInvoiceNumber = String(lastVisit.invoiceNumber || '').trim();
+        if (!existingInvoiceNumber) {
+          const allocatedInvoiceNumber = await allocateNextInvoiceNumberAdminServer(db);
+          merged.visits[lastIdx] = { ...lastVisit, invoiceNumber: allocatedInvoiceNumber };
+          if (merged.visitSchedules[lastIdx]) {
+            merged.visitSchedules[lastIdx] = {
+              ...merged.visitSchedules[lastIdx],
+              invoiceNumber: allocatedInvoiceNumber,
+            };
+          }
+        }
+      }
+    }
 
     const lastVisit = merged.visits[merged.visits.length - 1] as Record<string, unknown> | undefined;
     const relatedVisitId = String(lastVisit?.id ?? '').trim();
