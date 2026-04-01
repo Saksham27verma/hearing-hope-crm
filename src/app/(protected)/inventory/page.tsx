@@ -645,17 +645,6 @@ export default function InventoryPage() {
           });
         });
 
-        // Align inventory sold-serial truth with Product Journey:
-        // if a serial has a "sale" event in journey, treat it as sold in inventory too.
-        const soldFromJourneyOnly = new Set<string>();
-        journeyMap.forEach((events, serialKey) => {
-          if (events.some((e) => e.eventType === 'sale')) {
-            const normalized = normalizeSerialNumber(serialKey);
-            if (normalized) soldFromJourneyOnly.add(normalized);
-          }
-        });
-        soldFromJourneyOnly.forEach((sn) => soldSerialOnly.add(sn));
-
         const splitSerialCandidates = (raw: unknown): string[] => {
           if (Array.isArray(raw)) {
             return raw
@@ -812,6 +801,19 @@ export default function InventoryPage() {
           saleDate?: any;
           invoiceNumber?: string;
         }>();
+
+        // Align inventory sold-serial truth with Product Journey:
+        // if a serial has a "sale" event in journey, treat it as sold in inventory too.
+        const soldFromJourneyOnly = new Set<string>();
+        journeyMap.forEach((events, serialKey) => {
+          if (events.some((e) => e.eventType === 'sale')) {
+            const normalized = normalizeSerialNumber(serialKey);
+            if (normalized) soldFromJourneyOnly.add(normalized);
+          }
+        });
+        for (const sn of soldFromJourneyOnly) {
+          soldSerialOnly.add(sn);
+        }
         
         // Process sales from sales collection
         salesSnap.docs.forEach((docSnap: any) => {
@@ -1258,9 +1260,9 @@ export default function InventoryPage() {
           const normalized = normalizeSerialNumber(String(itm.serialNumber || ''));
           if (normalized) existingSerials.add(normalized);
         });
-        soldSerialOnly.forEach((serial) => {
+        for (const serial of soldSerialOnly) {
           const normalizedSerial = normalizeSerialNumber(serial);
-          if (!normalizedSerial || existingSerials.has(normalizedSerial)) return;
+          if (!normalizedSerial || existingSerials.has(normalizedSerial)) continue;
           const meta = soldSerialMetaBySerial.get(normalizedSerial);
           const productRef = productById.get(meta?.productId || '') || {};
           const productId = String(meta?.productId || '').trim();
@@ -1283,7 +1285,7 @@ export default function InventoryPage() {
             createdAt: meta?.saleDate || null,
             updatedAt: meta?.saleDate || null,
           });
-        });
+        }
 
         // Group serial items for products that are sold in pairs
         const serialItems: InventoryItem[] = (() => {
