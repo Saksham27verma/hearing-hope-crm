@@ -204,7 +204,11 @@ const getTimestampValue = (timestamp: any) => {
   return 0;
 };
 
-const normalizeSerialNumber = (serialNumber: string) => serialNumber.trim().toUpperCase();
+const normalizeSerialNumber = (serialNumber: string) =>
+  String(serialNumber || '')
+    .trim()
+    .replace(/^['"`\s]+|['"`\s]+$/g, '')
+    .toUpperCase();
 
 export default function InventoryPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
@@ -623,18 +627,20 @@ export default function InventoryPage() {
 
         const splitSerialCandidates = (raw: unknown): string[] => {
           if (Array.isArray(raw)) {
-            return raw.map((v) => String(v || '').trim()).filter(Boolean);
+            return raw
+              .map((v) => normalizeSerialNumber(String(v || '')))
+              .filter(Boolean);
           }
           const text = String(raw || '').trim();
           if (!text) return [];
           return text
             .split(/[,\n;|]+/g)
-            .map((v) => v.trim())
+            .map((v) => normalizeSerialNumber(v))
             .filter(Boolean);
         };
 
         const makeSerialKey = (productId: unknown, serialNumber: unknown): string =>
-          `${String(productId || '').trim()}|${String(serialNumber || '').trim().toUpperCase()}`;
+          `${String(productId || '').trim()}|${normalizeSerialNumber(String(serialNumber || ''))}`;
 
         // Incoming serials for stock transfer tracking
         const stockTransferInSerials = new Set<string>();
@@ -711,7 +717,7 @@ export default function InventoryPage() {
               const key = makeSerialKey(productId, serialNumber);
               if (serialNumber) {
                 soldSerials.add(key);
-                soldSerialOnly.add(String(serialNumber).trim().toUpperCase());
+                soldSerialOnly.add(normalizeSerialNumber(String(serialNumber || '')));
                 console.log(`Added sold serial: ${key} from sale ${docSnap.id}`);
               }
             });
@@ -742,7 +748,7 @@ export default function InventoryPage() {
                   const key = makeSerialKey(productId, serialNumber);
                   if (serialNumber) {
                     soldSerials.add(key);
-                    soldSerialOnly.add(String(serialNumber).trim().toUpperCase());
+                    soldSerialOnly.add(normalizeSerialNumber(String(serialNumber || '')));
                     console.log(`Added sold serial from enquiry: ${key} from enquiry ${docSnap.id}`);
                   }
                 });
@@ -830,11 +836,12 @@ export default function InventoryPage() {
                 return;
               }
               
-              // Exclude items that were dispatched out (not available in inventory)
-              if (dispatchedOutSerials.has(key)) return;
+              const isSold = soldSerials.has(key) || soldSerialOnly.has(normalizeSerialNumber(String(sn || '')));
+              // Exclude dispatched-out items only when they are not sold.
+              // Sold devices must remain visible in inventory (Show Sold Items) for serial lock safety.
+              if (dispatchedOutSerials.has(key) && !isSold) return;
               
               // Determine status based on sales / pending out
-              const isSold = soldSerials.has(key) || soldSerialOnly.has(String(sn || '').trim().toUpperCase());
               const isReserved = pendingOutSerials.has(key);
               const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
@@ -905,11 +912,11 @@ export default function InventoryPage() {
               const key = makeSerialKey(productId, sn);
               if (incomingMap.has(key)) return; // already from material in (converted)
               
-              // Exclude items that were dispatched out (not available in inventory)
-              if (dispatchedOutSerials.has(key)) return;
+              const isSold = soldSerials.has(key) || soldSerialOnly.has(normalizeSerialNumber(String(sn || '')));
+              // Exclude dispatched-out items only when they are not sold.
+              if (dispatchedOutSerials.has(key) && !isSold) return;
               
               // Determine status based on sales / pending out
-              const isSold = soldSerials.has(key) || soldSerialOnly.has(String(sn || '').trim().toUpperCase());
               const isReserved = pendingOutSerials.has(key);
               const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
