@@ -1,5 +1,9 @@
 import type { InvoiceData } from '@/components/invoices/InvoiceTemplate';
 import type { InvoiceConfig } from '@/utils/invoicePdfPreferences';
+import {
+  accessoryLinesTotal,
+  visitAccessoryToSaleAccessories,
+} from '@/lib/sales-invoicing/visitAccessoryInvoice';
 
 /** Map enquiry + visit into the shape expected by `convertSaleToInvoiceData` / invoice PDF. */
 export function enquiryVisitToInvoiceSalePayload(
@@ -7,10 +11,20 @@ export function enquiryVisitToInvoiceSalePayload(
   visit: Record<string, unknown>
 ): Record<string, unknown> {
   const visitKey = visit?.id ?? visit?.visitDate ?? visit?.purchaseDate ?? 'sale';
+  const accessories = visitAccessoryToSaleAccessories(visit);
+  const accessoryTotal = accessoryLinesTotal(accessories);
+  const salesAfterTax = Number(visit?.salesAfterTax) || 0;
+  const taxAmount = Number(visit?.taxAmount) || 0;
+  /** Pre-tax hearing-aid subtotal (visit stores after-tax + tax separately). */
+  const hearingAidPreTax = Math.max(0, salesAfterTax - taxAmount);
+  const totalAmount = hearingAidPreTax + accessoryTotal;
+  const grandTotal = salesAfterTax + accessoryTotal;
   return {
     products: visit?.products || [],
-    gstAmount: Number(visit?.taxAmount) || 0,
-    totalAmount: Number(visit?.salesAfterTax) || 0,
+    accessories,
+    gstAmount: taxAmount,
+    totalAmount,
+    grandTotal,
     patientName: enquiry?.name || 'Patient',
     phone: enquiry?.phone || '',
     email: enquiry?.email || '',
@@ -45,10 +59,19 @@ const getDefaultTermsAndConditions = (): string => {
 /** Map raw sale payload (enquiry visit / billing) into `InvoiceData` for HTML/React PDF. */
 export const convertSaleToInvoiceData = (sale: Record<string, unknown>): InvoiceData => {
   const products = (sale.products as Record<string, unknown>[]) || [];
-  const subtotal =
+  const accessories = (sale.accessories as Record<string, unknown>[]) || [];
+
+  const productSub =
     products.reduce((sum: number, product: Record<string, unknown>) => {
       return sum + (Number(product.sellingPrice) || Number(product.finalAmount) || 0) * (Number(product.quantity) || 1);
     }, 0) || 0;
+
+  const accessorySub = accessories.reduce((sum: number, a: Record<string, unknown>) => {
+    if (a.isFree) return sum;
+    return sum + (Number(a.price) || 0) * (Number(a.quantity) || 1);
+  }, 0);
+
+  const subtotal = productSub + accessorySub;
 
   const totalGST = Number(sale.gstAmount) || 0;
   const totalDiscount =
@@ -59,9 +82,15 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
       return sum + (discount > 0 ? discount : 0);
     }, 0) || 0;
 
-  const grandTotal = Number(sale.totalAmount) || subtotal + totalGST;
+  const computedGrand = subtotal + totalGST;
+  const grandTotal =
+    typeof sale.grandTotal === 'number' && !Number.isNaN(sale.grandTotal)
+      ? sale.grandTotal
+      : typeof sale.totalAmount === 'number' && !Number.isNaN(sale.totalAmount)
+        ? Number(sale.totalAmount) + totalGST
+        : computedGrand;
 
-  const items =
+  const productRows =
     products.map((product: Record<string, unknown>, index: number) => ({
       id: (product.id as string) || `item-${index}`,
       name: (product.name as string) || 'Unknown Product',
@@ -75,6 +104,25 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
       amount:
         (Number(product.sellingPrice) || Number(product.finalAmount) || 0) * (Number(product.quantity) || 1),
     })) || [];
+
+  const accessoryRows = accessories.map((a: Record<string, unknown>, index: number) => {
+    const qty = Number(a.quantity) || 1;
+    const rate = a.isFree ? 0 : Number(a.price) || 0;
+    return {
+      id: (a.id as string) || `acc-${index}`,
+      name: (a.name as string) || 'Accessory',
+      description: 'Accessory',
+      serialNumber: '',
+      quantity: qty,
+      rate,
+      mrp: rate,
+      discount: 0,
+      gstPercent: 0,
+      amount: rate * qty,
+    };
+  });
+
+  const items = [...productRows, ...accessoryRows];
 
   const invoiceNumber = (sale.invoiceNumber as string) || '—';
   const invoiceDate = formatInvoiceDateLabel(sale.saleDate);

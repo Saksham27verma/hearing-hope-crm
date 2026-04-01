@@ -1,4 +1,5 @@
 import type { Timestamp } from 'firebase/firestore';
+import type { SaleAccessoryLine } from '@/lib/sales-invoicing/visitAccessoryInvoice';
 
 export type InvoiceSource = 'manual' | 'enquiry';
 
@@ -65,6 +66,12 @@ export interface DerivedEnquirySale {
   visitDate: Timestamp;
   products: unknown[];
   totalAmount: number;
+  /** Non–hearing-aid lines on the same visit (battery, charger, accessory, other). */
+  accessories?: SaleAccessoryLine[];
+  /** From enquiry visit `taxAmount` (GST on hearing aid lines). */
+  gstAmount?: number;
+  /** `salesAfterTax` + accessory total — matches invoice grand total when visit data is consistent. */
+  grandTotal?: number;
 }
 
 export type UnifiedRowKind = 'saved' | 'enquiry_pending';

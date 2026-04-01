@@ -1,6 +1,7 @@
 import { Timestamp } from 'firebase/firestore';
 import type { DerivedEnquirySale } from './types';
 import { toTimestamp, timestampToMs } from './timestamps';
+import { accessoryLinesTotal, visitAccessoryToSaleAccessories } from '@/lib/sales-invoicing/visitAccessoryInvoice';
 
 export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enquiry'): DerivedEnquirySale[] {
   const derived: DerivedEnquirySale[] = [];
@@ -21,9 +22,17 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
       );
       if (!isSale) return;
       const prods: any[] = Array.isArray(visit.products) ? visit.products : [];
+      const accessories = visitAccessoryToSaleAccessories(visit as Record<string, unknown>);
+      const accessoryTotal = accessoryLinesTotal(accessories);
       const dateStr: string = visit.visitDate || visit.purchaseDate || visit.hearingAidPurchaseDate || '';
       const ts = dateStr ? Timestamp.fromDate(new Date(dateStr)) : toTimestamp(rec.updatedAt) || Timestamp.now();
-      const totalAmount = prods.reduce((sum: number, p: any) => sum + (p.finalAmount || p.sellingPrice || 0), 0);
+      const productTotal = prods.reduce((sum: number, p: any) => sum + (p.finalAmount || p.sellingPrice || 0), 0);
+      const salesAfterTax = Number(visit.salesAfterTax);
+      const taxAmount = Number(visit.taxAmount) || 0;
+      const haAfterTax =
+        Number.isFinite(salesAfterTax) && salesAfterTax > 0 ? salesAfterTax : productTotal;
+      const totalAmount = haAfterTax + accessoryTotal;
+      const invoiceGrandTotal = haAfterTax + accessoryTotal;
       const base: DerivedEnquirySale = {
         id: `${rec.id}-${idx}`,
         visitIndex: idx,
@@ -31,6 +40,9 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
         visitDate: ts,
         products: prods,
         totalAmount,
+        gstAmount: taxAmount,
+        grandTotal: invoiceGrandTotal,
+        ...(accessories.length > 0 ? { accessories } : {}),
         phone,
         address,
       };

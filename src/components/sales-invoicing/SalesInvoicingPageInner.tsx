@@ -368,7 +368,7 @@ export default function SalesInvoicingPageInner() {
 
   // ─── Totals (catalog products + manual lines) ───
 
-  const recalcFull = (prods: SaleProduct[], manual: ManualLineItem[]) => {
+  const recalcFull = (prods: SaleProduct[], manual: ManualLineItem[], accessoryLines: Accessory[] = []) => {
     const productSub = prods.reduce((s, p) => s + p.sellingPrice, 0);
     const productGst = prods.reduce((s, p) => s + p.gstAmount, 0);
     let manualSub = 0;
@@ -378,7 +378,11 @@ export default function SalesInvoicingPageInner() {
       manualSub += line;
       manualGst += Math.round((line * (m.taxPercent || 0)) / 100);
     });
-    const totalAmount = productSub + manualSub;
+    const accessorySub = accessoryLines.reduce(
+      (s, a) => s + (a.isFree ? 0 : (a.price || 0) * (a.quantity || 1)),
+      0
+    );
+    const totalAmount = productSub + manualSub + accessorySub;
     const gstAmount = productGst + manualGst;
     const grandTotal = totalAmount + gstAmount;
     const netProfit = prods.reduce((s, p) => s + (p.sellingPrice - (p.dealerPrice || p.mrp * 0.7)), 0);
@@ -439,6 +443,7 @@ export default function SalesInvoicingPageInner() {
     setCurrentSale({
       ...sale,
       manualLineItems: sale.manualLineItems || [],
+      accessories: sale.accessories || [],
       paymentStatus: sale.paymentStatus || 'paid',
       source: sale.source || 'manual',
     });
@@ -502,7 +507,10 @@ export default function SalesInvoicingPageInner() {
       return;
     }
     if (!currentSale.patientName.trim()) { setErrorMsg('Patient name is required'); return; }
-    const hasLines = currentSale.products.length > 0 || (currentSale.manualLineItems && currentSale.manualLineItems.length > 0);
+    const hasLines =
+      currentSale.products.length > 0 ||
+      (currentSale.manualLineItems && currentSale.manualLineItems.length > 0) ||
+      (currentSale.accessories && currentSale.accessories.length > 0);
     if (!hasLines) { setErrorMsg('Add at least one catalog product or manual line item'); return; }
 
     try {
@@ -610,7 +618,7 @@ export default function SalesInvoicingPageInner() {
     setCurrentSale({
       ...currentSale,
       products: updatedProducts,
-      ...recalcFull(updatedProducts, currentSale.manualLineItems || []),
+      ...recalcFull(updatedProducts, currentSale.manualLineItems || [], currentSale.accessories || []),
     });
     resetProductForm();
   };
@@ -621,7 +629,7 @@ export default function SalesInvoicingPageInner() {
     setCurrentSale({
       ...currentSale,
       products: updatedProducts,
-      ...recalcFull(updatedProducts, currentSale.manualLineItems || []),
+      ...recalcFull(updatedProducts, currentSale.manualLineItems || [], currentSale.accessories || []),
     });
   };
 
@@ -645,7 +653,11 @@ export default function SalesInvoicingPageInner() {
     }
 
     prods[index] = p;
-    setCurrentSale({ ...currentSale, products: prods, ...recalcFull(prods, currentSale.manualLineItems || []) });
+    setCurrentSale({
+      ...currentSale,
+      products: prods,
+      ...recalcFull(prods, currentSale.manualLineItems || [], currentSale.accessories || []),
+    });
   };
 
   const updateSaleField = (field: string, value: any) => {
@@ -752,7 +764,7 @@ export default function SalesInvoicingPageInner() {
         invoiceNumber: suggested,
         salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
       });
-      setCurrentSale({ ...(pre as unknown as Sale), accessories: [] });
+      setCurrentSale({ ...(pre as unknown as Sale) });
       setOpenDialog(true);
     },
     [user, userProfile]
@@ -1255,7 +1267,7 @@ export default function SalesInvoicingPageInner() {
                     setCurrentSale({
                       ...currentSale,
                       manualLineItems: items,
-                      ...recalcFull(currentSale.products, items),
+                      ...recalcFull(currentSale.products, items, currentSale.accessories || []),
                     })
                   }
                 />

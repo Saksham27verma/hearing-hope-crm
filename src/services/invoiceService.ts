@@ -540,7 +540,28 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
       };
     }) || [];
 
-  const items = [...productItems, ...manualItems];
+  const accessoryItems =
+    (sale.accessories || []).map((a: any, index: number) => {
+      const qty = a.quantity || 1;
+      const rate = a.isFree ? 0 : Number(a.price) || 0;
+      const lineSub = rate * qty;
+      return {
+        id: a.id || `accessory-${index}`,
+        name: a.name || 'Accessory',
+        description: 'Accessory',
+        serialNumber: '',
+        quantity: qty,
+        rate,
+        mrp: rate,
+        discount: 0,
+        discountPercent: 0,
+        gstPercent: 0,
+        amount: lineSub,
+        sellingPrice: rate,
+      };
+    }) || [];
+
+  const items = [...productItems, ...manualItems, ...accessoryItems];
 
   const productSub = (sale.products || []).reduce(
     (sum: number, product: any) => sum + (product.sellingPrice || product.finalAmount || 0) * (product.quantity || 1),
@@ -551,7 +572,11 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
     const rate = line.rate || 0;
     return sum + qty * rate;
   }, 0);
-  const subtotal = productSub + manualSub;
+  const accessorySub = (sale.accessories || []).reduce((sum: number, a: any) => {
+    if (a.isFree) return sum;
+    return sum + (Number(a.price) || 0) * (a.quantity || 1);
+  }, 0);
+  const subtotal = productSub + manualSub + accessorySub;
 
   let manualGst = 0;
   (sale.manualLineItems || []).forEach((line: any) => {
@@ -564,7 +589,9 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
   const grandTotal =
     typeof sale.grandTotal === 'number' && !Number.isNaN(sale.grandTotal)
       ? sale.grandTotal
-      : (sale.totalAmount || 0) + totalGST;
+      : typeof sale.totalAmount === 'number' && !Number.isNaN(sale.totalAmount)
+        ? sale.totalAmount + totalGST
+        : subtotal + totalGST;
 
   let dueStr = '';
   if (sale.dueDate?.toDate) {

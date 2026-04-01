@@ -1,5 +1,6 @@
 import { Timestamp } from 'firebase/firestore';
 import type { DerivedEnquirySale } from './types';
+import { accessoryLinesTotal, type SaleAccessoryLine } from '@/lib/sales-invoicing/visitAccessoryInvoice';
 
 /** Map enquiry visit product lines into sale `products`-compatible rows (minimal catalog fields). */
 export function mapVisitProductsToSaleProducts(products: any[]): any[] {
@@ -36,9 +37,18 @@ export function prefillSaleFromDerivedEnquiry(
   defaults: { invoiceNumber: string; salesperson: { id: string; name: string } }
 ) {
   const products = mapVisitProductsToSaleProducts(Array.isArray(d.products) ? d.products : []);
-  const totalAmount = products.reduce((sum: number, p: any) => sum + (p.sellingPrice || 0), 0);
-  const gstAmount = products.reduce((sum: number, p: any) => sum + (p.gstAmount || 0), 0);
-  const grandTotal = totalAmount + gstAmount;
+  const accessories: SaleAccessoryLine[] = Array.isArray(d.accessories) ? d.accessories : [];
+  const accSub = accessoryLinesTotal(accessories);
+  const productSub = products.reduce((sum: number, p: any) => sum + (p.sellingPrice || 0), 0);
+  const totalAmount = productSub + accSub;
+  const gstAmount =
+    typeof d.gstAmount === 'number' && !Number.isNaN(d.gstAmount)
+      ? d.gstAmount
+      : products.reduce((sum: number, p: any) => sum + (p.gstAmount || 0), 0);
+  const grandTotal =
+    typeof d.grandTotal === 'number' && !Number.isNaN(d.grandTotal)
+      ? d.grandTotal
+      : totalAmount + gstAmount;
   return {
     invoiceNumber: defaults.invoiceNumber,
     patientName: d.patientName,
@@ -46,7 +56,7 @@ export function prefillSaleFromDerivedEnquiry(
     email: '',
     address: d.address || '',
     products,
-    accessories: [],
+    accessories,
     referenceDoctor: { name: '' },
     salesperson: defaults.salesperson,
     totalAmount,
