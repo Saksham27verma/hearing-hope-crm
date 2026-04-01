@@ -701,6 +701,16 @@ export default function InventoryPage() {
 
         const soldSerials = new Set<string>();
         const soldSerialOnly = new Set<string>();
+        const soldSerialMetaByKey = new Map<string, {
+          productId: string;
+          serialNumber: string;
+          productName?: string;
+          type?: string;
+          company?: string;
+          centerId?: string;
+          saleDate?: any;
+          invoiceNumber?: string;
+        }>();
         
         // Process sales from sales collection
         salesSnap.docs.forEach(docSnap => {
@@ -718,6 +728,16 @@ export default function InventoryPage() {
               if (serialNumber) {
                 soldSerials.add(key);
                 soldSerialOnly.add(normalizeSerialNumber(String(serialNumber || '')));
+                soldSerialMetaByKey.set(key, {
+                  productId: String(productId || '').trim(),
+                  serialNumber: normalizeSerialNumber(String(serialNumber || '')),
+                  productName: prod.name || data.productName || '',
+                  type: prod.type || '',
+                  company: data.company || '',
+                  centerId: data.centerId || '',
+                  saleDate: data.saleDate || data.createdAt || null,
+                  invoiceNumber: data.invoiceNumber || '',
+                });
                 console.log(`Added sold serial: ${key} from sale ${docSnap.id}`);
               }
             });
@@ -751,6 +771,16 @@ export default function InventoryPage() {
                   if (serialNumber) {
                     soldSerials.add(key);
                     soldSerialOnly.add(normalizeSerialNumber(String(serialNumber || '')));
+                    soldSerialMetaByKey.set(key, {
+                      productId: String(productId || '').trim(),
+                      serialNumber: normalizeSerialNumber(String(serialNumber || '')),
+                      productName: prod.name || '',
+                      type: prod.type || '',
+                      company: data.company || '',
+                      centerId: visit.centerId || data.visitingCenter || data.center || '',
+                      saleDate: visit.purchaseDate || visit.visitDate || data.updatedAt || data.createdAt || null,
+                      invoiceNumber: visit.invoiceNumber || '',
+                    });
                     console.log(`Added sold serial from enquiry: ${key} from enquiry ${docSnap.id}`);
                   }
                 });
@@ -1030,6 +1060,32 @@ export default function InventoryPage() {
             }
           }
           return itm;
+        });
+
+        // Ensure sold serials are represented even if source inward/purchase row is missing.
+        // This prevents sold devices (e.g. dummy3) from disappearing from inventory table.
+        soldSerialMetaByKey.forEach((meta, key) => {
+          if (incomingMap.has(key)) return;
+          const productRef = productById.get(meta.productId) || {};
+          const location = String(meta.centerId || headOfficeId || '').trim();
+          incomingMap.set(key, {
+            id: `sold-${key}`,
+            productId: meta.productId,
+            productName: meta.productName || productRef.name || 'Unknown Product',
+            serialNumber: meta.serialNumber,
+            type: meta.type || productRef.type || '',
+            company: meta.company || productRef.company || '',
+            originalProductCompany: productRef.company || '',
+            location,
+            status: 'Sold',
+            dealerPrice: Number(productRef.dealerPrice || 0),
+            mrp: Number(productRef.mrp || 0),
+            purchaseDate: meta.saleDate || null,
+            purchaseInvoice: meta.invoiceNumber || '',
+            supplier: '',
+            createdAt: meta.saleDate || null,
+            updatedAt: meta.saleDate || null,
+          });
         });
 
         // Group serial items for products that are sold in pairs
