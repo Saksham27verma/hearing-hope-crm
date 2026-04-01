@@ -642,6 +642,42 @@ export default function InventoryPage() {
         const makeSerialKey = (productId: unknown, serialNumber: unknown): string =>
           `${String(productId || '').trim()}|${normalizeSerialNumber(String(serialNumber || ''))}`;
 
+        const serialCandidatesFromProduct = (prod: any): string[] => {
+          const direct = [
+            prod?.serialNumber,
+            prod?.trialSerialNumber,
+            prod?.serialNo,
+            prod?.serial_no,
+            prod?.deviceSerial,
+            prod?.hearingAidSerial,
+          ];
+          const all: string[] = [];
+          if (Array.isArray(prod?.serialNumbers) && prod.serialNumbers.length > 0) {
+            all.push(...splitSerialCandidates(prod.serialNumbers));
+          }
+          direct.forEach((v) => all.push(...splitSerialCandidates(v)));
+          if (Array.isArray(prod?.previousSales)) {
+            prod.previousSales.forEach((line: any) => {
+              all.push(...splitSerialCandidates(line?.serialNumber));
+            });
+          }
+          return Array.from(new Set(all.filter(Boolean)));
+        };
+
+        const serialCandidatesFromVisit = (visit: any): string[] => {
+          const all: string[] = [];
+          all.push(...splitSerialCandidates(visit?.trialSerialNumber));
+          all.push(...splitSerialCandidates(visit?.serialNumber));
+          all.push(...splitSerialCandidates(visit?.hearingAidDetails?.trialSerialNumber));
+          all.push(...splitSerialCandidates(visit?.hearingAidDetails?.serialNumber));
+          if (Array.isArray(visit?.hearingAidDetails?.products)) {
+            visit.hearingAidDetails.products.forEach((p: any) => {
+              all.push(...serialCandidatesFromProduct(p));
+            });
+          }
+          return Array.from(new Set(all.filter(Boolean)));
+        };
+
         // Incoming serials for stock transfer tracking
         const stockTransferInSerials = new Set<string>();
         materialInSnap.docs.forEach(docSnap => {
@@ -711,18 +747,27 @@ export default function InventoryPage() {
           saleDate?: any;
           invoiceNumber?: string;
         }>();
+        const soldSerialMetaBySerial = new Map<string, {
+          productId: string;
+          serialNumber: string;
+          productName?: string;
+          type?: string;
+          company?: string;
+          centerId?: string;
+          saleDate?: any;
+          invoiceNumber?: string;
+        }>();
         
         // Process sales from sales collection
         salesSnap.docs.forEach(docSnap => {
           const data: any = docSnap.data();
-          (data.products || []).forEach((prod: any) => {
+          const saleProducts: any[] = Array.isArray(data.products)
+            ? data.products
+            : (Array.isArray(data.items) ? data.items : []);
+          saleProducts.forEach((prod: any) => {
             // Handle both sales collection structure and enquiry-derived sales
             const productId = prod.productId || prod.id || '';
-            const serialCandidates = splitSerialCandidates(
-              Array.isArray(prod.serialNumbers) && prod.serialNumbers.length > 0
-                ? prod.serialNumbers
-                : prod.serialNumber
-            );
+            const serialCandidates = serialCandidatesFromProduct(prod);
             serialCandidates.forEach((serialNumber) => {
               const key = makeSerialKey(productId, serialNumber);
               if (serialNumber) {
@@ -738,9 +783,29 @@ export default function InventoryPage() {
                   saleDate: data.saleDate || data.createdAt || null,
                   invoiceNumber: data.invoiceNumber || '',
                 });
+                soldSerialMetaBySerial.set(normalizeSerialNumber(String(serialNumber || '')), {
+                  productId: String(productId || '').trim(),
+                  serialNumber: normalizeSerialNumber(String(serialNumber || '')),
+                  productName: prod.name || data.productName || '',
+                  type: prod.type || '',
+                  company: data.company || '',
+                  centerId: data.centerId || '',
+                  saleDate: data.saleDate || data.createdAt || null,
+                  invoiceNumber: data.invoiceNumber || '',
+                });
                 console.log(`Added sold serial: ${key} from sale ${docSnap.id}`);
               }
             });
+          });
+
+          // Fallback for non-standard sales docs with serials at top level.
+          const docLevelSerials = splitSerialCandidates(
+            data.serialNumber || data.trialSerialNumber || data.deviceSerial || data.hearingAidSerial
+          );
+          docLevelSerials.forEach((serialNumber) => {
+            const key = makeSerialKey(data.productId || '', serialNumber);
+            soldSerials.add(key);
+            soldSerialOnly.add(normalizeSerialNumber(String(serialNumber || '')));
           });
         });
 
@@ -757,15 +822,14 @@ export default function InventoryPage() {
               (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
             );
             if (isSale) {
-              const products: any[] = Array.isArray(visit.products) ? visit.products : [];
+              const products: any[] = Array.isArray(visit.products)
+                ? visit.products
+                : (Array.isArray(visit?.hearingAidDetails?.products) ? visit.hearingAidDetails.products : []);
+              const visitLevelSerials = serialCandidatesFromVisit(visit);
               products.forEach((prod: any) => {
                 // Handle different product structures in enquiry visits
                 const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
-                const serialCandidates = splitSerialCandidates(
-                  Array.isArray(prod.serialNumbers) && prod.serialNumbers.length > 0
-                    ? prod.serialNumbers
-                    : (prod.serialNumber || prod.trialSerialNumber || '')
-                );
+                const serialCandidates = serialCandidatesFromProduct(prod);
                 serialCandidates.forEach((serialNumber) => {
                   const key = makeSerialKey(productId, serialNumber);
                   if (serialNumber) {
@@ -781,9 +845,26 @@ export default function InventoryPage() {
                       saleDate: visit.purchaseDate || visit.visitDate || data.updatedAt || data.createdAt || null,
                       invoiceNumber: visit.invoiceNumber || '',
                     });
+                    soldSerialMetaBySerial.set(normalizeSerialNumber(String(serialNumber || '')), {
+                      productId: String(productId || '').trim(),
+                      serialNumber: normalizeSerialNumber(String(serialNumber || '')),
+                      productName: prod.name || '',
+                      type: prod.type || '',
+                      company: data.company || '',
+                      centerId: visit.centerId || data.visitingCenter || data.center || '',
+                      saleDate: visit.purchaseDate || visit.visitDate || data.updatedAt || data.createdAt || null,
+                      invoiceNumber: visit.invoiceNumber || '',
+                    });
                     console.log(`Added sold serial from enquiry: ${key} from enquiry ${docSnap.id}`);
                   }
                 });
+              });
+
+              // If products are absent/malformed, still capture sold serial from visit-level fields.
+              visitLevelSerials.forEach((serialNumber) => {
+                const key = makeSerialKey(visit?.hearingAidProductId || visit?.hearingAidDetails?.hearingAidProductId || '', serialNumber);
+                soldSerials.add(key);
+                soldSerialOnly.add(normalizeSerialNumber(String(serialNumber || '')));
               });
             }
           });
@@ -1085,6 +1166,40 @@ export default function InventoryPage() {
             supplier: '',
             createdAt: meta.saleDate || null,
             updatedAt: meta.saleDate || null,
+          });
+        });
+
+        // Serial-level fallback: if a serial is known sold but still missing in incomingMap
+        // (productId/key mismatch edge cases), add one guaranteed Sold row.
+        const existingSerials = new Set<string>();
+        incomingMap.forEach((itm) => {
+          const normalized = normalizeSerialNumber(String(itm.serialNumber || ''));
+          if (normalized) existingSerials.add(normalized);
+        });
+        soldSerialOnly.forEach((serial) => {
+          const normalizedSerial = normalizeSerialNumber(serial);
+          if (!normalizedSerial || existingSerials.has(normalizedSerial)) return;
+          const meta = soldSerialMetaBySerial.get(normalizedSerial);
+          const productRef = productById.get(meta?.productId || '') || {};
+          const productId = String(meta?.productId || '').trim();
+          const key = makeSerialKey(productId, normalizedSerial);
+          incomingMap.set(key, {
+            id: `sold-serial-${normalizedSerial}`,
+            productId,
+            productName: meta?.productName || productRef.name || 'Unknown Product',
+            serialNumber: normalizedSerial,
+            type: meta?.type || productRef.type || '',
+            company: meta?.company || productRef.company || '',
+            originalProductCompany: productRef.company || '',
+            location: String(meta?.centerId || '').trim(),
+            status: 'Sold',
+            dealerPrice: Number(productRef.dealerPrice || 0),
+            mrp: Number(productRef.mrp || 0),
+            purchaseDate: meta?.saleDate || null,
+            purchaseInvoice: meta?.invoiceNumber || '',
+            supplier: '',
+            createdAt: meta?.saleDate || null,
+            updatedAt: meta?.saleDate || null,
           });
         });
 

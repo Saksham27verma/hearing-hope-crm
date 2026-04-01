@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname localhost --turbo",
+    "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname localhost",
     "dev:webpack": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname localhost",
     "clean": "rm -rf .next",
     "dev:clean": "rm -rf .next && NEXT_TELEMETRY_DISABLED=1 next dev --hostname localhost --turbo",
