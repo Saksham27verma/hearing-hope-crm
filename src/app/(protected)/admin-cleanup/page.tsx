@@ -83,6 +83,8 @@ export default function AdminCleanupPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(false);
   const [totalProgress, setTotalProgress] = useState(0);
+  const [resyncingSales, setResyncingSales] = useState(false);
+  const [resyncResult, setResyncResult] = useState<string>('');
   
   // Password protection states
   const [passwordDialog, setPasswordDialog] = useState(false);
@@ -277,6 +279,44 @@ export default function AdminCleanupPage() {
     }
   };
 
+  const handleResyncHistoricalSales = async () => {
+    try {
+      if (!user) {
+        alert('Please sign in again.');
+        return;
+      }
+      setResyncingSales(true);
+      setResyncResult('');
+      const token = await user.getIdToken();
+      const res = await fetch('/api/admin/resync-enquiry-sales', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        processedVisits?: number;
+        createdSales?: number;
+        updatedSales?: number;
+        allocatedInvoiceNumbers?: number;
+      };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || 'Failed to re-sync sales');
+      }
+      setResyncResult(
+        `Done. Processed ${json.processedVisits || 0} sale visits, created ${json.createdSales || 0} sales docs, updated ${json.updatedSales || 0}, allocated ${json.allocatedInvoiceNumbers || 0} invoice numbers.`
+      );
+    } catch (e) {
+      console.error(e);
+      setResyncResult(`Error: ${e instanceof Error ? e.message : 'Failed to re-sync sales'}`);
+    } finally {
+      setResyncingSales(false);
+    }
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       <Box sx={{ mb: 3 }}>
@@ -298,6 +338,28 @@ export default function AdminCleanupPage() {
           The following collections will be preserved: {preservedCollections.join(', ')}
         </Typography>
       </Alert>
+
+      {/* Historical Sales Re-sync */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Re-sync Historical Enquiry Sales
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          One-click backfill: creates/updates `sales` records from old enquiry sale visits and assigns missing/provisional invoice numbers.
+        </Typography>
+        <Button
+          variant="contained"
+          onClick={handleResyncHistoricalSales}
+          disabled={resyncingSales || isRunning}
+        >
+          {resyncingSales ? 'Re-syncing…' : 'Re-sync Enquiry Sales → Sales Collection'}
+        </Button>
+        {resyncResult ? (
+          <Alert severity={resyncResult.startsWith('Error:') ? 'error' : 'success'} sx={{ mt: 2 }}>
+            {resyncResult}
+          </Alert>
+        ) : null}
+      </Paper>
 
       {/* Password Management */}
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>

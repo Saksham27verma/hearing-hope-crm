@@ -17,9 +17,23 @@ import {
   Group as GroupIcon
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import { doc, getDoc, updateDoc, serverTimestamp, collection, getDocs, runTransaction } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  updateDoc,
+  serverTimestamp,
+  collection,
+  getDocs,
+  runTransaction,
+  query,
+  where,
+  limit,
+  addDoc,
+  Timestamp,
+} from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
+import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -195,9 +209,87 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       const oldVisits = enquiry?.visits || [];
       const newSalesProducts = findNewSales(oldVisits, data.visits || []);
       
+      const visits = Array.isArray(data.visits) ? [...data.visits] : [];
+      let visitsPatched = false;
+
+      // Upsert sale visits into `sales` collection and ensure invoice numbers.
+      for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
+        const visit = visits[visitIndex] || {};
+        const products = Array.isArray(visit.products) ? visit.products : [];
+        const isSale = Boolean(
+          visit?.hearingAidSale ||
+          visit?.journeyStage === 'sale' ||
+          visit?.hearingAidStatus === 'sold' ||
+          (products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+        );
+        if (!isSale || !resolvedParams?.id) continue;
+
+        let invoiceNumber = String(visit.invoiceNumber || '').trim();
+        if (!invoiceNumber) {
+          invoiceNumber = await allocateNextInvoiceNumber(db);
+          visits[visitIndex] = { ...visit, invoiceNumber };
+          visitsPatched = true;
+        }
+
+        const saleDateRaw = visit.purchaseDate || visit.visitDate;
+        const saleDate = saleDateRaw
+          ? Timestamp.fromDate(new Date(`${String(saleDateRaw)}T00:00:00+05:30`))
+          : Timestamp.now();
+        const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
+        const gstAmount = Number(visit.taxAmount) || 0;
+        const grandTotal = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+
+        const existing = await getDocs(
+          query(
+            collection(db, 'sales'),
+            where('enquiryId', '==', resolvedParams.id),
+            where('enquiryVisitIndex', '==', visitIndex),
+            limit(1)
+          )
+        );
+
+        const payload = {
+          invoiceNumber,
+          patientName: data.name || 'Patient',
+          phone: data.phone || '',
+          email: data.email || '',
+          address: data.address || '',
+          products,
+          accessories: [],
+          manualLineItems: [],
+          referenceDoctor: { name: '' },
+          salesperson: { id: '', name: '' },
+          totalAmount: grossSalesBeforeTax,
+          gstAmount,
+          gstPercentage: 0,
+          grandTotal,
+          netProfit: 0,
+          branch: '',
+          centerId: visit.centerId || data.visitingCenter || data.center || '',
+          paymentMethod: 'cash',
+          paymentStatus: 'pending',
+          notes: visit.visitNotes || '',
+          saleDate,
+          source: 'enquiry',
+          enquiryId: resolvedParams.id,
+          enquiryVisitIndex: visitIndex,
+          updatedAt: serverTimestamp(),
+        } as Record<string, unknown>;
+
+        if (existing.empty) {
+          await addDoc(collection(db, 'sales'), {
+            ...payload,
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(doc(db, 'sales', existing.docs[0].id), payload);
+        }
+      }
+
       // Add updated timestamp
       const enquiryData = {
         ...data,
+        visits,
         updatedAt: serverTimestamp()
       };
 

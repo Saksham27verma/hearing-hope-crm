@@ -16,10 +16,24 @@ import {
   Group as GroupIcon
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import { collection, addDoc, serverTimestamp, doc, updateDoc, getDoc, runTransaction, getDocs } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  doc,
+  updateDoc,
+  getDoc,
+  runTransaction,
+  getDocs,
+  query,
+  where,
+  limit,
+  Timestamp,
+} from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
+import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
 
 export default function NewEnquiryPage() {
   const router = useRouter();
@@ -158,6 +172,89 @@ export default function NewEnquiryPage() {
 
       // Save to Firestore
       const docRef = await addDoc(collection(db, 'enquiries'), enquiryData);
+
+      // Mirror sale visits into `sales` collection (so Sales & Invoicing/inventory sold tracking are consistent).
+      const visits = Array.isArray(data.visits) ? [...data.visits] : [];
+      let visitsPatched = false;
+      for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
+        const visit = visits[visitIndex] || {};
+        const products = Array.isArray(visit.products) ? visit.products : [];
+        const isSale = Boolean(
+          visit?.hearingAidSale ||
+          visit?.journeyStage === 'sale' ||
+          visit?.hearingAidStatus === 'sold' ||
+          (products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+        );
+        if (!isSale) continue;
+
+        let invoiceNumber = String(visit.invoiceNumber || '').trim();
+        if (!invoiceNumber) {
+          invoiceNumber = await allocateNextInvoiceNumber(db);
+          visits[visitIndex] = { ...visit, invoiceNumber };
+          visitsPatched = true;
+        }
+
+        const saleDateRaw = visit.purchaseDate || visit.visitDate;
+        const saleDate = saleDateRaw
+          ? Timestamp.fromDate(new Date(`${String(saleDateRaw)}T00:00:00+05:30`))
+          : Timestamp.now();
+        const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
+        const gstAmount = Number(visit.taxAmount) || 0;
+        const grandTotal = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+
+        const existing = await getDocs(
+          query(
+            collection(db, 'sales'),
+            where('enquiryId', '==', docRef.id),
+            where('enquiryVisitIndex', '==', visitIndex),
+            limit(1)
+          )
+        );
+
+        const payload = {
+          invoiceNumber,
+          patientName: data.name || 'Patient',
+          phone: data.phone || '',
+          email: data.email || '',
+          address: data.address || '',
+          products,
+          accessories: [],
+          manualLineItems: [],
+          referenceDoctor: { name: '' },
+          salesperson: { id: '', name: '' },
+          totalAmount: grossSalesBeforeTax,
+          gstAmount,
+          gstPercentage: 0,
+          grandTotal,
+          netProfit: 0,
+          branch: '',
+          centerId: visit.centerId || data.visitingCenter || data.center || '',
+          paymentMethod: 'cash',
+          paymentStatus: 'pending',
+          notes: visit.visitNotes || '',
+          saleDate,
+          source: 'enquiry',
+          enquiryId: docRef.id,
+          enquiryVisitIndex: visitIndex,
+          updatedAt: serverTimestamp(),
+        } as Record<string, unknown>;
+
+        if (existing.empty) {
+          await addDoc(collection(db, 'sales'), {
+            ...payload,
+            createdAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(doc(db, 'sales', existing.docs[0].id), payload);
+        }
+      }
+
+      if (visitsPatched) {
+        await updateDoc(doc(db, 'enquiries', docRef.id), {
+          visits,
+          updatedAt: serverTimestamp(),
+        });
+      }
       
       // Reduce inventory for any sales in the visits
       if (data.visits && data.visits.length > 0) {
