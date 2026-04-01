@@ -1195,6 +1195,16 @@ export default function InventoryPage() {
           return itm;
         });
 
+        // Force serial-level sold truth: if any source marks a serial as sold,
+        // mark every matching inventory row for that serial as Sold (even when productId keys differ).
+        incomingMap.forEach((itm, k) => {
+          const normalizedSerial = normalizeSerialNumber(String(itm.serialNumber || ''));
+          if (!normalizedSerial) return;
+          if (soldSerialOnly.has(normalizedSerial) && itm.status !== 'Sold') {
+            incomingMap.set(k, { ...itm, status: 'Sold' });
+          }
+        });
+
         // Ensure sold serials are represented even if source inward/purchase row is missing.
         // This prevents sold devices (e.g. dummy3) from disappearing from inventory table.
         soldSerialMetaByKey.forEach((meta, key) => {
