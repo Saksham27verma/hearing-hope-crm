@@ -2263,11 +2263,32 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       return visit;
     });
 
+    const normalizedPaymentRecords = (data.payments || []).map((payment) => ({
+      id: payment.id,
+      paymentType:
+        payment.paymentFor === 'hearing_test' ? 'hearing_aid_test' :
+        payment.paymentFor === 'booking_advance' ? 'hearing_aid_booking' :
+        payment.paymentFor === 'hearing_aid' ? 'hearing_aid_sale' :
+        payment.paymentFor === 'full_payment' ? 'hearing_aid_sale' :
+        payment.paymentFor === 'partial_payment' ? 'hearing_aid_sale' :
+        payment.paymentFor === 'trial_home_security_deposit' ? 'staff_trial_request' :
+        payment.paymentFor || 'other',
+      amount: Number(payment.amount || 0),
+      paymentDate: payment.paymentDate || null,
+      paymentMethod: payment.paymentMode || 'Cash',
+      referenceNumber: payment.referenceNumber || '',
+      remarks: payment.remarks || '',
+      relatedVisitId: payment.relatedVisitId ?? null,
+    }));
+
     const formattedData = {
       ...data,
       visits: visitsForSave,
       followUps,
       status: 'active',
+      // Keep legacy and normalized payment arrays in sync so profile/payment widgets
+      // reflect deletes/edits made from CRM enquiry form immediately.
+      paymentRecords: normalizedPaymentRecords,
       // Payment summary
       financialSummary: {
         totalDue,

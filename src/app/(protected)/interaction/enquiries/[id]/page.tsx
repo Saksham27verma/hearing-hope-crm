@@ -491,7 +491,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }
   };
 
-  const paymentEntries = Array.isArray(enquiry?.paymentRecords) && enquiry.paymentRecords.length > 0
+  const normalizedPaymentRecords = Array.isArray(enquiry?.paymentRecords)
     ? enquiry.paymentRecords.map((payment: any) => ({
         label:
           payment.paymentType === 'hearing_aid_test' ? 'Test' :
@@ -503,8 +503,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         date: payment.paymentDate,
         mode: payment.paymentMethod,
       }))
-    : Array.isArray(enquiry?.payments)
-      ? enquiry.payments.map((payment: any) => ({
+    : [];
+  const normalizedLegacyPayments = Array.isArray(enquiry?.payments)
+    ? enquiry.payments.map((payment: any) => ({
           label:
             payment.paymentFor === 'hearing_test' ? 'Test' :
             payment.paymentFor === 'booking_advance' ? 'Booking' :
@@ -519,7 +520,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           date: payment.paymentDate,
           mode: payment.paymentMode,
         }))
-      : [];
+    : [];
+  const paymentEntries =
+    normalizedPaymentRecords.length > 0 ? normalizedPaymentRecords : normalizedLegacyPayments;
   const hasPayments = paymentEntries.length > 0 || Boolean(enquiry?.financialSummary);
 
   const hasValue = (value: any) => {
@@ -1362,8 +1365,15 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                 activeVisit.hearingAidDetails?.trialHearingAidType === 'home';
                               const agreed = getHomeTrialSecurityDepositAmount(activeVisit);
                               if (!isHome || agreed <= 0) return null;
-                              const payList = (enquiry?.payments || []).filter((p: any) => {
-                                if (p.paymentFor !== 'trial_home_security_deposit') return false;
+                              const trialPaymentCandidates = [
+                                ...(Array.isArray(enquiry?.payments) ? enquiry.payments : []),
+                                ...(Array.isArray(enquiry?.paymentRecords) ? enquiry.paymentRecords : []),
+                              ];
+                              const payList = trialPaymentCandidates.filter((p: any) => {
+                                const isTrialDeposit =
+                                  p.paymentFor === 'trial_home_security_deposit' ||
+                                  p.paymentType === 'staff_trial_request';
+                                if (!isTrialDeposit) return false;
                                 const rid = p.relatedVisitId;
                                 if (rid !== undefined && rid !== null && String(rid) !== '') {
                                   return String(rid) === String(activeVisit.id ?? '');
@@ -1383,7 +1393,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                       <Stack spacing={0.75}>
                                         {payList.map((p: any, idx: number) => (
                                           <Typography key={p.id || idx} variant="body2">
-                                            {formatCurrency(Number(p.amount))} · {p.paymentMode || '—'}
+                                            {formatCurrency(Number(p.amount))} · {p.paymentMode || p.paymentMethod || '—'}
                                             {p.referenceNumber ? ` · Ref: ${p.referenceNumber}` : ''}
                                             {p.remarks ? ` · ${p.remarks}` : ''}
                                             {p.paymentDate ? ` · ${p.paymentDate}` : ''}
