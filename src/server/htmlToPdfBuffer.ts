@@ -9,6 +9,22 @@
  * Override: set `PDF_USE_PUPPETEER_FULL=1` to force the full `puppeteer` package on Linux (e.g. Docker with deps installed).
  */
 
+/**
+ * `@sparticuz/chromium` only extracts `al2023.tar.br` (bundled `libnss3.so`, etc.) and prepends `LD_LIBRARY_PATH`
+ * when it thinks it is on **AWS Lambda** (`AWS_EXECUTION_ENV`). **Vercel does not set that**, so Chromium was
+ * launched without NSS libs → `libnss3.so: cannot open shared object file`. Spoof Lambda detection on Vercel
+ * before the first `import('@sparticuz/chromium')` (module top-level runs `setupLambdaEnvironment`).
+ *
+ * @see https://github.com/Sparticuz/chromium/issues/254
+ */
+if (process.env.VERCEL === '1' && process.platform === 'linux' && !process.env.AWS_EXECUTION_ENV?.trim()) {
+  const major = Number(process.versions.node.split('.')[0] || '20');
+  process.env.AWS_EXECUTION_ENV = major >= 22 ? 'AWS_Lambda_nodejs22.x' : 'AWS_Lambda_nodejs20.x';
+}
+
+/** If a prior run extracted only `chromium.br` (no al2023 NSS libs), `/tmp/chromium` exists and `executablePath()` skips re-extract — unlink once so the next extract includes al2023. */
+let vercelClearedStaleChromiumBinary = false;
+
 function shouldUseSparticuzChromium(): boolean {
   if (process.env.PDF_USE_PUPPETEER_FULL === '1') return false;
   if (process.env.PDF_USE_SPARTICUZ === '1') return true;
@@ -17,6 +33,18 @@ function shouldUseSparticuzChromium(): boolean {
 }
 
 async function renderWithSparticuz(html: string): Promise<Buffer> {
+  if (process.env.VERCEL === '1' && !vercelClearedStaleChromiumBinary) {
+    vercelClearedStaleChromiumBinary = true;
+    try {
+      const { existsSync, unlinkSync } = await import('node:fs');
+      if (existsSync('/tmp/chromium')) {
+        unlinkSync('/tmp/chromium');
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   const puppeteer = await import('puppeteer-core');
   const chromium = (await import('@sparticuz/chromium')).default;
 
@@ -95,10 +123,14 @@ export async function renderHtmlToPdfBuffer(html: string): Promise<Buffer> {
     } catch (first) {
       const msg = first instanceof Error ? first.message : String(first);
       console.error(
-        'renderHtmlToPdfBuffer: @sparticuz/chromium failed, retrying with full puppeteer:',
+        'renderHtmlToPdfBuffer: @sparticuz/chromium failed:',
         msg,
         first instanceof Error ? first.stack : ''
       );
+      // On Vercel there is no Chrome for full `puppeteer` — retry only wastes time and log noise.
+      if (process.env.VERCEL === '1') {
+        throw first instanceof Error ? first : new Error(msg);
+      }
       try {
         return await renderWithFullPuppeteer(html);
       } catch (second) {
