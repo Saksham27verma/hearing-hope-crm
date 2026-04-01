@@ -19,6 +19,9 @@ export function enquiryVisitToInvoiceSalePayload(
   const hearingAidPreTax = Math.max(0, salesAfterTax - taxAmount);
   const totalAmount = hearingAidPreTax + accessoryTotal;
   const grandTotal = salesAfterTax + accessoryTotal;
+  const invoiceNumberFromRecord = String(
+    visit?.invoiceNumber || visit?.salesInvoiceNumber || enquiry?.invoiceNumber || ''
+  ).trim();
   return {
     products: visit?.products || [],
     accessories,
@@ -30,7 +33,8 @@ export function enquiryVisitToInvoiceSalePayload(
     email: enquiry?.email || '',
     address: enquiry?.address || '',
     saleDate: visit?.purchaseDate || visit?.visitDate || visit?.date || new Date().toISOString().slice(0, 10),
-    invoiceNumber: `PROV-${String(enquiry?.id || 'enquiry').slice(0, 8)}-${String(visitKey).slice(0, 12)}`,
+    invoiceNumber:
+      invoiceNumberFromRecord || `PROV-${String(enquiry?.id || 'enquiry').slice(0, 8)}-${String(visitKey).slice(0, 12)}`,
     notes: visit?.saleNotes || visit?.notes || '',
   };
 }

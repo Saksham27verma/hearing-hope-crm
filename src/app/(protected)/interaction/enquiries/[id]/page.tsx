@@ -72,6 +72,7 @@ import {
 } from '@/utils/receiptGenerator';
 import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
+import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
 import {
   ENQUIRY_STATUS_OPTIONS,
   getEnquiryStatusMeta,
@@ -567,6 +568,24 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const centerId =
       visit?.centerId || enquiry.visitingCenter || (enquiry as { center?: string }).center;
     return centerId ? (centers.find(c => c.id === centerId)?.name) || undefined : undefined;
+  };
+
+  const ensureVisitInvoiceNumber = async (visitIndex: number): Promise<string> => {
+    const visitsKey = Array.isArray(enquiry?.visits) ? 'visits' : 'visitSchedules';
+    const visitList = Array.isArray(enquiry?.[visitsKey]) ? [...enquiry[visitsKey]] : [];
+    const currentVisit = visitList[visitIndex] || {};
+    const existing = String(currentVisit.invoiceNumber || '').trim();
+    if (existing) return existing;
+    const nextNumber = await allocateNextInvoiceNumber(db);
+    visitList[visitIndex] = { ...currentVisit, invoiceNumber: nextNumber };
+    if (resolvedParams?.id) {
+      await updateDoc(doc(db, 'enquiries', resolvedParams.id), {
+        [visitsKey]: visitList,
+        updatedAt: serverTimestamp(),
+      });
+    }
+    setEnquiry((prev: any) => ({ ...prev, [visitsKey]: visitList }));
+    return nextNumber;
   };
 
   const formatCurrency = (value?: number) =>
@@ -1832,10 +1851,23 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           size="small"
                           variant="contained"
                           startIcon={<PictureAsPdfIcon />}
-                          onClick={() => {
-                            const payload = enquiryVisitToInvoiceSalePayload(enquiry, visit);
-                            setInvoicePdfData(convertSaleToInvoiceData(payload));
-                            setInvoicePdfOpen(true);
+                          onClick={async () => {
+                            try {
+                              const invoiceNumber = await ensureVisitInvoiceNumber(index);
+                              const payload = enquiryVisitToInvoiceSalePayload(enquiry, {
+                                ...visit,
+                                invoiceNumber,
+                              });
+                              setInvoicePdfData(convertSaleToInvoiceData(payload));
+                              setInvoicePdfOpen(true);
+                            } catch (e) {
+                              console.error('Failed to prepare invoice PDF number:', e);
+                              setFollowUpFeedback({
+                                open: true,
+                                message: 'Could not allocate invoice number. Please try again.',
+                                severity: 'error',
+                              });
+                            }
                           }}
                           sx={{ borderRadius: 99 }}
                         >

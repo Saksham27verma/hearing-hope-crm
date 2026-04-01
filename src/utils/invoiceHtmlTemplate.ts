@@ -103,5 +103,11 @@ export function processInvoiceHtmlTemplate(
     processed = processed.replace(/\{\{ITEMS_PLACEHOLDER\}\}/g, itemsHTML);
   }
 
+  // Guardrail: remove accidental pasted Firebase Storage links from template body text.
+  // Keep URL values used inside attributes (e.g. src="...") intact.
+  processed = processed
+    .replace(/(^|[\s>])(https:\/\/firebasestorage\.googleapis\.com\/[^\s<>"']+)/g, '$1')
+    .replace(/\balt=media&token=[^\s<>"']+/g, '');
+
   return processed;
 }
