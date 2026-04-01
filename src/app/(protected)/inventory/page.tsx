@@ -226,7 +226,7 @@ export default function InventoryPage() {
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [locationFilter, setLocationFilter] = useState<string>('');
   const [companyFilter, setCompanyFilter] = useState<string>('');
-  const [showSoldItems, setShowSoldItems] = useState<boolean>(false);
+  const [showSoldItems, setShowSoldItems] = useState<boolean>(true);
   
   // Pagination
   const [page, setPage] = useState(0);
@@ -742,7 +742,9 @@ export default function InventoryPage() {
                 // Handle different product structures in enquiry visits
                 const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
                 const serialCandidates = splitSerialCandidates(
-                  prod.serialNumber || prod.trialSerialNumber || ''
+                  Array.isArray(prod.serialNumbers) && prod.serialNumbers.length > 0
+                    ? prod.serialNumbers
+                    : (prod.serialNumber || prod.trialSerialNumber || '')
                 );
                 serialCandidates.forEach((serialNumber) => {
                   const key = makeSerialKey(productId, serialNumber);
@@ -1615,7 +1617,7 @@ export default function InventoryPage() {
     let filtered = inventory;
 
     // Filter sold items unless toggle is enabled
-    if (!showSoldItems) {
+    if (!showSoldItems && statusFilter !== 'Sold') {
       filtered = filtered.filter(item => item.status !== 'Sold');
     }
 
