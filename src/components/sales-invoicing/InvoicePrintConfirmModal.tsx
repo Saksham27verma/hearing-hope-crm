@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -19,11 +19,7 @@ import { Print as PrintIcon } from '@mui/icons-material';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { InvoiceData } from '@/components/invoices/InvoiceTemplate';
-import InvoicePrintableBody from '@/components/invoices/InvoicePrintableBody';
-import type { InvoiceVisualTemplate } from '@/components/invoices/InvoicePrintableBody';
 import {
-  createInvoicePdfBlobFromElement,
-  DEFAULT_INVOICE_PDF_SETTINGS,
   openPdfBlobPrintDialog,
   openPdfBlobInNewTab,
   downloadPdfBlob,
@@ -57,7 +53,6 @@ export default function InvoicePrintConfirmModal({
   userId,
   extraPdfActions = false,
 }: InvoicePrintConfirmModalProps) {
-  const printRef = useRef<HTMLDivElement>(null);
   const [templates, setTemplates] = useState<FirestoreTemplate[]>([]);
   const [fullById, setFullById] = useState<Record<string, FirestoreTemplate>>({});
   const [loading, setLoading] = useState(false);
@@ -82,7 +77,9 @@ export default function InvoicePrintConfirmModal({
     setError(null);
     try {
       const snap = await getDocs(collection(db, 'invoiceTemplates'));
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as FirestoreTemplate[];
+      const list = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((t: any) => t?.templateType !== 'visual' && String(t?.htmlContent || '').trim()) as FirestoreTemplate[];
       setTemplates(list);
       const full: Record<string, FirestoreTemplate> = {};
       list.forEach((t) => {
@@ -106,14 +103,25 @@ export default function InvoicePrintConfirmModal({
   }, [open, loadTemplates]);
 
   const renderPdfBlob = async (): Promise<Blob> => {
-    if (!printRef.current) throw new Error('Invoice preview is not ready yet.');
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    const { blob } = await createInvoicePdfBlobFromElement(
-      printRef.current,
-      invoiceData.invoiceNumber,
-      DEFAULT_INVOICE_PDF_SETTINGS
-    );
-    return blob;
+    const res = await fetch('/api/invoices/render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceData,
+        templateId: selectedId || undefined,
+      }),
+    });
+    if (!res.ok) {
+      let message = 'Failed to render invoice PDF.';
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j?.error) message = j.error;
+      } catch {
+        // no-op
+      }
+      throw new Error(message);
+    }
+    return res.blob();
   };
 
   const persistTemplateChoice = () => {
@@ -121,7 +129,7 @@ export default function InvoicePrintConfirmModal({
   };
 
   const handleConfirmPrint = async () => {
-    if (!selectedId || !printRef.current) return;
+    if (!selectedId) return;
     setPrinting(true);
     setError(null);
     try {
@@ -138,7 +146,7 @@ export default function InvoicePrintConfirmModal({
   };
 
   const handleOpenInBrowser = async () => {
-    if (!selectedId || !printRef.current) return;
+    if (!selectedId) return;
     setPdfBusy(true);
     setError(null);
     try {
@@ -155,7 +163,7 @@ export default function InvoicePrintConfirmModal({
   };
 
   const handleDownloadPdf = async () => {
-    if (!selectedId || !printRef.current) return;
+    if (!selectedId) return;
     setPdfBusy(true);
     setError(null);
     try {
@@ -173,8 +181,6 @@ export default function InvoicePrintConfirmModal({
   };
 
   const busy = printing || pdfBusy;
-
-  const visualTemplate: InvoiceVisualTemplate = 'modern';
 
   return (
     <>
@@ -285,28 +291,7 @@ export default function InvoicePrintConfirmModal({
         </DialogActions>
       </Dialog>
 
-      {/* Off-screen render target for html2canvas */}
-      {open && selectedId && (
-        <Box
-          aria-hidden
-          sx={{
-            position: 'fixed',
-            left: -9999,
-            top: 0,
-            width: 820,
-            zIndex: -1,
-            opacity: 0.02,
-            pointerEvents: 'none',
-          }}
-        >
-          <InvoicePrintableBody
-            ref={printRef}
-            invoiceData={invoiceData}
-            template={visualTemplate}
-            customTemplate={customTemplate}
-          />
-        </Box>
-      )}
+      {/* PDF is rendered server-side through /api/invoices/render */}
     </>
   );
 }
