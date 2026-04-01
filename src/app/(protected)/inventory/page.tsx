@@ -675,43 +675,18 @@ export default function InventoryPage() {
           return Array.from(new Set(all.filter(Boolean)));
         };
 
-        const extractSerialLikeValuesDeep = (
-          input: unknown,
-          depth = 0,
-          visited: WeakSet<object> = new WeakSet<object>(),
-        ): string[] => {
-          if (depth > 4 || input === null || input === undefined) return [];
-          if (typeof input === 'string' || typeof input === 'number') {
-            return splitSerialCandidates(String(input));
-          }
-          if (Array.isArray(input)) {
-            return Array.from(
-              new Set(input.flatMap((v) => extractSerialLikeValuesDeep(v, depth + 1, visited))),
-            );
-          }
-          if (typeof input !== 'object') return [];
-
+        const extractSerialLikeValuesDeep = (input: unknown): string[] => {
+          // Keep this intentionally shallow/safe to avoid runtime failures in production.
+          if (!input || typeof input !== 'object') return [];
           const obj = input as Record<string, unknown>;
-          if (visited.has(obj)) return [];
-          visited.add(obj);
-
           const out: string[] = [];
           Object.entries(obj).forEach(([k, v]) => {
             const key = k.toLowerCase();
             if (key.includes('serial')) {
               out.push(...splitSerialCandidates(v));
             }
-            // Traverse only likely containers to avoid large/recursive object walks.
-            if (
-              v &&
-              typeof v === 'object' &&
-              (Array.isArray(v) ||
-                /(visit|product|detail|sale|item|hearingaid|previous|line)/i.test(key))
-            ) {
-              out.push(...extractSerialLikeValuesDeep(v, depth + 1, visited));
-            }
           });
-          return Array.from(new Set(out));
+          return Array.from(new Set(out.filter(Boolean)));
         };
 
         const serialCandidatesFromVisit = (visit: any): string[] => {
