@@ -694,6 +694,7 @@ export default function InventoryPage() {
         });
 
         const soldSerials = new Set<string>();
+        const soldSerialOnly = new Set<string>();
         
         // Process sales from sales collection
         salesSnap.docs.forEach(docSnap => {
@@ -710,6 +711,7 @@ export default function InventoryPage() {
               const key = makeSerialKey(productId, serialNumber);
               if (serialNumber) {
                 soldSerials.add(key);
+                soldSerialOnly.add(String(serialNumber).trim().toUpperCase());
                 console.log(`Added sold serial: ${key} from sale ${docSnap.id}`);
               }
             });
@@ -738,8 +740,9 @@ export default function InventoryPage() {
                 );
                 serialCandidates.forEach((serialNumber) => {
                   const key = makeSerialKey(productId, serialNumber);
-                  if (serialNumber && productId) {
+                  if (serialNumber) {
                     soldSerials.add(key);
+                    soldSerialOnly.add(String(serialNumber).trim().toUpperCase());
                     console.log(`Added sold serial from enquiry: ${key} from enquiry ${docSnap.id}`);
                   }
                 });
@@ -831,7 +834,7 @@ export default function InventoryPage() {
               if (dispatchedOutSerials.has(key)) return;
               
               // Determine status based on sales / pending out
-              const isSold = soldSerials.has(key);
+              const isSold = soldSerials.has(key) || soldSerialOnly.has(String(sn || '').trim().toUpperCase());
               const isReserved = pendingOutSerials.has(key);
               const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
@@ -906,7 +909,7 @@ export default function InventoryPage() {
               if (dispatchedOutSerials.has(key)) return;
               
               // Determine status based on sales / pending out
-              const isSold = soldSerials.has(key);
+              const isSold = soldSerials.has(key) || soldSerialOnly.has(String(sn || '').trim().toUpperCase());
               const isReserved = pendingOutSerials.has(key);
               const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
               
