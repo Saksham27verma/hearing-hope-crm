@@ -15,14 +15,6 @@ import { enquiryVisitToInvoiceSalePayload, convertSaleToInvoiceData, mergeInvoic
 import { DEFAULT_INVOICE_PDF_CONFIG } from '@/utils/invoicePdfPreferences';
 import { processInvoiceHtmlTemplate } from '@/utils/invoiceHtmlTemplate';
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 function publicSiteOrigin(): string {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
   if (explicit && explicit.trim()) return explicit.replace(/\/$/, '');
@@ -31,16 +23,7 @@ function publicSiteOrigin(): string {
   return 'http://localhost:3000';
 }
 
-function appendGeneratedByFooter(html: string, line: string): string {
-  const footer = `<div style="margin-top:14px;padding:10px 12px;border-top:1px solid #e5e7eb;font-size:10px;color:#64748b;font-family:system-ui,Segoe UI,sans-serif;line-height:1.4">${escapeHtml(line)}</div>`;
-  if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, `${footer}</body>`);
-  }
-  return `${html}${footer}`;
-}
-
-function wrapFragmentInDocument(inner: string, footerLine: string): string {
-  const f = `<div style="margin-top:14px;padding:10px 12px;border-top:1px solid #e5e7eb;font-size:10px;color:#64748b;font-family:system-ui,Segoe UI,sans-serif;line-height:1.4">${escapeHtml(footerLine)}</div>`;
+function wrapFragmentInDocument(inner: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -50,7 +33,6 @@ function wrapFragmentInDocument(inner: string, footerLine: string): string {
 </head>
 <body style="margin:0;background:#ffffff">
 ${inner}
-${f}
 </body>
 </html>`;
 }
@@ -83,7 +65,6 @@ export type StaffCrmStylePdfResult = {
  */
 export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs): Promise<StaffCrmStylePdfResult> {
   const origin = publicSiteOrigin();
-  const footerLine = `Generated in staff app by ${args.staffName} (ID: ${args.staffId}) · Request ${args.requestId.slice(0, 8)}…`;
   const override = args.htmlTemplateId;
 
   const enquiry = args.enquiry as EnquiryLike;
@@ -103,7 +84,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
         paymentMode: args.paymentMethod,
       });
       const inner = buildBookingReceiptHtmlString(template, data, { logoPublicOrigin: origin });
-      const html = wrapFragmentInDocument(inner, footerLine);
+      const html = wrapFragmentInDocument(inner);
       const buffer = await renderHtmlToPdfBuffer(html);
       return { buffer, templateId: template.id };
     }
@@ -117,7 +98,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
         centerName,
       });
       const inner = buildTrialReceiptHtmlString(template, data, { logoPublicOrigin: origin });
-      const html = wrapFragmentInDocument(inner, footerLine);
+      const html = wrapFragmentInDocument(inner);
       const buffer = await renderHtmlToPdfBuffer(html);
       return { buffer, templateId: template.id };
     }
@@ -137,8 +118,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
         paymentMethod: args.paymentMethod,
         salesperson: args.staffName,
       };
-      let html = processInvoiceHtmlTemplate(template.htmlContent, invoiceData, template);
-      html = appendGeneratedByFooter(html, footerLine);
+      const html = processInvoiceHtmlTemplate(template.htmlContent, invoiceData, template);
       const buffer = await renderHtmlToPdfBuffer(html);
       return { buffer, templateId: template.id };
     }

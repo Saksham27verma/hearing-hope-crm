@@ -1,0 +1,142 @@
+<!--
+  Trial receipt HTML for Invoice Manager (document type: trial_receipt).
+  Tokens match buildTrialReceiptHtmlString in src/utils/receiptTemplateHtml.ts
+  Paste the inner content (from <style> through closing </div>) into the HTML template editor, or use as full fragment.
+-->
+<div class="trial-delivery-note-root">
+  <style>
+    .receipt-page { max-width: 800px; margin: 0 auto; padding: 45px; background: rgb(255, 255, 255); }
+    .brand-red { color: rgb(168, 0, 0); }
+    .text-light { color: rgb(74, 85, 104); font-size: 12px; }
+    .text-muted { color: rgb(113, 128, 150); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+    .header-table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
+    .company-name { font-size: 22px; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: -0.5px; }
+    .document-type { font-size: 11px; font-weight: 700; color: rgb(168, 0, 0); text-transform: uppercase; letter-spacing: 2px; border: 1.5px solid rgb(168, 0, 0); padding: 4px 12px; display: inline-block; margin-bottom: 10px; }
+    .meta-grid { width: 100%; border-collapse: collapse; margin-bottom: 40px; border-top: 1px solid rgb(237, 242, 247); padding-top: 30px; }
+    .meta-grid td { vertical-align: top; padding: 0; }
+    .label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: rgb(160, 174, 192); margin-bottom: 4px; }
+    .order-table { width: 100%; border-collapse: collapse; margin-bottom: 40px; }
+    .order-table th { border-bottom: 1px solid rgb(26, 32, 44); padding: 12px 10px; text-align: left; font-size: 11px; text-transform: uppercase; font-weight: 700; color: rgb(74, 85, 104); }
+    .order-table td { border-bottom: 1px solid rgb(237, 242, 247); padding: 25px 10px; vertical-align: top; font-size: 14px; }
+    .trial-info-box { background: rgb(255, 245, 245); border: 1px solid rgb(254, 215, 215); padding: 20px; border-radius: 4px; display: flex; justify-content: space-between; margin-bottom: 30px; }
+    .trial-stat { flex: 1; text-align: center; border-right: 1px solid rgb(254, 215, 215); }
+    .trial-stat:last-child { border-right: none; }
+    .stat-label { font-size: 10px; text-transform: uppercase; color: rgb(197, 48, 48); font-weight: 700; letter-spacing: 0.5px; }
+    .stat-val { font-size: 16px; font-weight: 700; color: rgb(26, 32, 44); display: block; margin-top: 4px; }
+    .protocol-box { margin-top: 20px; }
+    .protocol-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: rgb(168, 0, 0); margin-bottom: 10px; }
+    .protocol-text { font-size: 12px; color: rgb(74, 85, 104); line-height: 1.6; }
+    .warning-text { color: rgb(168, 0, 0); font-weight: 700; }
+    .terms-footer { margin-top: 60px; font-size: 10px; color: rgb(160, 174, 192); border-top: 1px dashed rgb(237, 242, 247); padding-top: 20px; text-align: center; }
+    .digital-disclaimer { font-size: 10px; color: rgb(160, 174, 192); margin-top: 15px; font-style: italic; font-weight: 500; }
+  </style>
+
+  <div class="receipt-page">
+    <table class="header-table">
+      <tbody>
+        <tr>
+          <td width="65%">
+            <img src="{{LOGO_PLACEHOLDER}}" alt="Logo" style="width: 130px; margin-bottom: 15px;" />
+            <br />
+            <h1 class="company-name brand-red">{{COMPANY_NAME}}</h1>
+            <div class="text-light">
+              {{COMPANY_ADDRESS}}<br />
+              <strong>Contact:</strong> {{COMPANY_PHONE}} | <strong>Email:</strong> {{COMPANY_EMAIL}}
+            </div>
+          </td>
+          <td width="35%" style="text-align: right; vertical-align: top;">
+            <div class="document-type">Trial Delivery Note</div>
+            <div style="font-size: 14px; margin-top: 5px; line-height: 1.8;">
+              <span class="text-muted">Receipt date:</span><br />
+              <strong>{{RECEIPT_DATE}}</strong><br />
+              <span class="text-muted">Receipt no:</span><br />
+              <strong>{{RECEIPT_NUMBER}}</strong><br />
+              <span class="text-muted">Center:</span><br />
+              <strong>{{CENTER_NAME}}</strong><br />
+              <span class="text-muted">Visit date:</span><br />
+              <strong>{{VISIT_DATE}}</strong>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <table class="meta-grid">
+      <tbody>
+        <tr>
+          <td>
+            <div class="label">Patient information</div>
+            <div style="font-weight: 700; font-size: 15px;">{{PATIENT_NAME}}</div>
+            <div class="text-light" style="margin-top: 4px;">
+              {{PATIENT_ADDRESS}}<br />
+              <strong>Phone:</strong> {{PATIENT_PHONE}}<br />
+              <strong>Email:</strong> {{PATIENT_EMAIL}}
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="trial-info-box">
+      <div class="trial-stat">
+        <span class="stat-label">Start date</span>
+        <span class="stat-val">{{TRIAL_START_DATE}}</span>
+      </div>
+      <div class="trial-stat">
+        <span class="stat-label">Trial duration</span>
+        <span class="stat-val">{{TRIAL_DURATION_DAYS}}</span>
+      </div>
+      <div class="trial-stat">
+        <span class="stat-label">Trial end date</span>
+        <span class="stat-val" style="color: #a80000;">{{TRIAL_END_DATE}}</span>
+      </div>
+    </div>
+
+    <p class="text-light" style="margin: 0 0 24px;">
+      <strong>Security deposit (home trial):</strong> {{SECURITY_DEPOSIT_AMOUNT}}
+    </p>
+
+    <table class="order-table">
+      <thead>
+        <tr>
+          <th width="55%">Model / device</th>
+          <th width="45%">Serial &amp; ear</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <div style="font-weight: 700; font-size: 15px;">{{DEVICE_USED}}</div>
+            <div class="text-light" style="margin-top: 5px;">{{TRIAL_TYPE}} · Ear: {{WHICH_EAR}}</div>
+          </td>
+          <td style="font-family: monospace; font-weight: 700; color: #a80000; font-size: 15px;">
+            {{SERIAL_NUMBER}}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="protocol-box">
+      <div class="protocol-title">Trial terms &amp; conditions (CRM)</div>
+      <div class="protocol-text">{{TERMS_TEXT}}</div>
+    </div>
+
+    <div class="terms-footer">
+      <div class="protocol-text" style="text-align: left; margin-bottom: 16px;">{{FOOTER_TEXT}}</div>
+      <div style="display: flex; justify-content: space-between; text-align: left;">
+        <div style="width: 48%;">
+          <strong>HANDLING:</strong> Please keep the device away from moisture and extreme heat.
+        </div>
+        <div style="width: 48%; text-align: right;">
+          <strong>JURISDICTION:</strong> All disputes are subject to Delhi jurisdiction.
+        </div>
+      </div>
+
+      <div class="digital-disclaimer">
+        This is a computer-generated receipt; a physical signature is not required unless mandated by your centre policy.
+      </div>
+
+      <div style="letter-spacing: 2px; font-weight: 700; color: #e2e8f0; margin-top: 20px;">CLINICAL TRIAL RECORD / PATIENT COPY</div>
+    </div>
+  </div>
+</div>

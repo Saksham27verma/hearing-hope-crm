@@ -146,6 +146,7 @@ export function buildTrialReceiptHtmlString(
       TRIAL_TYPE: formatHtmlText(data.trialType),
       SERIAL_NUMBER: formatHtmlText(data.serialNumber),
       WHICH_EAR: formatHtmlText(data.whichEar),
+      SECURITY_DEPOSIT_AMOUNT: formatHtmlText(formatCurrencyForTemplate(data.securityDepositAmount)),
       CENTER_NAME: formatHtmlText(data.centerName),
       VISIT_DATE: formatHtmlText(data.visitDate),
       TERMS_TEXT: formatHtmlText(data.terms, true),

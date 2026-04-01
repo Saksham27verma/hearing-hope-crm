@@ -60,6 +60,8 @@ export type VisitLike = {
   trialHearingAidModel?: string;
   trialHearingAidType?: string;
   trialSerialNumber?: string;
+  /** Home trial security deposit (₹); 0 for in-office / not applicable. */
+  trialHomeSecurityDepositAmount?: number;
   whichEar?: string;
   visitType?: string;
   hearingAidBrand?: string;
@@ -169,6 +171,7 @@ export function buildTrialReceiptData(
       : undefined);
   const trialType = formatTrialType(visit);
   const isHomeTrial = trialType?.toLowerCase().includes('home');
+  const depositRaw = Number(visit.trialHomeSecurityDepositAmount);
   return {
     ...receiptDefaultCompany,
     receiptNumber: options?.receiptNumber ?? `TR-${Date.now()}`,
@@ -181,6 +184,7 @@ export function buildTrialReceiptData(
     trialStartDate: visit.trialStartDate || visit.visitDate || receiptDate,
     trialEndDate: visit.trialEndDate,
     trialDurationDays: duration,
+    securityDepositAmount: isHomeTrial ? (Number.isFinite(depositRaw) ? depositRaw : 0) : undefined,
     deviceUsed: [
       visit.trialHearingAidBrand || visit.hearingAidBrand || product?.brand,
       visit.trialHearingAidModel || visit.hearingAidModel || product?.model,

@@ -61,6 +61,8 @@ export interface TrialReceiptData {
   trialType?: string;
   serialNumber?: string;
   whichEar?: string;
+  /** Home trial security deposit (₹); omit for clinic trial. */
+  securityDepositAmount?: number;
   centerName?: string;
   visitDate?: string;
   terms?: string;

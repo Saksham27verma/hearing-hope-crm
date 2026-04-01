@@ -286,6 +286,7 @@ const trialReceiptSample = baseHtmlShell(
       <div><div class="field-label">Duration</div><div class="field-value">{{TRIAL_DURATION_DAYS}}</div></div>
       <div><div class="field-label">Serial Number</div><div class="field-value">{{SERIAL_NUMBER}}</div></div>
       <div><div class="field-label">Ear</div><div class="field-value">{{WHICH_EAR}}</div></div>
+      <div><div class="field-label">Security deposit</div><div class="field-value">{{SECURITY_DEPOSIT_AMOUNT}}</div></div>
       <div><div class="field-label">Center</div><div class="field-value">{{CENTER_NAME}}</div></div>
     </div>
   </div>
@@ -333,7 +334,17 @@ export const DOCUMENT_TEMPLATE_META: Record<ManagedDocumentType, {
       { title: 'Company', tokens: ['{{COMPANY_NAME}}', '{{COMPANY_ADDRESS}}', '{{COMPANY_PHONE}}', '{{COMPANY_EMAIL}}'] },
       { title: 'Receipt', tokens: ['{{RECEIPT_NUMBER}}', '{{RECEIPT_DATE}}', '{{TRIAL_DATE}}', '{{TRIAL_START_DATE}}', '{{TRIAL_END_DATE}}', '{{CENTER_NAME}}'] },
       { title: 'Patient', tokens: ['{{PATIENT_NAME}}', '{{PATIENT_PHONE}}', '{{PATIENT_EMAIL}}', '{{PATIENT_ADDRESS}}'] },
-      { title: 'Trial Details', tokens: ['{{DEVICE_USED}}', '{{TRIAL_TYPE}}', '{{TRIAL_DURATION_DAYS}}', '{{SERIAL_NUMBER}}', '{{WHICH_EAR}}'] },
+      {
+        title: 'Trial Details',
+        tokens: [
+          '{{DEVICE_USED}}',
+          '{{TRIAL_TYPE}}',
+          '{{TRIAL_DURATION_DAYS}}',
+          '{{SERIAL_NUMBER}}',
+          '{{WHICH_EAR}}',
+          '{{SECURITY_DEPOSIT_AMOUNT}}',
+        ],
+      },
       { title: 'Copy', tokens: ['{{TERMS_TEXT}}', '{{FOOTER_TEXT}}'] },
       { title: 'Images', tokens: ['{{LOGO_PLACEHOLDER}}', '{{SIGNATURE_PLACEHOLDER}}'] },
     ],
@@ -450,6 +461,7 @@ export const getTemplatePreviewHtml = (
       TRIAL_TYPE: 'Home Trial',
       SERIAL_NUMBER: 'SN-HT-2045',
       WHICH_EAR: 'Right',
+      SECURITY_DEPOSIT_AMOUNT: 'Rs. 5,000',
       TERMS_TEXT: 'Return the device by the end date in good condition.',
       FOOTER_TEXT: 'Damage or loss may attract charges.',
       LOGO_PLACEHOLDER: '',
