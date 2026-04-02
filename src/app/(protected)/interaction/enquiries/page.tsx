@@ -879,6 +879,25 @@ export default function EnquiriesPage() {
 
   const [openDeleteDialog, setOpenDeleteDialog] = useState<boolean>(false);
   const [enquiryToDelete, setEnquiryToDelete] = useState<Enquiry | null>(null);
+  const [purgePreviewLoading, setPurgePreviewLoading] = useState<boolean>(false);
+  const [purgePreview, setPurgePreview] = useState<null | {
+    deletedSalesCount: number;
+    salesPreview?: Array<{ id: string; invoiceNumber: string; enquiryVisitIndex?: number }>;
+    deletedVisitorsCount: number;
+    restoreResult?: {
+      updatedMaterialInwardDocs: number;
+      restoredSerials: number;
+      restoredQuantityLines: number;
+      restoredQuantityTotal: number;
+      materialInwardRestorePreview?: Array<{
+        materialInwardDocId: string;
+        productId: string;
+        serialsToAdd: string[];
+        quantityToAdd: number;
+      }>;
+    };
+  }>(null);
+  const [purgePreviewError, setPurgePreviewError] = useState<string>('');
   
   // Visitor conversion states
   const [openConvertDialog, setOpenConvertDialog] = useState<boolean>(false);
@@ -1862,12 +1881,16 @@ export default function EnquiriesPage() {
   // Add a function to handle enquiry deletion
   const handleOpenDeleteDialog = (enquiry: Enquiry) => {
     setEnquiryToDelete(enquiry);
+    setPurgePreview(null);
+    setPurgePreviewError('');
     setOpenDeleteDialog(true);
   };
 
   const handleCloseDeleteDialog = () => {
     setOpenDeleteDialog(false);
     setEnquiryToDelete(null);
+    setPurgePreview(null);
+    setPurgePreviewError('');
   };
 
   // Convert to Visitor functions
@@ -1995,6 +2018,43 @@ export default function EnquiriesPage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const previewPurgeEnquiryWithInventory = async () => {
+    if (!enquiryToDelete) return;
+    if (!user) {
+      setPurgePreviewError('Please sign in again.');
+      return;
+    }
+    setPurgePreviewLoading(true);
+    setPurgePreviewError('');
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch('/api/admin/purge-enquiry-with-inventory', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ enquiryId: enquiryToDelete.id, dryRun: true }),
+      });
+      const json = (await res.json()) as any;
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || 'Failed to preview purge');
+      }
+
+      setPurgePreview({
+        deletedSalesCount: json.deletedSalesCount || 0,
+        salesPreview: json.salesPreview || [],
+        deletedVisitorsCount: json.deletedVisitorsCount || 0,
+        restoreResult: json.restoreResult,
+      });
+    } catch (e) {
+      console.error(e);
+      setPurgePreviewError(e instanceof Error ? e.message : 'Failed to preview purge');
+    } finally {
+      setPurgePreviewLoading(false);
     }
   };
 
@@ -3927,8 +3987,95 @@ export default function EnquiriesPage() {
               </Typography>
             </Typography>
           )}
+
+          <Box sx={{ mt: 2 }}>
+            {purgePreviewLoading && (
+              <Typography variant="body2" color="text.secondary">
+                Preparing dry-run preview...
+              </Typography>
+            )}
+            {purgePreviewError && (
+              <Typography variant="body2" color="error.main">
+                {purgePreviewError}
+              </Typography>
+            )}
+            {purgePreview && (
+              <Box>
+                <Typography variant="subtitle2" sx={{ color: 'text.primary' }}>
+                  Dry-run preview (what will be restored / removed)
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  Sales docs to delete: <span style={{ fontFamily: 'monospace' }}>{purgePreview.deletedSalesCount}</span>
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Visitor docs to delete: <span style={{ fontFamily: 'monospace' }}>{purgePreview.deletedVisitorsCount}</span>
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  materialInward docs to update: <span style={{ fontFamily: 'monospace' }}>{purgePreview.restoreResult?.updatedMaterialInwardDocs ?? 0}</span>
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Serials to restore: <span style={{ fontFamily: 'monospace' }}>{purgePreview.restoreResult?.restoredSerials ?? 0}</span>
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Quantity lines to restore: <span style={{ fontFamily: 'monospace' }}>{purgePreview.restoreResult?.restoredQuantityLines ?? 0}</span>
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Quantity total restored: <span style={{ fontFamily: 'monospace' }}>{purgePreview.restoreResult?.restoredQuantityTotal ?? 0}</span>
+                </Typography>
+
+                {purgePreview.restoreResult?.materialInwardRestorePreview?.length && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Inventory restore changes (first {Math.min(5, purgePreview.restoreResult?.materialInwardRestorePreview?.length ?? 0)}):
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ mt: 0.5, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}
+                    >
+                      {purgePreview.restoreResult?.materialInwardRestorePreview
+                        .slice(0, 5)
+                        .map((r) => {
+                          const serials = r.serialsToAdd || [];
+                          const shownSerials = serials.slice(0, 5);
+                          const moreSerials = serials.length > 5 ? '...' : '';
+                          const serialPart =
+                            shownSerials.length > 0 ? ` +serials:[${shownSerials.join(', ')}]${moreSerials}` : '';
+                          const qtyPart = r.quantityToAdd > 0 ? ` +qty:${r.quantityToAdd}` : '';
+                          return `${r.materialInwardDocId} | ${r.productId}:${qtyPart}${serialPart}`;
+                        })
+                        .join('\n')}
+                    </Typography>
+                  </Box>
+                )}
+
+                {purgePreview.salesPreview && purgePreview.salesPreview.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Sales preview (first {Math.min(5, purgePreview.salesPreview.length)}):
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      sx={{ mt: 0.5, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}
+                    >
+                      {purgePreview.salesPreview
+                        .slice(0, 5)
+                        .map((s) => `#${s.invoiceNumber || '(empty)'} (visit ${s.enquiryVisitIndex ?? '-'})`)
+                        .join('\n')}
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={previewPurgeEnquiryWithInventory}
+            disabled={loading || purgePreviewLoading || !enquiryToDelete}
+          >
+            {purgePreviewLoading ? 'Previewing...' : 'Preview (dry-run)'}
+          </Button>
           <Button onClick={handleCloseDeleteDialog} disabled={loading}>
             Cancel
           </Button>

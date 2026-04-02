@@ -12,6 +12,13 @@ type SaleVisitProductUpdate =
   | { type: 'serial'; productId: string; serialNumber: string }
   | { type: 'quantity'; productId: string; quantity: number };
 
+type MaterialInwardRestorePreview = {
+  materialInwardDocId: string;
+  productId: string;
+  serialsToAdd: string[];
+  quantityToAdd: number;
+};
+
 function getIsSaleVisit(visit: Record<string, unknown> | null | undefined): boolean {
   if (!visit) return false;
   return Boolean((visit as any).hearingAidSale || (visit as any).purchaseFromTrial || (visit as any).hearingAidStatus === 'sold');
@@ -70,13 +77,27 @@ function uniqueSerialUpdates(updates: SaleVisitProductUpdate[]): { serialsByProd
 async function restoreInventoryFromSaleVisits({
   db,
   updates,
+  apply,
 }: {
   db: Firestore;
   updates: SaleVisitProductUpdate[];
-}): Promise<{ updatedMaterialInwardDocs: number; restoredSerials: number; restoredQuantityLines: number; restoredQuantityTotal: number }> {
+  apply: boolean;
+}): Promise<{
+  updatedMaterialInwardDocs: number;
+  restoredSerials: number;
+  restoredQuantityLines: number;
+  restoredQuantityTotal: number;
+  materialInwardRestorePreview: MaterialInwardRestorePreview[];
+}> {
   const { serialsByProductId, quantitiesByProductId } = uniqueSerialUpdates(updates);
   if (serialsByProductId.size === 0 && quantitiesByProductId.size === 0) {
-    return { updatedMaterialInwardDocs: 0, restoredSerials: 0, restoredQuantityLines: 0, restoredQuantityTotal: 0 };
+    return {
+      updatedMaterialInwardDocs: 0,
+      restoredSerials: 0,
+      restoredQuantityLines: 0,
+      restoredQuantityTotal: 0,
+      materialInwardRestorePreview: [],
+    };
   }
 
   const materialSnap = await db.collection('materialInward').get();
@@ -90,6 +111,8 @@ async function restoreInventoryFromSaleVisits({
   serialsByProductId.forEach((set, pid) => remainingSerialsByProductId.set(pid, new Set(Array.from(set))));
 
   const remainingQuantityByProductId = new Map<string, number>(quantitiesByProductId);
+
+  const materialInwardRestorePreview: MaterialInwardRestorePreview[] = [];
 
   // Build in-memory updated products arrays so we can batch write once per doc.
   const docUpdates = new Map<string, any[]>();
@@ -126,6 +149,13 @@ async function restoreInventoryFromSaleVisits({
           // Normalize to `serialNumbers` representation.
           // Mark these serials as restored so they won't be added again to other materialInward docs.
           toAdd.forEach((sn) => serialSet.delete(sn));
+
+          materialInwardRestorePreview.push({
+            materialInwardDocId: docSnap.id,
+            productId,
+            serialsToAdd: [...toAdd],
+            quantityToAdd: 0,
+          });
           return {
             ...p,
             serialNumbers: merged,
@@ -144,6 +174,13 @@ async function restoreInventoryFromSaleVisits({
           restoredQuantityTotal += qtyToAdd;
           changed = true;
           remainingQuantityByProductId.set(productId, 0);
+
+          materialInwardRestorePreview.push({
+            materialInwardDocId: docSnap.id,
+            productId,
+            serialsToAdd: [],
+            quantityToAdd: qtyToAdd,
+          });
           return { ...p, quantity: nextQ };
         }
       }
@@ -159,7 +196,24 @@ async function restoreInventoryFromSaleVisits({
   // Safety: if we didn't find any doc to update (e.g., materialInward missing productId),
   // we can't recreate history reliably here.
   if (docUpdates.size === 0) {
-    return { updatedMaterialInwardDocs: 0, restoredSerials, restoredQuantityLines, restoredQuantityTotal };
+    return {
+      updatedMaterialInwardDocs: 0,
+      restoredSerials,
+      restoredQuantityLines,
+      restoredQuantityTotal,
+      materialInwardRestorePreview: [],
+    };
+  }
+
+  // Dry-run: do not write anything; just return what would be updated.
+  if (!apply) {
+    return {
+      updatedMaterialInwardDocs: docUpdates.size,
+      restoredSerials,
+      restoredQuantityLines,
+      restoredQuantityTotal,
+      materialInwardRestorePreview,
+    };
   }
 
   const updatesArray = Array.from(docUpdates.entries());
@@ -176,7 +230,13 @@ async function restoreInventoryFromSaleVisits({
     updatedMaterialInwardDocs += chunk.length;
   }
 
-  return { updatedMaterialInwardDocs, restoredSerials, restoredQuantityLines, restoredQuantityTotal };
+  return {
+    updatedMaterialInwardDocs,
+    restoredSerials,
+    restoredQuantityLines,
+    restoredQuantityTotal,
+    materialInwardRestorePreview,
+  };
 }
 
 export async function POST(req: Request) {
@@ -191,8 +251,9 @@ export async function POST(req: Request) {
     if (!requester) return jsonError('Forbidden', 403);
     assertAdmin(requester);
 
-    const body = (await req.json().catch(() => null)) as { enquiryId?: string } | null;
+    const body = (await req.json().catch(() => null)) as { enquiryId?: string; dryRun?: boolean } | null;
     const enquiryId = toNonEmptyString(body?.enquiryId);
+    const dryRun = Boolean(body?.dryRun);
     if (!enquiryId) return jsonError('enquiryId is required', 400);
 
     const db = adminDb();
@@ -203,11 +264,48 @@ export async function POST(req: Request) {
 
     // 1) Restore inventory for sale visits
     const saleProductsUpdates = collectSaleProductsFromEnquiry(enquiry);
-    const restoreResult = await restoreInventoryFromSaleVisits({ db, updates: saleProductsUpdates });
+    const restoreResult = await restoreInventoryFromSaleVisits({
+      db,
+      updates: saleProductsUpdates,
+      apply: !dryRun,
+    });
 
     // 2) Delete linked sales docs (Sales & Invoicing relies on this collection)
     const salesSnap = await db.collection('sales').where('enquiryId', '==', enquiryId).get();
     const salesDocs = salesSnap.docs;
+
+    const salesPreview = salesDocs.slice(0, 20).map((d) => {
+      const s = d.data() as Record<string, unknown>;
+      return {
+        id: d.id,
+        invoiceNumber: String(s.invoiceNumber ?? ''),
+        enquiryVisitIndex: s.enquiryVisitIndex,
+      };
+    });
+
+    if (dryRun) {
+      // 3) Compute visitor count (dry-run only)
+      const visitorsSnap1 = await db.collection('visitors').where('enquiryId', '==', enquiryId).get();
+      const visitorsSnap2 = await db.collection('visitors').where('relatedEnquiryId', '==', enquiryId).get().catch(() => null);
+      const visitorsDocs = [...visitorsSnap1.docs, ...(visitorsSnap2?.docs || [])];
+      const seen = new Set<string>();
+      const uniqueVisitorsCount = visitorsDocs.filter((d) => {
+        if (seen.has(d.id)) return false;
+        seen.add(d.id);
+        return true;
+      }).length;
+
+      return NextResponse.json({
+        ok: true,
+        dryRun: true,
+        restoreResult,
+        deletedSalesCount: salesDocs.length,
+        salesPreview,
+        deletedVisitorsCount: uniqueVisitorsCount,
+        deletedEnquiryId: enquiryId,
+      });
+    }
+
     for (let i = 0; i < salesDocs.length; i += 450) {
       const chunk = salesDocs.slice(i, i + 450);
       const batch = db.batch();
@@ -239,6 +337,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       ok: true,
+      dryRun: false,
       restored: restoreResult,
       deletedSalesCount: salesDocs.length,
       deletedVisitorsCount: uniqueVisitors.length,
