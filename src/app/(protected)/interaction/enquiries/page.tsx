@@ -2011,9 +2011,10 @@ export default function EnquiriesPage() {
       });
     } catch (error) {
       console.error('Error deleting enquiry and related records:', error);
+      const msg = error instanceof Error ? error.message : 'Failed to purge enquiry';
       setAlert({
         open: true,
-        message: 'Failed to purge enquiry with inventory rollback. You may not have permission or the record may be in use.',
+        message: `Failed to purge enquiry with inventory rollback. ${msg}`,
         severity: 'error',
       });
     } finally {

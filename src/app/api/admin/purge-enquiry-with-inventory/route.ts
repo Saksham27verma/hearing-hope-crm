@@ -248,7 +248,7 @@ export async function POST(req: Request) {
     const idToken = match[1];
     const decoded = await adminAuth().verifyIdToken(idToken);
     const requester = await getRequesterTenant(decoded.uid);
-    if (!requester) return jsonError('Forbidden', 403);
+    if (!requester) return jsonError('Forbidden: user profile not found in `users` collection', 403);
     assertAdmin(requester);
 
     const body = (await req.json().catch(() => null)) as { enquiryId?: string; dryRun?: boolean } | null;

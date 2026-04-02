@@ -32,7 +32,9 @@ export async function getRequesterTenant(uid: string): Promise<RequesterTenant |
 }
 
 export function assertAdmin(requester: RequesterTenant): void {
-  if (requester.role !== 'admin') {
+  // "Super admin" accounts should be able to perform admin-only maintenance actions
+  // even if their `role` isn't set to `admin` in the `users` profile doc.
+  if (requester.role !== 'admin' && !requester.isSuperAdmin) {
     throw new Error('Forbidden');
   }
 }
