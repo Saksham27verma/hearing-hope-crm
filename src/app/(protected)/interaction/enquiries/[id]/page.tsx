@@ -587,6 +587,23 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         [visitsKey]: visitList,
         updatedAt: serverTimestamp(),
       });
+
+      // Keep `sales.invoiceNumber` in sync for the same (enquiryId, visitIndex),
+      // so the Sales & Invoicing module never shows a stale/provisional number.
+      const existingSalesSnap = await getDocs(
+        query(
+          collection(db, 'sales'),
+          where('enquiryId', '==', resolvedParams.id),
+          where('enquiryVisitIndex', '==', visitIndex),
+          limit(1)
+        )
+      );
+      if (!existingSalesSnap.empty) {
+        await updateDoc(doc(db, 'sales', existingSalesSnap.docs[0].id), {
+          invoiceNumber: nextNumber,
+          updatedAt: serverTimestamp(),
+        });
+      }
     }
     setEnquiry((prev: any) => ({ ...prev, [visitsKey]: visitList }));
     return nextNumber;

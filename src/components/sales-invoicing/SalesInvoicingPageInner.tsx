@@ -262,9 +262,11 @@ export default function SalesInvoicingPageInner() {
   const [selectedPairSaleMode, setSelectedPairSaleMode] = useState<'single' | 'pair'>('pair');
   const [selectedProductDiscount, setSelectedProductDiscount] = useState<number>(0);
   const [selectedProductSellingPrice, setSelectedProductSellingPrice] = useState<number>(0);
+  const [priceEditSource, setPriceEditSource] = useState<'discount' | 'sellingPrice'>('discount');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
-  /** When false on a new sale, save uses atomic sequence from `invoiceSettings/default`. Set true after user edits invoice #. */
+  // For strict sequential invoice numbering: new invoices use auto-allocation at save time.
+  // We keep this state for backward compatibility with older UI, but it should never allow custom numbers for new invoices.
   const [invoiceNumberTouchedByUser, setInvoiceNumberTouchedByUser] = useState(false);
 
   const createEmptySale = (invoiceNumber = ''): Sale => ({
@@ -390,43 +392,47 @@ export default function SalesInvoicingPageInner() {
   };
 
   const buildSaleProduct = (product: Product, serialNumber: string, sellingPrice: number, discountPercent: number): SaleProduct => {
-    const discount = Math.round((product.mrp * discountPercent) / 100);
+    // Selling price should be authoritative. We compute discount fields from it,
+    // so typing a selling price never "jumps" due to rounding math elsewhere.
+    const safeMrp = Number(product.mrp) || 0;
+    const safeSelling = Number(sellingPrice) || 0;
+    const discountAmount = Math.max(0, Math.round(safeMrp - safeSelling));
+    const rawDiscountPercent = safeMrp > 0 ? ((safeMrp - safeSelling) / safeMrp) * 100 : 0;
+    const safeDiscountPercent = Number(Math.max(0, Math.min(100, rawDiscountPercent)).toFixed(2));
     const gstPercent = product.gstApplicable !== false ? (product.gstPercentage || 0) : 0;
-    const gstAmount = Math.round((sellingPrice * gstPercent) / 100);
+    const gstAmount = Math.round((safeSelling * gstPercent) / 100);
     return {
       ...product,
       serialNumber,
-      sellingPrice,
-      discount,
-      discountPercent,
+      sellingPrice: safeSelling,
+      discount: discountAmount,
+      discountPercent: safeDiscountPercent,
       gstPercent,
       gstAmount,
-      totalWithGst: sellingPrice + gstAmount,
+      totalWithGst: safeSelling + gstAmount,
     };
   };
 
   // Sync selling price with discount for the "add product" form
   useEffect(() => {
-    if (selectedProduct) {
+    if (selectedProduct && priceEditSource === 'discount') {
       const sp = selectedProduct.mrp - (selectedProduct.mrp * selectedProductDiscount) / 100;
       setSelectedProductSellingPrice(Math.round(sp));
     }
-  }, [selectedProduct, selectedProductDiscount]);
+  }, [selectedProduct, selectedProductDiscount, priceEditSource]);
 
   // ─── Sale CRUD ───
 
   const handleAddSale = async () => {
     resetProductForm();
     let suggested = '';
-    let forceCustom = false;
     try {
       suggested = await peekNextInvoiceNumber(db);
     } catch (e) {
       console.error('peekNextInvoiceNumber:', e);
-      setErrorMsg('Could not load the next invoice number. Enter a custom invoice number to save (the sequence will not advance).');
-      forceCustom = true;
+      // Not fatal: we still allocate the correct sequential number on save.
     }
-    setInvoiceNumberTouchedByUser(forceCustom);
+    setInvoiceNumberTouchedByUser(false);
     setCurrentSale({
       ...createEmptySale(suggested),
       salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
@@ -517,17 +523,24 @@ export default function SalesInvoicingPageInner() {
       setSavingSale(true);
       let finalInvoiceNumber = (currentSale.invoiceNumber || '').trim();
       if (!currentSale.id) {
-        if (!invoiceNumberTouchedByUser) {
+        // Strict mode: always allocate next sequential invoice number for new sales.
+        try {
+          finalInvoiceNumber = await allocateNextInvoiceNumber(db);
+        } catch (e) {
+          console.error('allocateNextInvoiceNumber:', e);
+          setErrorMsg('Could not allocate the next invoice number. Check Firestore rules and `invoiceSettings/default`.');
+          return;
+        }
+      } else {
+        // Existing invoice: allow edits, but prevent broken/provisional invoice numbers from persisting.
+        if (!finalInvoiceNumber || /^PROV-/i.test(finalInvoiceNumber)) {
           try {
             finalInvoiceNumber = await allocateNextInvoiceNumber(db);
           } catch (e) {
-            console.error('allocateNextInvoiceNumber:', e);
-            setErrorMsg('Could not allocate the next invoice number. Check Firestore rules and the invoiceSettings document, or enter a custom number.');
+            console.error('allocateNextInvoiceNumber (existing sale fix):', e);
+            setErrorMsg('Could not fix the invoice number. Check Firestore rules and `invoiceSettings/default`.');
             return;
           }
-        } else if (!finalInvoiceNumber) {
-          setErrorMsg('Invoice number is required when using a custom value.');
-          return;
         }
       }
 
@@ -640,8 +653,8 @@ export default function SalesInvoicingPageInner() {
 
     if (field === 'sellingPrice') {
       p.sellingPrice = value;
-      p.discount = p.mrp - value;
-      p.discountPercent = p.mrp > 0 ? Math.round(((p.mrp - value) / p.mrp) * 100) : 0;
+      p.discount = Math.max(0, Math.round(p.mrp - value));
+      p.discountPercent = p.mrp > 0 ? Number(Math.max(0, Math.min(100, ((p.mrp - value) / p.mrp) * 100)).toFixed(2)) : 0;
       p.gstAmount = Math.round((p.sellingPrice * p.gstPercent) / 100);
       p.totalWithGst = p.sellingPrice + p.gstAmount;
     } else if (field === 'gstPercent') {
@@ -1019,17 +1032,12 @@ export default function SalesInvoicingPageInner() {
                       fullWidth
                       value={currentSale.invoiceNumber || ''}
                       onChange={(e) => {
-                        if (!currentSale.id) setInvoiceNumberTouchedByUser(true);
+                        // For strict numbering: new invoices are read-only (auto-assigned).
+                        if (!currentSale.id) return;
                         updateSaleField('invoiceNumber', e.target.value);
                       }}
-                      InputProps={{ sx: { fontFamily: 'monospace' } }}
-                      helperText={
-                        currentSale.id
-                          ? undefined
-                          : invoiceNumberTouchedByUser
-                            ? 'Custom number — saving will not advance the global sequence.'
-                            : 'Next in sequence — edit this field to use a custom number without advancing the sequence.'
-                      }
+                      InputProps={{ sx: { fontFamily: 'monospace' }, readOnly: !currentSale.id }}
+                      helperText={currentSale.id ? undefined : 'Auto-assigned sequential invoice number (read-only).'}
                     />
                   </Grid>
                   <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>
@@ -1138,14 +1146,31 @@ export default function SalesInvoicingPageInner() {
                       )}
                     </Grid>
                     <Grid sx={{ gridColumn: { xs: 'span 6', sm: 'span 3', md: 'span 1.5' } }}>
-                      <TextField label="Disc %" size="small" fullWidth type="number" value={selectedProductDiscount} onChange={(e) => setSelectedProductDiscount(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }} />
+                      <TextField
+                        label="Disc %"
+                        size="small"
+                        fullWidth
+                        type="number"
+                        value={selectedProductDiscount}
+                        onChange={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          setPriceEditSource('discount');
+                          setSelectedProductDiscount(Math.max(0, Math.min(100, v)));
+                        }}
+                        InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }}
+                      />
                     </Grid>
                     <Grid sx={{ gridColumn: { xs: 'span 6', sm: 'span 3', md: 'span 2' } }}>
                       <TextField label="Selling Price" size="small" fullWidth type="number" value={selectedProductSellingPrice}
                         onChange={(e) => {
                           const v = Number(e.target.value) || 0;
+                          setPriceEditSource('sellingPrice');
                           setSelectedProductSellingPrice(v);
-                          if (selectedProduct && selectedProduct.mrp > 0) setSelectedProductDiscount(Math.round(((selectedProduct.mrp - v) / selectedProduct.mrp) * 100));
+                          if (selectedProduct && selectedProduct.mrp > 0) {
+                            const rawDiscountPercent = ((selectedProduct.mrp - v) / selectedProduct.mrp) * 100;
+                            const safeDiscountPercent = Number(Math.max(0, Math.min(100, rawDiscountPercent)).toFixed(2));
+                            setSelectedProductDiscount(safeDiscountPercent);
+                          }
                         }}
                         InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
                       />

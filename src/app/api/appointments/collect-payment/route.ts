@@ -202,12 +202,46 @@ async function allocateNextInvoiceNumberAdminServer(
   db: FirebaseFirestore.Firestore
 ): Promise<string> {
   const ref = db.collection('invoiceSettings').doc('default');
+
+  // Reconcile outside the transaction to avoid doing query reads inside tx.
+  const settingsSnap = await ref.get();
+  const baseSettings = normalizeInvoiceNumberSettingsServer(
+    settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined
+  );
+
+  // Look at recent `sales` docs to find the highest allocated numeric sequence.
+  let salesSnap;
+  try {
+    salesSnap = await db.collection('sales').orderBy('saleDate', 'desc').limit(50).get();
+  } catch (e) {
+    console.error('allocateNextInvoiceNumberAdminServer: sales reconcile query failed:', e);
+    salesSnap = null;
+  }
+  let maxSeq: number | null = null;
+  if (salesSnap) {
+    for (const s of salesSnap.docs) {
+      const inv = String((s.data() as Record<string, unknown>)?.invoiceNumber || '').trim();
+      if (!inv || /^PROV-/i.test(inv)) continue;
+      const beforeSlash = inv.split('/')[0] || inv;
+      const digitGroups = beforeSlash.match(/\d+/g);
+      if (!digitGroups || digitGroups.length === 0) continue;
+      const seq = Number.parseInt(digitGroups[digitGroups.length - 1], 10);
+      if (!Number.isFinite(seq) || seq < 1) continue;
+      if (maxSeq == null || seq > maxSeq) maxSeq = seq;
+    }
+  }
+
+  const desiredNext = typeof maxSeq === 'number' && Number.isFinite(maxSeq) ? maxSeq + 1 : baseSettings.next_number;
+
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const settings = normalizeInvoiceNumberSettingsServer(
       snap.exists ? (snap.data() as Record<string, unknown>) : undefined
     );
-    const n = settings.next_number;
+
+    // Never allocate backwards. If another concurrent allocation already advanced the counter,
+    // `settings.next_number` will be >= `desiredNext`.
+    const n = Math.max(settings.next_number, desiredNext);
     const formatted = formatInvoiceNumberServer(settings, n);
     tx.set(
       ref,
@@ -537,7 +571,8 @@ export async function POST(req: Request) {
       if (lastIdx >= 0) {
         const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
         const existingInvoiceNumber = String(lastVisit.invoiceNumber || '').trim();
-        if (!existingInvoiceNumber) {
+        const isProvisionalExisting = /^PROV-/i.test(existingInvoiceNumber);
+        if (!existingInvoiceNumber || isProvisionalExisting) {
           const allocatedInvoiceNumber = await allocateNextInvoiceNumberAdminServer(db);
           merged.visits[lastIdx] = { ...lastVisit, invoiceNumber: allocatedInvoiceNumber };
           if (merged.visitSchedules[lastIdx]) {
@@ -604,6 +639,7 @@ export async function POST(req: Request) {
         .where('enquiryVisitIndex', '==', lastVisitIndex)
         .limit(1)
         .get();
+      const allocatedInvoiceNumber = String(lastVisit.invoiceNumber || '').trim();
       if (existingSaleSnap.empty) {
         const saleDoc = buildSalesDocFromStaffInvoice({
           enquiryId,
@@ -616,6 +652,18 @@ export async function POST(req: Request) {
           paymentMethod,
         });
         await db.collection('sales').add(deepStripUndefined(saleDoc) as Record<string, unknown>);
+      } else {
+        // Ensure invoice numbering stays in sync even if a sales doc already exists (e.g. previously provisional).
+        const saleId = existingSaleSnap.docs[0]?.id;
+        if (saleId && allocatedInvoiceNumber) {
+          await db.collection('sales').doc(saleId).set(
+            {
+              invoiceNumber: allocatedInvoiceNumber,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
       }
     }
 

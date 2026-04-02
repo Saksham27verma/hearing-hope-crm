@@ -82,9 +82,14 @@ export default function AdminCleanupPage() {
   const [stats, setStats] = useState<CleanupStats[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(false);
+  const [pendingDestructiveAction, setPendingDestructiveAction] = useState<'deleteAllData' | 'purgeMisclassifiedEnquirySales' | null>(null);
   const [totalProgress, setTotalProgress] = useState(0);
   const [resyncingSales, setResyncingSales] = useState(false);
   const [resyncResult, setResyncResult] = useState<string>('');
+
+  const [purgeMisclassifiedRunning, setPurgeMisclassifiedRunning] = useState(false);
+  const [purgeMisclassifiedPreviewCount, setPurgeMisclassifiedPreviewCount] = useState<number | null>(null);
+  const [purgeMisclassifiedResult, setPurgeMisclassifiedResult] = useState<string>('');
   
   // Password protection states
   const [passwordDialog, setPasswordDialog] = useState(false);
@@ -317,6 +322,42 @@ export default function AdminCleanupPage() {
     }
   };
 
+  const previewAndPurgeMisclassifiedEnquirySales = async (dryRun: boolean) => {
+    if (!user) {
+      alert('Please sign in again.');
+      return;
+    }
+
+    setPurgeMisclassifiedRunning(true);
+    setPurgeMisclassifiedResult('');
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch('/api/admin/purge-misclassified-enquiry-sales', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ dryRun }),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string; misclassifiedCount?: number; deletedCount?: number };
+      if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to purge misclassified enquiry sales');
+
+      if (dryRun) {
+        setPurgeMisclassifiedPreviewCount(json.misclassifiedCount || 0);
+        setPurgeMisclassifiedResult(`Preview: ${json.misclassifiedCount || 0} misclassified enquiry sale(s) would be deleted.`);
+      } else {
+        setPurgeMisclassifiedResult(`Deleted: ${json.deletedCount || 0} misclassified enquiry sale(s).`);
+        setPurgeMisclassifiedPreviewCount(null);
+      }
+    } catch (e) {
+      console.error(e);
+      setPurgeMisclassifiedResult(`Error: ${e instanceof Error ? e.message : 'Failed to purge misclassified enquiry sales'}`);
+    } finally {
+      setPurgeMisclassifiedRunning(false);
+    }
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       <Box sx={{ mb: 3 }}>
@@ -357,6 +398,49 @@ export default function AdminCleanupPage() {
         {resyncResult ? (
           <Alert severity={resyncResult.startsWith('Error:') ? 'error' : 'success'} sx={{ mt: 2 }}>
             {resyncResult}
+          </Alert>
+        ) : null}
+      </Paper>
+
+      {/* Purge Misclassified Enquiry Sales */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Purge Misclassified Enquiry Sales
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Deletes `sales` documents created from enquiry visits that are not true sale visits (prevents booking-only invoices from appearing in Sales &amp; Invoicing).
+        </Typography>
+
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={() => previewAndPurgeMisclassifiedEnquirySales(true)}
+            disabled={purgeMisclassifiedRunning || isRunning}
+          >
+            {purgeMisclassifiedRunning ? 'Checking…' : 'Preview (dry-run)'}
+          </Button>
+
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setPendingDestructiveAction('purgeMisclassifiedEnquirySales');
+              setPasswordDialog(true);
+            }}
+            disabled={purgeMisclassifiedRunning || isRunning}
+          >
+            Delete Misclassified
+          </Button>
+        </Box>
+
+        {purgeMisclassifiedPreviewCount != null ? (
+          <Alert severity={purgeMisclassifiedPreviewCount > 0 ? 'warning' : 'success'} sx={{ mb: 1 }}>
+            Preview: {purgeMisclassifiedPreviewCount} misclassified enquiry sale(s).
+          </Alert>
+        ) : null}
+        {purgeMisclassifiedResult ? (
+          <Alert severity={purgeMisclassifiedResult.startsWith('Error:') ? 'error' : 'success'} sx={{ mt: 1 }}>
+            {purgeMisclassifiedResult}
           </Alert>
         ) : null}
       </Paper>
@@ -445,7 +529,10 @@ export default function AdminCleanupPage() {
           color="error"
           size="large"
           startIcon={<DeleteIcon />}
-          onClick={() => setPasswordDialog(true)}
+          onClick={() => {
+            setPendingDestructiveAction('deleteAllData');
+            setPasswordDialog(true);
+          }}
           disabled={isRunning}
           sx={{ minWidth: 200 }}
         >
@@ -454,7 +541,13 @@ export default function AdminCleanupPage() {
       </Box>
 
       {/* Password Protection Dialog */}
-      <Dialog open={passwordDialog} onClose={() => setPasswordDialog(false)}>
+      <Dialog
+        open={passwordDialog}
+        onClose={() => {
+          setPasswordDialog(false);
+          setPendingDestructiveAction(null);
+        }}
+      >
         <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <LockIcon color="error" />
           Enter Cleanup Password
@@ -487,7 +580,12 @@ export default function AdminCleanupPage() {
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPasswordDialog(false)}>
+          <Button
+            onClick={() => {
+              setPasswordDialog(false);
+              setPendingDestructiveAction(null);
+            }}
+          >
             Cancel
           </Button>
           <Button 
@@ -579,36 +677,75 @@ export default function AdminCleanupPage() {
       </Dialog>
 
       {/* Confirmation Dialog */}
-      <Dialog open={confirmDialog} onClose={() => setConfirmDialog(false)}>
+      <Dialog
+        open={confirmDialog}
+        onClose={() => {
+          setConfirmDialog(false);
+          setPendingDestructiveAction(null);
+        }}
+      >
         <DialogTitle>⚠️ Confirm Database Cleanup</DialogTitle>
         <DialogContent>
-          <Typography variant="body1" gutterBottom>
-            Are you absolutely sure you want to delete all data from the following collections?
-          </Typography>
-          <Box sx={{ mt: 2 }}>
-            {collectionsToClean.map(({ label }) => (
-              <Chip key={label} label={label} sx={{ m: 0.5 }} />
-            ))}
-          </Box>
-          <Divider sx={{ my: 2 }} />
-          <Typography variant="body2" color="text.secondary">
-            This action will permanently delete all user data and cannot be undone.
-            Collections "{preservedCollections.join('", "')}" will be preserved.
-          </Typography>
+          {pendingDestructiveAction === 'purgeMisclassifiedEnquirySales' ? (
+            <>
+              <Typography variant="body1" gutterBottom>
+                Delete misclassified enquiry sales from `sales`?
+              </Typography>
+              <Alert severity="warning" sx={{ my: 2 }}>
+                This will delete misclassified `sales` docs (`source="enquiry"`) whose linked enquiry visit is not marked as a true sale.
+              </Alert>
+              {purgeMisclassifiedPreviewCount != null ? (
+                <Typography variant="body2" color="text.secondary">
+                  Preview count: {purgeMisclassifiedPreviewCount} document(s).
+                </Typography>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Preview count not available yet (run dry-run first if you need exact numbers).
+                </Typography>
+              )}
+            </>
+          ) : (
+            <>
+              <Typography variant="body1" gutterBottom>
+                Are you absolutely sure you want to delete all data from the following collections?
+              </Typography>
+              <Box sx={{ mt: 2 }}>
+                {collectionsToClean.map(({ label }) => (
+                  <Chip key={label} label={label} sx={{ m: 0.5 }} />
+                ))}
+              </Box>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="body2" color="text.secondary">
+                This action will permanently delete all user data and cannot be undone.
+                Collections "{preservedCollections.join('", "')}" will be preserved.
+              </Typography>
+            </>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirmDialog(false)}>
+          <Button
+            onClick={() => {
+              setConfirmDialog(false);
+              setPendingDestructiveAction(null);
+            }}
+          >
             Cancel
           </Button>
           <Button 
             variant="contained" 
             color="error" 
-            onClick={() => {
+            onClick={async () => {
               setConfirmDialog(false);
-              runCleanup();
+              if (pendingDestructiveAction === 'purgeMisclassifiedEnquirySales') {
+                setPendingDestructiveAction(null);
+                await previewAndPurgeMisclassifiedEnquirySales(false);
+              } else {
+                setPendingDestructiveAction(null);
+                runCleanup();
+              }
             }}
           >
-            Yes, Delete All Data
+            {pendingDestructiveAction === 'purgeMisclassifiedEnquirySales' ? 'Yes, Delete Misclassified' : 'Yes, Delete All Data'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -216,16 +216,19 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
         const products = Array.isArray(visit.products) ? visit.products : [];
+        // Only treat as invoicable "sale" when the visit is explicitly marked as a sale.
+        // This prevents "booking-only" visits (which can still carry amounts/products) from
+        // being mirrored into `sales` and getting invoice numbers.
         const isSale = Boolean(
           visit?.hearingAidSale ||
-          visit?.journeyStage === 'sale' ||
-          visit?.hearingAidStatus === 'sold' ||
-          (products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+            visit?.purchaseFromTrial ||
+            visit?.hearingAidStatus === 'sold'
         );
         if (!isSale || !resolvedParams?.id) continue;
 
         let invoiceNumber = String(visit.invoiceNumber || '').trim();
-        if (!invoiceNumber) {
+        const isProvisional = /^PROV-/i.test(invoiceNumber);
+        if (!invoiceNumber || isProvisional) {
           invoiceNumber = await allocateNextInvoiceNumber(db);
           visits[visitIndex] = { ...visit, invoiceNumber };
           visitsPatched = true;

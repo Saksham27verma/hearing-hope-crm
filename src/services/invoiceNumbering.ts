@@ -1,8 +1,13 @@
 import {
+  collection,
   doc,
   getDoc,
+  getDocs,
   runTransaction,
   serverTimestamp,
+  limit,
+  orderBy,
+  query,
   setDoc,
   type Firestore,
 } from 'firebase/firestore';
@@ -85,7 +90,12 @@ export async function peekNextInvoiceNumber(
   const ref = invoiceSettingsDocRef(db, docId);
   const snap = await getDoc(ref);
   const settings = normalizeInvoiceSettings(snap.exists() ? (snap.data() as Record<string, unknown>) : undefined);
-  return formatInvoiceNumber(settings, settings.next_number);
+
+  const lastSeq = await inferLastInvoiceSequenceFromRecentSales(db, settings, 50);
+  const desiredNext = typeof lastSeq === 'number' && Number.isFinite(lastSeq) ? lastSeq + 1 : settings.next_number;
+  // Prevent preview from going backwards if another allocation already advanced the counter.
+  const previewN = Math.max(settings.next_number, desiredNext);
+  return formatInvoiceNumber(settings, previewN);
 }
 
 /**
@@ -97,11 +107,21 @@ export async function allocateNextInvoiceNumber(
   docId: string = DEFAULT_INVOICE_SETTINGS_DOC_ID
 ): Promise<string> {
   const ref = invoiceSettingsDocRef(db, docId);
+
+  // Reconcile outside the transaction to avoid expensive query reads inside tx.
+  // Goal: next allocated invoice is always `lastSequence + 1` (or newer if concurrent allocations already advanced the counter).
+  const settingsSnap = await getDoc(ref);
+  const baseSettings = normalizeInvoiceSettings(settingsSnap.exists() ? (settingsSnap.data() as Record<string, unknown>) : undefined);
+  const lastSeq = await inferLastInvoiceSequenceFromRecentSales(db, baseSettings, 50);
+  const desiredNext = typeof lastSeq === 'number' && Number.isFinite(lastSeq) ? lastSeq + 1 : baseSettings.next_number;
+
   return runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
     const settings = normalizeInvoiceSettings(snap.exists() ? (snap.data() as Record<string, unknown>) : undefined);
-    const n = settings.next_number;
+
+    const n = Math.max(settings.next_number, desiredNext);
     const formatted = formatInvoiceNumber(settings, n);
+
     transaction.set(
       ref,
       {
@@ -115,4 +135,50 @@ export async function allocateNextInvoiceNumber(
     );
     return formatted;
   });
+}
+
+function parseSequencePartFromInvoiceNumber(invoiceNumber: string): number | null {
+  const s = invoiceNumber.trim();
+  if (!s) return null;
+  if (/^PROV-/i.test(s)) return null;
+
+  // Most invoice numbers look like: `${prefix}${zeroPaddedSeq}/${yearSuffix}`
+  // We parse digits only from the "before first slash" segment so we don't accidentally pick the year.
+  const beforeSlash = s.split('/')[0] || s;
+  const digitGroups = beforeSlash.match(/\d+/g);
+  if (!digitGroups || digitGroups.length === 0) return null;
+  const seqStr = digitGroups[digitGroups.length - 1];
+  const seq = Number.parseInt(seqStr, 10);
+  if (!Number.isFinite(seq) || seq < 1) return null;
+  return seq;
+}
+
+async function inferLastInvoiceSequenceFromRecentSales(
+  db: Firestore,
+  _settings: InvoiceNumberSettings,
+  lookbackLimit: number
+): Promise<number | null> {
+  // Assumption for performance: the most recent `saleDate` invoices also include the highest sequence.
+  // The sequence is only used to reconcile the next counter upward.
+  //
+  // Safety: if reconcile query fails (missing index/rules), we fall back to the counter in `invoiceSettings`.
+  let snap;
+  try {
+    snap = await getDocs(
+      query(collection(db, 'sales'), orderBy('saleDate', 'desc'), limit(lookbackLimit))
+    );
+  } catch (e) {
+    console.error('inferLastInvoiceSequenceFromRecentSales query failed:', e);
+    return null;
+  }
+
+  let maxSeq: number | null = null;
+  for (const d of snap.docs) {
+    const data = d.data() as Record<string, unknown>;
+    const inv = String(data.invoiceNumber || '').trim();
+    const seq = parseSequencePartFromInvoiceNumber(inv);
+    if (seq == null) continue;
+    if (maxSeq == null || seq > maxSeq) maxSeq = seq;
+  }
+  return maxSeq;
 }

@@ -11,14 +11,13 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
     const address = rec.address || rec.location || '';
     const visits: any[] = Array.isArray(rec.visits) ? rec.visits : [];
     visits.forEach((visit: any, idx: number) => {
-      const isSale = !!(
+      // Only treat as invoicable "sale" when the visit is explicitly marked as a sale.
+      // This prevents "booking-only" visits (which can still carry amounts/products) from
+      // being included as invoiced sales.
+      const isSale = Boolean(
         visit?.hearingAidSale ||
-        (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
-        visit?.journeyStage === 'sale' ||
-        visit?.hearingAidStatus === 'sold' ||
-        (Array.isArray(visit?.products) &&
-          visit.products.length > 0 &&
-          ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+          visit?.purchaseFromTrial ||
+          visit?.hearingAidStatus === 'sold'
       );
       if (!isSale) return;
       const prods: any[] = Array.isArray(visit.products) ? visit.products : [];
