@@ -873,26 +873,16 @@ export default function InventoryPage() {
           const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
           visits.forEach((visit: any) => {
             const visitSerialCandidates = serialCandidatesFromVisit(visit);
-            const isSale = !!(
+            // IMPORTANT: Only treat an enquiry visit as "sold" when it is explicitly marked as a sale.
+            // This keeps inventory status aligned with the invoicing safeguards (booking/trial visits must not mark devices as Sold).
+            const isSale = Boolean(
               visit?.hearingAidSale ||
-              (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
-              visit?.journeyStage === 'sale' ||
-              visit?.hearingAidDetails?.journeyStage === 'sale' ||
-              visit?.hearingAidStatus === 'sold' ||
-              visit?.hearingAidDetails?.hearingAidStatus === 'sold' ||
-              String(visit?.invoiceNumber || '').trim() !== '' ||
-              String(visit?.salesInvoiceNumber || '').trim() !== '' ||
-              (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
+                visit?.purchaseFromTrial ||
+                visit?.hearingAidStatus === 'sold' ||
+                visit?.hearingAidDetails?.hearingAidStatus === 'sold'
             );
-            const hasSoldSerialSignal = visitSerialCandidates.length > 0 && (
-              Number(visit?.salesAfterTax || 0) > 0 ||
-              Number(visit?.grossSalesBeforeTax || 0) > 0 ||
-              String(visit?.invoiceNumber || '').trim() !== '' ||
-              String(visit?.salesInvoiceNumber || '').trim() !== '' ||
-              visit?.hearingAidStatus === 'sold' ||
-              visit?.hearingAidDetails?.hearingAidStatus === 'sold'
-            );
-            if (isSale || hasSoldSerialSignal) {
+
+            if (isSale) {
               const products: any[] = Array.isArray(visit.products)
                 ? visit.products
                 : (Array.isArray(visit?.hearingAidDetails?.products) ? visit.hearingAidDetails.products : []);
