@@ -15,6 +15,8 @@ import {
 import { docToCatalogProduct, type CatalogProductDoc } from '@/server/staffEnquiryCatalogHelpers';
 import { sendStaffPaymentNotifyEmail } from '@/server/sendStaffPaymentNotifyEmail';
 import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmails';
+import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
+import { invoiceNumberMatchesSettings, normalizeInvoiceSettings } from '@/lib/invoice-numbering/core';
 
 /** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
 export const maxDuration = 60;
@@ -166,96 +168,6 @@ function isAppointmentTodayServer(start: unknown): boolean {
   const d = parseAppointmentStart(start);
   if (!d) return false;
   return isSameCalendarDayInKolkata(d, new Date());
-}
-
-function normalizeInvoiceNumberSettingsServer(raw: Record<string, unknown> | undefined): {
-  prefix: string;
-  suffix: string;
-  next_number: number;
-  padding: number;
-} {
-  const d = raw || {};
-  const pad =
-    typeof d.padding === 'number' && d.padding >= 1 ? Math.min(Math.floor(d.padding), 12) : 4;
-  let next =
-    typeof d.next_number === 'number' && Number.isFinite(d.next_number)
-      ? Math.floor(d.next_number)
-      : 1;
-  if (next < 1) next = 1;
-  return {
-    prefix: typeof d.prefix === 'string' ? d.prefix : 'INV-',
-    suffix: typeof d.suffix === 'string' ? d.suffix : `/${new Date().getFullYear()}`,
-    next_number: next,
-    padding: pad,
-  };
-}
-
-function formatInvoiceNumberServer(
-  settings: { prefix: string; suffix: string; padding: number },
-  sequenceValue: number
-): string {
-  const n = Math.max(1, Math.floor(sequenceValue));
-  return `${settings.prefix}${String(n).padStart(settings.padding, '0')}${settings.suffix}`;
-}
-
-async function allocateNextInvoiceNumberAdminServer(
-  db: FirebaseFirestore.Firestore
-): Promise<string> {
-  const ref = db.collection('invoiceSettings').doc('default');
-
-  // Reconcile outside the transaction to avoid doing query reads inside tx.
-  const settingsSnap = await ref.get();
-  const baseSettings = normalizeInvoiceNumberSettingsServer(
-    settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined
-  );
-
-  // Look at recent `sales` docs to find the highest allocated numeric sequence.
-  let salesSnap;
-  try {
-    salesSnap = await db.collection('sales').orderBy('saleDate', 'desc').limit(50).get();
-  } catch (e) {
-    console.error('allocateNextInvoiceNumberAdminServer: sales reconcile query failed:', e);
-    salesSnap = null;
-  }
-  let maxSeq: number | null = null;
-  if (salesSnap) {
-    for (const s of salesSnap.docs) {
-      const inv = String((s.data() as Record<string, unknown>)?.invoiceNumber || '').trim();
-      if (!inv || /^PROV-/i.test(inv)) continue;
-      const beforeSlash = inv.split('/')[0] || inv;
-      const digitGroups = beforeSlash.match(/\d+/g);
-      if (!digitGroups || digitGroups.length === 0) continue;
-      const seq = Number.parseInt(digitGroups[digitGroups.length - 1], 10);
-      if (!Number.isFinite(seq) || seq < 1) continue;
-      if (maxSeq == null || seq > maxSeq) maxSeq = seq;
-    }
-  }
-
-  const desiredNext = typeof maxSeq === 'number' && Number.isFinite(maxSeq) ? maxSeq + 1 : baseSettings.next_number;
-
-  return db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const settings = normalizeInvoiceNumberSettingsServer(
-      snap.exists ? (snap.data() as Record<string, unknown>) : undefined
-    );
-
-    // Never allocate backwards. If another concurrent allocation already advanced the counter,
-    // `settings.next_number` will be >= `desiredNext`.
-    const n = Math.max(settings.next_number, desiredNext);
-    const formatted = formatInvoiceNumberServer(settings, n);
-    tx.set(
-      ref,
-      {
-        prefix: settings.prefix,
-        suffix: settings.suffix,
-        padding: settings.padding,
-        next_number: n + 1,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return formatted;
-  });
 }
 
 type ReceiptType = 'trial' | 'booking' | 'invoice';
@@ -571,9 +483,16 @@ export async function POST(req: Request) {
       if (lastIdx >= 0) {
         const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
         const existingInvoiceNumber = String(lastVisit.invoiceNumber || '').trim();
-        const isProvisionalExisting = /^PROV-/i.test(existingInvoiceNumber);
-        if (!existingInvoiceNumber || isProvisionalExisting) {
-          const allocatedInvoiceNumber = await allocateNextInvoiceNumberAdminServer(db);
+        const settingsSnap = await db.collection('invoiceSettings').doc('default').get();
+        const invSettings = normalizeInvoiceSettings(
+          settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined
+        );
+        const needsAllocation =
+          !existingInvoiceNumber ||
+          /^PROV-/i.test(existingInvoiceNumber) ||
+          !invoiceNumberMatchesSettings(existingInvoiceNumber, invSettings);
+        if (needsAllocation) {
+          const allocatedInvoiceNumber = await allocateNextInvoiceNumberAdmin(db);
           merged.visits[lastIdx] = { ...lastVisit, invoiceNumber: allocatedInvoiceNumber };
           if (merged.visitSchedules[lastIdx]) {
             merged.visitSchedules[lastIdx] = {

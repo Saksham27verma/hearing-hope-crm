@@ -3,6 +3,7 @@ import { renderHtmlToPdfBuffer } from '@/server/htmlToPdfBuffer';
 import { getResolvedHtmlTemplateAdmin } from '@/server/invoiceTemplatesAdmin';
 import { processInvoiceHtmlTemplate } from '@/utils/invoiceHtmlTemplate';
 import type { InvoiceData } from '@/components/invoices/InvoiceTemplate';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -18,6 +19,12 @@ export async function POST(req: Request) {
     const invoiceData = body?.invoiceData;
     if (!invoiceData) {
       return NextResponse.json({ ok: false, error: 'invoiceData is required' }, { status: 400 });
+    }
+    if (!saleHasBillableInvoiceNumber(invoiceData.invoiceNumber)) {
+      return NextResponse.json(
+        { ok: false, error: 'invoiceData.invoiceNumber must be a valid assigned invoice number (not empty or provisional).' },
+        { status: 400 }
+      );
     }
 
     const template = await getResolvedHtmlTemplateAdmin('invoice', {

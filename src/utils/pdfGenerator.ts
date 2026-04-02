@@ -13,6 +13,7 @@ import {
   convertSaleToInvoiceData,
   mergeInvoiceConfigIntoData,
   enquiryVisitToInvoiceSalePayload as enquiryVisitToInvoiceSalePayloadImpl,
+  saleHasBillableInvoiceNumber,
 } from '@/utils/invoiceSaleToData';
 
 export type { InvoiceConfig, InvoicePdfTemplateId } from '@/utils/invoicePdfPreferences';
@@ -66,6 +67,11 @@ export function createInvoicePdfElement(data: InvoiceData, rendererId: 'classic'
 }
 
 export const generateInvoicePDF = async (sale: any, opts?: InvoicePdfGenerationOptions): Promise<Blob> => {
+  if (!saleHasBillableInvoiceNumber(sale?.invoiceNumber)) {
+    throw new Error(
+      'A valid invoice number is required before generating a PDF. Assign one from Sales & Invoicing or open the enquiry sale invoice flow.'
+    );
+  }
   const templateId = opts?.templateId ?? getInvoicePdfTemplate();
   const rendererId = resolveInvoicePdfRendererId(templateId);
   const mergedConfig: InvoiceConfig = { ...getInvoicePdfConfig(), ...opts?.config };

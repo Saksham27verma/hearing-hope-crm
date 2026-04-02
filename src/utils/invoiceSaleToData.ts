@@ -4,13 +4,19 @@ import {
   accessoryLinesTotal,
   visitAccessoryToSaleAccessories,
 } from '@/lib/sales-invoicing/visitAccessoryInvoice';
+import { isProvisionalInvoiceNumber } from '@/lib/invoice-numbering/core';
+
+/** Non-empty and not a provisional (PROV-*) placeholder — required before accountant-facing PDFs. */
+export function saleHasBillableInvoiceNumber(inv: unknown): boolean {
+  const s = String(inv ?? '').trim();
+  return s.length > 0 && !isProvisionalInvoiceNumber(s);
+}
 
 /** Map enquiry + visit into the shape expected by `convertSaleToInvoiceData` / invoice PDF. */
 export function enquiryVisitToInvoiceSalePayload(
   enquiry: Record<string, unknown>,
   visit: Record<string, unknown>
 ): Record<string, unknown> {
-  const visitKey = visit?.id ?? visit?.visitDate ?? visit?.purchaseDate ?? 'sale';
   const accessories = visitAccessoryToSaleAccessories(visit);
   const accessoryTotal = accessoryLinesTotal(accessories);
   const salesAfterTax = Number(visit?.salesAfterTax) || 0;
@@ -22,6 +28,7 @@ export function enquiryVisitToInvoiceSalePayload(
   const invoiceNumberFromRecord = String(
     visit?.invoiceNumber || visit?.salesInvoiceNumber || enquiry?.invoiceNumber || ''
   ).trim();
+  const invoiceNumber = saleHasBillableInvoiceNumber(invoiceNumberFromRecord) ? invoiceNumberFromRecord : '';
   return {
     products: visit?.products || [],
     accessories,
@@ -33,8 +40,7 @@ export function enquiryVisitToInvoiceSalePayload(
     email: enquiry?.email || '',
     address: enquiry?.address || '',
     saleDate: visit?.purchaseDate || visit?.visitDate || visit?.date || new Date().toISOString().slice(0, 10),
-    invoiceNumber:
-      invoiceNumberFromRecord || `PROV-${String(enquiry?.id || 'enquiry').slice(0, 8)}-${String(visitKey).slice(0, 12)}`,
+    invoiceNumber,
     notes: visit?.saleNotes || visit?.notes || '',
   };
 }

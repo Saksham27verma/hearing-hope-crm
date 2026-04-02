@@ -11,7 +11,12 @@ import {
   buildBookingReceiptHtmlString,
   buildTrialReceiptHtmlString,
 } from '@/utils/receiptTemplateHtml';
-import { enquiryVisitToInvoiceSalePayload, convertSaleToInvoiceData, mergeInvoiceConfigIntoData } from '@/utils/invoiceSaleToData';
+import {
+  enquiryVisitToInvoiceSalePayload,
+  convertSaleToInvoiceData,
+  mergeInvoiceConfigIntoData,
+  saleHasBillableInvoiceNumber,
+} from '@/utils/invoiceSaleToData';
 import { DEFAULT_INVOICE_PDF_CONFIG } from '@/utils/invoicePdfPreferences';
 import { processInvoiceHtmlTemplate } from '@/utils/invoiceHtmlTemplate';
 
@@ -108,6 +113,9 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
         paymentMethod: args.paymentMethod,
         salesperson: { name: args.staffName },
       };
+      if (!saleHasBillableInvoiceNumber(sale.invoiceNumber)) {
+        throw new Error('Invoice number is missing or invalid — cannot render staff invoice PDF.');
+      }
       let invoiceData = convertSaleToInvoiceData(sale);
       invoiceData = mergeInvoiceConfigIntoData(invoiceData, DEFAULT_INVOICE_PDF_CONFIG);
       invoiceData = {

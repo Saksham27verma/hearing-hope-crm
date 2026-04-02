@@ -33,7 +33,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
-import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
+import { allocateNextInvoiceNumber, loadInvoiceNumberSettings } from '@/services/invoiceNumbering';
+import { invoiceNumberMatchesSettings } from '@/lib/invoice-numbering/core';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -211,6 +212,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       
       const visits = Array.isArray(data.visits) ? [...data.visits] : [];
       let visitsPatched = false;
+      const invSettings = await loadInvoiceNumberSettings(db);
 
       // Upsert sale visits into `sales` collection and ensure invoice numbers.
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
@@ -228,7 +230,9 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
 
         let invoiceNumber = String(visit.invoiceNumber || '').trim();
         const isProvisional = /^PROV-/i.test(invoiceNumber);
-        if (!invoiceNumber || isProvisional) {
+        const needsInvoiceAlloc =
+          !invoiceNumber || isProvisional || !invoiceNumberMatchesSettings(invoiceNumber, invSettings);
+        if (needsInvoiceAlloc) {
           invoiceNumber = await allocateNextInvoiceNumber(db);
           visits[visitIndex] = { ...visit, invoiceNumber };
           visitsPatched = true;

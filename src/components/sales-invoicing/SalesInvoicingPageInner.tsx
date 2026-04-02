@@ -70,7 +70,9 @@ import {
   doc,
   serverTimestamp,
   query,
+  where,
   orderBy,
+  limit,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -101,7 +103,12 @@ import type {
   UnifiedInvoiceRow,
 } from '@/lib/sales-invoicing/types';
 import { prefillSaleFromDerivedEnquiry } from '@/lib/sales-invoicing/enquiryPrefill';
-import { allocateNextInvoiceNumber, peekNextInvoiceNumber } from '@/services/invoiceNumbering';
+import {
+  allocateNextInvoiceNumber,
+  loadInvoiceNumberSettings,
+  peekNextInvoiceNumber,
+} from '@/services/invoiceNumbering';
+import { invoiceNumberMatchesSettings } from '@/lib/invoice-numbering/core';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 
 // ─── Types ───
@@ -265,9 +272,11 @@ export default function SalesInvoicingPageInner() {
   const [priceEditSource, setPriceEditSource] = useState<'discount' | 'sellingPrice'>('discount');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
-  // For strict sequential invoice numbering: new invoices use auto-allocation at save time.
-  // We keep this state for backward compatibility with older UI, but it should never allow custom numbers for new invoices.
-  const [invoiceNumberTouchedByUser, setInvoiceNumberTouchedByUser] = useState(false);
+  /** Admin changed invoice # on an existing sale — confirm before persisting (accounts / GST). */
+  const [pendingInvoiceNumberConfirm, setPendingInvoiceNumberConfirm] = useState<{
+    sale: Sale;
+    previousInvoiceNumber: string;
+  } | null>(null);
 
   const createEmptySale = (invoiceNumber = ''): Sale => ({
     invoiceNumber,
@@ -432,7 +441,6 @@ export default function SalesInvoicingPageInner() {
       console.error('peekNextInvoiceNumber:', e);
       // Not fatal: we still allocate the correct sequential number on save.
     }
-    setInvoiceNumberTouchedByUser(false);
     setCurrentSale({
       ...createEmptySale(suggested),
       salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
@@ -445,7 +453,6 @@ export default function SalesInvoicingPageInner() {
       setErrorMsg('This invoice was cancelled and cannot be edited.');
       return;
     }
-    setInvoiceNumberTouchedByUser(false);
     setCurrentSale({
       ...sale,
       manualLineItems: sale.manualLineItems || [],
@@ -506,6 +513,77 @@ export default function SalesInvoicingPageInner() {
     }
   };
 
+  const persistSaleAfterInvoiceChecks = async (
+    saleToSave: Sale,
+    opts: { previousInvoiceNumber: string }
+  ): Promise<boolean> => {
+    const inv = (saleToSave.invoiceNumber || '').trim();
+    const dupSnap = await getDocs(
+      query(collection(db, 'sales'), where('invoiceNumber', '==', inv), limit(25))
+    );
+    const duplicateOther = dupSnap.docs.some((d) => d.id !== saleToSave.id);
+    if (duplicateOther) {
+      setErrorMsg(`Another sale already uses invoice number "${inv}". Choose a different number.`);
+      return false;
+    }
+
+    const { id: _saleFirestoreId, ...saveData } = saleToSave;
+    const invoiceChangedByAdmin =
+      isAdmin &&
+      Boolean(saleToSave.id) &&
+      opts.previousInvoiceNumber.trim() !== inv;
+    const auditPatch = invoiceChangedByAdmin
+      ? {
+          invoiceNumberLastEditedAt: serverTimestamp(),
+          invoiceNumberLastEditedByUid: user?.uid || '',
+          invoiceNumberLastEditedByName: userProfile?.displayName || user?.email || '',
+        }
+      : {};
+
+    if (saleToSave.id) {
+      await updateDoc(doc(db, 'sales', saleToSave.id), {
+        ...saveData,
+        ...auditPatch,
+        updatedAt: serverTimestamp(),
+      });
+      setSales((prev) =>
+        prev.map((s) => (s.id === saleToSave.id ? { ...saleToSave, updatedAt: Timestamp.now() } : s))
+      );
+      setSuccessMsg('Sale updated');
+    } else {
+      const docRef = await addDoc(collection(db, 'sales'), {
+        ...saveData,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      setSales((prev) => [
+        { ...saleToSave, id: docRef.id, createdAt: Timestamp.now(), updatedAt: Timestamp.now() },
+        ...prev,
+      ]);
+      setSuccessMsg('Sale created');
+    }
+    return true;
+  };
+
+  const handleConfirmInvoiceNumberChange = async () => {
+    if (!pendingInvoiceNumberConfirm || savingSale) return;
+    const { sale, previousInvoiceNumber } = pendingInvoiceNumberConfirm;
+    setPendingInvoiceNumberConfirm(null);
+    try {
+      setSavingSale(true);
+      const ok = await persistSaleAfterInvoiceChecks(sale, { previousInvoiceNumber });
+      if (ok) {
+        setOpenDialog(false);
+        setCurrentSale(null);
+      }
+    } catch (e) {
+      console.error('Error saving sale:', e);
+      setErrorMsg('Failed to save sale');
+    } finally {
+      setSavingSale(false);
+    }
+  };
+
   const handleSaveSale = async () => {
     if (!currentSale || savingSale) return;
     if (currentSale.cancelled) {
@@ -523,7 +601,6 @@ export default function SalesInvoicingPageInner() {
       setSavingSale(true);
       let finalInvoiceNumber = (currentSale.invoiceNumber || '').trim();
       if (!currentSale.id) {
-        // Strict mode: always allocate next sequential invoice number for new sales.
         try {
           finalInvoiceNumber = await allocateNextInvoiceNumber(db);
         } catch (e) {
@@ -532,8 +609,11 @@ export default function SalesInvoicingPageInner() {
           return;
         }
       } else {
-        // Existing invoice: allow edits, but prevent broken/provisional invoice numbers from persisting.
-        if (!finalInvoiceNumber || /^PROV-/i.test(finalInvoiceNumber)) {
+        const invSettings = await loadInvoiceNumberSettings(db);
+        const prov = /^PROV-/i.test(finalInvoiceNumber);
+        const mismatched = !invoiceNumberMatchesSettings(finalInvoiceNumber, invSettings);
+        const emptyOrProv = !finalInvoiceNumber || prov;
+        if (emptyOrProv || (mismatched && !isAdmin)) {
           try {
             finalInvoiceNumber = await allocateNextInvoiceNumber(db);
           } catch (e) {
@@ -544,6 +624,10 @@ export default function SalesInvoicingPageInner() {
         }
       }
 
+      const previousInvoiceNumber = currentSale.id
+        ? (sales.find((s) => s.id === currentSale.id)?.invoiceNumber || '').trim()
+        : '';
+
       const saleToSave: Sale = {
         ...currentSale,
         invoiceNumber: finalInvoiceNumber,
@@ -552,19 +636,17 @@ export default function SalesInvoicingPageInner() {
           name: userProfile?.displayName || user?.email || currentSale.salesperson?.name || '',
         },
       };
-      const { id, ...saveData } = saleToSave as any;
-      if (currentSale.id) {
-        await updateDoc(doc(db, 'sales', currentSale.id), { ...saveData, updatedAt: serverTimestamp() });
-        setSales((prev) => prev.map((s) => (s.id === currentSale.id ? { ...saleToSave, updatedAt: Timestamp.now() } : s)));
-        setSuccessMsg('Sale updated');
-      } else {
-        const docRef = await addDoc(collection(db, 'sales'), { ...saveData, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-        setSales((prev) => [{ ...saleToSave, id: docRef.id, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }, ...prev]);
-        setSuccessMsg('Sale created');
+
+      if (currentSale.id && isAdmin && previousInvoiceNumber !== finalInvoiceNumber) {
+        setPendingInvoiceNumberConfirm({ sale: saleToSave, previousInvoiceNumber });
+        return;
       }
-      setOpenDialog(false);
-      setCurrentSale(null);
-      setInvoiceNumberTouchedByUser(false);
+
+      const ok = await persistSaleAfterInvoiceChecks(saleToSave, { previousInvoiceNumber });
+      if (ok) {
+        setOpenDialog(false);
+        setCurrentSale(null);
+      }
     } catch (e) {
       console.error('Error saving sale:', e);
       setErrorMsg('Failed to save sale');
@@ -766,15 +848,12 @@ export default function SalesInvoicingPageInner() {
       if (row.kind !== 'enquiry_pending' || !row.derivedEnquiry) return;
       resetProductForm();
       let suggested = '';
-      let forceCustom = false;
       try {
         suggested = await peekNextInvoiceNumber(db);
       } catch (e) {
         console.error('peekNextInvoiceNumber:', e);
-        setErrorMsg('Could not load the next invoice number. Enter a custom invoice number to save (the sequence will not advance).');
-        forceCustom = true;
+        setErrorMsg('Could not preview the next invoice number. It will still be assigned automatically when you save.');
       }
-      setInvoiceNumberTouchedByUser(forceCustom);
       const pre = prefillSaleFromDerivedEnquiry(row.derivedEnquiry, {
         invoiceNumber: suggested,
         salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
@@ -912,6 +991,47 @@ export default function SalesInvoicingPageInner() {
           </DialogActions>
         </Dialog>
 
+        <Dialog
+          open={!!pendingInvoiceNumberConfirm}
+          onClose={() => {
+            if (!savingSale) setPendingInvoiceNumberConfirm(null);
+          }}
+          maxWidth="sm"
+          fullWidth
+          PaperProps={{ sx: { borderRadius: 2 } }}
+        >
+          <DialogTitle fontWeight={700}>Confirm invoice number change</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              This number is used for accounts, GST, and official records. Confirm the change before saving.
+            </Typography>
+            {pendingInvoiceNumberConfirm && (
+              <Stack spacing={1}>
+                <Typography variant="body2">
+                  <strong>Previous:</strong>{' '}
+                  <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                    {pendingInvoiceNumberConfirm.previousInvoiceNumber || '—'}
+                  </Box>
+                </Typography>
+                <Typography variant="body2">
+                  <strong>New:</strong>{' '}
+                  <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                    {pendingInvoiceNumberConfirm.sale.invoiceNumber || '—'}
+                  </Box>
+                </Typography>
+              </Stack>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => !savingSale && setPendingInvoiceNumberConfirm(null)} disabled={savingSale}>
+              Back
+            </Button>
+            <Button variant="contained" onClick={handleConfirmInvoiceNumberChange} disabled={savingSale}>
+              {savingSale ? 'Saving…' : 'Confirm and save'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         <SalesInvoiceCommandPalette
           open={paletteOpen}
           onClose={() => {
@@ -956,7 +1076,6 @@ export default function SalesInvoicingPageInner() {
         onClose={() => {
           setOpenDialog(false);
           setCurrentSale(null);
-          setInvoiceNumberTouchedByUser(false);
         }}
         maxWidth="lg"
         fullWidth
@@ -1032,12 +1151,20 @@ export default function SalesInvoicingPageInner() {
                       fullWidth
                       value={currentSale.invoiceNumber || ''}
                       onChange={(e) => {
-                        // For strict numbering: new invoices are read-only (auto-assigned).
-                        if (!currentSale.id) return;
+                        if (!currentSale.id || !isAdmin) return;
                         updateSaleField('invoiceNumber', e.target.value);
                       }}
-                      InputProps={{ sx: { fontFamily: 'monospace' }, readOnly: !currentSale.id }}
-                      helperText={currentSale.id ? undefined : 'Auto-assigned sequential invoice number (read-only).'}
+                      InputProps={{
+                        sx: { fontFamily: 'monospace' },
+                        readOnly: !currentSale.id || !isAdmin,
+                      }}
+                      helperText={
+                        !currentSale.id
+                          ? 'Auto-assigned sequential invoice number when you save (read-only).'
+                          : isAdmin
+                            ? 'Editable by admins only. Used for accounts / GST — changes are logged.'
+                            : 'Only an admin can change the invoice number after the sale is saved.'
+                      }
                     />
                   </Grid>
                   <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 4' } }}>

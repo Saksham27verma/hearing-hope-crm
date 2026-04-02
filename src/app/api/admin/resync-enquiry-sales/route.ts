@@ -2,56 +2,11 @@ import { NextResponse } from 'next/server';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
+import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
+import { invoiceNumberMatchesSettings, normalizeInvoiceSettings } from '@/lib/invoice-numbering/core';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
-}
-
-function normalizeInvoiceNumberSettingsServer(raw: Record<string, unknown> | undefined) {
-  const d = raw || {};
-  const pad = typeof d.padding === 'number' && d.padding >= 1 ? Math.min(Math.floor(d.padding), 12) : 4;
-  let next = typeof d.next_number === 'number' && Number.isFinite(d.next_number) ? Math.floor(d.next_number) : 1;
-  if (next < 1) next = 1;
-  return {
-    prefix: typeof d.prefix === 'string' ? d.prefix : 'INV-',
-    suffix: typeof d.suffix === 'string' ? d.suffix : `/${new Date().getFullYear()}`,
-    next_number: next,
-    padding: pad,
-  };
-}
-
-function formatInvoiceNumberServer(
-  settings: { prefix: string; suffix: string; padding: number },
-  sequenceValue: number
-): string {
-  const n = Math.max(1, Math.floor(sequenceValue));
-  return `${settings.prefix}${String(n).padStart(settings.padding, '0')}${settings.suffix}`;
-}
-
-async function allocateNextInvoiceNumberAdminServer(
-  db: FirebaseFirestore.Firestore
-): Promise<string> {
-  const ref = db.collection('invoiceSettings').doc('default');
-  return db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    const settings = normalizeInvoiceNumberSettingsServer(
-      snap.exists ? (snap.data() as Record<string, unknown>) : undefined
-    );
-    const n = settings.next_number;
-    const formatted = formatInvoiceNumberServer(settings, n);
-    tx.set(
-      ref,
-      {
-        prefix: settings.prefix,
-        suffix: settings.suffix,
-        padding: settings.padding,
-        next_number: n + 1,
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return formatted;
-  });
 }
 
 export async function POST(req: Request) {
@@ -65,6 +20,10 @@ export async function POST(req: Request) {
     assertAdmin(requester);
 
     const db = adminDb();
+    const settingsSnap = await db.collection('invoiceSettings').doc('default').get();
+    const invSettings = normalizeInvoiceSettings(
+      settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined
+    );
     const enquiriesSnap = await db.collection('enquiries').get();
     let processedVisits = 0;
     let createdSales = 0;
@@ -88,8 +47,12 @@ export async function POST(req: Request) {
         processedVisits++;
 
         let invoiceNumber = String(visit.invoiceNumber || '').trim();
-        if (!invoiceNumber || /^PROV-/i.test(invoiceNumber)) {
-          invoiceNumber = await allocateNextInvoiceNumberAdminServer(db);
+        const needsInvoiceAlloc =
+          !invoiceNumber ||
+          /^PROV-/i.test(invoiceNumber) ||
+          !invoiceNumberMatchesSettings(invoiceNumber, invSettings);
+        if (needsInvoiceAlloc) {
+          invoiceNumber = await allocateNextInvoiceNumberAdmin(db);
           visits[visitIndex] = { ...visit, invoiceNumber };
           visitsChanged = true;
           allocatedInvoiceNumbers++;

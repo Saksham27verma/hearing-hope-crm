@@ -12,39 +12,27 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import type { InvoiceNumberSettings } from '@/lib/invoice-numbering/types';
+import {
+  computeDesiredNextSequence,
+  formatInvoiceNumber,
+  normalizeInvoiceSettings,
+  parseSequencePartFromInvoiceNumber,
+} from '@/lib/invoice-numbering/core';
 
 /** Default document id for org-wide invoice sequence. */
 export const DEFAULT_INVOICE_SETTINGS_DOC_ID = 'default';
 
+export {
+  normalizeInvoiceSettings,
+  formatInvoiceNumber,
+  DEFAULT_INVOICE_NUMBER_SETTINGS,
+  parseSequencePartFromInvoiceNumber,
+  isProvisionalInvoiceNumber,
+  invoiceNumberMatchesSettings,
+} from '@/lib/invoice-numbering/core';
+
 export function invoiceSettingsDocRef(db: Firestore, docId: string = DEFAULT_INVOICE_SETTINGS_DOC_ID) {
   return doc(db, 'invoiceSettings', docId);
-}
-
-export const DEFAULT_INVOICE_NUMBER_SETTINGS: InvoiceNumberSettings = {
-  prefix: 'INV-',
-  suffix: `/${new Date().getFullYear()}`,
-  next_number: 1,
-  padding: 4,
-};
-
-export function normalizeInvoiceSettings(raw: Record<string, unknown> | undefined): InvoiceNumberSettings {
-  const d = raw || {};
-  const pad = typeof d.padding === 'number' && d.padding >= 1 ? Math.min(Math.floor(d.padding), 12) : DEFAULT_INVOICE_NUMBER_SETTINGS.padding;
-  let next = typeof d.next_number === 'number' && Number.isFinite(d.next_number) ? Math.floor(d.next_number) : DEFAULT_INVOICE_NUMBER_SETTINGS.next_number;
-  if (next < 1) next = 1;
-  return {
-    prefix: typeof d.prefix === 'string' ? d.prefix : DEFAULT_INVOICE_NUMBER_SETTINGS.prefix,
-    suffix: typeof d.suffix === 'string' ? d.suffix : DEFAULT_INVOICE_NUMBER_SETTINGS.suffix,
-    next_number: next,
-    padding: pad,
-  };
-}
-
-/** Format one invoice number from settings and a numeric sequence value (does not read/write Firestore). */
-export function formatInvoiceNumber(settings: InvoiceNumberSettings, sequenceValue: number): string {
-  const n = Math.max(1, Math.floor(sequenceValue));
-  const padded = String(n).padStart(settings.padding, '0');
-  return `${settings.prefix}${padded}${settings.suffix}`;
 }
 
 /** Load current settings from Firestore (or defaults if missing). */
@@ -92,8 +80,7 @@ export async function peekNextInvoiceNumber(
   const settings = normalizeInvoiceSettings(snap.exists() ? (snap.data() as Record<string, unknown>) : undefined);
 
   const lastSeq = await inferLastInvoiceSequenceFromRecentSales(db, settings, 50);
-  const desiredNext = typeof lastSeq === 'number' && Number.isFinite(lastSeq) ? lastSeq + 1 : settings.next_number;
-  // Prevent preview from going backwards if another allocation already advanced the counter.
+  const desiredNext = computeDesiredNextSequence(settings, lastSeq);
   const previewN = Math.max(settings.next_number, desiredNext);
   return formatInvoiceNumber(settings, previewN);
 }
@@ -108,12 +95,10 @@ export async function allocateNextInvoiceNumber(
 ): Promise<string> {
   const ref = invoiceSettingsDocRef(db, docId);
 
-  // Reconcile outside the transaction to avoid expensive query reads inside tx.
-  // Goal: next allocated invoice is always `lastSequence + 1` (or newer if concurrent allocations already advanced the counter).
   const settingsSnap = await getDoc(ref);
   const baseSettings = normalizeInvoiceSettings(settingsSnap.exists() ? (settingsSnap.data() as Record<string, unknown>) : undefined);
   const lastSeq = await inferLastInvoiceSequenceFromRecentSales(db, baseSettings, 50);
-  const desiredNext = typeof lastSeq === 'number' && Number.isFinite(lastSeq) ? lastSeq + 1 : baseSettings.next_number;
+  const desiredNext = computeDesiredNextSequence(baseSettings, lastSeq);
 
   return runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
@@ -137,31 +122,11 @@ export async function allocateNextInvoiceNumber(
   });
 }
 
-function parseSequencePartFromInvoiceNumber(invoiceNumber: string): number | null {
-  const s = invoiceNumber.trim();
-  if (!s) return null;
-  if (/^PROV-/i.test(s)) return null;
-
-  // Most invoice numbers look like: `${prefix}${zeroPaddedSeq}/${yearSuffix}`
-  // We parse digits only from the "before first slash" segment so we don't accidentally pick the year.
-  const beforeSlash = s.split('/')[0] || s;
-  const digitGroups = beforeSlash.match(/\d+/g);
-  if (!digitGroups || digitGroups.length === 0) return null;
-  const seqStr = digitGroups[digitGroups.length - 1];
-  const seq = Number.parseInt(seqStr, 10);
-  if (!Number.isFinite(seq) || seq < 1) return null;
-  return seq;
-}
-
 async function inferLastInvoiceSequenceFromRecentSales(
   db: Firestore,
   _settings: InvoiceNumberSettings,
   lookbackLimit: number
 ): Promise<number | null> {
-  // Assumption for performance: the most recent `saleDate` invoices also include the highest sequence.
-  // The sequence is only used to reconcile the next counter upward.
-  //
-  // Safety: if reconcile query fails (missing index/rules), we fall back to the counter in `invoiceSettings`.
   let snap;
   try {
     snap = await getDocs(

@@ -72,7 +72,8 @@ import {
 } from '@/utils/receiptGenerator';
 import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
-import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
+import { allocateNextInvoiceNumber, loadInvoiceNumberSettings } from '@/services/invoiceNumbering';
+import { invoiceNumberMatchesSettings } from '@/lib/invoice-numbering/core';
 import {
   ENQUIRY_STATUS_OPTIONS,
   getEnquiryStatusMeta,
@@ -579,7 +580,10 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const currentVisit = visitList[visitIndex] || {};
     const existing = String(currentVisit.invoiceNumber || '').trim();
     const isProvisionalExisting = /^PROV-/i.test(existing);
-    if (existing && !isProvisionalExisting) return existing;
+    const invSettings = await loadInvoiceNumberSettings(db);
+    if (existing && !isProvisionalExisting && invoiceNumberMatchesSettings(existing, invSettings)) {
+      return existing;
+    }
     const nextNumber = await allocateNextInvoiceNumber(db);
     visitList[visitIndex] = { ...currentVisit, invoiceNumber: nextNumber };
     if (resolvedParams?.id) {
