@@ -156,11 +156,10 @@ async function restoreInventoryFromSaleVisits({
             serialsToAdd: [...toAdd],
             quantityToAdd: 0,
           });
-          return {
-            ...p,
-            serialNumbers: merged,
-            serialNumber: undefined,
-          };
+          const { serialNumber, ...rest } = p as any;
+          // Important: Firestore rejects `undefined` values, so we must omit `serialNumber`
+          // instead of setting it to `undefined` in the nested `products` array.
+          return { ...rest, serialNumbers: merged };
         }
       }
 
