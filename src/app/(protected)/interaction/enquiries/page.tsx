@@ -432,7 +432,7 @@ interface VisitSchedule {
 
 export default function EnquiriesPage() {
   const router = useRouter();
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth();
   const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const { optionsByField } = useEnquiryOptionsByField();
   const wizardReferenceOpts = optionsByField.reference ?? [];
@@ -1953,48 +1953,44 @@ export default function EnquiriesPage() {
     
     try {
       setLoading(true);
-      
-      // First, find and delete any related visitor records
-      const visitorQuery = query(
-        collection(db, 'visitors'),
-        where('relatedEnquiryId', '==', enquiryToDelete.id)
-      );
-      
-      const visitorSnapshot = await getDocs(visitorQuery);
-      
-      // Create an array of promises for batch deletion
-      const deletePromises = visitorSnapshot.docs.map(visitorDoc => 
-        deleteDoc(doc(db, 'visitors', visitorDoc.id))
-      );
-      
-      // Add the enquiry deletion to the promises
-      deletePromises.push(deleteDoc(doc(db, 'enquiries', enquiryToDelete.id)));
-      
-      // Execute all deletions in parallel
-      await Promise.all(deletePromises);
-      
-      console.log(`Deleted enquiry and ${visitorSnapshot.docs.length} related visitor records`);
-      
-      // Update the local state
-      setEnquiries(prevEnquiries => 
-        prevEnquiries.filter(enquiry => enquiry.id !== enquiryToDelete.id)
-      );
-      
-      setFilteredEnquiries(prevEnquiries => 
-        prevEnquiries.filter(enquiry => enquiry.id !== enquiryToDelete.id)
-      );
-      
+
+      if (!user) {
+        throw new Error('Not signed in');
+      }
+
+      // Use admin route to:
+      // - restore inventory consumed by sale visits in this enquiry
+      // - delete linked `sales` docs so Sales & Invoicing updates immediately
+      // - delete the enquiry + linked visitors/receipts data
+      const token = await user.getIdToken();
+      const res = await fetch('/api/admin/purge-enquiry-with-inventory', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ enquiryId: enquiryToDelete.id }),
+      });
+
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || 'Failed to purge enquiry');
+      }
+
+      setEnquiries((prevEnquiries) => prevEnquiries.filter((enquiry) => enquiry.id !== enquiryToDelete.id));
+      setFilteredEnquiries((prevEnquiries) => prevEnquiries.filter((enquiry) => enquiry.id !== enquiryToDelete.id));
+
       handleCloseDeleteDialog();
       setAlert({
         open: true,
-        message: 'Enquiry and any linked visitor records deleted successfully.',
+        message: 'Enquiry purged successfully (inventory rolled back + linked invoices removed).',
         severity: 'success',
       });
     } catch (error) {
       console.error('Error deleting enquiry and related records:', error);
       setAlert({
         open: true,
-        message: 'Failed to delete enquiry. You may not have permission or the record may be in use.',
+        message: 'Failed to purge enquiry with inventory rollback. You may not have permission or the record may be in use.',
         severity: 'error',
       });
     } finally {
