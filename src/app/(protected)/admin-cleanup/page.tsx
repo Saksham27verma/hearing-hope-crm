@@ -82,7 +82,9 @@ export default function AdminCleanupPage() {
   const [stats, setStats] = useState<CleanupStats[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState(false);
-  const [pendingDestructiveAction, setPendingDestructiveAction] = useState<'deleteAllData' | 'purgeMisclassifiedEnquirySales' | null>(null);
+  const [pendingDestructiveAction, setPendingDestructiveAction] = useState<
+    'deleteAllData' | 'purgeMisclassifiedEnquirySales' | 'operationalReset' | null
+  >(null);
   const [totalProgress, setTotalProgress] = useState(0);
   const [resyncingSales, setResyncingSales] = useState(false);
   const [resyncResult, setResyncResult] = useState<string>('');
@@ -90,6 +92,10 @@ export default function AdminCleanupPage() {
   const [purgeMisclassifiedRunning, setPurgeMisclassifiedRunning] = useState(false);
   const [purgeMisclassifiedPreviewCount, setPurgeMisclassifiedPreviewCount] = useState<number | null>(null);
   const [purgeMisclassifiedResult, setPurgeMisclassifiedResult] = useState<string>('');
+
+  const [operationalResetBusy, setOperationalResetBusy] = useState(false);
+  const [operationalDryRunText, setOperationalDryRunText] = useState<string>('');
+  const [operationalResetResult, setOperationalResetResult] = useState<string>('');
   
   // Password protection states
   const [passwordDialog, setPasswordDialog] = useState(false);
@@ -358,6 +364,109 @@ export default function AdminCleanupPage() {
     }
   };
 
+  const previewOperationalReset = async () => {
+    if (!user) {
+      alert('Please sign in again.');
+      return;
+    }
+    setOperationalResetBusy(true);
+    setOperationalDryRunText('');
+    setOperationalResetResult('');
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch('/api/admin/operational-reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        collectionCounts?: Record<string, number>;
+        enquiryCount?: number;
+        collectionErrors?: Record<string, string>;
+      };
+      if (!res.ok || !json.ok) throw new Error(json.error || 'Preview failed');
+
+      const lines: string[] = [];
+      lines.push(`Enquiries to sanitize (documents kept, visits/payments cleared): ${json.enquiryCount ?? 0}`);
+      lines.push('');
+      lines.push('Collections to delete (document counts):');
+      const entries = Object.entries(json.collectionCounts || {}).sort(([a], [b]) => a.localeCompare(b));
+      for (const [name, n] of entries) {
+        lines.push(`  • ${name}: ${n < 0 ? 'error' : n}`);
+      }
+      if (json.collectionErrors && Object.keys(json.collectionErrors).length > 0) {
+        lines.push('');
+        lines.push('Count errors:');
+        for (const [k, v] of Object.entries(json.collectionErrors)) {
+          lines.push(`  • ${k}: ${v}`);
+        }
+      }
+      setOperationalDryRunText(lines.join('\n'));
+    } catch (e) {
+      console.error(e);
+      setOperationalDryRunText(`Error: ${e instanceof Error ? e.message : 'Preview failed'}`);
+    } finally {
+      setOperationalResetBusy(false);
+    }
+  };
+
+  const executeOperationalReset = async () => {
+    if (!user) {
+      alert('Please sign in again.');
+      return;
+    }
+    setOperationalResetBusy(true);
+    setOperationalResetResult('');
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch('/api/admin/operational-reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        deletedByCollection?: Record<string, number>;
+        enquiriesRewritten?: number;
+        collectionErrors?: Record<string, string>;
+      };
+      if (!res.ok) throw new Error(json.error || 'Operational reset failed');
+
+      const lines: string[] = [];
+      lines.push(`Enquiries rewritten (patient basics only): ${json.enquiriesRewritten ?? 0}`);
+      lines.push('');
+      lines.push('Deleted per collection:');
+      const entries = Object.entries(json.deletedByCollection || {}).sort(([a], [b]) => a.localeCompare(b));
+      for (const [name, n] of entries) {
+        lines.push(`  • ${name}: ${n}`);
+      }
+      if (json.collectionErrors && Object.keys(json.collectionErrors).length > 0) {
+        lines.push('');
+        lines.push('Errors (partial run possible):');
+        for (const [k, v] of Object.entries(json.collectionErrors)) {
+          lines.push(`  • ${k}: ${v}`);
+        }
+      }
+      lines.push('');
+      lines.push(json.ok ? 'Completed with no reported errors.' : 'Completed with errors — check list above; you can retry.');
+      setOperationalResetResult(lines.join('\n'));
+    } catch (e) {
+      console.error(e);
+      setOperationalResetResult(`Error: ${e instanceof Error ? e.message : 'Operational reset failed'}`);
+    } finally {
+      setOperationalResetBusy(false);
+    }
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       <Box sx={{ mb: 3 }}>
@@ -380,6 +489,57 @@ export default function AdminCleanupPage() {
         </Typography>
       </Alert>
 
+      {/* Operational reset: keep enquiry identities, wipe inventory / sales / visits */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Operational reset (keep patient enquiries)
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Deletes inventory, sales, appointments, visitors, cash sheets, Hope AI index logs, and related transactional
+          collections. <strong>Does not delete</strong> users, centers, products, companies, parties, staff, or settings.
+          Each <code>enquiries</code> document is kept with the same ID but stripped to basic fields;{' '}
+          <code>visits</code>, <code>followUps</code>, and <code>payments</code> are cleared.
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          This is separate from <strong>Start Cleanup</strong> below, which removes enquiries entirely. Use preview first,
+          then run after entering the cleanup password.
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={previewOperationalReset}
+            disabled={operationalResetBusy || isRunning || purgeMisclassifiedRunning || resyncingSales}
+          >
+            {operationalResetBusy ? 'Working…' : 'Preview (dry-run)'}
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setPendingDestructiveAction('operationalReset');
+              setPasswordDialog(true);
+            }}
+            disabled={operationalResetBusy || isRunning || purgeMisclassifiedRunning || resyncingSales}
+          >
+            Run operational reset
+          </Button>
+        </Box>
+        {operationalDryRunText ? (
+          <Alert severity={operationalDryRunText.startsWith('Error:') ? 'error' : 'info'} sx={{ mb: 1 }}>
+            <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', m: 0 }}>
+              {operationalDryRunText}
+            </Typography>
+          </Alert>
+        ) : null}
+        {operationalResetResult ? (
+          <Alert severity={operationalResetResult.startsWith('Error:') ? 'error' : 'warning'} sx={{ mt: 1 }}>
+            <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', m: 0 }}>
+              {operationalResetResult}
+            </Typography>
+          </Alert>
+        ) : null}
+      </Paper>
+
       {/* Historical Sales Re-sync */}
       <Paper sx={{ p: 2, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -391,7 +551,7 @@ export default function AdminCleanupPage() {
         <Button
           variant="contained"
           onClick={handleResyncHistoricalSales}
-          disabled={resyncingSales || isRunning}
+          disabled={resyncingSales || isRunning || operationalResetBusy}
         >
           {resyncingSales ? 'Re-syncing…' : 'Re-sync Enquiry Sales → Sales Collection'}
         </Button>
@@ -415,7 +575,7 @@ export default function AdminCleanupPage() {
           <Button
             variant="outlined"
             onClick={() => previewAndPurgeMisclassifiedEnquirySales(true)}
-            disabled={purgeMisclassifiedRunning || isRunning}
+            disabled={purgeMisclassifiedRunning || isRunning || operationalResetBusy}
           >
             {purgeMisclassifiedRunning ? 'Checking…' : 'Preview (dry-run)'}
           </Button>
@@ -427,7 +587,7 @@ export default function AdminCleanupPage() {
               setPendingDestructiveAction('purgeMisclassifiedEnquirySales');
               setPasswordDialog(true);
             }}
-            disabled={purgeMisclassifiedRunning || isRunning}
+            disabled={purgeMisclassifiedRunning || isRunning || operationalResetBusy}
           >
             Delete Misclassified
           </Button>
@@ -533,7 +693,7 @@ export default function AdminCleanupPage() {
             setPendingDestructiveAction('deleteAllData');
             setPasswordDialog(true);
           }}
-          disabled={isRunning}
+          disabled={isRunning || operationalResetBusy}
           sx={{ minWidth: 200 }}
         >
           {isRunning ? 'Cleaning...' : 'Start Cleanup'}
@@ -686,7 +846,23 @@ export default function AdminCleanupPage() {
       >
         <DialogTitle>⚠️ Confirm Database Cleanup</DialogTitle>
         <DialogContent>
-          {pendingDestructiveAction === 'purgeMisclassifiedEnquirySales' ? (
+          {pendingDestructiveAction === 'operationalReset' ? (
+            <>
+              <Typography variant="body1" gutterBottom>
+                Run operational reset?
+              </Typography>
+              <Alert severity="warning" sx={{ my: 2 }}>
+                This permanently deletes sales, purchases, stock movements, appointments, visitors, cash sheets, Hope AI
+                index data, and other transactional collections. Enquiry documents stay but lose visits, follow-ups, and
+                payments—only basic patient/lead fields remain. Users, centers, products, parties, and staff are not
+                deleted.
+              </Alert>
+              <Typography variant="body2" color="text.secondary">
+                Run preview first if you have not checked counts. Large databases may need more than one run if the
+                server times out.
+              </Typography>
+            </>
+          ) : pendingDestructiveAction === 'purgeMisclassifiedEnquirySales' ? (
             <>
               <Typography variant="body1" gutterBottom>
                 Delete misclassified enquiry sales from `sales`?
@@ -736,16 +912,22 @@ export default function AdminCleanupPage() {
             color="error" 
             onClick={async () => {
               setConfirmDialog(false);
-              if (pendingDestructiveAction === 'purgeMisclassifiedEnquirySales') {
-                setPendingDestructiveAction(null);
+              const action = pendingDestructiveAction;
+              setPendingDestructiveAction(null);
+              if (action === 'purgeMisclassifiedEnquirySales') {
                 await previewAndPurgeMisclassifiedEnquirySales(false);
+              } else if (action === 'operationalReset') {
+                await executeOperationalReset();
               } else {
-                setPendingDestructiveAction(null);
                 runCleanup();
               }
             }}
           >
-            {pendingDestructiveAction === 'purgeMisclassifiedEnquirySales' ? 'Yes, Delete Misclassified' : 'Yes, Delete All Data'}
+            {pendingDestructiveAction === 'operationalReset'
+              ? 'Yes, run operational reset'
+              : pendingDestructiveAction === 'purgeMisclassifiedEnquirySales'
+                ? 'Yes, Delete Misclassified'
+                : 'Yes, Delete All Data'}
           </Button>
         </DialogActions>
       </Dialog>

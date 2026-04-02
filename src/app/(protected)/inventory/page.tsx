@@ -873,9 +873,7 @@ export default function InventoryPage() {
           const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
           visits.forEach((visit: any) => {
             const visitSerialCandidates = serialCandidatesFromVisit(visit);
-            // IMPORTANT: Only treat an enquiry visit as "sold" when it is explicitly marked as a sale.
-            // This keeps inventory status aligned with the invoicing safeguards (booking/trial visits must not mark devices as Sold).
-            const isSale = Boolean(
+            const isSale = !!(
               visit?.hearingAidSale ||
                 visit?.purchaseFromTrial ||
                 visit?.hearingAidStatus === 'sold' ||
@@ -933,6 +931,17 @@ export default function InventoryPage() {
             }
           });
         });
+
+        const inventoryRowIsSold = (productId: string, serialKey: string, sn: string): boolean => {
+          const normSn = normalizeSerialNumber(String(sn || ''));
+          if (soldSerials.has(serialKey)) return true;
+          if (!soldSerialOnly.has(normSn)) return false;
+          const meta = soldSerialMetaBySerial.get(normSn);
+          if (!meta) return true;
+          const mp = String(meta.productId || '').trim();
+          if (!mp) return true;
+          return mp === String(productId || '').trim();
+        };
 
         // Build lookup maps for deep links
         const challanByNumber = new Map<string, string>();
@@ -1013,7 +1022,7 @@ export default function InventoryPage() {
                 return;
               }
               
-              const isSold = soldSerials.has(key) || soldSerialOnly.has(normalizeSerialNumber(String(sn || '')));
+              const isSold = inventoryRowIsSold(productId, key, sn);
               // Exclude dispatched-out items only when they are not sold.
               // Sold devices must remain visible in inventory (Show Sold Items) for serial lock safety.
               if (dispatchedOutSerials.has(key) && !isSold) return;
@@ -1089,7 +1098,7 @@ export default function InventoryPage() {
               const key = makeSerialKey(productId, sn);
               if (incomingMap.has(key)) return; // already from material in (converted)
               
-              const isSold = soldSerials.has(key) || soldSerialOnly.has(normalizeSerialNumber(String(sn || '')));
+              const isSold = inventoryRowIsSold(productId, key, sn);
               // Exclude dispatched-out items only when they are not sold.
               if (dispatchedOutSerials.has(key) && !isSold) return;
               

@@ -272,6 +272,8 @@ export async function POST(req: Request) {
     // 2) Delete linked sales docs (Sales & Invoicing relies on this collection)
     const salesSnap = await db.collection('sales').where('enquiryId', '==', enquiryId).get();
     const salesDocs = salesSnap.docs;
+    const materialsOutSnap = await db.collection('materialsOut').where('enquiryId', '==', enquiryId).get();
+    const materialsOutDocs = materialsOutSnap.docs;
 
     const salesPreview = salesDocs.slice(0, 20).map((d) => {
       const s = d.data() as Record<string, unknown>;
@@ -299,6 +301,7 @@ export async function POST(req: Request) {
         dryRun: true,
         restoreResult,
         deletedSalesCount: salesDocs.length,
+        deletedMaterialsOutCount: materialsOutDocs.length,
         salesPreview,
         deletedVisitorsCount: uniqueVisitorsCount,
         deletedEnquiryId: enquiryId,
@@ -307,6 +310,13 @@ export async function POST(req: Request) {
 
     for (let i = 0; i < salesDocs.length; i += 450) {
       const chunk = salesDocs.slice(i, i + 450);
+      const batch = db.batch();
+      chunk.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+
+    for (let i = 0; i < materialsOutDocs.length; i += 450) {
+      const chunk = materialsOutDocs.slice(i, i + 450);
       const batch = db.batch();
       chunk.forEach((d) => batch.delete(d.ref));
       await batch.commit();
@@ -339,6 +349,7 @@ export async function POST(req: Request) {
       dryRun: false,
       restored: restoreResult,
       deletedSalesCount: salesDocs.length,
+      deletedMaterialsOutCount: materialsOutDocs.length,
       deletedVisitorsCount: uniqueVisitors.length,
       deletedEnquiryId: enquiryId,
     });
