@@ -47,6 +47,7 @@ import {
   getCenterLabel,
   type Center,
 } from '@/utils/centerUtils';
+import { fetchBusinessCompanies, defaultCompanySelection, type BusinessCompany } from '@/utils/businessCompanies';
 import { useAuth } from '@/context/AuthContext';
 import { 
   Delete as DeleteIcon, 
@@ -78,9 +79,6 @@ const PRODUCT_TYPES = ['Hearing Aid', 'Battery', 'Accessory', 'Charger', 'Remote
 
 // Status options
 
-
-// Company options
-const COMPANY_OPTIONS = ['Hope Enterprises', 'HDIPL'];
 
 // GST Type options
 const GST_TYPES = ['LGST', 'IGST', 'GST Exempted'];
@@ -196,7 +194,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     initialData || {
       challanNumber: '',
       supplier: { id: '', name: '' },
-      company: 'Hope Enterprises',
+      company: '',
       products: [],
       totalAmount: 0,
       receivedDate: Timestamp.now(),
@@ -233,6 +231,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   const [selectedProductType, setSelectedProductType] = useState<string | null>(null);
 
   const [centers, setCenters] = useState<Center[]>([]);
+  const [businessCompanies, setBusinessCompanies] = useState<BusinessCompany[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -248,6 +247,34 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       cancelled = true;
     };
   }, [userProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchBusinessCompanies();
+        if (!cancelled) setBusinessCompanies(list);
+      } catch (e) {
+        console.error('MaterialInForm: failed to load business companies', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (businessCompanies.length === 0) return;
+    setMaterialData((prev) => {
+      const names = businessCompanies.map((c) => c.name);
+      if (prev.company && names.includes(prev.company)) return prev;
+      if (initialData?.id && prev.company) return prev;
+      return {
+        ...prev,
+        company: defaultCompanySelection(businessCompanies, initialData?.company ?? prev.company),
+      };
+    });
+  }, [businessCompanies, initialData?.id, initialData?.company]);
 
   // Initialize form with initial data if provided
   useEffect(() => {
@@ -895,9 +922,9 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                   </InputAdornment>
                 }
               >
-                {COMPANY_OPTIONS.map((company) => (
-                  <MenuItem key={company} value={company}>
-                    {company}
+                {businessCompanies.map((c) => (
+                  <MenuItem key={c.id} value={c.name}>
+                    {c.name}
                   </MenuItem>
                 ))}
               </Select>

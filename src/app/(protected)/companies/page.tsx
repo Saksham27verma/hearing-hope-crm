@@ -31,6 +31,8 @@ import {
   CardActions,
   Stack,
   Divider,
+  Tooltip,
+  DialogContentText,
 } from '@mui/material';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
@@ -47,6 +49,7 @@ import {
   AccountBalance as GSTIcon,
   Language as WebsiteIcon,
   CorporateFare as CorporateIcon,
+  SyncAlt as SyncAltIcon,
 } from '@mui/icons-material';
 import { 
   collection, 
@@ -98,6 +101,12 @@ const CompaniesPage = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const [centersCount, setCentersCount] = useState<Record<string, number>>({});
   const [refreshing, setRefreshing] = useState(false);
+  /** Snapshot of `name` when opening the edit dialog — used to cascade renames across the CRM. */
+  const [nameBeforeEdit, setNameBeforeEdit] = useState<string | null>(null);
+  const [syncDialogOpen, setSyncDialogOpen] = useState(false);
+  const [syncCompany, setSyncCompany] = useState<Company | null>(null);
+  const [syncLegacyName, setSyncLegacyName] = useState('');
+  const [syncSaving, setSyncSaving] = useState(false);
 
   // Initialize empty company
   const emptyCompany: Company = {
@@ -270,11 +279,13 @@ const CompaniesPage = () => {
   };
 
   const handleAddCompany = () => {
+    setNameBeforeEdit(null);
     setCurrentCompany(emptyCompany);
     setOpenDialog(true);
   };
 
   const handleEditCompany = (company: Company) => {
+    setNameBeforeEdit(String(company.name || '').trim());
     setCurrentCompany(company);
     setOpenDialog(true);
   };
@@ -302,6 +313,7 @@ const CompaniesPage = () => {
   const handleCloseDialog = () => {
     setOpenDialog(false);
     setCurrentCompany(null);
+    setNameBeforeEdit(null);
   };
 
   const handleSaveCompany = async () => {
@@ -312,29 +324,83 @@ const CompaniesPage = () => {
       setErrorMsg('Please fill in all required fields (Name and Type)');
       return;
     }
+
+    const trimmedName = String(currentCompany.name || '').trim();
+    const duplicate = companies.some(
+      (c) =>
+        c.id !== currentCompany.id &&
+        String(c.name || '').trim().toLowerCase() === trimmedName.toLowerCase(),
+    );
+    if (duplicate) {
+      setErrorMsg('A company with this name already exists (names are case-insensitive).');
+      return;
+    }
     
     try {
       setSavingCompany(true);
       if (currentCompany.id) {
-        // Update existing company
         const companyRef = doc(db, 'companies', currentCompany.id);
+        const oldN = nameBeforeEdit ?? '';
+        const newN = trimmedName;
+        let cascadeTotal = 0;
+
+        if (oldN && newN !== oldN) {
+          const ok = window.confirm(
+            `Rename "${oldN}" to "${newN}" everywhere in the CRM? This updates purchases, material in/out, centers, stock transfers, and related records that reference the old name.`,
+          );
+          if (!ok) {
+            setSavingCompany(false);
+            return;
+          }
+          const token = await user?.getIdToken();
+          if (!token) {
+            setErrorMsg('You must be signed in to rename a company.');
+            setSavingCompany(false);
+            return;
+          }
+          const res = await fetch('/api/admin/rename-business-company', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              companyId: currentCompany.id,
+              oldName: oldN,
+              newName: newN,
+            }),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error((payload as { error?: string }).error || 'Failed to cascade company rename');
+          }
+          cascadeTotal = (payload as { totalUpdated?: number }).totalUpdated ?? 0;
+        }
+
+        const { id: _omitId, ...companyFields } = { ...currentCompany, name: newN };
         await updateDoc(companyRef, {
-          ...currentCompany,
+          ...companyFields,
           updatedAt: serverTimestamp(),
         });
         
         // Update in state
         setCompanies(prevCompanies => 
           prevCompanies.map(company => 
-            company.id === currentCompany.id ? {...currentCompany, updatedAt: Timestamp.now()} : company
+            company.id === currentCompany.id ? {...currentCompany, name: newN, updatedAt: Timestamp.now()} : company
           )
         );
-        
-        setSuccessMsg('Company updated successfully');
+
+        setSuccessMsg(
+          oldN && newN !== oldN
+            ? `Company saved. Renamed "${oldN}" → "${newN}"; updated ${cascadeTotal} Firestore reference(s).`
+            : 'Company updated successfully',
+        );
+        await fetchCentersCount();
       } else {
         // Add new company
+        const { id: _omitId, ...rest } = { ...currentCompany, name: trimmedName };
         const newCompanyData = {
-          ...currentCompany,
+          ...rest,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         };
@@ -344,6 +410,7 @@ const CompaniesPage = () => {
         // Add to state with the new ID
         const newCompany = {
           ...currentCompany,
+          name: trimmedName,
           id: docRef.id,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
@@ -355,9 +422,11 @@ const CompaniesPage = () => {
       
       setOpenDialog(false);
       setCurrentCompany(null);
+      setNameBeforeEdit(null);
     } catch (error) {
       console.error('Error saving company:', error);
-      setErrorMsg('Failed to save company');
+      const msg = error instanceof Error ? error.message : 'Failed to save company';
+      setErrorMsg(msg);
     } finally {
       setSavingCompany(false);
     }
@@ -375,6 +444,71 @@ const CompaniesPage = () => {
   const handleCloseSnackbar = () => {
     setSuccessMsg('');
     setErrorMsg('');
+  };
+
+  const openSyncReferencesDialog = (company: Company) => {
+    setSyncCompany(company);
+    setSyncLegacyName('');
+    setSyncDialogOpen(true);
+  };
+
+  const handleCloseSyncDialog = () => {
+    if (syncSaving) return;
+    setSyncDialogOpen(false);
+    setSyncCompany(null);
+    setSyncLegacyName('');
+  };
+
+  const handleSyncLegacyReferences = async () => {
+    if (!syncCompany?.id || syncSaving) return;
+    const newN = String(syncCompany.name || '').trim();
+    const oldN = String(syncLegacyName || '').trim();
+    if (!oldN) {
+      setErrorMsg('Enter the exact label as it appears on old purchases or inventory (e.g. HDIPL).');
+      return;
+    }
+    if (oldN === newN) {
+      setErrorMsg('Legacy name must differ from the current company name.');
+      return;
+    }
+    const ok = window.confirm(
+      `Replace "${oldN}" with "${newN}" on all purchases, material in/out, centers, stock transfers, and related records?`,
+    );
+    if (!ok) return;
+    try {
+      setSyncSaving(true);
+      setErrorMsg('');
+      const token = await user?.getIdToken();
+      if (!token) {
+        setErrorMsg('You must be signed in.');
+        return;
+      }
+      const res = await fetch('/api/admin/rename-business-company', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          companyId: syncCompany.id,
+          oldName: oldN,
+          newName: newN,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((payload as { error?: string }).error || 'Sync failed');
+      }
+      const total = (payload as { totalUpdated?: number }).totalUpdated ?? 0;
+      setSuccessMsg(`Updated ${total} reference(s): "${oldN}" → "${newN}".`);
+      handleCloseSyncDialog();
+      await fetchCentersCount();
+    } catch (e) {
+      console.error('Sync legacy references:', e);
+      setErrorMsg(e instanceof Error ? e.message : 'Sync failed');
+    } finally {
+      setSyncSaving(false);
+    }
   };
 
   const formatDate = (timestamp: Timestamp) => {
@@ -538,6 +672,16 @@ const CompaniesPage = () => {
                         />
                       </TableCell>
                       <TableCell align="right">
+                        <Tooltip title="Sync legacy name on purchases & inventory (e.g. after renaming in Firebase)">
+                          <IconButton
+                            size="small"
+                            color="secondary"
+                            onClick={() => openSyncReferencesDialog(company)}
+                            aria-label="Sync legacy company references"
+                          >
+                            <SyncAltIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         <IconButton 
                           size="small" 
                           color="primary"
@@ -891,6 +1035,42 @@ const CompaniesPage = () => {
             loadingText={currentCompany?.id ? 'Updating Company...' : 'Saving Company...'}
           >
             {currentCompany?.id ? 'Update Company' : 'Add Company'}
+          </AsyncActionButton>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={syncDialogOpen} onClose={handleCloseSyncDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>Sync legacy company name</DialogTitle>
+        <DialogContent dividers>
+          <DialogContentText sx={{ mb: 2 }}>
+            Use this if purchases, material in/out, or inventory still show an old label (e.g.{' '}
+            <strong>HDIPL</strong>) while this company&apos;s official name is already{' '}
+            <strong>{syncCompany?.name || '—'}</strong>. Enter the <strong>exact</strong> text stored on those
+            records (case-sensitive).
+          </DialogContentText>
+          <TextField
+            autoFocus
+            fullWidth
+            label="Old label on records (e.g. HDIPL)"
+            value={syncLegacyName}
+            onChange={(e) => setSyncLegacyName(e.target.value)}
+            placeholder="HDIPL"
+            disabled={syncSaving}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={handleCloseSyncDialog} disabled={syncSaving}>
+            Cancel
+          </Button>
+          <AsyncActionButton
+            variant="contained"
+            color="secondary"
+            onClick={handleSyncLegacyReferences}
+            loading={syncSaving}
+            loadingText="Updating references…"
+            startIcon={<SyncAltIcon />}
+          >
+            Replace on all records
           </AsyncActionButton>
         </DialogActions>
       </Dialog>

@@ -258,19 +258,11 @@ const StockTransferPage = () => {
         })) as Company[];
         setCompanies(companiesData);
       } else {
-        const defaultCompanies = [
-          { id: '1', name: 'Hope Enterprises' },
-          { id: '2', name: 'HDIPL' },
-        ];
-        setCompanies(defaultCompanies);
+        setCompanies([]);
       }
     } catch (error) {
       console.error('Error loading companies:', error);
-      const defaultCompanies = [
-        { id: '1', name: 'Hope Enterprises' },
-        { id: '2', name: 'HDIPL' },
-      ];
-      setCompanies(defaultCompanies);
+      setCompanies([]);
     }
   };
 
@@ -989,6 +981,7 @@ const StockTransferPage = () => {
   // Create inventory movements for stock transfer (Material Out + Material In)
   const createInventoryMovements = async (transfer: StockTransfer) => {
     try {
+      const fallbackBizCompany = companies[0]?.name?.trim() || '';
       const now = new Date();
       const dateString = now.toISOString().slice(0, 10).replace(/-/g, '');
       const randomNum = Math.floor(Math.random() * 900) + 100;
@@ -1100,8 +1093,8 @@ const StockTransferPage = () => {
 
       // Determine the company for material out (from source)
       const fromCompany = transfer.transferType === 'intercompany' 
-        ? (transfer.fromCompany || 'Hope Enterprises')
-        : (transfer.company || 'Hope Enterprises');
+        ? (transfer.fromCompany || fallbackBizCompany)
+        : (transfer.company || fallbackBizCompany);
       
       // Create Material Out entry (from source location)
       const materialOutData = {
@@ -1124,8 +1117,8 @@ const StockTransferPage = () => {
 
       // Determine the company for material in (to destination)
       const toCompany = transfer.transferType === 'intercompany' 
-        ? (transfer.toCompany || 'Hope Enterprises')
-        : (transfer.company || 'Hope Enterprises');
+        ? (transfer.toCompany || fallbackBizCompany)
+        : (transfer.company || fallbackBizCompany);
       
       // Create Material In entry (to destination location)
       const materialInData = {

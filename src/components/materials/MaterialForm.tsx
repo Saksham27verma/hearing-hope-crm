@@ -53,15 +53,13 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
+import { fetchBusinessCompanies, defaultCompanySelection, type BusinessCompany } from '@/utils/businessCompanies';
 
 // Product types for filtering
 const PRODUCT_TYPES = ['Hearing Aid', 'Battery', 'Accessory', 'Charger', 'Remote Control', 'Cleaning Kit', 'Other'];
 
 // GST Type options
 const GST_TYPES = ['LGST', 'IGST', 'GST Exempted'];
-
-// Company options
-const COMPANY_OPTIONS = ['Hope Enterprises', 'HDIPL'];
 
 interface MaterialProduct {
   productId: string;
@@ -153,7 +151,7 @@ const MaterialForm: React.FC<MaterialFormProps> = ({
     initialData || {
     challanNumber: '',
     party: { id: '', name: '' },
-    company: 'Hope Enterprises',
+    company: '',
     products: [],
     gstType: 'LGST',
     gstPercentage: 18,
@@ -183,7 +181,36 @@ const MaterialForm: React.FC<MaterialFormProps> = ({
   
   // filtered products state
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  
+  const [businessCompanies, setBusinessCompanies] = useState<BusinessCompany[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchBusinessCompanies();
+        if (!cancelled) setBusinessCompanies(list);
+      } catch (e) {
+        console.error('MaterialForm: failed to load business companies', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (businessCompanies.length === 0) return;
+    setMaterialData((prev) => {
+      const names = businessCompanies.map((c) => c.name);
+      if (prev.company && names.includes(prev.company)) return prev;
+      if (initialData?.id && prev.company) return prev;
+      return {
+        ...prev,
+        company: defaultCompanySelection(businessCompanies, initialData?.company ?? prev.company),
+      };
+    });
+  }, [businessCompanies, initialData?.id, initialData?.company]);
+
   // Initialize form with initial data if provided
   useEffect(() => {
     if (initialData) {
@@ -566,9 +593,9 @@ const MaterialForm: React.FC<MaterialFormProps> = ({
                 label="Company Billed To"
                 onChange={(e) => handleChallanDetailsChange('company', e.target.value)}
               >
-                {COMPANY_OPTIONS.map((company) => (
-                  <MenuItem key={company} value={company}>
-                    {company}
+                {businessCompanies.map((c) => (
+                  <MenuItem key={c.id} value={c.name}>
+                    {c.name}
                   </MenuItem>
                 ))}
               </Select>

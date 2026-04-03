@@ -39,6 +39,7 @@ import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
+import { fetchBusinessCompanies, defaultCompanySelection, type BusinessCompany } from '@/utils/businessCompanies';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
@@ -82,7 +83,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
       challanNumber: '',
       recipient: { id: '', name: '' },
       reason: '',
-      company: 'Hope Enterprises',
+      company: '',
       products: [],
       totalAmount: 0,
       dispatchDate: Timestamp.now(),
@@ -101,8 +102,37 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
   const [filteredProducts, setFilteredProducts] = useState<Product[]>(products);
   const [availableSerials, setAvailableSerials] = useState<string[]>([]);
   const [availableQty, setAvailableQty] = useState<number>(0);
+  const [businessCompanies, setBusinessCompanies] = useState<BusinessCompany[]>([]);
 
   useEffect(() => { setFilteredProducts(products); }, [products]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchBusinessCompanies();
+        if (!cancelled) setBusinessCompanies(list);
+      } catch (e) {
+        console.error('MaterialOutForm: failed to load business companies', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (businessCompanies.length === 0) return;
+    setMaterialData((prev) => {
+      const names = businessCompanies.map((c) => c.name);
+      if (prev.company && names.includes(prev.company)) return prev;
+      if (initialData?.id && prev.company) return prev;
+      return {
+        ...prev,
+        company: defaultCompanySelection(businessCompanies, initialData?.company ?? prev.company),
+      };
+    });
+  }, [businessCompanies, initialData?.id, initialData?.company]);
 
   const formatCurrency = (amount: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
   const calculateDiscount = (price: number, percent: number) => (price * percent) / 100;
@@ -266,7 +296,11 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
           <FormControl fullWidth size="medium">
             <InputLabel>Company Billed To</InputLabel>
             <Select value={materialData.company} label="Company Billed To" onChange={e => update({ company: e.target.value })} startAdornment={<InputAdornment position="start"><BusinessIcon fontSize="small" color="action" /></InputAdornment>}>
-              {['Hope Enterprises','HDIPL'].map(c => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+              {businessCompanies.map((c) => (
+                <MenuItem key={c.id} value={c.name}>
+                  {c.name}
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
           <LocalizationProvider dateAdapter={AdapterDateFns}>

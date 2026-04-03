@@ -313,7 +313,7 @@ export default function MaterialManagementPage() {
     const emptyMaterial: Material = {
       challanNumber,
       party: { id: '', name: '' },
-      company: 'Hope Enterprises',
+      company: '',
       products: [],
       gstType: 'LGST',
       gstPercentage: 18,

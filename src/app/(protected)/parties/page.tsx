@@ -71,6 +71,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { fetchAllCenters, getCenterLabel, type Center } from '@/utils/centerUtils';
+import { fetchBusinessCompanies } from '@/utils/businessCompanies';
 
 // Define the Purchase interface to match Firestore structure
 interface PurchaseParty {
@@ -120,8 +121,8 @@ const PARTY_TYPES = [
 ];
 
 interface PartyTransaction {
-  hopeEnterprises: number;
-  hdipl: number;
+  /** Purchase totals keyed by business company name (from `companies` / purchase.company). */
+  byCompany: Record<string, number>;
   total: number;
 }
 
@@ -171,6 +172,7 @@ export default function PartiesPage() {
   const [activeTab, setActiveTab] = useState(0);
   const [ledgerSortNewestFirst, setLedgerSortNewestFirst] = useState(true);
   const [centers, setCenters] = useState<Center[]>([]);
+  const [businessCompanyNames, setBusinessCompanyNames] = useState<string[]>([]);
   
   // Form state
   const [formData, setFormData] = useState<Omit<Party, 'id' | 'createdAt' | 'updatedAt' | 'transactions'>>({
@@ -255,6 +257,21 @@ export default function PartiesPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchBusinessCompanies();
+        if (!cancelled) setBusinessCompanyNames(list.map((c) => c.name).filter(Boolean));
+      } catch (e) {
+        console.error('Parties: failed to load business companies', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   
   // Calculate transaction amounts for each party
   const calculateTransactions = async (parties: Party[]): Promise<Party[]> => {
@@ -272,8 +289,7 @@ export default function PartiesPage() {
       // Initialize transaction objects for each party
       parties.forEach(party => {
         transactionsByParty[party.id] = {
-          hopeEnterprises: 0,
-          hdipl: 0,
+          byCompany: {},
           total: 0
         };
       });
@@ -291,12 +307,10 @@ export default function PartiesPage() {
 
           // Only process if we have this party in our list
           if (transactionsByParty[partyId]) {
-            if (purchase.company === 'Hope Enterprises') {
-              transactionsByParty[partyId].hopeEnterprises += amount;
-            } else if (purchase.company === 'HDIPL') {
-              transactionsByParty[partyId].hdipl += amount;
-            }
-            transactionsByParty[partyId].total += amount;
+            const c = String(purchase.company || '').trim() || '—';
+            const row = transactionsByParty[partyId];
+            row.byCompany[c] = (row.byCompany[c] || 0) + amount;
+            row.total += amount;
           }
 
           if (ledgerByParty[partyId]) {
@@ -868,43 +882,44 @@ export default function PartiesPage() {
                 </Card>
               </Grid>
               
-              <Grid item xs={12} md={6}>
-                <Paper elevation={1} sx={{ p: 2, borderRadius: 2 }}>
-                  <Typography variant="subtitle1" color="primary" gutterBottom>
-                    Hope Enterprises
-                  </Typography>
-                  <Typography variant="h5" fontWeight="medium">
-                    {party.transactions ? formatCurrency(party.transactions.hopeEnterprises) : 'No transactions'}
-                  </Typography>
-                  
-                  <Box sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
-                    <Typography variant="body2" color="text.secondary">
-                      {party.transactions && party.transactions.total > 0 ? 
-                        `${((party.transactions.hopeEnterprises / party.transactions.total) * 100).toFixed(1)}% of total` : 
-                        '0% of total'}
-                    </Typography>
-                  </Box>
-                </Paper>
-              </Grid>
-              
-              <Grid item xs={12} md={6}>
-                <Paper elevation={1} sx={{ p: 2, borderRadius: 2 }}>
-                  <Typography variant="subtitle1" color="primary" gutterBottom>
-                    HDIPL
-                  </Typography>
-                  <Typography variant="h5" fontWeight="medium">
-                    {party.transactions ? formatCurrency(party.transactions.hdipl) : 'No transactions'}
-                  </Typography>
-                  
-                  <Box sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
-                    <Typography variant="body2" color="text.secondary">
-                      {party.transactions && party.transactions.total > 0 ? 
-                        `${((party.transactions.hdipl / party.transactions.total) * 100).toFixed(1)}% of total` : 
-                        '0% of total'}
-                    </Typography>
-                  </Box>
-                </Paper>
-              </Grid>
+              {(() => {
+                const byC = party.transactions?.byCompany || {};
+                const extra = Object.keys(byC).filter((k) => !businessCompanyNames.includes(k)).sort();
+                const keys = [...businessCompanyNames, ...extra];
+                if (keys.length === 0) {
+                  return (
+                    <Grid item xs={12}>
+                      <Typography variant="body2" color="text.secondary">
+                        No business companies configured. Add companies in the Companies module.
+                      </Typography>
+                    </Grid>
+                  );
+                }
+                return keys.map((name) => {
+                  const amt = byC[name] || 0;
+                  const pct =
+                    party.transactions && party.transactions.total > 0
+                      ? ((amt / party.transactions.total) * 100).toFixed(1)
+                      : '0';
+                  return (
+                    <Grid item xs={12} md={6} key={name}>
+                      <Paper elevation={1} sx={{ p: 2, borderRadius: 2 }}>
+                        <Typography variant="subtitle1" color="primary" gutterBottom>
+                          {name}
+                        </Typography>
+                        <Typography variant="h5" fontWeight="medium">
+                          {formatCurrency(amt)}
+                        </Typography>
+                        <Box sx={{ mt: 1, display: 'flex', alignItems: 'center' }}>
+                          <Typography variant="body2" color="text.secondary">
+                            {pct}% of total
+                          </Typography>
+                        </Box>
+                      </Paper>
+                    </Grid>
+                  );
+                });
+              })()}
             </Grid>
           </Box>
         )}
@@ -1137,7 +1152,15 @@ export default function PartiesPage() {
                     </TableCell>
                     <TableCell align="right">
                       {party.transactions ? (
-                        <Tooltip title={`Hope Enterprises: ${formatCurrency(party.transactions.hopeEnterprises)} | HDIPL: ${formatCurrency(party.transactions.hdipl)}`}>
+                        <Tooltip
+                          title={
+                            Object.keys(party.transactions.byCompany).length > 0
+                              ? Object.entries(party.transactions.byCompany)
+                                  .map(([n, v]) => `${n}: ${formatCurrency(v)}`)
+                                  .join(' | ')
+                              : `Total: ${formatCurrency(party.transactions.total)}`
+                          }
+                        >
                           <Typography fontWeight="medium">
                             {formatCurrency(party.transactions.total)}
                           </Typography>

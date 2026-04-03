@@ -464,7 +464,7 @@ export default function MaterialInPage() {
         id: 'sales-return', 
         name: 'Sales Return'
       },
-      company: 'Hope Enterprises',
+      company: '',
       location: await getHeadOfficeId(), // Returns go to Head Office
       products: [{
         productId: product.id,
@@ -530,7 +530,7 @@ export default function MaterialInPage() {
         id: 'trial-return', 
         name: 'Trial Machine Return'
       },
-      company: 'Hope Enterprises',
+      company: '',
       location: await getHeadOfficeId(), // Trial returns go to Head Office
       products: [{
         productId: product.id, // Use the actual product ID
@@ -571,7 +571,7 @@ export default function MaterialInPage() {
     const emptyMaterial: MaterialInward = {
       challanNumber,
       supplier: { id: '', name: '' },
-      company: 'Hope Enterprises',
+      company: '',
       location: headOfficeId, // Default to configured head office
       products: [],
       totalAmount: 0,

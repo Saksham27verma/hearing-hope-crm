@@ -579,7 +579,7 @@ export default function MaterialOutPage() {
         id: trial.enquiryId, 
         name: trial.enquiryName 
       },
-      company: 'Hope Enterprises',
+      company: '',
       location: await getHeadOfficeId(), // Default to configured head office
       products: [{
         productId: product.id, // Use the actual product ID
@@ -634,7 +634,7 @@ export default function MaterialOutPage() {
     const emptyMaterial: MaterialOut = {
       challanNumber,
       recipient: { id: '', name: '' },
-      company: 'Hope Enterprises',
+      company: '',
       location: headOfficeId, // Default to configured head office
       products: [],
       totalAmount: 0,

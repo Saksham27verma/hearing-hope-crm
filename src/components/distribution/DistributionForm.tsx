@@ -66,6 +66,7 @@ import {
   Close as CloseIcon,
 } from '@mui/icons-material';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
+import { fetchBusinessCompanies, defaultCompanySelection, type BusinessCompany } from '@/utils/businessCompanies';
 
 // Alias Grid to avoid type issues with MUI Grid variants
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
@@ -177,7 +178,7 @@ const DistributionForm: React.FC<Props> = ({ initialData, dealers, onSave, onCan
     initialData || {
       invoiceNumber: `INV-${Date.now()}`,
       dealer: { id: '', name: '' },
-      company: 'Hope Enterprises',
+      company: '',
       products: [],
       subtotalAmount: 0,
       gstAmount: 0,
@@ -229,6 +230,35 @@ const DistributionForm: React.FC<Props> = ({ initialData, dealers, onSave, onCan
   
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serialNumber, setSerialNumber] = useState('');
+  const [businessCompanies, setBusinessCompanies] = useState<BusinessCompany[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchBusinessCompanies();
+        if (!cancelled) setBusinessCompanies(list);
+      } catch (e) {
+        console.error('DistributionForm: failed to load business companies', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (businessCompanies.length === 0) return;
+    setDistributionData((prev) => {
+      const names = businessCompanies.map((c) => c.name);
+      if (prev.company && names.includes(prev.company)) return prev;
+      if (initialData?.id && prev.company) return prev;
+      return {
+        ...prev,
+        company: defaultCompanySelection(businessCompanies, initialData?.company ?? prev.company),
+      };
+    });
+  }, [businessCompanies, initialData?.id, initialData?.company]);
 
   // Load available inventory on component mount
   useEffect(() => {

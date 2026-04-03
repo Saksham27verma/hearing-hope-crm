@@ -66,6 +66,7 @@ import {
 import { collection, query, getDocs, where, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
+import { businessCompanyChipColor } from '@/utils/businessCompanies';
 import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 import { useAuth } from '@/context/AuthContext';
 import { useCenterScope } from '@/hooks/useCenterScope';
@@ -2551,29 +2552,18 @@ export default function InventoryPage() {
             const businessCompanies = Array.from(companyMap.values())
               .sort((a, b) => b.totalCount - a.totalCount);
             
-            // Get business company colors
-            const getCompanyColor = (name: string): string => {
-              const colors: Record<string, string> = {
-                'Hope Enterprises': '#1976d2',
-                'HDIPL': '#388e3c', 
-                'Hope Digital Innovations': '#f57c00',
-                'Head Office': '#7b1fa2'
-              };
-              return colors[name] || '#616161';
-            };
-            
             return businessCompanies.map(company => (
               <Grid item xs={12} sm={6} md={4} lg={3} key={company.name}>
                 <Card elevation={0} sx={{ 
                   borderRadius: 2, 
                   border: '2px solid', 
-                  borderColor: companyFilter === company.name ? getCompanyColor(company.name) : 'divider',
+                  borderColor: companyFilter === company.name ? businessCompanyChipColor(company.name) : 'divider',
                   bgcolor: 'background.paper',
                   transition: 'all 0.3s ease',
                   cursor: 'pointer',
                   '&:hover': { 
-                    borderColor: getCompanyColor(company.name),
-                    boxShadow: `0 4px 20px ${getCompanyColor(company.name)}20`,
+                    borderColor: businessCompanyChipColor(company.name),
+                    boxShadow: `0 4px 20px ${businessCompanyChipColor(company.name)}20`,
                     transform: 'translateY(-2px)'
                   }
                 }}
@@ -2585,12 +2575,12 @@ export default function InventoryPage() {
                           width: 48, 
                           height: 48, 
                           borderRadius: 2, 
-                          bgcolor: getCompanyColor(company.name),
+                          bgcolor: businessCompanyChipColor(company.name),
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           mr: 2,
-                          boxShadow: `0 4px 12px ${getCompanyColor(company.name)}30`
+                          boxShadow: `0 4px 12px ${businessCompanyChipColor(company.name)}30`
                         }}>
                           <Typography variant="h6" fontWeight="bold" color="white">
                             {company.name.charAt(0)}
@@ -3267,7 +3257,7 @@ export default function InventoryPage() {
                             width: 8, 
                             height: 8, 
                             borderRadius: '50%', 
-                            bgcolor: item.company === 'Hope Enterprises' ? 'primary.main' : 'success.main',
+                            bgcolor: businessCompanyChipColor(item.company || 'Unknown'),
                             mr: 1
                           }} />
                           <Typography variant="body2" fontWeight="medium">

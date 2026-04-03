@@ -47,6 +47,7 @@ import {
   getCenterLabel,
   type Center,
 } from '@/utils/centerUtils';
+import { fetchBusinessCompanies, defaultCompanySelection, type BusinessCompany } from '@/utils/businessCompanies';
 import { useAuth } from '@/context/AuthContext';
 import { 
   Delete as DeleteIcon, 
@@ -124,9 +125,6 @@ interface Purchase {
 // GST Type options
 const GST_TYPES = ['LGST', 'IGST', 'GST Exempted'];
 
-// Company options
-const COMPANY_OPTIONS = ['Hope Enterprises', 'HDIPL'];
-
 // Product types for filtering
 const PRODUCT_TYPES = ['Hearing Aid', 'Battery', 'Accessory', 'Charger', 'Remote Control', 'Cleaning Kit', 'Other'];
 
@@ -161,7 +159,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     initialData || {
       invoiceNo: '',
       party: { id: '', name: '' },
-      company: 'Hope Enterprises',
+      company: '',
       location: '', // Will be set to head office dynamically
       products: [],
       gstType: 'LGST',
@@ -194,6 +192,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   const serialInputRef = React.useRef<HTMLInputElement>(null);
 
   const [centers, setCenters] = useState<Center[]>([]);
+  const [businessCompanies, setBusinessCompanies] = useState<BusinessCompany[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -209,6 +208,34 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       cancelled = true;
     };
   }, [userProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchBusinessCompanies();
+        if (!cancelled) setBusinessCompanies(list);
+      } catch (e) {
+        console.error('PurchaseForm: failed to load business companies', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (businessCompanies.length === 0) return;
+    setPurchaseData((prev) => {
+      const names = businessCompanies.map((c) => c.name);
+      if (prev.company && names.includes(prev.company)) return prev;
+      if (initialData?.id && prev.company) return prev;
+      return {
+        ...prev,
+        company: defaultCompanySelection(businessCompanies, initialData?.company ?? prev.company),
+      };
+    });
+  }, [businessCompanies, initialData?.id, initialData?.company]);
 
   // Default location (head office) for new purchases; resolve legacy name→id when editing
   useEffect(() => {
@@ -883,9 +910,9 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                 label="Company Billed To"
                 onChange={(e) => handleInvoiceDetailsChange('company', e.target.value)}
               >
-                {COMPANY_OPTIONS.map((company) => (
-                  <MenuItem key={company} value={company}>
-                    {company}
+                {businessCompanies.map((c) => (
+                  <MenuItem key={c.id} value={c.name}>
+                    {c.name}
                   </MenuItem>
                 ))}
               </Select>
