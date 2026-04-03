@@ -60,6 +60,15 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import PurchaseForm from '@/components/purchases/PurchaseForm';
+import { fetchAllCenters, getCenterLabel, type Center } from '@/utils/centerUtils';
+import {
+  buildPurchaseInvoicePrintHtml,
+  buildPurchaseInvoicePrintModel,
+  findCompanyByPurchaseCompanyName,
+  openPurchaseInvoicePrintWindow,
+  type CompanyMasterRow,
+  type PartyMasterRow,
+} from '@/utils/purchaseInvoicePrintHtml';
 
 // Types
 interface Product {
@@ -76,6 +85,11 @@ interface Party {
   id: string;
   name: string;
   gstType: string;
+  gstNumber?: string;
+  address?: string;
+  contactPerson?: string;
+  phone?: string;
+  email?: string;
 }
 
 interface PurchaseProduct {
@@ -113,6 +127,8 @@ interface Purchase {
   updatedAt?: Timestamp;
 }
 
+interface CompanyRecord extends CompanyMasterRow {}
+
 export default function PurchaseManagement() {
   const { user, userProfile, isAllowedModule } = useAuth();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -128,6 +144,8 @@ export default function PurchaseManagement() {
   const [dateFilter, setDateFilter] = useState<Date | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
+  const [companies, setCompanies] = useState<CompanyRecord[]>([]);
+  const [centers, setCenters] = useState<Center[]>([]);
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
@@ -146,6 +164,8 @@ export default function PurchaseManagement() {
       fetchPurchases();
       fetchProducts();
       fetchParties();
+      fetchCompanies();
+      fetchCenters();
     } else {
       setLoading(false);
     }
@@ -277,9 +297,84 @@ export default function PurchaseManagement() {
     if (refreshing) return;
     try {
       setRefreshing(true);
-      await Promise.all([fetchPurchases(), fetchProducts(), fetchParties()]);
+      await Promise.all([
+        fetchPurchases(),
+        fetchProducts(),
+        fetchParties(),
+        fetchCompanies(),
+        fetchCenters(),
+      ]);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const fetchCompanies = async () => {
+    try {
+      const q = query(collection(db, 'companies'), orderBy('name', 'asc'));
+      const snapshot = await getDocs(q);
+      const list = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as object),
+      })) as CompanyRecord[];
+      setCompanies(list);
+    } catch (error) {
+      console.error('Error fetching companies:', error);
+      setSnackbar({
+        open: true,
+        message: 'Failed to load company data',
+        severity: 'error',
+      });
+    }
+  };
+
+  const fetchCenters = async () => {
+    try {
+      const list = await fetchAllCenters();
+      setCenters(list);
+    } catch (error) {
+      console.error('Error fetching centers:', error);
+    }
+  };
+
+  const resolvePartyMaster = (purchase: Purchase): PartyMasterRow | null => {
+    const row = parties.find((p) => p.id === purchase.party.id);
+    if (!row) return null;
+    return {
+      id: row.id,
+      name: row.name,
+      gstType: row.gstType,
+      gstNumber: row.gstNumber,
+      address: row.address,
+      contactPerson: row.contactPerson,
+      phone: row.phone,
+      email: row.email,
+    };
+  };
+
+  const resolveCompanyMaster = (purchase: Purchase): CompanyMasterRow | null => {
+    return findCompanyByPurchaseCompanyName(companies, purchase.company);
+  };
+
+  const handlePrintPurchase = (purchase: Purchase) => {
+    const partyMaster = resolvePartyMaster(purchase);
+    const companyMaster = resolveCompanyMaster(purchase);
+    const centerLabel = getCenterLabel(purchase.location || '', centers);
+    const model = buildPurchaseInvoicePrintModel({
+      purchase,
+      purchaseDateLabel: formatDate(purchase.purchaseDate),
+      centerLabel,
+      partyMaster,
+      companyMaster,
+    });
+    const html = buildPurchaseInvoicePrintHtml(model);
+    const ok = openPurchaseInvoicePrintWindow(html);
+    if (!ok) {
+      setSnackbar({
+        open: true,
+        message: 'Could not open print window. Allow pop-ups for this site and try again.',
+        severity: 'error',
+      });
     }
   };
 
@@ -768,10 +863,11 @@ export default function PurchaseManagement() {
             </Typography>
           </Box>
           <Box>
-            <Tooltip title="Print">
-              <IconButton 
-                onClick={() => window.print()}
+            <Tooltip title="Print purchase record (supplier + company details)">
+              <IconButton
+                onClick={() => previewPurchase && handlePrintPurchase(previewPurchase)}
                 sx={{ mr: 1 }}
+                disabled={!previewPurchase}
               >
                 <PrintIcon />
               </IconButton>
@@ -783,7 +879,11 @@ export default function PurchaseManagement() {
         </DialogTitle>
         
         <DialogContent sx={{ p: 3 }}>
-          {previewPurchase && (
+          {previewPurchase && (() => {
+            const partyM = resolvePartyMaster(previewPurchase);
+            const companyM = resolveCompanyMaster(previewPurchase);
+            const centerLbl = getCenterLabel(previewPurchase.location || '', centers);
+            return (
             <Box>
               {/* Invoice Details */}
               <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: '#f8f9fa', borderRadius: 2 }}>
@@ -813,15 +913,17 @@ export default function PurchaseManagement() {
                       {formatDate(previewPurchase.purchaseDate)}
                     </Typography>
                   </Box>
-                  
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">Supplier:</Typography>
-                    <Typography variant="body1" fontWeight="medium">{previewPurchase.party.name}</Typography>
-                  </Box>
-                  
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">Company Billed To:</Typography>
-                    <Typography variant="body1" fontWeight="medium">{previewPurchase.company}</Typography>
+
+                  {previewPurchase.reference && (
+                    <Box sx={{ gridColumn: { md: '1 / -1' } }}>
+                      <Typography variant="body2" color="text.secondary">Reference:</Typography>
+                      <Typography variant="body1" fontWeight="medium">{previewPurchase.reference}</Typography>
+                    </Box>
+                  )}
+
+                  <Box sx={{ gridColumn: { md: '1 / -1' } }}>
+                    <Typography variant="body2" color="text.secondary">Stock location (center):</Typography>
+                    <Typography variant="body1" fontWeight="medium">{centerLbl || '—'}</Typography>
                   </Box>
                   
                   <Box>
@@ -837,6 +939,86 @@ export default function PurchaseManagement() {
                   )}
                 </Box>
               </Paper>
+
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+                  gap: 2,
+                  mb: 3,
+                }}
+              >
+                <Paper elevation={0} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                  <Typography variant="subtitle2" color="primary" gutterBottom>
+                    Billed to (Companies module)
+                    {!companyM && (
+                      <Typography component="span" variant="caption" color="warning.main" sx={{ ml: 1 }}>
+                        — name not matched to Companies
+                      </Typography>
+                    )}
+                  </Typography>
+                  <Typography variant="body1" fontWeight="bold">
+                    {companyM?.name || previewPurchase.company}
+                  </Typography>
+                  {companyM?.address && (
+                    <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-line' }}>
+                      {companyM.address}
+                    </Typography>
+                  )}
+                  {(companyM?.city || companyM?.state || companyM?.pincode) && (
+                    <Typography variant="body2">
+                      {[companyM?.city, companyM?.state].filter(Boolean).join(', ')}
+                      {companyM?.pincode ? ` - ${companyM.pincode}` : ''}
+                    </Typography>
+                  )}
+                  {companyM?.gstNumber && (
+                    <Typography variant="body2" sx={{ mt: 0.5 }}>
+                      GSTIN: {companyM.gstNumber}
+                    </Typography>
+                  )}
+                  {companyM?.phone && (
+                    <Typography variant="body2">Phone: {companyM.phone}</Typography>
+                  )}
+                  {companyM?.email && (
+                    <Typography variant="body2">Email: {companyM.email}</Typography>
+                  )}
+                </Paper>
+                <Paper elevation={0} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                  <Typography variant="subtitle2" color="primary" gutterBottom>
+                    Supplier (Parties module)
+                    {!partyM && (
+                      <Typography component="span" variant="caption" color="warning.main" sx={{ ml: 1 }}>
+                        — party not found by id
+                      </Typography>
+                    )}
+                  </Typography>
+                  <Typography variant="body1" fontWeight="bold">
+                    {partyM?.name || previewPurchase.party.name}
+                  </Typography>
+                  {partyM?.contactPerson && (
+                    <Typography variant="body2">Contact: {partyM.contactPerson}</Typography>
+                  )}
+                  {partyM?.address && (
+                    <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-line' }}>
+                      {partyM.address}
+                    </Typography>
+                  )}
+                  {partyM?.gstType && (
+                    <Typography variant="body2" sx={{ mt: 0.5 }}>
+                      GST type: {partyM.gstType}
+                    </Typography>
+                  )}
+                  {partyM?.gstNumber && (
+                    <Typography variant="body2">GSTIN: {partyM.gstNumber}</Typography>
+                  )}
+                  {partyM?.phone && (
+                    <Typography variant="body2">Phone: {partyM.phone}</Typography>
+                  )}
+                  {partyM?.email && (
+                    <Typography variant="body2">Email: {partyM.email}</Typography>
+                  )}
+                </Paper>
+              </Box>
               
               {/* Products Table */}
               <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', mb: 3 }}>
@@ -953,7 +1135,8 @@ export default function PurchaseManagement() {
                 </Paper>
               )}
             </Box>
-          )}
+            );
+          })()}
         </DialogContent>
       </Dialog>
       
