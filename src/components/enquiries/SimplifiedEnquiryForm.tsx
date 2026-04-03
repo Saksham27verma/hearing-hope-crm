@@ -10,6 +10,21 @@ import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
+import EnquiryInventoryPickerDialog from './EnquiryInventoryPickerDialog';
+import {
+  resolveGstFromProductMaster,
+  gstFieldsForInventoryRowFromProd,
+  isHearingDeviceInventoryItem,
+  isAccessoryInventoryItem,
+  type EnquiryInventoryRow,
+} from './enquiryInventoryUtils';
+import {
+  serialsFromLineProduct,
+  applySalesCollectionToAvailabilityMaps,
+  applyEnquiryVisitsSalesToAvailabilityMaps,
+  makeProductLocationKey,
+  splitProductLocationKey,
+} from '@/lib/enquiryInventoryAvailability';
 import { formatPtaTestDateForDisplay, type ExternalPtaReportLink } from '@/lib/ptaIntegration';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
@@ -42,9 +57,6 @@ import {
   Check as CheckIcon,
   Inventory as InventoryIcon,
   Search as SearchIcon,
-  Business as BusinessIcon,
-  Category as CategoryIcon,
-  ViewList as ViewListIcon,
   GridView as GridViewIcon,
   AssignmentReturn as AssignmentReturnIcon,
   KeyboardArrowUp as KeyboardArrowUpIcon,
@@ -86,6 +98,13 @@ const ACCESSORY_SERVICE_PRODUCT_TYPES: readonly string[] = [
 
 function isAccessoryServiceProductType(type: string | undefined): boolean {
   return !!type && ACCESSORY_SERVICE_PRODUCT_TYPES.includes(type);
+}
+
+/** Catalog picker for accessory visit: excludes serial-tracked chargers (those use device inventory). */
+function isAccessoryCatalogProductType(p: Product): boolean {
+  if (!isAccessoryServiceProductType(p.type)) return false;
+  if (p.type === 'Charger' && p.hasSerialNumber) return false;
+  return true;
 }
 
 function accessoryServiceProductChipColor(
@@ -155,6 +174,22 @@ const formatCurrency = (amount: number) => {
   }).format(amount);
 };
 
+/** Whole rupees for hearing-aid sale lines, GST, and visit totals (matches invoices). */
+const roundInrRupee = (n: number) => Math.round(Number(n) || 0);
+
+const formatCurrencySale = (amount: number) => formatCurrency(roundInrRupee(amount));
+
+/** Warranty options for sale lines — stored verbatim for invoices. */
+const HEARING_AID_SALE_WARRANTY_OPTIONS = [
+  '6 Months',
+  '12 Months',
+  '18 Months',
+  '24 Months',
+  '30 Months',
+  '36 Months',
+  '48 Months',
+] as const;
+
 /** Max 2 decimal places for discount % (display + stored values). */
 const roundDiscountPercent = (value: number) =>
   Math.round(Math.max(0, Math.min(100, Number(value) || 0)) * 100) / 100;
@@ -200,11 +235,24 @@ function hearingAidLineQty(p: { quantity?: number }): number {
 }
 
 function sumHearingAidVisitTotals(products: HearingAidProduct[]) {
+  const grossMRP = roundInrRupee(products.reduce((sum, p) => sum + p.mrp * hearingAidLineQty(p), 0));
+  const grossSalesBeforeTax = roundInrRupee(
+    products.reduce((sum, p) => sum + p.sellingPrice * hearingAidLineQty(p), 0)
+  );
+  let taxAmount = roundInrRupee(products.reduce((sum, p) => sum + p.gstAmount * hearingAidLineQty(p), 0));
+  const salesAfterTax = roundInrRupee(
+    products.reduce((sum, p) => sum + p.finalAmount * hearingAidLineQty(p), 0)
+  );
+  const prePlusTax = roundInrRupee(grossSalesBeforeTax + taxAmount);
+  // Align GST with line finals when float/legacy lines cause a single-rupee drift vs gross + tax.
+  if (prePlusTax !== salesAfterTax && Math.abs(salesAfterTax - prePlusTax) <= 1) {
+    taxAmount = roundInrRupee(salesAfterTax - grossSalesBeforeTax);
+  }
   return {
-    grossMRP: products.reduce((sum, p) => sum + p.mrp * hearingAidLineQty(p), 0),
-    grossSalesBeforeTax: products.reduce((sum, p) => sum + p.sellingPrice * hearingAidLineQty(p), 0),
-    taxAmount: products.reduce((sum, p) => sum + p.gstAmount * hearingAidLineQty(p), 0),
-    salesAfterTax: products.reduce((sum, p) => sum + p.finalAmount * hearingAidLineQty(p), 0),
+    grossMRP,
+    grossSalesBeforeTax,
+    taxAmount,
+    salesAfterTax,
   };
 }
 
@@ -746,55 +794,28 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
 
 
-  // Automatic calculation when product pricing fields change
+  // Selling price is the source of truth; discount % is derived from MRP vs selling (GST from selling).
   useEffect(() => {
     if (currentProduct.mrp > 0) {
-      const discountAmount = (currentProduct.mrp * currentProduct.discountPercent) / 100;
-      const gstAmount = (currentProduct.sellingPrice * currentProduct.gstPercent) / 100;
-      const finalAmount = currentProduct.sellingPrice + gstAmount;
+      const selling = roundInrRupee(currentProduct.sellingPrice);
+      const discountAmount = roundInrRupee(Math.max(0, currentProduct.mrp - selling));
+      const discountPercent = roundDiscountPercent((discountAmount / currentProduct.mrp) * 100);
+      const gstAmount = roundInrRupee((selling * currentProduct.gstPercent) / 100);
+      const finalAmount = roundInrRupee(selling + gstAmount);
 
       setCurrentProduct((prev) => ({
         ...prev,
         discountAmount,
+        discountPercent,
         gstAmount,
         finalAmount,
       }));
     }
-  }, [currentProduct.mrp, currentProduct.sellingPrice, currentProduct.discountPercent, currentProduct.gstPercent]);
+  }, [currentProduct.mrp, currentProduct.sellingPrice, currentProduct.gstPercent]);
 
-  // Calculate discount percentage when selling price is manually changed
   const updateSellingPrice = (newSellingPrice: number) => {
-    if (currentProduct.mrp > 0 && newSellingPrice !== currentProduct.sellingPrice) {
-      const discountAmount = currentProduct.mrp - newSellingPrice;
-      const discountPercent = roundDiscountPercent((discountAmount / currentProduct.mrp) * 100);
-
-      setCurrentProduct(prev => ({
-        ...prev,
-        sellingPrice: newSellingPrice,
-        discountPercent,
-        discountAmount: Math.max(0, discountAmount),
-      }));
-    } else {
-      setCurrentProduct(prev => ({ ...prev, sellingPrice: newSellingPrice }));
-    }
-  };
-
-  // Calculate selling price when discount percentage is changed
-  const updateDiscountPercent = (newDiscountPercent: number) => {
-    const pct = roundDiscountPercent(newDiscountPercent);
-    if (currentProduct.mrp > 0) {
-      const discountAmount = (currentProduct.mrp * pct) / 100;
-      const sellingPrice = currentProduct.mrp - discountAmount;
-
-      setCurrentProduct(prev => ({
-        ...prev,
-        discountPercent: pct,
-        discountAmount,
-        sellingPrice: Math.max(0, sellingPrice),
-      }));
-    } else {
-      setCurrentProduct(prev => ({ ...prev, discountPercent: pct }));
-    }
+    const sp = roundInrRupee(newSellingPrice);
+    setCurrentProduct((prev) => ({ ...prev, sellingPrice: sp }));
   };
 
   // React Hook Form setup
@@ -922,6 +943,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const productsData: any[] = [];
         querySnapshot.forEach((doc) => {
           const data = doc.data();
+          const gstApplicable = !!data.gstApplicable;
+          const rawPct = data.gstPercentage;
+          const gstPercentage =
+            rawPct !== undefined && rawPct !== null && Number.isFinite(Number(rawPct))
+              ? Number(rawPct)
+              : gstApplicable
+                ? 18
+                : 0;
           productsData.push({
             id: doc.id,
             name: data.name,
@@ -929,8 +958,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             company: data.company || '',
             mrp: data.mrp || 0,
             isFreeOfCost: data.isFreeOfCost || false,
-            gstApplicable: data.gstApplicable || false,
-            gstPercentage: data.gstPercentage || 18,
+            hasSerialNumber: !!data.hasSerialNumber,
+            gstApplicable,
+            gstPercentage,
             hsnCode: data.hsnCode || '',
             quantityType: data.quantityType || 'piece'
           });
@@ -1114,56 +1144,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   // Fetch available inventory for hearing aid sales
   const [availableInventory, setAvailableInventory] = useState<any[]>([]);
   const [inventoryDialogOpen, setInventoryDialogOpen] = useState(false);
-  const [inventorySearchTerm, setInventorySearchTerm] = useState('');
-  const [selectedCompany, setSelectedCompany] = useState<string>('');
-  const [selectedModel, setSelectedModel] = useState<string>('');
-  const [viewMode, setViewMode] = useState<'companies' | 'models' | 'serials'>('companies');
+  const [inventoryPickerMode, setInventoryPickerMode] = useState<'hearing_device' | 'accessory'>(
+    'hearing_device'
+  );
+
+  const hearingDeviceInventory = useMemo(
+    () => availableInventory.filter((it) => isHearingDeviceInventoryItem(it)),
+    [availableInventory]
+  );
+  const accessoryInventory = useMemo(
+    () => availableInventory.filter((it) => isAccessoryInventoryItem(it)),
+    [availableInventory]
+  );
 
   // Sales return states
   const [previousSales, setPreviousSales] = useState<any[]>([]);
   const [serialSelectionMode, setSerialSelectionMode] = useState<'dropdown' | 'manual'>('dropdown');
-
-  // Helper functions for inventory organization
-  const getInventoryByCompany = () => {
-    const companyGroups: Record<string, any[]> = {};
-    availableInventory.forEach(item => {
-      const company = item.company || 'Unknown Company';
-      if (!companyGroups[company]) companyGroups[company] = [];
-      companyGroups[company].push(item);
-    });
-    return companyGroups;
-  };
-
-  const getModelsByCompany = (company: string) => {
-    const modelGroups: Record<string, any[]> = {};
-    availableInventory
-      .filter(item => (item.company || 'Unknown Company') === company)
-      .forEach(item => {
-        const model = item.productName || 'Unknown Model';
-        if (!modelGroups[model]) modelGroups[model] = [];
-        modelGroups[model].push(item);
-      });
-    return modelGroups;
-  };
-
-  const getFilteredInventory = () => {
-    if (!inventorySearchTerm) return availableInventory;
-    
-    const searchLower = inventorySearchTerm.toLowerCase();
-    return availableInventory.filter(item => 
-      (item.productName?.toLowerCase().includes(searchLower)) ||
-      (item.company?.toLowerCase().includes(searchLower)) ||
-      (item.serialNumber?.toLowerCase().includes(searchLower)) ||
-      (item.location?.toLowerCase().includes(searchLower))
-    );
-  };
-
-  const resetInventorySelection = () => {
-    setSelectedCompany('');
-    setSelectedModel('');
-    setViewMode('companies');
-    setInventorySearchTerm('');
-  };
   
   // Function to fetch available inventory (center-aware)
   const fetchAvailableInventory = async () => {
@@ -1175,21 +1171,46 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const headOfficeId = await getHeadOfficeId();
         
         // Get data from multiple collections (same as material-out page)
-        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap] = await Promise.all([
-          getDocs(collection(db, 'products')),
-          getDocs(collection(db, 'materialInward')),
-          getDocs(collection(db, 'purchases')),
-          getDocs(collection(db, 'materialsOut')),
-        ]);
+        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, centersSnap] =
+          await Promise.all([
+            getDocs(collection(db, 'products')),
+            getDocs(collection(db, 'materialInward')),
+            getDocs(collection(db, 'purchases')),
+            getDocs(collection(db, 'materialsOut')),
+            getDocs(collection(db, 'sales')),
+            getDocs(collection(db, 'enquiries')),
+            getDocs(collection(db, 'centers')),
+          ]);
 
-        console.log(`📊 Found ${productsSnap.docs.length} products, ${materialInSnap.docs.length} material-in, ${purchasesSnap.docs.length} purchases, ${materialsOutSnap.docs.length} materials-out`);
+        console.log(
+          `📊 Found ${productsSnap.docs.length} products, ${materialInSnap.docs.length} material-in, ${purchasesSnap.docs.length} purchases, ${materialsOutSnap.docs.length} materials-out, ${salesSnap.docs.length} sales, ${enquiriesSnap.docs.length} enquiries, ${centersSnap.docs.length} centers`
+        );
+
+        const centerNameById: Record<string, string> = {};
+        centersSnap.docs.forEach((d) => {
+          const x = d.data() as Record<string, unknown>;
+          const nm = String(x.name ?? x.displayName ?? x.centerName ?? '').trim();
+          centerNameById[d.id] = nm || d.id;
+        });
 
         const prodMap: Record<string, any> = {};
         productsSnap.docs.forEach(d => { prodMap[d.id] = { id: d.id, ...(d.data() as any) }; });
 
-        // Build availability from inbound docs
-        const serialsByProduct: Record<string, Set<string>> = {};
-        const qtyByProduct: Record<string, number> = {};
+        // Per center (locationId = Firestore `centers` doc id) — matches inventory, fixes labels vs raw ids
+        const serialsByProductLoc: Record<string, Set<string>> = {};
+        const qtyByProductLoc: Record<string, number> = {};
+
+        const addSerials = (productId: string, locationId: string, serials: string[]) => {
+          const k = makeProductLocationKey(productId, locationId);
+          if (!serialsByProductLoc[k]) serialsByProductLoc[k] = new Set<string>();
+          serials.forEach((sn) => sn && serialsByProductLoc[k].add(String(sn)));
+        };
+        const addQty = (productId: string, locationId: string, q: number) => {
+          const k = makeProductLocationKey(productId, locationId);
+          const n = Number(q);
+          if (isNaN(n) || n === 0) return;
+          qtyByProductLoc[k] = (qtyByProductLoc[k] || 0) + n;
+        };
 
         const addInbound = (docs: any[]) => {
           docs.forEach(docSnap => {
@@ -1206,14 +1227,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             (data.products || []).forEach((p: any) => {
               const productId = p.productId || p.id;
               if (!productId) return;
-              const serialArray: string[] = Array.isArray(p.serialNumbers) ? p.serialNumbers : (p.serialNumber ? [p.serialNumber] : []);
+              const locId = String(dataLocation || headOfficeId);
+              const serialArray = serialsFromLineProduct(p);
               if (serialArray.length > 0) {
-                if (!serialsByProduct[productId]) serialsByProduct[productId] = new Set<string>();
-                serialArray.forEach(sn => sn && serialsByProduct[productId].add(String(sn)));
+                addSerials(productId, locId, serialArray);
               } else {
                 const q = Number(p.quantity ?? p.qty ?? 0);
-                if (!qtyByProduct[productId]) qtyByProduct[productId] = 0;
-                qtyByProduct[productId] += isNaN(q) ? 0 : q;
+                addQty(productId, locId, isNaN(q) ? 0 : q);
               }
             });
           });
@@ -1237,27 +1257,39 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           (data.products || []).forEach((p: any) => {
             const productId = p.productId || p.id;
             if (!productId) return;
-            const serialArray: string[] = Array.isArray(p.serialNumbers) ? p.serialNumbers : [];
+            const locId = String(dataLocation || headOfficeId);
+            const key = makeProductLocationKey(productId, locId);
+            const serialArray = serialsFromLineProduct(p);
             if (serialArray.length > 0) {
-              if (!serialsByProduct[productId]) serialsByProduct[productId] = new Set<string>();
-              serialArray.forEach(sn => {
-                if (sn && serialsByProduct[productId].has(String(sn))) serialsByProduct[productId].delete(String(sn));
-              });
+              const set = serialsByProductLoc[key];
+              if (set) {
+                serialArray.forEach((sn) => {
+                  if (sn && set.has(String(sn))) set.delete(String(sn));
+                });
+              }
             } else {
               const q = Number(p.quantity ?? 0);
-              if (!qtyByProduct[productId]) qtyByProduct[productId] = 0;
-              qtyByProduct[productId] = Math.max(0, qtyByProduct[productId] - (isNaN(q) ? 0 : q));
+              if (qtyByProductLoc[key] != null) {
+                qtyByProductLoc[key] = Math.max(0, qtyByProductLoc[key] - (isNaN(q) ? 0 : q));
+              }
             }
           });
         });
 
-        // Flatten to items array
+        // Align with inventory page: remove serials / qty already sold (sales + enquiry visits)
+        applySalesCollectionToAvailabilityMaps(salesSnap.docs, serialsByProductLoc, qtyByProductLoc);
+        applyEnquiryVisitsSalesToAvailabilityMaps(enquiriesSnap.docs, serialsByProductLoc, qtyByProductLoc);
+
+        // Flatten to items array (real per-center location + resolved center name)
         const items: any[] = [];
-        Object.entries(serialsByProduct).forEach(([productId, set]) => {
+        Object.entries(serialsByProductLoc).forEach(([plKey, set]) => {
+          const { productId, locationId } = splitProductLocationKey(plKey);
           const prod = prodMap[productId] || {};
-          Array.from(set).forEach(sn => {
+          const gstRow = gstFieldsForInventoryRowFromProd(prod);
+          const locLabel = centerNameById[locationId] || locationId;
+          Array.from(set).forEach((sn) => {
             items.push({
-              id: `${productId}-${sn}`, // Create unique ID for inventory items
+              id: `${productId}-${sn}-${locationId}`,
               productId,
               productName: prod.name || 'Product',
               name: prod.name || 'Product', // Alias for compatibility
@@ -1267,21 +1299,26 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               isSerialTracked: true,
               mrp: Number(prod.mrp) || 0,
               dealerPrice: Number(prod.dealerPrice) || 0,
-              gstApplicable: prod.gstApplicable || false,
-              gstPercentage: Number(prod.gstPercentage) || (prod.gstApplicable ? 18 : 0),
+              gstApplicable: gstRow.gstApplicable,
+              gstPercentage: gstRow.gstPercentage,
               gstType: prod.gstType || 'IGST',
               status: 'In Stock',
-              location: selectedCenter || 'rohini', // Current center or default to Rohini
-              hsnCode: prod.hsnCode || ''
+              location: locLabel,
+              locationId,
+              hsnCode: prod.hsnCode || '',
+              productHasSerialNumber: !!prod.hasSerialNumber,
             });
           });
         });
         
-        Object.entries(qtyByProduct).forEach(([productId, qty]) => {
+        Object.entries(qtyByProductLoc).forEach(([plKey, qty]) => {
           if (qty > 0) {
+            const { productId, locationId } = splitProductLocationKey(plKey);
             const prod = prodMap[productId] || {};
+            const gstRow = gstFieldsForInventoryRowFromProd(prod);
+            const locLabel = centerNameById[locationId] || locationId;
             items.push({
-              id: `${productId}-qty`, // Create unique ID for non-serial items
+              id: `${productId}-qty-${locationId}`,
               productId,
               productName: prod.name || 'Product',
               name: prod.name || 'Product', // Alias for compatibility
@@ -1291,12 +1328,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               quantity: qty,
               mrp: Number(prod.mrp) || 0,
               dealerPrice: Number(prod.dealerPrice) || 0,
-              gstApplicable: prod.gstApplicable || false,
-              gstPercentage: Number(prod.gstPercentage) || (prod.gstApplicable ? 18 : 0),
+              gstApplicable: gstRow.gstApplicable,
+              gstPercentage: gstRow.gstPercentage,
               gstType: prod.gstType || 'IGST',
               status: 'In Stock',
-              location: selectedCenter || 'rohini', // Current center or default to Rohini
-              hsnCode: prod.hsnCode || ''
+              location: locLabel,
+              locationId,
+              hsnCode: prod.hsnCode || '',
+              productHasSerialNumber: !!prod.hasSerialNumber,
             });
           }
         });
@@ -1529,6 +1568,70 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     setValue('visits', nextVisits);
   };
 
+  const reconcileLinesWithProductMaster = useCallback((lines: HearingAidProduct[]): HearingAidProduct[] => {
+    const byId = new Map(hearingAidProducts.map((p) => [p.id, p]));
+    return lines.map((line) => {
+      const master = line.productId ? byId.get(line.productId) : undefined;
+      if (!master) return line;
+      const { gstApplicable, gstPercent } = resolveGstFromProductMaster(master);
+      const sellingPrice = roundInrRupee(line.sellingPrice);
+      const gstAmount =
+        gstPercent > 0 ? roundInrRupee((sellingPrice * gstPercent) / 100) : 0;
+      const finalAmount = roundInrRupee(sellingPrice + gstAmount);
+      return { ...line, sellingPrice, gstApplicable, gstPercent, gstAmount, finalAmount };
+    });
+  }, [hearingAidProducts]);
+
+  const handleInventoryItemSelected = useCallback(
+    (item: EnquiryInventoryRow) => {
+      const visit = getValues('visits')[activeVisit];
+      if (inventoryPickerMode === 'accessory') {
+        const master = products.find((p) => p.id === item.productId);
+        const name = master?.name || item.productName;
+        const isFree = master?.mrp === 0 || master?.isFreeOfCost;
+        updateVisitFields(activeVisit, {
+          accessoryName: name,
+          accessoryFOC: !!isFree,
+          accessoryAmount: isFree ? 0 : roundInrRupee(item.mrp || master?.mrp || 0),
+          accessoryQuantity: 1,
+        });
+        return;
+      }
+      if (visit?.hearingAidTrial && visit?.trialHearingAidType === 'home') {
+        updateVisit(activeVisit, 'trialSerialNumber', item.serialNumber || '');
+        updateVisit(activeVisit, 'trialHearingAidBrand', item.company || '');
+        updateVisit(activeVisit, 'trialHearingAidModel', item.productName || '');
+        return;
+      }
+      const { gstApplicable, gstPercent } = resolveGstFromProductMaster(item);
+      const mrp = roundInrRupee(item.mrp);
+      const gstAmount = roundInrRupee((mrp * gstPercent) / 100);
+      setCurrentProduct((prev) => ({
+        ...prev,
+        inventoryId: item.id,
+        productId: item.productId,
+        name: item.productName,
+        hsnCode: item.hsnCode || '',
+        mrp,
+        dealerPrice: item.dealerPrice ?? prev.dealerPrice ?? 0,
+        gstPercent,
+        gstApplicable,
+        gstType: (item.gstType as 'CGST' | 'IGST') || 'IGST',
+        unit: 'piece',
+        quantity: 1,
+        serialNumber: item.serialNumber || '',
+        sellingPrice: mrp,
+        discountPercent: 0,
+        discountAmount: 0,
+        gstAmount,
+        finalAmount: roundInrRupee(mrp + gstAmount),
+        company: item.company ?? prev.company ?? '',
+        location: item.location ?? prev.location ?? '',
+      }));
+    },
+    [activeVisit, getValues, inventoryPickerMode, products, updateVisit, updateVisitFields]
+  );
+
   const applyCatalogHearingAidSelection = useCallback(
     (visitIndex: number, selectedIds: string[]) => {
       const currentVisits = getValues('visits');
@@ -1554,9 +1657,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const discountPercent = 0;
         const discountAmount = 0;
         const sellingPrice = mrp;
-        const gstPercent = p.gstPercentage ?? 18;
-        const gstAmount = gstPercent > 0 ? (sellingPrice * gstPercent) / 100 : 0;
-        const finalAmount = sellingPrice + gstAmount;
+        const { gstApplicable, gstPercent } = resolveGstFromProductMaster(p);
+        const gstAmount =
+          gstPercent > 0 ? roundInrRupee((sellingPrice * gstPercent) / 100) : 0;
+        const finalAmount = roundInrRupee(sellingPrice + gstAmount);
 
         return {
           id: `${p.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1568,15 +1672,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           unit: 'piece',
           quantity: 1,
           saleDate: new Date().toISOString().split('T')[0],
-          mrp,
+          mrp: roundInrRupee(mrp),
           dealerPrice: 0,
-          sellingPrice,
+          sellingPrice: roundInrRupee(sellingPrice),
           discountPercent,
           discountAmount,
           gstPercent,
           gstAmount,
           finalAmount,
-          gstApplicable: p.gstApplicable,
+          gstApplicable,
           gstType: p.gstType ?? 'IGST',
           warranty: '',
           company: p.company,
@@ -1800,11 +1904,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       const hasSerial = !!(currentProduct.serialNumber && String(currentProduct.serialNumber).trim());
       const qty = hasSerial ? 1 : hearingAidLineQty({ quantity: currentProduct.quantity });
       const discountPercent = roundDiscountPercent(currentProduct.discountPercent);
-      const discountAmount = (currentProduct.mrp * discountPercent) / 100;
-      const sellingPrice = Math.max(0, currentProduct.mrp - discountAmount);
+      const sellingPrice = roundInrRupee(currentProduct.sellingPrice);
+      const discountAmount = roundInrRupee(Math.max(0, currentProduct.mrp - sellingPrice));
       const gstAmount =
-        currentProduct.gstPercent > 0 ? (sellingPrice * currentProduct.gstPercent) / 100 : 0;
-      const finalAmount = sellingPrice + gstAmount;
+        currentProduct.gstPercent > 0
+          ? roundInrRupee((sellingPrice * currentProduct.gstPercent) / 100)
+          : 0;
+      const finalAmount = roundInrRupee(sellingPrice + gstAmount);
 
       const newProduct: HearingAidProduct = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -4117,7 +4223,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <Button
                                   fullWidth
                                   variant="outlined"
-                                  onClick={() => setInventoryDialogOpen(true)}
+                                  onClick={() => {
+                                    setInventoryPickerMode('hearing_device');
+                                    setInventoryDialogOpen(true);
+                                  }}
                                   sx={{ 
                                     height: 56,
                                     justifyContent: 'flex-start',
@@ -4127,7 +4236,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 >
                                   {currentVisit.trialSerialNumber ? 
                                     `Selected: ${currentVisit.trialSerialNumber}` : 
-                                    'Select Hearing Aid from Inventory'
+                                    `Select device from stock (${hearingDeviceInventory.length})`
                                   }
                                 </Button>
                           </Grid>
@@ -4502,7 +4611,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 onClick={() => {
                                   const bookingVisit = getValues('visits').slice(0, activeVisit).find(v => v.hearingAidBooked);
                                   if (bookingVisit) {
-                                    const products = bookingVisit.products || [];
+                                    const rawProducts = bookingVisit.products || [];
+                                    const products = reconcileLinesWithProductMaster(rawProducts);
                                     const bt = sumHearingAidVisitTotals(products);
                                     updateVisitFields(activeVisit, {
                                       previousVisitId: bookingVisit.id,
@@ -4515,10 +4625,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       bookingSellingPrice: bookingVisit.bookingSellingPrice || bookingVisit.grossSalesBeforeTax || 0,
                                       bookingQuantity: bookingVisit.bookingQuantity || Math.max(1, (products || []).reduce((sum, p) => sum + (Number(p.quantity) || 1), 0)),
                                       products,
-                                      grossMRP: bookingVisit.grossMRP || bt.grossMRP,
-                                      grossSalesBeforeTax: bookingVisit.grossSalesBeforeTax || bt.grossSalesBeforeTax,
-                                      taxAmount: bookingVisit.taxAmount || bt.taxAmount,
-                                      salesAfterTax: bookingVisit.salesAfterTax || bt.salesAfterTax,
+                                      grossMRP: bt.grossMRP,
+                                      grossSalesBeforeTax: bt.grossSalesBeforeTax,
+                                      taxAmount: bt.taxAmount,
+                                      salesAfterTax: bt.salesAfterTax,
                                     });
                                   }
                                 }}
@@ -4810,7 +4920,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <Button
                                       fullWidth
                                       variant="outlined"
-                                      onClick={() => setInventoryDialogOpen(true)}
+                                      onClick={() => {
+                                        setInventoryPickerMode('hearing_device');
+                                        setInventoryDialogOpen(true);
+                                      }}
                                       sx={{ 
                                         height: 56,
                                         borderRadius: 2,
@@ -4821,7 +4934,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     >
                                       {currentVisit.trialSerialNumber ? 
                                         `Selected: ${currentVisit.trialSerialNumber}` : 
-                                        'Select Hearing Aid from Inventory'
+                                        `Select device from stock (${hearingDeviceInventory.length})`
                                       }
                                     </Button>
                                   </Grid>
@@ -4957,7 +5070,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   fullWidth
                                   variant="outlined"
                                   size="large"
-                                  onClick={() => setInventoryDialogOpen(true)}
+                                  onClick={() => {
+                                    setInventoryPickerMode('hearing_device');
+                                    setInventoryDialogOpen(true);
+                                  }}
                                   startIcon={<InventoryIcon />}
                                   sx={{
                                     minHeight: 56,
@@ -4982,7 +5098,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       </Typography>
                                     </Box>
                                   ) : (
-                                    <Typography>Select from inventory ({availableInventory.length} in stock)</Typography>
+                                    <Typography>
+                                      Select device stock ({hearingDeviceInventory.length} lines)
+                                    </Typography>
                                   )}
                                 </Button>
                               </Grid>
@@ -5052,7 +5170,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   type="number"
                                   value={currentProduct.mrp}
                                   onChange={(e) => {
-                                    const newMrp = Number(e.target.value);
+                                    const newMrp = roundInrRupee(Number(e.target.value));
                                     setCurrentProduct((prev) => ({
                                       ...prev,
                                       mrp: newMrp,
@@ -5069,6 +5187,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   type="number"
                                   value={currentProduct.sellingPrice}
                                   onChange={(e) => updateSellingPrice(Number(e.target.value))}
+                                  inputProps={{ step: 1, min: 0 }}
                                 />
                               </Grid>
                               <Grid item xs={6} sm={4} md={2}>
@@ -5078,9 +5197,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   label="Discount %"
                                   type="number"
                                   value={currentProduct.discountPercent}
-                                  onChange={(e) => updateDiscountPercent(Number(e.target.value))}
+                                  InputProps={{ readOnly: true }}
                                   inputProps={{ step: 0.01, min: 0, max: 100 }}
-                                  helperText="Up to 2 decimal places"
+                                  helperText="From MRP vs selling price"
                                 />
                               </Grid>
                               <Grid item xs={6} sm={4} md={2}>
@@ -5105,13 +5224,38 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 />
                               </Grid>
                               <Grid item xs={12} sm={6} md={2}>
-                                <TextField
-                                  fullWidth
-                                  size="small"
-                                  label="Warranty"
-                                  value={currentProduct.warranty}
-                                  onChange={(e) => setCurrentProduct((prev) => ({ ...prev, warranty: e.target.value }))}
-                                />
+                                <FormControl fullWidth size="small">
+                                  <InputLabel id="sale-line-warranty-label">Warranty</InputLabel>
+                                  <Select
+                                    labelId="sale-line-warranty-label"
+                                    label="Warranty"
+                                    value={currentProduct.warranty || ''}
+                                    onChange={(e) =>
+                                      setCurrentProduct((prev) => ({
+                                        ...prev,
+                                        warranty: (e.target.value as string) || '',
+                                      }))
+                                    }
+                                    displayEmpty
+                                  >
+                                    <MenuItem value="">
+                                      <em>None</em>
+                                    </MenuItem>
+                                    {currentProduct.warranty &&
+                                      !(
+                                        HEARING_AID_SALE_WARRANTY_OPTIONS as readonly string[]
+                                      ).includes(currentProduct.warranty) && (
+                                        <MenuItem value={currentProduct.warranty}>
+                                          {currentProduct.warranty} (other)
+                                        </MenuItem>
+                                      )}
+                                    {HEARING_AID_SALE_WARRANTY_OPTIONS.map((opt) => (
+                                      <MenuItem key={opt} value={opt}>
+                                        {opt}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
                               </Grid>
                             </Grid>
 
@@ -5126,7 +5270,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       Discount (line)
                                     </Typography>
                                     <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'error.main' }}>
-                                      {formatCurrency(currentProduct.discountAmount * saleLineQtyPreview)}
+                                      {formatCurrencySale(currentProduct.discountAmount * saleLineQtyPreview)}
                                     </Typography>
                                   </Grid>
                                   <Grid item xs={6} sm={3}>
@@ -5143,7 +5287,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     >
                                       {currentProduct.gstPercent === 0
                                         ? '—'
-                                        : formatCurrency(currentProduct.gstAmount * saleLineQtyPreview)}
+                                        : formatCurrencySale(currentProduct.gstAmount * saleLineQtyPreview)}
                                     </Typography>
                                   </Grid>
                                   <Grid item xs={6} sm={3}>
@@ -5151,7 +5295,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       Final (line)
                                     </Typography>
                                     <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'success.main' }}>
-                                      {formatCurrency(currentProduct.finalAmount * saleLineQtyPreview)}
+                                      {formatCurrencySale(currentProduct.finalAmount * saleLineQtyPreview)}
                                     </Typography>
                                   </Grid>
                                   <Grid item xs={12} sm={3}>
@@ -5250,8 +5394,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                             />
                                           )}
                                         </TableCell>
-                                        <TableCell align="right">{formatCurrency(product.mrp)}</TableCell>
-                                        <TableCell align="right">{formatCurrency(product.sellingPrice)}</TableCell>
+                                        <TableCell align="right">{formatCurrencySale(product.mrp)}</TableCell>
+                                        <TableCell align="right">{formatCurrencySale(product.sellingPrice)}</TableCell>
                                         <TableCell align="right">{discPct.toFixed(2)}%</TableCell>
                                         <TableCell
                                           sx={{
@@ -5262,7 +5406,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                           {product.gstPercent === 0 ? 'Exempt' : `${product.gstPercent}%`}
                                         </TableCell>
                                         <TableCell align="right" sx={{ fontWeight: 700 }}>
-                                          {formatCurrency(product.finalAmount * q)}
+                                          {formatCurrencySale(product.finalAmount * q)}
                                         </TableCell>
                                         <TableCell align="right">
                                           <IconButton size="small" onClick={() => removeProduct(index)} color="error">
@@ -5279,17 +5423,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       Totals
                                     </TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 800 }}>
-                                      {formatCurrency(currentVisit.grossMRP)}
+                                      {formatCurrencySale(currentVisit.grossMRP)}
                                     </TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 800 }}>
-                                      {formatCurrency(currentVisit.grossSalesBeforeTax)}
+                                      {formatCurrencySale(currentVisit.grossSalesBeforeTax)}
                                     </TableCell>
                                     <TableCell align="right">—</TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 800 }}>
-                                      {formatCurrency(currentVisit.taxAmount)}
+                                      {formatCurrencySale(currentVisit.taxAmount)}
                                     </TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 800, color: 'primary.main' }}>
-                                      {formatCurrency(currentVisit.salesAfterTax)}
+                                      {formatCurrencySale(currentVisit.salesAfterTax)}
                                     </TableCell>
                                     <TableCell />
                                   </TableRow>
@@ -5408,7 +5552,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                             {sale.productName} • {sale.brand} {sale.model}
                                           </Typography>
                                           <Typography variant="caption" color="text.secondary" display="block">
-                                            Sold on: {sale.saleDate} • ₹{sale.finalAmount}
+                                            Sold on: {sale.saleDate} • {formatCurrencySale(sale.finalAmount ?? 0)}
                                           </Typography>
                                         </Box>
                                       </li>
@@ -5663,6 +5807,20 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           
                           <Grid container spacing={3}>
                             <Grid item xs={12} md={6}>
+                              <Stack spacing={1.5}>
+                                <Button
+                                  fullWidth
+                                  variant="outlined"
+                                  size="small"
+                                  startIcon={<InventoryIcon />}
+                                  onClick={() => {
+                                    setInventoryPickerMode('accessory');
+                                    setInventoryDialogOpen(true);
+                                  }}
+                                  sx={{ textTransform: 'none', borderRadius: 2 }}
+                                >
+                                  Select from accessory stock ({accessoryInventory.length} lines)
+                                </Button>
                               <FormControl fullWidth>
                                 <InputLabel>Name of Accessory</InputLabel>
                                 <Select
@@ -5700,7 +5858,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     
                                     const selectedAccessory = products.find(p => 
                                       p.name === selectedValue && 
-                                      isAccessoryServiceProductType(p.type)
+                                      isAccessoryCatalogProductType(p)
                                     );
                                     console.log('Found accessory in products:', selectedAccessory);
                                     
@@ -5748,7 +5906,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     </Typography>
                                   </MenuItem>
                                   {products
-                                    .filter((product) => isAccessoryServiceProductType(product.type))
+                                    .filter((product) => isAccessoryCatalogProductType(product))
                                     .length === 0 ? (
                                     <MenuItem disabled>
                                       <Typography color="text.secondary" sx={{ fontStyle: 'italic' }}>
@@ -5757,7 +5915,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     </MenuItem>
                                   ) : (
                                     products
-                                      .filter((product) => isAccessoryServiceProductType(product.type))
+                                      .filter((product) => isAccessoryCatalogProductType(product))
                                       .map(product => (
                                         <MenuItem key={product.id} value={product.name}>
                                           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
@@ -5782,6 +5940,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   )}
                                 </Select>
                               </FormControl>
+                              </Stack>
                             </Grid>
                             <Grid item xs={12} md={6}>
                               <TextField
@@ -5833,7 +5992,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         // If unchecking FOC and an accessory is selected, restore its MRP
                                         const selectedAccessory = products.find(p => 
                                           p.name === currentVisitData?.accessoryName && 
-                                          isAccessoryServiceProductType(p.type)
+                                          isAccessoryCatalogProductType(p)
                                         );
                                         updatedVisits[activeVisit] = {
                                           ...currentVisitData,
@@ -5942,7 +6101,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
                                       {accessoryName}
                                     </Typography>
-                                    {products.find(p => p.name === accessoryName && isAccessoryServiceProductType(p.type)) && (
+                                    {products.find(p => p.name === accessoryName && isAccessoryCatalogProductType(p)) && (
                                       <Chip 
                                         label="From Product Catalog" 
                                         size="small" 
@@ -7819,534 +7978,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         </DialogActions>
       </Dialog>
 
-      {/* Hearing Aid Inventory Selection Dialog */}
-      <Dialog
+      <EnquiryInventoryPickerDialog
         open={inventoryDialogOpen}
-        onClose={() => {
-          setInventoryDialogOpen(false);
-          resetInventorySelection();
-        }}
-        maxWidth="md"
-        fullWidth
-        PaperProps={{
-          sx: { borderRadius: 3, maxHeight: '85vh' }
-        }}
-      >
-        <DialogTitle sx={{ bgcolor: 'primary.main', color: 'white', py: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <InventoryIcon />
-            <Box>
-              <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                Select Hearing Aid from Inventory
-              </Typography>
-              <Typography variant="body2" sx={{ opacity: 0.9 }}>
-                {availableInventory.length} hearing aids available in stock
-              </Typography>
-            </Box>
-          </Box>
-        </DialogTitle>
-
-        <DialogContent sx={{ p: 0 }}>
-          {/* Search Bar */}
-          <Box sx={{ p: 3, pb: 2, bgcolor: 'grey.50', borderBottom: 1, borderColor: 'divider' }}>
-            <TextField
-              fullWidth
-              placeholder="Search by product name, company, serial number, or location..."
-              value={inventorySearchTerm}
-              onChange={(e) => setInventorySearchTerm(e.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon color="action" />
-                  </InputAdornment>
-                ),
-              }}
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: 2,
-                  bgcolor: 'white'
-                }
-              }}
-            />
-          </Box>
-
-          {/* Navigation Breadcrumb */}
-          {!inventorySearchTerm && (
-            <Box sx={{ p: 2, bgcolor: 'primary.50', borderBottom: 1, borderColor: 'divider' }}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2" color="text.secondary">Navigate:</Typography>
-                <Button
-                  size="small"
-                  variant={viewMode === 'companies' ? 'contained' : 'text'}
-                  onClick={() => {
-                    setViewMode('companies');
-                    setSelectedCompany('');
-                    setSelectedModel('');
-                  }}
-                  sx={{ minWidth: 'auto' }}
-                >
-                  Companies
-                </Button>
-                {selectedCompany && (
-                  <>
-                    <Typography color="text.secondary">→</Typography>
-                    <Button
-                      size="small"
-                      variant={viewMode === 'models' ? 'contained' : 'text'}
-                      onClick={() => {
-                        setViewMode('models');
-                        setSelectedModel('');
-                      }}
-                      sx={{ minWidth: 'auto' }}
-                    >
-                      {selectedCompany}
-                    </Button>
-                  </>
-                )}
-                {selectedModel && (
-                  <>
-                    <Typography color="text.secondary">→</Typography>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      sx={{ minWidth: 'auto' }}
-                    >
-                      {selectedModel}
-                    </Button>
-                  </>
-                )}
-              </Stack>
-            </Box>
-          )}
-
-          {/* Content Area */}
-          <Box sx={{ p: 3, maxHeight: '60vh', overflow: 'auto' }}>
-            {availableInventory.length === 0 ? (
-              <Box sx={{ textAlign: 'center', py: 6 }}>
-                <InventoryIcon sx={{ fontSize: 64, color: 'grey.400', mb: 2 }} />
-                <Typography variant="h6" color="text.secondary" gutterBottom>
-                  No Hearing Aids in Stock
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Please add hearing aids to inventory first or check the inventory filters.
-                </Typography>
-              </Box>
-            ) : inventorySearchTerm ? (
-              /* Search Results */
-              <Box>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Search results for "{inventorySearchTerm}" ({getFilteredInventory().length} items)
-                </Typography>
-                <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' } }}>
-                  {getFilteredInventory().map(item => (
-                    <Card 
-                      key={item.id} 
-                      sx={{ 
-                        cursor: 'pointer',
-                        border: 2,
-                        borderColor: currentProduct.inventoryId === item.id ? 'success.main' : 'transparent',
-                        bgcolor: currentProduct.inventoryId === item.id ? 'success.50' : 'white',
-                        '&:hover': { 
-                          borderColor: 'primary.main',
-                          boxShadow: 3,
-                          transform: 'translateY(-2px)',
-                          transition: 'all 0.2s ease-in-out'
-                        }
-                      }}
-                      onClick={() => {
-                        const currentVisit = watchedVisits[activeVisit];
-                        
-                        // Check if we're selecting for trial (trial service is active and trial type is home)
-                        if (currentVisit?.hearingAidTrial && 
-                            currentVisit?.hearingAidStatus === 'trial_given' && 
-                            currentVisit?.trialHearingAidType === 'home') {
-                          // For home trials, just set the serial number and basic info
-                          updateVisit(activeVisit, 'trialSerialNumber', item.serialNumber || '');
-                          updateVisit(activeVisit, 'trialHearingAidBrand', item.company || '');
-                          updateVisit(activeVisit, 'trialHearingAidModel', item.productName || '');
-                          setInventoryDialogOpen(false);
-                          resetInventorySelection();
-                        } else {
-                          // For sales, set the full product details
-                          const gstPercent = item.gstApplicable ? (item.gstPercentage || 18) : 0;
-                          const gstAmount = item.mrp * gstPercent / 100;
-                          setCurrentProduct(prev => ({
-                            ...prev,
-                            inventoryId: item.id,
-                            productId: item.productId,
-                            name: item.productName,
-                            hsnCode: item.hsnCode || '',
-                            mrp: item.mrp,
-                            dealerPrice: item.dealerPrice,
-                            gstPercent,
-                            gstApplicable: item.gstApplicable,
-                            gstType: item.gstType,
-                            unit: 'piece',
-                            quantity: 1,
-                            serialNumber: item.serialNumber || '',
-                            sellingPrice: item.mrp,
-                            discountPercent: 0,
-                            discountAmount: 0,
-                            gstAmount,
-                            finalAmount: item.mrp + gstAmount,
-                            company: item.company,
-                            location: item.location
-                          }));
-                          setInventoryDialogOpen(false);
-                          resetInventorySelection();
-                        }
-                      }}
-                    >
-                      <CardContent sx={{ p: 3 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                          <Avatar sx={{ bgcolor: 'primary.main', width: 48, height: 48 }}>
-                            <InventoryIcon />
-                          </Avatar>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1rem' }}>
-                              {item.productName}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {item.company}
-                            </Typography>
-                          </Box>
-                          <Typography variant="h6" color="primary.main" sx={{ fontWeight: 600 }}>
-                            ₹{item.mrp?.toLocaleString()}
-                          </Typography>
-                        </Box>
-
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-                          {item.serialNumber && (
-                            <Chip 
-                              label={`SN: ${item.serialNumber}`} 
-                              size="small" 
-                              color="success" 
-                              variant="outlined"
-                              sx={{ fontWeight: 600 }}
-                            />
-                          )}
-                          {!item.serialNumber && item.quantity && (
-                            <Chip 
-                              label={`Qty: ${item.quantity}`} 
-                              size="small" 
-                              color="warning" 
-                              variant="outlined"
-                              sx={{ fontWeight: 600 }}
-                            />
-                          )}
-                          <Chip 
-                            label={item.location} 
-                            size="small" 
-                            color="info" 
-                            variant="outlined"
-                          />
-                          <Chip 
-                            label={item.status} 
-                            size="small" 
-                            color="secondary" 
-                            variant="filled"
-                          />
-                          {item.gstApplicable ? (
-                            <Chip 
-                              label={`GST: ${item.gstPercentage || 18}%`} 
-                              size="small" 
-                              color="primary" 
-                              variant="outlined"
-                            />
-                          ) : (
-                            <Chip 
-                              label="GST Exempt" 
-                              size="small" 
-                              color="error" 
-                              variant="outlined"
-                            />
-                          )}
-                        </Box>
-
-                        {item.dealerPrice && (
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pt: 1 }}>
-                            <Typography variant="caption" color="text.secondary">
-                              Dealer Price: ₹{item.dealerPrice?.toLocaleString()}
-                            </Typography>
-                            <Typography variant="caption" color="success.main" sx={{ fontWeight: 600 }}>
-                              Margin: ₹{((item.mrp || 0) - (item.dealerPrice || 0)).toLocaleString()}
-                            </Typography>
-                          </Box>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
-                </Box>
-              </Box>
-            ) : viewMode === 'companies' ? (
-              /* Company Selection */
-              <Box>
-                <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <BusinessIcon color="primary" />
-                  Select Company ({Object.keys(getInventoryByCompany()).length} companies)
-                </Typography>
-                <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(3, 1fr)' } }}>
-                  {Object.entries(getInventoryByCompany()).map(([company, items]) => (
-                    <Card 
-                      key={company} 
-                      sx={{ 
-                        cursor: 'pointer',
-                        '&:hover': { 
-                          boxShadow: 4,
-                          transform: 'translateY(-2px)',
-                          transition: 'all 0.2s ease-in-out'
-                        }
-                      }}
-                      onClick={() => {
-                        setSelectedCompany(company);
-                        setViewMode('models');
-                      }}
-                    >
-                      <CardContent sx={{ p: 3, textAlign: 'center' }}>
-                        <Avatar sx={{ bgcolor: 'secondary.main', width: 56, height: 56, mx: 'auto', mb: 2 }}>
-                          <BusinessIcon sx={{ fontSize: 32 }} />
-                        </Avatar>
-                        <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-                          {company}
-                        </Typography>
-                        <Chip 
-                          label={`${items.length} models`}
-                          color="primary"
-                          variant="outlined"
-                          size="small"
-                        />
-                      </CardContent>
-                    </Card>
-                  ))}
-                </Box>
-              </Box>
-            ) : viewMode === 'models' ? (
-              /* Model Selection */
-              <Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                  <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <CategoryIcon color="primary" />
-                    {selectedCompany} Models ({Object.keys(getModelsByCompany(selectedCompany)).length} models)
-                  </Typography>
-                  <Button
-                    startIcon={<ArrowBackIcon />}
-                    onClick={() => {
-                      setViewMode('companies');
-                      setSelectedCompany('');
-                    }}
-                    variant="outlined"
-                    size="small"
-                  >
-                    Back to Companies
-                  </Button>
-                </Box>
-                <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' } }}>
-                  {Object.entries(getModelsByCompany(selectedCompany)).map(([model, items]) => (
-                    <Card 
-                      key={model} 
-                      sx={{ 
-                        cursor: 'pointer',
-                        '&:hover': { 
-                          boxShadow: 4,
-                          transform: 'translateY(-2px)',
-                          transition: 'all 0.2s ease-in-out'
-                        }
-                      }}
-                      onClick={() => {
-                        setSelectedModel(model);
-                        setViewMode('serials');
-                      }}
-                    >
-                      <CardContent sx={{ p: 3 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                          <Avatar sx={{ bgcolor: 'info.main', width: 48, height: 48 }}>
-                            <CategoryIcon />
-                          </Avatar>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1rem' }}>
-                              {model}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {selectedCompany}
-                            </Typography>
-                          </Box>
-                          <Typography variant="h6" color="primary.main" sx={{ fontWeight: 600 }}>
-                            ₹{items[0]?.mrp?.toLocaleString()}
-                          </Typography>
-                        </Box>
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip 
-                            label={`${items.length} units`}
-                            color="primary"
-                            variant="outlined"
-                            size="small"
-                          />
-                          {items[0]?.gstApplicable ? (
-                            <Chip 
-                              label={`GST: ${items[0]?.gstPercentage || 18}%`} 
-                              size="small" 
-                              color="primary" 
-                              variant="outlined"
-                            />
-                          ) : (
-                            <Chip 
-                              label="GST Exempt" 
-                              size="small" 
-                              color="error" 
-                              variant="outlined"
-                            />
-                          )}
-                        </Box>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </Box>
-              </Box>
-            ) : (
-              /* Serial Selection */
-              <Box>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                  <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ViewListIcon color="primary" />
-                    {selectedModel} - Available Units
-                  </Typography>
-                  <Button
-                    startIcon={<ArrowBackIcon />}
-                    onClick={() => {
-                      setViewMode('models');
-                      setSelectedModel('');
-                    }}
-                    variant="outlined"
-                    size="small"
-                  >
-                    Back to Models
-                  </Button>
-                </Box>
-                <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' } }}>
-                  {getModelsByCompany(selectedCompany)[selectedModel]?.map(item => (
-                    <Card 
-                      key={item.id} 
-                      sx={{ 
-                        cursor: 'pointer',
-                        border: 2,
-                        borderColor: currentProduct.inventoryId === item.id ? 'success.main' : 'transparent',
-                        bgcolor: currentProduct.inventoryId === item.id ? 'success.50' : 'white',
-                        '&:hover': { 
-                          borderColor: 'primary.main',
-                          boxShadow: 3,
-                          transform: 'translateY(-2px)',
-                          transition: 'all 0.2s ease-in-out'
-                        }
-                      }}
-                      onClick={() => {
-                        const currentVisit = watchedVisits[activeVisit];
-                        
-                        // Check if we're selecting for trial (trial service is active and trial type is home)
-                        if (currentVisit?.hearingAidTrial && currentVisit?.trialHearingAidType === 'home') {
-                          // For home trials, just set the serial number and basic info
-                          updateVisit(activeVisit, 'trialSerialNumber', item.serialNumber || '');
-                          updateVisit(activeVisit, 'trialHearingAidBrand', item.company || '');
-                          updateVisit(activeVisit, 'trialHearingAidModel', item.productName || '');
-                          setInventoryDialogOpen(false);
-                          resetInventorySelection();
-                        } else {
-                          // For sales, set the full product details
-                          const gstPercent = item.gstApplicable ? (item.gstPercentage || 18) : 0;
-                          const gstAmount = item.mrp * gstPercent / 100;
-                          setCurrentProduct(prev => ({
-                            ...prev,
-                            inventoryId: item.id,
-                            productId: item.productId,
-                            name: item.productName,
-                            hsnCode: item.hsnCode || '',
-                            mrp: item.mrp,
-                            dealerPrice: item.dealerPrice,
-                            gstPercent,
-                            gstApplicable: item.gstApplicable,
-                            gstType: item.gstType,
-                            unit: 'piece',
-                            quantity: 1,
-                            serialNumber: item.serialNumber || '',
-                            sellingPrice: item.mrp,
-                            discountPercent: 0,
-                            discountAmount: 0,
-                            gstAmount,
-                            finalAmount: item.mrp + gstAmount,
-                            company: item.company,
-                            location: item.location
-                          }));
-                          setInventoryDialogOpen(false);
-                          resetInventorySelection();
-                        }
-                      }}
-                    >
-                      <CardContent sx={{ p: 3 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-                          <Avatar sx={{ bgcolor: 'success.main', width: 48, height: 48 }}>
-                            <InventoryIcon />
-                          </Avatar>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1rem' }}>
-                              {item.serialNumber ? `SN: ${item.serialNumber}` : `Qty: ${item.quantity}`}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              {item.location}
-                            </Typography>
-                          </Box>
-                          <Typography variant="h6" color="primary.main" sx={{ fontWeight: 600 }}>
-                            ₹{item.mrp?.toLocaleString()}
-                          </Typography>
-                        </Box>
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                          <Chip 
-                            label={item.status} 
-                            size="small" 
-                            color="secondary" 
-                            variant="filled"
-                          />
-                          {item.dealerPrice && (
-                            <Chip 
-                              label={`Margin: ₹${((item.mrp || 0) - (item.dealerPrice || 0)).toLocaleString()}`}
-                              size="small" 
-                              color="success" 
-                              variant="outlined"
-                            />
-                          )}
-                        </Box>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </Box>
-              </Box>
-            )}
-          </Box>
-        </DialogContent>
-
-        <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
-          <Button
-            onClick={() => {
-              setInventoryDialogOpen(false);
-              resetInventorySelection();
-            }}
-            variant="outlined"
-            sx={{ borderRadius: 2 }}
-          >
-            Cancel
-          </Button>
-          {currentProduct.inventoryId && (
-            <Button
-              onClick={() => {
-                setInventoryDialogOpen(false);
-                resetInventorySelection();
-              }}
-              variant="contained"
-              sx={{ borderRadius: 2 }}
-            >
-              Selected: {currentProduct.name}
-            </Button>
-          )}
-        </DialogActions>
-      </Dialog>
+        onClose={() => setInventoryDialogOpen(false)}
+        items={
+          (inventoryPickerMode === 'hearing_device' ? hearingDeviceInventory : accessoryInventory) as EnquiryInventoryRow[]
+        }
+        mode={inventoryPickerMode}
+        selectedInventoryId={
+          inventoryPickerMode === 'hearing_device' ? currentProduct.inventoryId || undefined : undefined
+        }
+        formatCurrency={formatCurrency}
+        onSelectItem={handleInventoryItemSelected}
+      />
 
       {/* Staff Management Dialog */}
       <Dialog 

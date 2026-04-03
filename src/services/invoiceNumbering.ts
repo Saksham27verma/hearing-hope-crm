@@ -15,6 +15,7 @@ import type { InvoiceNumberSettings } from '@/lib/invoice-numbering/types';
 import {
   computeDesiredNextSequence,
   formatInvoiceNumber,
+  MAX_INVOICE_SEQUENCE,
   normalizeInvoiceSettings,
   parseSequencePartFromInvoiceNumber,
 } from '@/lib/invoice-numbering/core';
@@ -104,7 +105,9 @@ export async function allocateNextInvoiceNumber(
     const snap = await transaction.get(ref);
     const settings = normalizeInvoiceSettings(snap.exists() ? (snap.data() as Record<string, unknown>) : undefined);
 
-    const n = Math.max(settings.next_number, desiredNext);
+    let n = Math.max(settings.next_number, desiredNext);
+    if (!Number.isFinite(n) || n < 1) n = 1;
+    n = Math.min(MAX_INVOICE_SEQUENCE, Math.floor(n));
     const formatted = formatInvoiceNumber(settings, n);
 
     transaction.set(
@@ -124,7 +127,7 @@ export async function allocateNextInvoiceNumber(
 
 async function inferLastInvoiceSequenceFromRecentSales(
   db: Firestore,
-  _settings: InvoiceNumberSettings,
+  settings: InvoiceNumberSettings,
   lookbackLimit: number
 ): Promise<number | null> {
   let snap;
@@ -141,7 +144,7 @@ async function inferLastInvoiceSequenceFromRecentSales(
   for (const d of snap.docs) {
     const data = d.data() as Record<string, unknown>;
     const inv = String(data.invoiceNumber || '').trim();
-    const seq = parseSequencePartFromInvoiceNumber(inv);
+    const seq = parseSequencePartFromInvoiceNumber(inv, settings);
     if (seq == null) continue;
     if (maxSeq == null || seq > maxSeq) maxSeq = seq;
   }

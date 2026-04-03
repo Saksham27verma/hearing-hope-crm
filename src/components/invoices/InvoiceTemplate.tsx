@@ -282,6 +282,10 @@ export interface InvoiceData {
     amount: number;
     hsnCode?: string;
     sellingPrice?: number;
+    /** Row GST (qty applied), whole rupees — used by HTML templates to match CRM lines. */
+    taxLineAmount?: number;
+    /** Row inclusive total (qty applied), whole rupees — matches CRM final × qty. */
+    inclusiveLineAmount?: number;
   }[];
   
   // Totals

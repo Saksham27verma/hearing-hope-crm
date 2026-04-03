@@ -39,6 +39,15 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
 import { fetchExistingSerialNumbers, SerialIndex } from '@/utils/serialUtils';
+import {
+  getHeadOfficeId,
+  fetchAllCenters,
+  getCentersForProfile,
+  resolveCenterIdForForm,
+  getCenterLabel,
+  type Center,
+} from '@/utils/centerUtils';
+import { useAuth } from '@/context/AuthContext';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
@@ -46,6 +55,7 @@ import {
   CurrencyRupee as RupeeIcon,
   Receipt as ReceiptIcon,
   BusinessCenter as BusinessIcon,
+  LocationOn as LocationOnIcon,
   DateRange as DateRangeIcon,
   Search as SearchIcon,
   FilterList as FilterListIcon,
@@ -127,6 +137,8 @@ interface MaterialInward {
     name: string;
   };
   company: string;
+  /** Firestore center id — stock location for this inward. */
+  location?: string;
   products: MaterialProduct[];
   totalAmount: number;
   receivedDate: Timestamp;
@@ -159,6 +171,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   onCancel,
   isSaving = false,
 }) => {
+  const { userProfile } = useAuth();
   // Console logging to debug
   console.log("MaterialInForm received parties:", parties);
   console.log("Parties array length:", parties ? parties.length : 0);
@@ -218,7 +231,24 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   // filtered products state
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [selectedProductType, setSelectedProductType] = useState<string | null>(null);
-  
+
+  const [centers, setCenters] = useState<Center[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await fetchAllCenters();
+        if (!cancelled) setCenters(getCentersForProfile(all, userProfile ?? null));
+      } catch (e) {
+        console.error('MaterialInForm: failed to load centers', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userProfile]);
+
   // Initialize form with initial data if provided
   useEffect(() => {
     if (initialData) {
@@ -228,6 +258,25 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
     // Initialize filtered products
     setFilteredProducts(products);
   }, [initialData, products]);
+
+  // Default location (head office); resolve legacy name→id; keep parent-provided valid id
+  useEffect(() => {
+    if (centers.length === 0) return;
+
+    (async () => {
+      let resolved = initialData
+        ? resolveCenterIdForForm(initialData.location, centers)
+        : '';
+      if (!resolved) resolved = await getHeadOfficeId();
+
+      setMaterialData((prev) => {
+        if (prev.location && centers.some((c) => c.id === prev.location)) {
+          return prev;
+        }
+        return { ...prev, location: resolved };
+      });
+    })();
+  }, [centers, initialData?.id, initialData?.location]);
 
   // Load all existing serial numbers once so we can prevent duplicates
   useEffect(() => {
@@ -295,6 +344,10 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       
       if (!materialData.supplier.id) {
         stepErrors.supplier = 'Supplier is required';
+      }
+
+      if (!materialData.location?.trim()) {
+        stepErrors.location = 'Center (stock location) is required';
       }
       
       // If there are errors, show them and prevent proceeding
@@ -771,7 +824,32 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
           </Box>
           
           <Box>
-            
+            <FormControl fullWidth error={!!errors.location} size="medium" required>
+              <InputLabel id="material-in-center-label">Center (stock at)</InputLabel>
+              <Select
+                labelId="material-in-center-label"
+                value={
+                  centers.some((c) => c.id === materialData.location)
+                    ? materialData.location
+                    : ''
+                }
+                label="Center (stock at)"
+                onChange={(e) => handleDetailsChange('location', e.target.value)}
+              >
+                {centers
+                  .slice()
+                  .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                  .map((c) => (
+                    <MenuItem key={c.id} value={c.id}>
+                      {c.name}
+                    </MenuItem>
+                  ))}
+              </Select>
+              {errors.location && <FormHelperText>{errors.location}</FormHelperText>}
+              {!centers.length && (
+                <FormHelperText>Loading centers…</FormHelperText>
+              )}
+            </FormControl>
           </Box>
           
           <Box>
@@ -901,8 +979,14 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
             </Typography>
           </Box>
           <Box>
-            <Typography variant="body2">
-
+            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <LocationOnIcon fontSize="inherit" color="action" />
+              Center:{' '}
+              <strong>
+                {materialData.location
+                  ? getCenterLabel(materialData.location, centers)
+                  : 'Not selected'}
+              </strong>
             </Typography>
             <Typography variant="body2">
               Company: <strong>{materialData.company || 'Not selected'}</strong>
@@ -1485,7 +1569,10 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                   <Typography variant="body2" fontWeight="medium">{materialData.company}</Typography>
                 </Box>
                 <Box display="flex" justifyContent="space-between">
-
+                  <Typography variant="body2" color="text.secondary">Center (stock at):</Typography>
+                  <Typography variant="body2" fontWeight="medium">
+                    {materialData.location ? getCenterLabel(materialData.location, centers) : '—'}
+                  </Typography>
                 </Box>
               </Stack>
             </Box>
@@ -1691,7 +1778,12 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
         </Box>
         
         <Box>
-
+          <Typography variant="subtitle2" gutterBottom>
+            Stock location
+          </Typography>
+          <Typography variant="body2" gutterBottom>
+            {materialData.location ? getCenterLabel(materialData.location, centers) : '—'}
+          </Typography>
           
           {materialData.notes && (
             <>

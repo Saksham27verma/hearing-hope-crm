@@ -1,7 +1,13 @@
 import type { InvoiceData } from '@/components/invoices/InvoiceTemplate';
 
 export function formatInvoiceCurrency(amount: number) {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount);
+  const n = Math.round(Number(amount) || 0);
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(n);
 }
 
 type InvoiceLineItem = InvoiceData['items'][number] & {
@@ -9,7 +15,49 @@ type InvoiceLineItem = InvoiceData['items'][number] & {
   sellingPrice?: number;
   unitPrice?: number;
   hsnCode?: string;
+  /** Total GST for the row (qty applied), whole rupees — matches CRM enquiry lines. */
+  taxLineAmount?: number;
+  /** Inclusive line total (qty applied), whole rupees — matches CRM `finalAmount` × qty. */
+  inclusiveLineAmount?: number;
 };
+
+/** GST and line total aligned to CRM: whole rupees, inclusive total is source of truth when provided. */
+function lineGstAndTotalForHtmlRow(
+  item: InvoiceLineItem,
+  invoiceData: InvoiceData
+): { linePreTax: number; gstAmount: number; lineTotal: number } {
+  const quantity = item.quantity || 1;
+  const unitSelling = Number(item.rate) || Number(item.sellingPrice) || 0;
+  const linePreTax = Math.round(unitSelling * quantity);
+  const gstPercent =
+    typeof item.gstPercent === 'number' && !Number.isNaN(item.gstPercent)
+      ? item.gstPercent
+      : Number((invoiceData as { taxRate?: number }).taxRate) || 0;
+
+  const inclusiveKnown =
+    item.inclusiveLineAmount != null && !Number.isNaN(Number(item.inclusiveLineAmount));
+  const inclusive = inclusiveKnown ? Math.round(Number(item.inclusiveLineAmount)) : null;
+
+  let gstAmount =
+    item.taxLineAmount != null && !Number.isNaN(Number(item.taxLineAmount))
+      ? Math.round(Number(item.taxLineAmount))
+      : Math.round((linePreTax * gstPercent) / 100);
+
+  let lineTotal = inclusive ?? linePreTax + gstAmount;
+
+  if (inclusive != null) {
+    gstAmount = Math.max(0, inclusive - linePreTax);
+    lineTotal = inclusive;
+  } else {
+    const drift = lineTotal - (linePreTax + gstAmount);
+    if (drift !== 0 && Math.abs(drift) <= 1) {
+      gstAmount += drift;
+      lineTotal = linePreTax + gstAmount;
+    }
+  }
+
+  return { linePreTax, gstAmount, lineTotal };
+}
 
 /**
  * Discount % for display in HTML tables. Never use `discount` (rupees) as a percentage —
@@ -84,18 +132,19 @@ export function processInvoiceHtmlTemplate(
         const quantity = item.quantity || 1;
         const unitSelling = Number(item.rate) || Number(item.sellingPrice) || 0;
         const mrpUnit = Number(item.mrp) > 0 ? Number(item.mrp) : unitSelling;
-        const totalMRP = mrpUnit * quantity;
+        const totalMRP = Math.round(mrpUnit * quantity);
         const discountPct = lineItemDiscountPercent(item);
-        const totalSellingPrice = unitSelling * quantity;
+        const { linePreTax: totalSellingPrice, gstAmount, lineTotal } = lineGstAndTotalForHtmlRow(
+          item,
+          invoiceData
+        );
         const gstPercent =
           typeof item.gstPercent === 'number' && !Number.isNaN(item.gstPercent)
             ? item.gstPercent
             : Number((invoiceData as { taxRate?: number }).taxRate) || 0;
-        const gstAmount = (totalSellingPrice * gstPercent) / 100;
         const hsn = item.hsnCode || '9021';
 
         if (isSixColumnInvoiceTemplate) {
-          const lineTotal = totalSellingPrice + gstAmount;
           return `
         <tr>
           <td>

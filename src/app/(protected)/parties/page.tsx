@@ -5,6 +5,7 @@ import {
   Box,
   Typography,
   Button,
+  IconButton,
   Paper,
   Table,
   TableBody,
@@ -12,7 +13,6 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  IconButton,
   TextField,
   Dialog,
   DialogActions,
@@ -53,6 +53,8 @@ import {
   Info as InfoIcon,
   Visibility as VisibilityIcon,
   Store as StoreIcon,
+  OpenInNew as OpenInNewIcon,
+  SwapVert as SwapVertIcon,
 } from '@mui/icons-material';
 
 import { useAuth } from '@/context/AuthContext';
@@ -66,10 +68,9 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
-  query,
-  where,
   Timestamp,
 } from 'firebase/firestore';
+import { fetchAllCenters, getCenterLabel, type Center } from '@/utils/centerUtils';
 
 // Define the Purchase interface to match Firestore structure
 interface PurchaseParty {
@@ -80,10 +81,27 @@ interface PurchaseParty {
 interface Purchase {
   id: string;
   party: PurchaseParty;
+  invoiceNo: string;
   company: string;
+  location?: string;
   totalAmount: number;
+  gstType: string;
+  gstPercentage: number;
+  purchaseDate: Timestamp;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** One row in the party purchase ledger (from `purchases`). */
+interface PartyPurchaseLedgerRow {
+  id: string;
+  purchaseDate: Timestamp;
+  invoiceNo: string;
+  company: string;
+  location?: string;
+  totalAmount: number;
+  gstType: string;
+  gstPercentage: number;
 }
 
 // GST Types
@@ -131,6 +149,8 @@ interface Party {
   updatedAt: any;
   // Business metrics (will be calculated, not stored)
   transactions?: PartyTransaction;
+  /** Purchase invoices where this party is the supplier */
+  purchaseLedger?: PartyPurchaseLedgerRow[];
 }
 
 export default function PartiesPage() {
@@ -149,6 +169,8 @@ export default function PartiesPage() {
   const [previewParty, setPreviewParty] = useState<Party | null>(null);
   const [openPreviewDialog, setOpenPreviewDialog] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [ledgerSortNewestFirst, setLedgerSortNewestFirst] = useState(true);
+  const [centers, setCenters] = useState<Center[]>([]);
   
   // Form state
   const [formData, setFormData] = useState<Omit<Party, 'id' | 'createdAt' | 'updatedAt' | 'transactions'>>({
@@ -218,6 +240,21 @@ export default function PartiesPage() {
       }
     }
   }, [user, loading, isAllowedModule]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchAllCenters();
+        if (!cancelled) setCenters(list);
+      } catch (e) {
+        console.error('Parties: failed to load centers', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   
   // Calculate transaction amounts for each party
   const calculateTransactions = async (parties: Party[]): Promise<Party[]> => {
@@ -241,12 +278,17 @@ export default function PartiesPage() {
         };
       });
       
-      // Calculate purchase totals
-      purchases.forEach(purchase => {
+      const ledgerByParty: Record<string, PartyPurchaseLedgerRow[]> = {};
+      parties.forEach((p) => {
+        ledgerByParty[p.id] = [];
+      });
+
+      // Calculate purchase totals + per-party ledger rows
+      purchases.forEach((purchase) => {
         if (purchase.party && purchase.party.id) {
           const partyId = purchase.party.id;
           const amount = purchase.totalAmount || 0;
-          
+
           // Only process if we have this party in our list
           if (transactionsByParty[partyId]) {
             if (purchase.company === 'Hope Enterprises') {
@@ -256,13 +298,37 @@ export default function PartiesPage() {
             }
             transactionsByParty[partyId].total += amount;
           }
+
+          if (ledgerByParty[partyId]) {
+            const pAny = purchase as Purchase & { createdAt?: Timestamp };
+            ledgerByParty[partyId].push({
+              id: purchase.id,
+              purchaseDate: purchase.purchaseDate || pAny.createdAt,
+              invoiceNo: purchase.invoiceNo || '—',
+              company: purchase.company || '—',
+              location: purchase.location,
+              totalAmount: amount,
+              gstType: purchase.gstType || 'LGST',
+              gstPercentage: Number(purchase.gstPercentage) || 0,
+            });
+          }
         }
       });
-      
+
+      // Sort ledger: newest first by default (seconds)
+      Object.keys(ledgerByParty).forEach((pid) => {
+        ledgerByParty[pid].sort((a, b) => {
+          const sa = a.purchaseDate?.seconds ?? 0;
+          const sb = b.purchaseDate?.seconds ?? 0;
+          return sb - sa;
+        });
+      });
+
       // Add transaction data to parties
-      return parties.map(party => ({
+      return parties.map((party) => ({
         ...party,
-        transactions: transactionsByParty[party.id]
+        transactions: transactionsByParty[party.id],
+        purchaseLedger: ledgerByParty[party.id] || [],
       }));
     } catch (error) {
       console.error('Error calculating transactions:', error);
@@ -487,12 +553,14 @@ export default function PartiesPage() {
   // Handle preview dialog
   const handlePreviewOpen = (party: Party) => {
     setPreviewParty(party);
+    setActiveTab(0);
     setOpenPreviewDialog(true);
   };
   
   const handlePreviewClose = () => {
     setOpenPreviewDialog(false);
     setPreviewParty(null);
+    setActiveTab(0);
   };
   
   const handleEditFromPreview = () => {
@@ -548,6 +616,12 @@ export default function PartiesPage() {
       return 'Invalid date';
     }
   };
+
+  const purchaseLedgerGrandTotal = (row: PartyPurchaseLedgerRow): number => {
+    const sub = row.totalAmount || 0;
+    if (row.gstType === 'GST Exempted') return sub;
+    return sub * (1 + (Number(row.gstPercentage) || 0) / 100);
+  };
   
   // Render party details for preview
   const renderPartyDetails = (party: Party) => {
@@ -560,6 +634,7 @@ export default function PartiesPage() {
         >
           <Tab label="Basic Info" />
           <Tab label="Business Summary" />
+          <Tab label="Purchase ledger" />
         </Tabs>
         
         {activeTab === 0 && (
@@ -831,6 +906,103 @@ export default function PartiesPage() {
                 </Paper>
               </Grid>
             </Grid>
+          </Box>
+        )}
+
+        {activeTab === 2 && (
+          <Box sx={{ p: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2, mb: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 'medium' }}>
+                Purchase ledger
+              </Typography>
+              <Tooltip title={ledgerSortNewestFirst ? 'Newest first' : 'Oldest first'}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<SwapVertIcon />}
+                  onClick={() => setLedgerSortNewestFirst((v) => !v)}
+                >
+                  {ledgerSortNewestFirst ? 'Newest first' : 'Oldest first'}
+                </Button>
+              </Tooltip>
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Purchase invoices where this party is the supplier. Subtotal is before GST; total includes GST where applicable.
+            </Typography>
+
+            {(() => {
+              const rows = [...(party.purchaseLedger || [])];
+              rows.sort((a, b) => {
+                const sa = a.purchaseDate?.seconds ?? 0;
+                const sb = b.purchaseDate?.seconds ?? 0;
+                return ledgerSortNewestFirst ? sb - sa : sa - sb;
+              });
+              const sumSub = rows.reduce((s, r) => s + (r.totalAmount || 0), 0);
+              const sumGrand = rows.reduce((s, r) => s + purchaseLedgerGrandTotal(r), 0);
+
+              if (rows.length === 0) {
+                return (
+                  <Paper elevation={0} sx={{ p: 3, bgcolor: 'background.default', borderRadius: 2 }}>
+                    <Typography color="text.secondary">No purchase invoices found for this party.</Typography>
+                  </Paper>
+                );
+              }
+
+              return (
+                <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ bgcolor: 'action.hover' }}>
+                        <TableCell>Date</TableCell>
+                        <TableCell>Invoice #</TableCell>
+                        <TableCell>Company</TableCell>
+                        <TableCell>Center</TableCell>
+                        <TableCell align="right">Subtotal</TableCell>
+                        <TableCell align="right">Total (incl. GST)</TableCell>
+                        <TableCell align="center">Open</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {rows.map((row) => (
+                        <TableRow key={row.id} hover>
+                          <TableCell>{formatDate(row.purchaseDate)}</TableCell>
+                          <TableCell>{row.invoiceNo}</TableCell>
+                          <TableCell>{row.company}</TableCell>
+                          <TableCell>{row.location ? getCenterLabel(row.location, centers) : '—'}</TableCell>
+                          <TableCell align="right">{formatCurrency(row.totalAmount || 0)}</TableCell>
+                          <TableCell align="right">{formatCurrency(purchaseLedgerGrandTotal(row))}</TableCell>
+                          <TableCell align="center">
+                            <Tooltip title="Open in Purchase Management">
+                              <IconButton
+                                size="small"
+                                color="primary"
+                                onClick={() =>
+                                  window.open(`/purchase-management#id=${encodeURIComponent(row.id)}`, '_blank')
+                                }
+                              >
+                                <OpenInNewIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow sx={{ bgcolor: 'action.selected' }}>
+                        <TableCell colSpan={4} sx={{ fontWeight: 'bold' }}>
+                          Total ({rows.length} invoices)
+                        </TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 'bold' }}>
+                          {formatCurrency(sumSub)}
+                        </TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 'bold' }}>
+                          {formatCurrency(sumGrand)}
+                        </TableCell>
+                        <TableCell />
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              );
+            })()}
           </Box>
         )}
       </Box>

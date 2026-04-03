@@ -86,27 +86,41 @@ export type StaffSaleProductLine = {
   company?: string;
   serialNumber: string;
   mrp: number;
+  /** Pre-tax unit selling price (same as CRM enquiry form — source of truth). */
   sellingPrice: number;
   discountPercent: number;
   gstPercent: number;
   quantity: number;
+  warranty?: string;
 };
 
 export type StaffSaleDetails = {
-  product: StaffSaleProductLine;
   whichEar: 'left' | 'right' | 'both';
+  /** One or more inventory lines (serials). Legacy clients sent a single flat object — normalized to one line in parseSaleDetails. */
+  products: StaffSaleProductLine[];
 };
 
+const roundInrRupee = (n: number) => Math.round(Number(n) || 0);
+
+/** Max 2 decimal places for discount % — matches SimplifiedEnquiryForm. */
+const roundDiscountPercent = (value: number) =>
+  Math.round(Math.max(0, Math.min(100, Number(value) || 0)) * 100) / 100;
+
+/**
+ * Mirrors CRM enquiry hearing-aid line math: selling price is pre-tax; discount from MRP vs selling;
+ * GST on selling amount.
+ */
 function buildHearingAidProductFromSaleLine(line: StaffSaleProductLine, saleDate: string) {
   const qty = Math.max(1, Math.floor(Number(line.quantity) || 1));
-  const mrp = Number(line.mrp) || 0;
-  const sellingPrice = Number(line.sellingPrice) || 0;
-  const discountPercent = Math.max(0, Math.min(100, Number(line.discountPercent) || 0));
+  const mrp = roundInrRupee(line.mrp);
+  let sellingPreTax = roundInrRupee(line.sellingPrice);
+  if (mrp > 0 && sellingPreTax > mrp) sellingPreTax = mrp;
+  const discountAmount = roundInrRupee(Math.max(0, mrp - sellingPreTax));
+  const discountPercent = mrp > 0 ? roundDiscountPercent((discountAmount / mrp) * 100) : 0;
   const gstPercent = Math.max(0, Number(line.gstPercent) || 0);
-  const discountAmount = (sellingPrice * discountPercent) / 100;
-  const taxable = Math.max(0, sellingPrice - discountAmount);
-  const gstAmount = (taxable * gstPercent) / 100;
-  const finalAmount = taxable + gstAmount;
+  const gstAmount = gstPercent > 0 ? roundInrRupee((sellingPreTax * gstPercent) / 100) : 0;
+  const finalAmount = roundInrRupee(sellingPreTax + gstAmount);
+  const warranty = String(line.warranty ?? '').trim();
 
   return {
     id: uuidv4(),
@@ -119,7 +133,7 @@ function buildHearingAidProductFromSaleLine(line: StaffSaleProductLine, saleDate
     saleDate,
     mrp,
     dealerPrice: 0,
-    sellingPrice,
+    sellingPrice: sellingPreTax,
     discountPercent,
     discountAmount,
     gstPercent,
@@ -127,7 +141,7 @@ function buildHearingAidProductFromSaleLine(line: StaffSaleProductLine, saleDate
     finalAmount,
     gstApplicable: gstPercent > 0,
     gstType: 'IGST' as const,
-    warranty: '',
+    warranty,
     company: line.company || '',
     location: '',
   };
@@ -555,29 +569,28 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
   }
 
   if (args.receiptType === 'invoice' && args.sale) {
-    const line = args.sale.product;
+    const lines = args.sale.products;
     const whichEar = args.sale.whichEar;
     const saleDate = todayYmd;
-    const productRow = buildHearingAidProductFromSaleLine(line, saleDate);
-    const products = [productRow];
-    const grossMRP = products.reduce((s, p) => s + p.mrp * (p.quantity || 1), 0);
-    const grossSalesBeforeTax = products.reduce((s, p) => s + p.sellingPrice * (p.quantity || 1), 0);
-    const taxAmount = products.reduce((s, p) => s + p.gstAmount * (p.quantity || 1), 0);
-    const salesAfterTax = products.reduce((s, p) => s + p.finalAmount * (p.quantity || 1), 0);
+    const productRows = lines.map((line) => buildHearingAidProductFromSaleLine(line, saleDate));
+    const totals = sumHearingAidVisitTotalsFromProducts(productRows);
+    const first = lines[0];
+    const modelLabel =
+      lines.length <= 1 ? first.name : `${first.name} (+${lines.length - 1} more)`;
 
     Object.assign(v, {
       hearingAidSale: true,
       hearingAidBrand: args.whoSoldName.trim(),
-      hearingAidModel: line.name,
+      hearingAidModel: modelLabel,
       hearingAidType: (args.saleDeviceType || '').trim(),
-      hearingAidProductId: line.productId,
+      hearingAidProductId: first.productId,
       whichEar,
-      trialSerialNumber: line.serialNumber,
-      products,
-      grossMRP,
-      grossSalesBeforeTax,
-      taxAmount,
-      salesAfterTax,
+      trialSerialNumber: first.serialNumber,
+      products: productRows,
+      grossMRP: totals.grossMRP,
+      grossSalesBeforeTax: totals.grossSalesBeforeTax,
+      taxAmount: totals.taxAmount,
+      salesAfterTax: totals.salesAfterTax,
       purchaseDate: saleDate,
       purchaseFromTrial: false,
       journeyStage: 'sale',

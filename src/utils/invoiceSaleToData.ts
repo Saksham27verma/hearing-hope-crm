@@ -4,11 +4,11 @@ import {
   accessoryLinesTotal,
   visitAccessoryToSaleAccessories,
 } from '@/lib/sales-invoicing/visitAccessoryInvoice';
-import { isProvisionalInvoiceNumber } from '@/lib/invoice-numbering/core';
+import { isProvisionalInvoiceNumber, normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 
 /** Non-empty and not a provisional (PROV-*) placeholder — required before accountant-facing PDFs. */
 export function saleHasBillableInvoiceNumber(inv: unknown): boolean {
-  const s = String(inv ?? '').trim();
+  const s = normalizeInvoiceNumberString(inv);
   return s.length > 0 && !isProvisionalInvoiceNumber(s);
 }
 
@@ -25,9 +25,9 @@ export function enquiryVisitToInvoiceSalePayload(
   const hearingAidPreTax = Math.max(0, salesAfterTax - taxAmount);
   const totalAmount = hearingAidPreTax + accessoryTotal;
   const grandTotal = salesAfterTax + accessoryTotal;
-  const invoiceNumberFromRecord = String(
-    visit?.invoiceNumber || visit?.salesInvoiceNumber || enquiry?.invoiceNumber || ''
-  ).trim();
+  const invoiceNumberFromRecord = normalizeInvoiceNumberString(
+    visit?.invoiceNumber ?? visit?.salesInvoiceNumber ?? enquiry?.invoiceNumber ?? ''
+  );
   const invoiceNumber = saleHasBillableInvoiceNumber(invoiceNumberFromRecord) ? invoiceNumberFromRecord : '';
   return {
     products: visit?.products || [],
@@ -71,19 +71,26 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
   const products = (sale.products as Record<string, unknown>[]) || [];
   const accessories = (sale.accessories as Record<string, unknown>[]) || [];
 
+  const lineQty = (p: Record<string, unknown>) => {
+    const q = Math.floor(Number(p.quantity) || 1);
+    return !Number.isFinite(q) || q < 1 ? 1 : Math.min(9999, q);
+  };
+
   const productSub =
     products.reduce((sum: number, product: Record<string, unknown>) => {
-      return sum + (Number(product.sellingPrice) || Number(product.finalAmount) || 0) * (Number(product.quantity) || 1);
+      const unit = Number(product.sellingPrice) || Number(product.finalAmount) || 0;
+      return sum + Math.round(unit * lineQty(product));
     }, 0) || 0;
 
   const accessorySub = accessories.reduce((sum: number, a: Record<string, unknown>) => {
     if (a.isFree) return sum;
-    return sum + (Number(a.price) || 0) * (Number(a.quantity) || 1);
+    const qty = lineQty(a);
+    return sum + Math.round((Number(a.price) || 0) * qty);
   }, 0);
 
   const subtotal = productSub + accessorySub;
 
-  const totalGST = Number(sale.gstAmount) || 0;
+  const totalGST = Math.round(Number(sale.gstAmount) || 0);
   const totalDiscount =
     products.reduce((sum: number, product: Record<string, unknown>) => {
       const mrp = Number(product.mrp) || 0;
@@ -92,32 +99,61 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
       return sum + (discount > 0 ? discount : 0);
     }, 0) || 0;
 
-  const computedGrand = subtotal + totalGST;
-  const grandTotal =
+  const computedGrand = Math.round(subtotal + totalGST);
+  const grandTotal = Math.round(
     typeof sale.grandTotal === 'number' && !Number.isNaN(sale.grandTotal)
       ? sale.grandTotal
       : typeof sale.totalAmount === 'number' && !Number.isNaN(sale.totalAmount)
         ? Number(sale.totalAmount) + totalGST
-        : computedGrand;
+        : computedGrand
+  );
 
   const productRows =
-    products.map((product: Record<string, unknown>, index: number) => ({
-      id: (product.id as string) || `item-${index}`,
-      name: (product.name as string) || 'Unknown Product',
-      description: (product.type as string) || '',
-      serialNumber: (product.serialNumber as string) || '',
-      quantity: Number(product.quantity) || 1,
-      rate: Number(product.sellingPrice) || Number(product.finalAmount) || 0,
-      mrp: Number(product.mrp) || 0,
-      discount: Number(product.discount) || 0,
-      gstPercent: Number(product.gstPercent) || Number(sale.gstPercentage) || 0,
-      amount:
-        (Number(product.sellingPrice) || Number(product.finalAmount) || 0) * (Number(product.quantity) || 1),
-    })) || [];
+    products.map((product: Record<string, unknown>, index: number) => {
+      const qty = lineQty(product);
+      const unitSp = Number(product.sellingPrice) || Number(product.finalAmount) || 0;
+      const linePreTax = Math.round(unitSp * qty);
+      const gstPct = Number(product.gstPercent) || Number(sale.gstPercentage) || 0;
+      const gstExempt = product.gstApplicable === false;
+      const unitGst = Number(product.gstAmount);
+      const lineGst = gstExempt
+        ? 0
+        : Number.isFinite(unitGst)
+          ? Math.round(unitGst * qty)
+          : Math.round((linePreTax * gstPct) / 100);
+      const unitFin = Number(product.finalAmount);
+      const lineInclusive =
+        Number.isFinite(unitFin) && unitFin > 0 ? Math.round(unitFin * qty) : linePreTax + lineGst;
+      const typeOrCompany = String(product.type ?? product.company ?? '').trim();
+      const warranty = String(product.warranty ?? '').trim();
+      const description = warranty
+        ? [typeOrCompany, `Warranty: ${warranty}`].filter(Boolean).join(' · ')
+        : typeOrCompany;
+
+      return {
+        id: (product.id as string) || `item-${index}`,
+        name: (product.name as string) || 'Unknown Product',
+        description,
+        serialNumber: (product.serialNumber as string) || '',
+        quantity: qty,
+        rate: unitSp,
+        mrp: Number(product.mrp) || 0,
+        discount: Number(product.discount) || 0,
+        discountPercent:
+          typeof product.discountPercent === 'number' && !Number.isNaN(product.discountPercent)
+            ? product.discountPercent
+            : undefined,
+        gstPercent: gstPct,
+        amount: linePreTax,
+        taxLineAmount: lineGst,
+        inclusiveLineAmount: lineInclusive,
+      };
+    }) || [];
 
   const accessoryRows = accessories.map((a: Record<string, unknown>, index: number) => {
-    const qty = Number(a.quantity) || 1;
+    const qty = lineQty(a);
     const rate = a.isFree ? 0 : Number(a.price) || 0;
+    const linePreTax = Math.round(rate * qty);
     return {
       id: (a.id as string) || `acc-${index}`,
       name: (a.name as string) || 'Accessory',
@@ -128,13 +164,15 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
       mrp: rate,
       discount: 0,
       gstPercent: 0,
-      amount: rate * qty,
+      amount: linePreTax,
+      taxLineAmount: 0,
+      inclusiveLineAmount: linePreTax,
     };
   });
 
   const items = [...productRows, ...accessoryRows];
 
-  const invoiceNumber = (sale.invoiceNumber as string) || '—';
+  const invoiceNumber = normalizeInvoiceNumberString(sale.invoiceNumber) || '—';
   const invoiceDate = formatInvoiceDateLabel(sale.saleDate);
 
   const refDoc = sale.referenceDoctor as { name?: string } | undefined;

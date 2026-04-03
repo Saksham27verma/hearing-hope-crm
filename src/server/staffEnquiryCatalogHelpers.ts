@@ -31,12 +31,13 @@ export function buildCatalogHearingAidProductLine(args: {
   quantity: number;
 }) {
   const { product, saleDateYmd } = args;
-  const mrp = Math.max(0, Number(args.mrpPerUnit) || 0);
+  const mrp = Math.round(Math.max(0, Number(args.mrpPerUnit) || 0));
   const discountPercent = 0;
   const discountAmount = 0;
   const sellingPrice = mrp;
   const gstPercent = product.gstPercentage ?? 18;
-  const gstAmount = gstPercent > 0 ? (sellingPrice * gstPercent) / 100 : 0;
+  const gstAmount =
+    gstPercent > 0 && product.gstApplicable !== false ? Math.round((sellingPrice * gstPercent) / 100) : 0;
   const finalAmount = sellingPrice + gstAmount;
   const qty = Math.max(1, Math.floor(Number(args.quantity) || 1));
 
@@ -66,6 +67,8 @@ export function buildCatalogHearingAidProductLine(args: {
   };
 }
 
+const roundInr = (n: number) => Math.round(Number(n) || 0);
+
 export function sumHearingAidVisitTotalsFromProducts(
   products: Array<{
     mrp: number;
@@ -75,12 +78,15 @@ export function sumHearingAidVisitTotalsFromProducts(
     quantity?: number;
   }>
 ) {
-  return {
-    grossMRP: products.reduce((sum, p) => sum + p.mrp * lineQty(p), 0),
-    grossSalesBeforeTax: products.reduce((sum, p) => sum + p.sellingPrice * lineQty(p), 0),
-    taxAmount: products.reduce((sum, p) => sum + p.gstAmount * lineQty(p), 0),
-    salesAfterTax: products.reduce((sum, p) => sum + p.finalAmount * lineQty(p), 0),
-  };
+  const grossMRP = roundInr(products.reduce((sum, p) => sum + p.mrp * lineQty(p), 0));
+  let grossSalesBeforeTax = roundInr(products.reduce((sum, p) => sum + p.sellingPrice * lineQty(p), 0));
+  let taxAmount = roundInr(products.reduce((sum, p) => sum + p.gstAmount * lineQty(p), 0));
+  let salesAfterTax = roundInr(products.reduce((sum, p) => sum + p.finalAmount * lineQty(p), 0));
+  const prePlusTax = roundInr(grossSalesBeforeTax + taxAmount);
+  if (prePlusTax !== salesAfterTax && Math.abs(salesAfterTax - prePlusTax) <= 1) {
+    taxAmount = roundInr(salesAfterTax - grossSalesBeforeTax);
+  }
+  return { grossMRP, grossSalesBeforeTax, taxAmount, salesAfterTax };
 }
 
 export function docToCatalogProduct(id: string, data: DocumentData): CatalogProductDoc {

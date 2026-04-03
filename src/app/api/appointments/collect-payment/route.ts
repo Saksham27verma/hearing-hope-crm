@@ -16,7 +16,11 @@ import { docToCatalogProduct, type CatalogProductDoc } from '@/server/staffEnqui
 import { sendStaffPaymentNotifyEmail } from '@/server/sendStaffPaymentNotifyEmail';
 import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmails';
 import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
-import { invoiceNumberMatchesSettings, normalizeInvoiceSettings } from '@/lib/invoice-numbering/core';
+import {
+  invoiceNumberMatchesSettings,
+  normalizeInvoiceNumberString,
+  normalizeInvoiceSettings,
+} from '@/lib/invoice-numbering/core';
 
 /** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
 export const maxDuration = 60;
@@ -122,7 +126,7 @@ function buildSalesDocFromStaffInvoice(args: {
       : [];
 
   return {
-    invoiceNumber: firstNonEmptyString(args.visit.invoiceNumber),
+    invoiceNumber: normalizeInvoiceNumberString(args.visit.invoiceNumber),
     patientName: firstNonEmptyString(args.enquiryData.name, args.enquiryData.patientName, 'Patient'),
     phone: firstNonEmptyString(args.enquiryData.phone, args.enquiryData.mobile),
     email: firstNonEmptyString(args.enquiryData.email),
@@ -272,28 +276,24 @@ function parseTrialDetails(raw: unknown): (StaffTrialDetails & { catalogProductI
   };
 }
 
-function parseSaleDetails(raw: unknown): StaffSaleDetails | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as Record<string, unknown>;
-  const inner = (o.sale ?? o.product) as Record<string, unknown> | undefined;
-  const src = inner && typeof inner === 'object' ? inner : o;
+function parseOneStaffSaleLine(src: Record<string, unknown>): StaffSaleProductLine | null {
   const productId = String(src.productId ?? '').trim();
   const name = String(src.name ?? '').trim();
   const serialNumber = String(src.serialNumber ?? '').trim();
   const company = String(src.company ?? '').trim();
   const mrp = Number(src.mrp);
   const sellingPrice = Number(src.sellingPrice);
-  const discountPercent = Number(src.discountPercent);
+  const discountPercent = Number(src.discountPercent ?? 0);
   const gstPercent = Number(src.gstPercent);
   const quantity = Number(src.quantity);
-  const whichEar = parseWhichEar(o.whichEar ?? src.whichEar);
+  const warranty = String(src.warranty ?? '').trim();
   if (!productId || !name || !serialNumber) return null;
   if (!Number.isFinite(mrp) || mrp < 0) return null;
   if (!Number.isFinite(sellingPrice) || sellingPrice < 0) return null;
   if (!Number.isFinite(discountPercent) || discountPercent < 0 || discountPercent > 100) return null;
   if (!Number.isFinite(gstPercent) || gstPercent < 0) return null;
   if (!Number.isFinite(quantity) || quantity < 1) return null;
-  const product: StaffSaleProductLine = {
+  return {
     productId,
     name,
     company,
@@ -303,8 +303,40 @@ function parseSaleDetails(raw: unknown): StaffSaleDetails | null {
     discountPercent,
     gstPercent,
     quantity: Math.floor(quantity),
+    ...(warranty ? { warranty } : {}),
   };
-  return { product, whichEar };
+}
+
+/** Accepts `sale: { whichEar, products: [...] }` or legacy flat single-line `sale: { productId, name, ... }`. */
+function parseSaleDetails(raw: unknown): StaffSaleDetails | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const inner = (o.sale ?? o.product) as Record<string, unknown> | undefined;
+  const src = inner && typeof inner === 'object' ? inner : o;
+
+  const whichEar = parseWhichEar(o.whichEar ?? src.whichEar);
+
+  const productsRaw = src.products;
+  if (Array.isArray(productsRaw) && productsRaw.length > 0) {
+    const products: StaffSaleProductLine[] = [];
+    for (const row of productsRaw) {
+      if (!row || typeof row !== 'object') return null;
+      const line = parseOneStaffSaleLine(row as Record<string, unknown>);
+      if (!line) return null;
+      products.push(line);
+    }
+    const keys = new Set<string>();
+    for (const p of products) {
+      const k = `${p.productId}::${p.serialNumber}`;
+      if (keys.has(k)) return null;
+      keys.add(k);
+    }
+    return { whichEar, products };
+  }
+
+  const line = parseOneStaffSaleLine(src);
+  if (!line) return null;
+  return { whichEar, products: [line] };
 }
 
 async function assertSerialAvailableForSale(productId: string, serialNumber: string): Promise<boolean> {
@@ -443,17 +475,22 @@ export async function POST(req: Request) {
       trialProduct = p;
     } else {
       const s = parseSaleDetails(details?.sale ?? details?.product ?? details);
-      if (!s) {
+      if (!s || !s.products.length) {
         return jsonError(
-          'Missing or invalid sale details (product, whichEar, serial, MRP, selling price, discount %, GST %, quantity)',
+          'Missing or invalid sale details (whichEar, products[] or single line: serial, MRP, selling price, GST %, quantity)',
           400
         );
       }
-      const ok = await assertSerialAvailableForSale(s.product.productId, s.product.serialNumber);
-      if (!ok) {
-        return jsonError('Selected serial is not available in inventory (may already be sold or out)', 400);
+      for (const line of s.products) {
+        const ok = await assertSerialAvailableForSale(line.productId, line.serialNumber);
+        if (!ok) {
+          return jsonError(
+            `Serial ${line.serialNumber} is not available in inventory (may already be sold or out)`,
+            400
+          );
+        }
       }
-      const prodDoc = await loadCatalogProduct(s.product.productId);
+      const prodDoc = await loadCatalogProduct(s.products[0].productId);
       saleDeviceType = prodDoc?.type || '';
       sale = s;
     }
@@ -482,7 +519,7 @@ export async function POST(req: Request) {
       const lastIdx = merged.visits.length - 1;
       if (lastIdx >= 0) {
         const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
-        const existingInvoiceNumber = String(lastVisit.invoiceNumber || '').trim();
+        const existingInvoiceNumber = normalizeInvoiceNumberString(lastVisit.invoiceNumber);
         const settingsSnap = await db.collection('invoiceSettings').doc('default').get();
         const invSettings = normalizeInvoiceSettings(
           settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined
@@ -492,7 +529,7 @@ export async function POST(req: Request) {
           /^PROV-/i.test(existingInvoiceNumber) ||
           !invoiceNumberMatchesSettings(existingInvoiceNumber, invSettings);
         if (needsAllocation) {
-          const allocatedInvoiceNumber = await allocateNextInvoiceNumberAdmin(db);
+          const allocatedInvoiceNumber = String(await allocateNextInvoiceNumberAdmin(db)).trim();
           merged.visits[lastIdx] = { ...lastVisit, invoiceNumber: allocatedInvoiceNumber };
           if (merged.visitSchedules[lastIdx]) {
             merged.visitSchedules[lastIdx] = {
@@ -792,19 +829,21 @@ function buildPdfDetailLines(
     ].filter(Boolean);
   }
   if (receiptType === 'invoice' && args.sale) {
-    const p = args.sale.product;
-    return [
+    const lines = args.sale.products;
+    const head = [
       `Which ear: ${args.sale.whichEar}`,
       `Who sold (CRM field): ${args.whoSoldName}`,
-      `Product: ${p.name}`,
-      `Company: ${p.company || '—'}`,
-      `Serial: ${p.serialNumber}`,
-      `MRP: ₹${p.mrp}`,
-      `Selling: ₹${p.sellingPrice}`,
-      `Discount %: ${p.discountPercent}`,
-      `GST %: ${p.gstPercent}`,
-      `Qty: ${p.quantity}`,
+      `Lines: ${lines.length}`,
     ];
+    const perLine = lines.flatMap((p, i) => {
+      const w = p.warranty?.trim() ? ` · Warranty: ${p.warranty.trim()}` : '';
+      return [
+        `— Line ${i + 1}: ${p.name}${w}`,
+        `  Company: ${p.company || '—'} · Serial: ${p.serialNumber}`,
+        `  MRP: ₹${p.mrp} · Selling: ₹${p.sellingPrice} · Disc %: ${p.discountPercent} · GST %: ${p.gstPercent} · Qty: ${p.quantity}`,
+      ];
+    });
+    return [...head, ...perLine];
   }
   return [];
 }

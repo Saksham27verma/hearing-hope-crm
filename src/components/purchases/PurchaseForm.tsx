@@ -39,7 +39,15 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
 import { fetchExistingSerialNumbers, SerialIndex } from '@/utils/serialUtils';
-import { getHeadOfficeId } from '@/utils/centerUtils';
+import {
+  getHeadOfficeId,
+  fetchAllCenters,
+  getCentersForProfile,
+  resolveCenterIdForForm,
+  getCenterLabel,
+  type Center,
+} from '@/utils/centerUtils';
+import { useAuth } from '@/context/AuthContext';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
@@ -47,6 +55,7 @@ import {
   CurrencyRupee as RupeeIcon,
   Receipt as ReceiptIcon,
   BusinessCenter as BusinessIcon,
+  LocationOn as LocationOnIcon,
   DateRange as DateRangeIcon,
   Search as SearchIcon,
   FilterList as FilterListIcon,
@@ -141,6 +150,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   onCancel,
   isSaving = false
 }) => {
+  const { userProfile } = useAuth();
   console.log('PurchaseForm rendered with multi-step design');
   // Steps for the form
   const steps = ['Invoice Details', 'Product Details', 'Review & Summary'];
@@ -183,20 +193,45 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   const [scannerMode, setScannerMode] = useState(false);
   const serialInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Set head office as default location
-  useEffect(() => {
-    const setHeadOfficeLocation = async () => {
-      if (!purchaseData.location && !initialData) {
-        const headOfficeId = await getHeadOfficeId();
-        setPurchaseData(prev => ({
-          ...prev,
-          location: headOfficeId
-        }));
-      }
-    };
+  const [centers, setCenters] = useState<Center[]>([]);
 
-    setHeadOfficeLocation();
-  }, [initialData, purchaseData.location]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await fetchAllCenters();
+        if (!cancelled) setCenters(getCentersForProfile(all, userProfile ?? null));
+      } catch (e) {
+        console.error('PurchaseForm: failed to load centers', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [userProfile]);
+
+  // Default location (head office) for new purchases; resolve legacy name→id when editing
+  useEffect(() => {
+    if (centers.length === 0) return;
+
+    if (initialData?.id) {
+      (async () => {
+        let resolved = resolveCenterIdForForm(initialData.location, centers);
+        if (!resolved) resolved = await getHeadOfficeId();
+        setPurchaseData((prev) =>
+          prev.location === resolved ? prev : { ...prev, location: resolved },
+        );
+      })();
+    } else if (!initialData) {
+      (async () => {
+        const hid = await getHeadOfficeId();
+        setPurchaseData((prev) => {
+          if (prev.location) return prev;
+          return { ...prev, location: hid };
+        });
+      })();
+    }
+  }, [centers, initialData?.id, initialData?.location]);
 
   // Load all existing serial numbers once so we can prevent duplicates
   useEffect(() => {
@@ -279,6 +314,10 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       
       if (!purchaseData.company) {
         stepErrors.company = 'Company is required';
+      }
+
+      if (!purchaseData.location?.trim()) {
+        stepErrors.location = 'Center (stock location) is required';
       }
       
       if (Object.keys(stepErrors).length > 0) {
@@ -853,6 +892,36 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
               {errors.company && <FormHelperText>{errors.company}</FormHelperText>}
             </FormControl>
           </Box>
+
+          <Box>
+            <FormControl fullWidth error={!!errors.location} size="medium" required>
+              <InputLabel id="purchase-center-label">Center (stock at)</InputLabel>
+              <Select
+                labelId="purchase-center-label"
+                value={
+                  centers.some((c) => c.id === purchaseData.location)
+                    ? purchaseData.location
+                    : ''
+                }
+                label="Center (stock at)"
+                onChange={(e) => handleInvoiceDetailsChange('location', e.target.value)}
+                startAdornment={undefined}
+              >
+                {centers
+                  .slice()
+                  .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                  .map((c) => (
+                    <MenuItem key={c.id} value={c.id}>
+                      {c.name}
+                    </MenuItem>
+                  ))}
+              </Select>
+              {errors.location && <FormHelperText>{errors.location}</FormHelperText>}
+              {!centers.length && (
+                <FormHelperText>Loading centers…</FormHelperText>
+              )}
+            </FormControl>
+          </Box>
           
           <Box>
             <LocalizationProvider dateAdapter={AdapterDateFns}>
@@ -934,6 +1003,15 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
               </Typography>
               <Typography variant="body2">
                 Company: <strong>{purchaseData.company || 'Not selected'}</strong>
+              </Typography>
+              <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                <LocationOnIcon fontSize="inherit" color="action" />
+                Center:{' '}
+                <strong>
+                  {purchaseData.location
+                    ? getCenterLabel(purchaseData.location, centers)
+                    : 'Not selected'}
+                </strong>
               </Typography>
             </Box>
           </Box>
@@ -1638,6 +1716,12 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                   <Typography variant="body2" fontWeight="medium">{purchaseData.company}</Typography>
                 </Box>
                 <Box display="flex" justifyContent="space-between">
+                  <Typography variant="body2" color="text.secondary">Center (stock at):</Typography>
+                  <Typography variant="body2" fontWeight="medium">
+                    {purchaseData.location ? getCenterLabel(purchaseData.location, centers) : '—'}
+                  </Typography>
+                </Box>
+                <Box display="flex" justifyContent="space-between">
                   <Typography variant="body2" color="text.secondary">GST Type:</Typography>
                   <Typography variant="body2" fontWeight="medium">{purchaseData.gstType}</Typography>
                 </Box>
@@ -1864,6 +1948,12 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
           <Typography variant="body1" fontWeight="medium">{purchaseData.company}</Typography>
           <Typography variant="body2" color="text.secondary">
             Date: {format(new Date(purchaseData.purchaseDate.seconds * 1000), 'dd MMM yyyy')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            Center:{' '}
+            <Box component="span" fontWeight={500} color="text.primary">
+              {purchaseData.location ? getCenterLabel(purchaseData.location, centers) : '—'}
+            </Box>
           </Typography>
         </Paper>
       </Box>

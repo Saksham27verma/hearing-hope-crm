@@ -4,6 +4,7 @@ import {
   computeDesiredNextSequence,
   formatInvoiceNumber,
   maxSequenceFromInvoiceStrings,
+  MAX_INVOICE_SEQUENCE,
   normalizeInvoiceSettings,
 } from '@/lib/invoice-numbering/core';
 
@@ -45,13 +46,15 @@ export async function allocateNextInvoiceNumberAdmin(
       invoiceNumbers.push(String((s.data() as Record<string, unknown>)?.invoiceNumber || '').trim());
     }
   }
-  const maxSeq = maxSequenceFromInvoiceStrings(invoiceNumbers);
+  const maxSeq = maxSequenceFromInvoiceStrings(invoiceNumbers, baseSettings);
   const desiredNext = computeDesiredNextSequence(baseSettings, maxSeq);
 
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const settings = normalizeInvoiceSettings(snap.exists ? (snap.data() as Record<string, unknown>) : undefined);
-    const n = Math.max(settings.next_number, desiredNext);
+    let n = Math.max(settings.next_number, desiredNext);
+    if (!Number.isFinite(n) || n < 1) n = 1;
+    n = Math.min(MAX_INVOICE_SEQUENCE, Math.floor(n));
     const formatted = formatInvoiceNumber(settings, n);
     tx.set(
       ref,
