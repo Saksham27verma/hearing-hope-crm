@@ -3,7 +3,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
 import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
-import { invoiceNumberMatchesSettings, normalizeInvoiceSettings } from '@/lib/invoice-numbering/core';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -20,10 +20,6 @@ export async function POST(req: Request) {
     assertAdmin(requester);
 
     const db = adminDb();
-    const settingsSnap = await db.collection('invoiceSettings').doc('default').get();
-    const invSettings = normalizeInvoiceSettings(
-      settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined
-    );
     const enquiriesSnap = await db.collection('enquiries').get();
     let processedVisits = 0;
     let createdSales = 0;
@@ -47,10 +43,7 @@ export async function POST(req: Request) {
         processedVisits++;
 
         let invoiceNumber = String(visit.invoiceNumber || '').trim();
-        const needsInvoiceAlloc =
-          !invoiceNumber ||
-          /^PROV-/i.test(invoiceNumber) ||
-          !invoiceNumberMatchesSettings(invoiceNumber, invSettings);
+        const needsInvoiceAlloc = !saleHasBillableInvoiceNumber(invoiceNumber);
         if (needsInvoiceAlloc) {
           invoiceNumber = await allocateNextInvoiceNumberAdmin(db);
           visits[visitIndex] = { ...visit, invoiceNumber };

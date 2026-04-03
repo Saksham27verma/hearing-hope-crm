@@ -103,12 +103,9 @@ import type {
   UnifiedInvoiceRow,
 } from '@/lib/sales-invoicing/types';
 import { prefillSaleFromDerivedEnquiry } from '@/lib/sales-invoicing/enquiryPrefill';
-import {
-  allocateNextInvoiceNumber,
-  loadInvoiceNumberSettings,
-  peekNextInvoiceNumber,
-} from '@/services/invoiceNumbering';
-import { invoiceNumberMatchesSettings } from '@/lib/invoice-numbering/core';
+import { allocateNextInvoiceNumber, peekNextInvoiceNumber } from '@/services/invoiceNumbering';
+import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 
 // ─── Types ───
@@ -609,11 +606,9 @@ export default function SalesInvoicingPageInner() {
           return;
         }
       } else {
-        const invSettings = await loadInvoiceNumberSettings(db);
-        const prov = /^PROV-/i.test(finalInvoiceNumber);
-        const mismatched = !invoiceNumberMatchesSettings(finalInvoiceNumber, invSettings);
-        const emptyOrProv = !finalInvoiceNumber || prov;
-        if (emptyOrProv || (mismatched && !isAdmin)) {
+        // Never replace an already-issued invoice # on edit (e.g. patient name) — legacy formats like
+        // HDI/2026-27/006 may not match current prefix/suffix/padding rules but must stay stable for GST.
+        if (!saleHasBillableInvoiceNumber(currentSale.invoiceNumber)) {
           try {
             finalInvoiceNumber = await allocateNextInvoiceNumber(db);
           } catch (e) {
@@ -621,6 +616,8 @@ export default function SalesInvoicingPageInner() {
             setErrorMsg('Could not fix the invoice number. Check Firestore rules and `invoiceSettings/default`.');
             return;
           }
+        } else {
+          finalInvoiceNumber = normalizeInvoiceNumberString(currentSale.invoiceNumber);
         }
       }
 

@@ -33,8 +33,8 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
-import { allocateNextInvoiceNumber, loadInvoiceNumberSettings } from '@/services/invoiceNumbering';
-import { invoiceNumberMatchesSettings } from '@/lib/invoice-numbering/core';
+import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 export default function NewEnquiryPage() {
   const router = useRouter();
@@ -177,7 +177,6 @@ export default function NewEnquiryPage() {
       // Mirror sale visits into `sales` collection (so Sales & Invoicing/inventory sold tracking are consistent).
       const visits = Array.isArray(data.visits) ? [...data.visits] : [];
       let visitsPatched = false;
-      const invSettings = await loadInvoiceNumberSettings(db);
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
         const products = Array.isArray(visit.products) ? visit.products : [];
@@ -192,9 +191,7 @@ export default function NewEnquiryPage() {
         if (!isSale) continue;
 
         let invoiceNumber = String(visit.invoiceNumber || '').trim();
-        const isProvisional = /^PROV-/i.test(invoiceNumber);
-        const needsInvoiceAlloc =
-          !invoiceNumber || isProvisional || !invoiceNumberMatchesSettings(invoiceNumber, invSettings);
+        const needsInvoiceAlloc = !saleHasBillableInvoiceNumber(invoiceNumber);
         if (needsInvoiceAlloc) {
           invoiceNumber = await allocateNextInvoiceNumber(db);
           visits[visitIndex] = { ...visit, invoiceNumber };

@@ -16,11 +16,8 @@ import { docToCatalogProduct, type CatalogProductDoc } from '@/server/staffEnqui
 import { sendStaffPaymentNotifyEmail } from '@/server/sendStaffPaymentNotifyEmail';
 import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmails';
 import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
-import {
-  invoiceNumberMatchesSettings,
-  normalizeInvoiceNumberString,
-  normalizeInvoiceSettings,
-} from '@/lib/invoice-numbering/core';
+import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 /** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
 export const maxDuration = 60;
@@ -561,14 +558,7 @@ export async function POST(req: Request) {
       if (lastIdx >= 0) {
         const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
         const existingInvoiceNumber = normalizeInvoiceNumberString(lastVisit.invoiceNumber);
-        const settingsSnap = await db.collection('invoiceSettings').doc('default').get();
-        const invSettings = normalizeInvoiceSettings(
-          settingsSnap.exists ? (settingsSnap.data() as Record<string, unknown>) : undefined
-        );
-        const needsAllocation =
-          !existingInvoiceNumber ||
-          /^PROV-/i.test(existingInvoiceNumber) ||
-          !invoiceNumberMatchesSettings(existingInvoiceNumber, invSettings);
+        const needsAllocation = !saleHasBillableInvoiceNumber(existingInvoiceNumber);
         if (needsAllocation) {
           const allocatedInvoiceNumber = String(await allocateNextInvoiceNumberAdmin(db)).trim();
           merged.visits[lastIdx] = { ...lastVisit, invoiceNumber: allocatedInvoiceNumber };

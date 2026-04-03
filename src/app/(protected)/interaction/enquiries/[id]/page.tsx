@@ -63,7 +63,19 @@ import {
   PhoneInTalk as PhoneInTalkIcon,
   PictureAsPdf as PictureAsPdfIcon,
 } from '@mui/icons-material';
-import { collection, doc, getDoc, getDocs, query, orderBy, updateDoc, Timestamp, where, serverTimestamp } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  orderBy,
+  updateDoc,
+  Timestamp,
+  where,
+  limit,
+  serverTimestamp,
+} from 'firebase/firestore';
 import {
   openBookingReceiptPDF,
   downloadBookingReceiptPDF,
@@ -72,8 +84,9 @@ import {
 } from '@/utils/receiptGenerator';
 import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
-import { allocateNextInvoiceNumber, loadInvoiceNumberSettings } from '@/services/invoiceNumbering';
-import { invoiceNumberMatchesSettings } from '@/lib/invoice-numbering/core';
+import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import {
   ENQUIRY_STATUS_OPTIONS,
   getEnquiryStatusMeta,
@@ -578,10 +591,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const visitsKey = Array.isArray(enquiry?.visits) ? 'visits' : 'visitSchedules';
     const visitList = Array.isArray(enquiry?.[visitsKey]) ? [...enquiry[visitsKey]] : [];
     const currentVisit = visitList[visitIndex] || {};
-    const existing = String(currentVisit.invoiceNumber || '').trim();
-    const isProvisionalExisting = /^PROV-/i.test(existing);
-    const invSettings = await loadInvoiceNumberSettings(db);
-    if (existing && !isProvisionalExisting && invoiceNumberMatchesSettings(existing, invSettings)) {
+    const existing = normalizeInvoiceNumberString(currentVisit.invoiceNumber);
+    if (saleHasBillableInvoiceNumber(existing)) {
       return existing;
     }
     const nextNumber = await allocateNextInvoiceNumber(db);
