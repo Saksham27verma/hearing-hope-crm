@@ -241,14 +241,17 @@ function parseTrialDetails(raw: unknown): (StaffTrialDetails & { catalogProductI
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   const catalogProductId = String(o.catalogProductId ?? '').trim();
+  const secondCatalogProductId = String(o.secondCatalogProductId ?? '').trim();
   const loc = String(o.trialLocationType ?? o.trialHearingAidType ?? '').trim().toLowerCase();
   const trialLocationType = loc === 'home' ? 'home' : loc === 'in_office' ? 'in_office' : null;
   const whichEar = parseWhichEar(o.whichEar);
   const hearingAidPrice = Number(o.hearingAidPrice);
+  const secondHearingAidPrice = Number(o.secondHearingAidPrice);
   const trialDuration = Number(o.trialDuration);
   const trialStartDate = String(o.trialStartDate ?? '').trim();
   const trialEndDate = String(o.trialEndDate ?? '').trim();
   const trialSerialNumber = String(o.trialSerialNumber ?? '').trim();
+  const secondTrialSerialNumber = String(o.secondTrialSerialNumber ?? '').trim();
   const trialNotes = String(o.trialNotes ?? '').trim();
   const trialHomeSecurityDepositAmount = Number(o.trialHomeSecurityDepositAmount ?? 0);
 
@@ -256,14 +259,29 @@ function parseTrialDetails(raw: unknown): (StaffTrialDetails & { catalogProductI
   if (!Number.isFinite(hearingAidPrice) || hearingAidPrice < 0) return null;
   if (!Number.isFinite(trialHomeSecurityDepositAmount) || trialHomeSecurityDepositAmount < 0) return null;
 
+  if (secondCatalogProductId) {
+    if (secondCatalogProductId === catalogProductId) {
+      // Two units of same SKU still need two distinct serials on home trial; enforced below.
+    }
+    if (!Number.isFinite(secondHearingAidPrice) || secondHearingAidPrice < 0) return null;
+  }
+
   if (trialLocationType === 'home') {
     if (!Number.isFinite(trialDuration) || trialDuration < 1) return null;
     if (!trialStartDate || !trialEndDate) return null;
     if (!trialSerialNumber) return null;
+    if (secondCatalogProductId && !secondTrialSerialNumber) return null;
   }
 
   return {
     catalogProductId,
+    ...(secondCatalogProductId
+      ? {
+          secondCatalogProductId,
+          secondHearingAidPrice,
+          secondTrialSerialNumber: trialLocationType === 'home' ? secondTrialSerialNumber : '',
+        }
+      : {}),
     trialLocationType,
     whichEar,
     hearingAidPrice,
@@ -434,6 +452,7 @@ export async function POST(req: Request) {
     let bookingProduct: CatalogProductDoc | undefined;
     let trial: StaffTrialDetails | undefined;
     let trialProduct: CatalogProductDoc | undefined;
+    let secondTrialProduct: CatalogProductDoc | undefined;
     let sale: StaffSaleDetails | undefined;
     let saleDeviceType: string | undefined;
 
@@ -461,6 +480,7 @@ export async function POST(req: Request) {
         );
       }
       const { catalogProductId, ...rest } = t;
+      const secondCatalogProductId = String(rest.secondCatalogProductId ?? '').trim();
       const p = await loadCatalogProduct(catalogProductId);
       if (!p) {
         return jsonError('Catalog product not found', 400);
@@ -470,6 +490,26 @@ export async function POST(req: Request) {
         if (!okSerial) {
           return jsonError('Trial serial is not available in inventory', 400);
         }
+      }
+      if (secondCatalogProductId) {
+        const p2 = await loadCatalogProduct(secondCatalogProductId);
+        if (!p2) {
+          return jsonError('Second trial catalog product not found', 400);
+        }
+        if (rest.trialLocationType === 'home') {
+          const sn2 = String(rest.secondTrialSerialNumber || '').trim();
+          const ok2 = await assertSerialAvailableForSale(secondCatalogProductId, sn2);
+          if (!ok2) {
+            return jsonError('Second trial serial is not available in inventory', 400);
+          }
+          if (
+            secondCatalogProductId === catalogProductId &&
+            sn2 === String(rest.trialSerialNumber || '').trim()
+          ) {
+            return jsonError('Second trial serial must differ from the first', 400);
+          }
+        }
+        secondTrialProduct = p2;
       }
       trial = rest;
       trialProduct = p;
@@ -510,6 +550,7 @@ export async function POST(req: Request) {
       bookingProduct,
       trial,
       trialProduct,
+      secondTrialProduct,
       sale,
       whoSoldName: staffName,
       saleDeviceType,
@@ -572,6 +613,7 @@ export async function POST(req: Request) {
         bookingProductId: bookingProduct?.id,
         trial,
         trialProductId: trialProduct?.id,
+        secondTrialProductId: secondTrialProduct?.id,
         sale,
         saleDeviceType,
       }),
@@ -636,6 +678,7 @@ export async function POST(req: Request) {
       bookingProduct,
       trial,
       trialProduct,
+      secondTrialProduct,
       sale,
       whoSoldName: staffName,
     });
@@ -796,6 +839,7 @@ function buildPdfDetailLines(
     bookingProduct?: CatalogProductDoc;
     trial?: StaffTrialDetails;
     trialProduct?: CatalogProductDoc;
+    secondTrialProduct?: CatalogProductDoc;
     sale?: StaffSaleDetails;
     whoSoldName: string;
   }
@@ -814,19 +858,30 @@ function buildPdfDetailLines(
   if (receiptType === 'trial' && args.trial && args.trialProduct) {
     const t = args.trial;
     const p = args.trialProduct;
+    const p2 = args.secondTrialProduct;
     const loc = t.trialLocationType === 'home' ? 'Home trial' : 'In-office trial';
-    return [
+    const lines = [
       `Trial type: ${loc}`,
-      `Device: ${p.company} ${p.name} (${p.type})`,
+      `Device 1: ${p.company} ${p.name} (${p.type})`,
       `Ear: ${t.whichEar}`,
-      `MRP (per unit): ₹${t.hearingAidPrice}`,
-      t.trialLocationType === 'home' ? `Serial: ${t.trialSerialNumber}` : 'Serial: —',
+      `MRP (device 1): ₹${t.hearingAidPrice}`,
+      t.trialLocationType === 'home' ? `Serial 1: ${t.trialSerialNumber}` : 'Serial 1: —',
+    ];
+    if (p2 && t.secondCatalogProductId) {
+      lines.push(`Device 2: ${p2.company} ${p2.name} (${p2.type})`);
+      lines.push(`MRP (device 2): ₹${t.secondHearingAidPrice ?? p2.mrp ?? 0}`);
+      if (t.trialLocationType === 'home') {
+        lines.push(`Serial 2: ${t.secondTrialSerialNumber || '—'}`);
+      }
+    }
+    lines.push(
       t.trialLocationType === 'home'
         ? `Period: ${t.trialStartDate} → ${t.trialEndDate} (${t.trialDuration} days)`
         : '',
       `Security deposit (recorded): ₹${t.trialHomeSecurityDepositAmount}`,
-      t.trialNotes ? `Notes: ${t.trialNotes}` : '',
-    ].filter(Boolean);
+      t.trialNotes ? `Notes: ${t.trialNotes}` : ''
+    );
+    return lines.filter(Boolean);
   }
   if (receiptType === 'invoice' && args.sale) {
     const lines = args.sale.products;

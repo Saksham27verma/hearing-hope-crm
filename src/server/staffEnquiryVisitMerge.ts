@@ -72,6 +72,10 @@ export type StaffTrialDetails = {
   trialLocationType: 'in_office' | 'home';
   whichEar: 'left' | 'right' | 'both';
   hearingAidPrice: number;
+  /** Optional second device (max 2 total) — same visit. */
+  secondCatalogProductId?: string;
+  secondHearingAidPrice?: number;
+  secondTrialSerialNumber?: string;
   trialDuration: number;
   trialStartDate: string;
   trialEndDate: string;
@@ -473,6 +477,7 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
   bookingProduct?: CatalogProductDoc;
   trial?: StaffTrialDetails;
   trialProduct?: CatalogProductDoc;
+  secondTrialProduct?: CatalogProductDoc;
   sale?: StaffSaleDetails;
   /** CRM sale visit: `hearingAidBrand` is "Who Sold" (staff), not device manufacturer. */
   whoSoldName: string;
@@ -527,6 +532,7 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
   if (args.receiptType === 'trial' && args.trial && args.trialProduct) {
     const t = args.trial;
     const p = args.trialProduct;
+    const p2 = args.secondTrialProduct;
     const line = buildCatalogHearingAidProductLine({
       product: p,
       saleDateYmd: todayYmd,
@@ -534,26 +540,46 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
       quantity: 1,
     });
     const products = [line];
+    if (p2 && t.secondCatalogProductId && t.secondCatalogProductId === p2.id) {
+      const mrp2 =
+        typeof t.secondHearingAidPrice === 'number' && Number.isFinite(t.secondHearingAidPrice) && t.secondHearingAidPrice >= 0
+          ? t.secondHearingAidPrice
+          : p2.mrp ?? 0;
+      products.push(
+        buildCatalogHearingAidProductLine({
+          product: p2,
+          saleDateYmd: todayYmd,
+          mrpPerUnit: mrp2,
+          quantity: 1,
+        })
+      );
+    }
     const totals = sumHearingAidVisitTotalsFromProducts(products);
 
     const isHome = t.trialLocationType === 'home';
+    const modelLabel =
+      products.length > 1 && p2 ? `${(p.name || '').trim()} + ${(p2.name || '').trim()}` : (p.name || '').trim();
 
     Object.assign(v, {
       hearingAidTrial: true,
       trialGiven: true,
       hearingAidProductId: p.id,
+      ...(p2 && t.secondCatalogProductId ? { secondHearingAidProductId: p2.id } : {}),
       hearingAidBrand: (p.company || '').trim(),
-      hearingAidModel: (p.name || '').trim(),
+      hearingAidModel: modelLabel,
       hearingAidType: (p.type || '').trim(),
       whichEar: t.whichEar,
       hearingAidPrice: Number(t.hearingAidPrice) || 0,
       trialHearingAidBrand: (p.company || '').trim(),
-      trialHearingAidModel: (p.name || '').trim(),
+      trialHearingAidModel: modelLabel,
       trialHearingAidType: t.trialLocationType,
       trialDuration: isHome ? Math.max(0, Math.floor(Number(t.trialDuration) || 0)) : 0,
       trialStartDate: isHome ? String(t.trialStartDate || '').trim() : '',
       trialEndDate: isHome ? String(t.trialEndDate || '').trim() : '',
       trialSerialNumber: isHome ? String(t.trialSerialNumber || '').trim() : '',
+      ...(isHome && p2 && t.secondTrialSerialNumber
+        ? { secondTrialSerialNumber: String(t.secondTrialSerialNumber || '').trim() }
+        : {}),
       trialHomeSecurityDepositAmount: isHome ? Number(t.trialHomeSecurityDepositAmount) || 0 : 0,
       trialNotes: String(t.trialNotes || '').trim(),
       trialResult: 'ongoing',

@@ -75,7 +75,11 @@ interface Enquiry {
   status?: string;
   assignedTo?: string;
   telecaller?: string;
-  followUps: FollowUp[];
+  /** Patient information section — optional scheduled follow-up (YYYY-MM-DD). */
+  followUpDate?: string;
+  followUps?: FollowUp[];
+  createdAt?: { seconds: number; nanoseconds?: number };
+  updatedAt?: { seconds: number; nanoseconds?: number };
 }
 
 interface TelecallingRecord {
@@ -92,6 +96,25 @@ interface TelecallingRecord {
   remarks: string;
   nextFollowUpDate: string;
   createdAt: Date;
+  /** Logged call vs date-only from enquiry patient section */
+  recordSource?: 'followup_log' | 'patient_info';
+}
+
+function normalizeYmd(raw: string | undefined): string {
+  if (!raw || typeof raw !== 'string') return '';
+  return raw.trim().slice(0, 10);
+}
+
+function firestoreTimeToDate(data: Enquiry): Date {
+  const u = data.updatedAt;
+  const c = data.createdAt;
+  if (u && typeof u === 'object' && 'seconds' in u) {
+    return new Date(u.seconds * 1000);
+  }
+  if (c && typeof c === 'object' && 'seconds' in c) {
+    return new Date(c.seconds * 1000);
+  }
+  return new Date();
 }
 
 export default function TelecallingRecordsPage() {
@@ -176,7 +199,8 @@ export default function TelecallingRecordsPage() {
                   telecaller: followUp.callerName || 'Unknown',
                   remarks: followUp.remarks || '',
                   nextFollowUpDate: followUp.nextFollowUpDate || '',
-                  createdAt: createdAtDate
+                  createdAt: createdAtDate,
+                  recordSource: 'followup_log',
                 };
 
                 allRecords.push(record);
@@ -185,6 +209,32 @@ export default function TelecallingRecordsPage() {
                 console.error(`Error processing follow-up ${index} for enquiry ${enquiryId}:`, followUpError);
               }
             });
+          }
+
+          /** Patient information "Follow-up Date" — show in telecalling when no follow-up row already uses that next date. */
+          const patientFollowYmd = normalizeYmd(enquiryData.followUpDate);
+          if (patientFollowYmd) {
+            const followList = Array.isArray(enquiryData.followUps) ? enquiryData.followUps : [];
+            const alreadyCovered = followList.some((fu) => normalizeYmd(fu.nextFollowUpDate) === patientFollowYmd);
+            if (!alreadyCovered) {
+              const createdAtDate = firestoreTimeToDate(enquiryData);
+              allRecords.push({
+                id: `${enquiryId}_patientFollowUp`,
+                enquiryId,
+                enquiryName: enquiryData.name || 'Unknown',
+                enquiryPhone: enquiryData.phone || '',
+                enquiryEmail: enquiryData.email || '',
+                enquirySubject: enquiryData.subject || '',
+                assignedTo: enquiryData.assignedTo || '',
+                followUpId: 'patient_followup_info',
+                followUpDate: '',
+                telecaller: (enquiryData.telecaller || enquiryData.assignedTo || 'Unassigned').trim() || 'Unassigned',
+                remarks: 'Follow-up date from patient information (enquiry form). No call logged yet.',
+                nextFollowUpDate: patientFollowYmd,
+                createdAt: createdAtDate,
+                recordSource: 'patient_info',
+              });
+            }
           }
         } catch (docError) {
           console.error(`Error processing enquiry document ${doc.id}:`, docError);
@@ -360,6 +410,7 @@ export default function TelecallingRecordsPage() {
 
   // Format date
   const formatDate = (dateString: string) => {
+    if (!dateString || !String(dateString).trim()) return '—';
     try {
       return format(parseISO(dateString), 'dd MMM yyyy');
     } catch {
@@ -395,7 +446,7 @@ export default function TelecallingRecordsPage() {
               Telecalling Records
             </Typography>
             <Typography variant="body1" color="text.secondary">
-              View and filter all follow-up calls made to enquiries
+              Follow-up calls from enquiry logs and scheduled follow-up dates from patient information
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', gap: 2 }}>
@@ -686,9 +737,14 @@ export default function TelecallingRecordsPage() {
                   <TableRow key={record.id} hover>
                     <TableCell>
                       <Box>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                          {record.enquiryName}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                            {record.enquiryName}
+                          </Typography>
+                          {record.recordSource === 'patient_info' ? (
+                            <Chip size="small" label="Patient info follow-up" color="info" variant="outlined" />
+                          ) : null}
+                        </Box>
                         <Typography variant="body2" color="text.secondary">
                           {record.enquiryPhone}
                         </Typography>
@@ -715,7 +771,7 @@ export default function TelecallingRecordsPage() {
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
-                          {record.telecaller.charAt(0).toUpperCase()}
+                          {(record.telecaller || '?').charAt(0).toUpperCase()}
                         </Avatar>
                         <Typography variant="body2">
                           {record.telecaller}
@@ -787,10 +843,9 @@ export default function TelecallingRecordsPage() {
               {records.length === 0 ? 'No telecalling records available' : 'No records match your filters'}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {records.length === 0 
-                ? 'No follow-ups have been recorded yet. Add follow-ups to enquiries to see them here.' 
-                : 'Try adjusting your filters to see more results'
-              }
+              {records.length === 0
+                ? 'No records yet. Add follow-up dates in patient information or log follow-up calls on enquiries.'
+                : 'Try adjusting your filters to see more results'}
             </Typography>
             {records.length === 0 && (
               <Button

@@ -1,4 +1,5 @@
 import { adminDb } from '@/server/firebaseAdmin';
+import { effectiveGstPercentFromCatalogData } from '@/server/staffEnquiryCatalogHelpers';
 
 export type StaffInventoryRow = {
   lineId: string;
@@ -10,6 +11,10 @@ export type StaffInventoryRow = {
   dealerPrice: number;
   serialNumber: string;
   hasSerialNumber: boolean;
+  /** From product master: false when GST exempt. */
+  gstApplicable: boolean;
+  /** Effective rate (0 if exempt, else e.g. 18). */
+  gstPercent: number;
 };
 
 /**
@@ -160,7 +165,13 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     const data = docSnap.data() as Record<string, unknown>;
     const visits = Array.isArray(data.visits) ? (data.visits as Record<string, unknown>[]) : [];
     visits.forEach((visit) => {
-      if (visit.hearingAidSale && visit.hearingAidProductId) {
+      const reserveSale = visit.hearingAidSale && visit.hearingAidProductId;
+      const reserveTrialHome =
+        visit.hearingAidTrial === true &&
+        String(visit.trialHearingAidType || '').toLowerCase() === 'home' &&
+        visit.hearingAidProductId;
+
+      if (reserveSale) {
         const productId = String(visit.hearingAidProductId);
         const sn = String(visit.trialSerialNumber || '');
         if (sn) {
@@ -168,6 +179,21 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
           soldSerials.get(productId)!.add(sn);
         } else {
           soldQtyByProduct.set(productId, (soldQtyByProduct.get(productId) || 0) + 1);
+        }
+      }
+
+      if (reserveTrialHome) {
+        const productId = String(visit.hearingAidProductId);
+        const sn = String(visit.trialSerialNumber || '');
+        if (sn) {
+          if (!soldSerials.has(productId)) soldSerials.set(productId, new Set());
+          soldSerials.get(productId)!.add(sn);
+        }
+        const pid2 = String(visit.secondHearingAidProductId || '').trim();
+        const sn2 = String(visit.secondTrialSerialNumber || '').trim();
+        if (pid2 && sn2) {
+          if (!soldSerials.has(pid2)) soldSerials.set(pid2, new Set());
+          soldSerials.get(pid2)!.add(sn2);
         }
       }
     });
@@ -192,6 +218,8 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     const type = String(product.type || '');
     const mrp = Number(product.mrp || 0);
     const dealerPrice = Number(product.dealerPrice || 0);
+    const gstApplicable = product.gstApplicable !== false;
+    const gstPercent = effectiveGstPercentFromCatalogData(product as Record<string, unknown>);
 
     available.forEach((serialNumber) => {
       rows.push({
@@ -204,6 +232,8 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
         dealerPrice,
         serialNumber,
         hasSerialNumber: true,
+        gstApplicable,
+        gstPercent,
       });
     });
   });

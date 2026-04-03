@@ -35,7 +35,7 @@ export function buildCatalogHearingAidProductLine(args: {
   const discountPercent = 0;
   const discountAmount = 0;
   const sellingPrice = mrp;
-  const gstPercent = product.gstPercentage ?? 18;
+  const gstPercent = effectiveGstPercentFromCatalogData(product as unknown as Record<string, unknown>);
   const gstAmount =
     gstPercent > 0 && product.gstApplicable !== false ? Math.round((sellingPrice * gstPercent) / 100) : 0;
   const finalAmount = sellingPrice + gstAmount;
@@ -69,6 +69,14 @@ export function buildCatalogHearingAidProductLine(args: {
 
 const roundInr = (n: number) => Math.round(Number(n) || 0);
 
+/** Effective GST % for a `products` doc — 0 when exempt (`gstApplicable === false`), else catalog % or 18. */
+export function effectiveGstPercentFromCatalogData(data: Record<string, unknown>): number {
+  if (data.gstApplicable === false) return 0;
+  const g = typeof data.gstPercentage === 'number' ? data.gstPercentage : Number(data.gstPercentage);
+  if (Number.isFinite(g) && g >= 0) return g;
+  return 18;
+}
+
 export function sumHearingAidVisitTotalsFromProducts(
   products: Array<{
     mrp: number;
@@ -90,6 +98,8 @@ export function sumHearingAidVisitTotalsFromProducts(
 }
 
 export function docToCatalogProduct(id: string, data: DocumentData): CatalogProductDoc {
+  const raw = data as Record<string, unknown>;
+  const gstPct = effectiveGstPercentFromCatalogData(raw);
   return {
     id,
     name: String(data.name ?? ''),
@@ -99,7 +109,7 @@ export function docToCatalogProduct(id: string, data: DocumentData): CatalogProd
     isFreeOfCost: !!data.isFreeOfCost,
     gstApplicable: data.gstApplicable !== false,
     gstType: data.gstType,
-    gstPercentage: typeof data.gstPercentage === 'number' ? data.gstPercentage : Number(data.gstPercentage) || 18,
+    gstPercentage: gstPct,
     hsnCode: data.hsnCode ? String(data.hsnCode) : '',
     quantityType: data.quantityType === 'pair' ? 'pair' : 'piece',
   };
