@@ -501,10 +501,15 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
           : mrp > 0
             ? Math.max(0, Math.min(100, Math.round(((mrp - rate) / mrp) * 100)))
             : 0;
+      const typeOrCompany = String(product.type ?? product.company ?? '').trim();
+      const warranty = String(product.warranty ?? '').trim();
+      const description = warranty
+        ? [typeOrCompany, `Warranty: ${warranty}`].filter(Boolean).join(' · ')
+        : typeOrCompany;
       return {
         id: product.id || `item-${index}`,
         name: product.name || 'Unknown Product',
-        description: product.type || '',
+        description,
         serialNumber: product.serialNumber || '',
         quantity: qty,
         rate,
