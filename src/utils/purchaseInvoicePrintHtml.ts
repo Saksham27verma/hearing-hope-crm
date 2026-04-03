@@ -339,13 +339,32 @@ export function buildPurchaseInvoicePrintHtml(m: PurchaseInvoicePrintModel): str
 </html>`;
 }
 
+/**
+ * Opens a same-origin blank window, writes HTML, then triggers print.
+ *
+ * Do not pass `noopener` in window.open's features: browsers then return `null`
+ * from window.open while still opening a blank tab, so document.write never runs
+ * and users see an empty window plus a false "allow pop-ups" message.
+ */
 export function openPurchaseInvoicePrintWindow(html: string): boolean {
-  const w = window.open('', '_blank', 'noopener,noreferrer');
+  const w = window.open('', '_blank');
   if (!w) return false;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  try {
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+  } catch {
+    w.close();
+    return false;
+  }
   w.focus();
-  w.print();
+  // Defer print so the document can paint (avoids blank print preview in some browsers).
+  setTimeout(() => {
+    try {
+      w.print();
+    } catch {
+      /* ignore */
+    }
+  }, 100);
   return true;
 }
