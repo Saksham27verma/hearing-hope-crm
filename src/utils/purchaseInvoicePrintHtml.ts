@@ -44,21 +44,16 @@ export type PurchaseInvoicePrintModel = {
   reference?: string;
   gstType: string;
   gstPercentage: number;
-  centerLabel: string;
   /** Legal entity billed to (from companies master or purchase snapshot). */
   billedToName: string;
   billedToLines: string[];
   billedToGst?: string;
-  billedToPhone?: string;
-  billedToEmail?: string;
   billedToFromMaster: boolean;
   /** Supplier (from parties master or purchase snapshot). */
   supplierName: string;
   supplierLines: string[];
   supplierGstType?: string;
   supplierGstNumber?: string;
-  supplierPhone?: string;
-  supplierEmail?: string;
   supplierContactPerson?: string;
   supplierFromMaster: boolean;
   lines: PurchaseLineForPrint[];
@@ -128,11 +123,10 @@ export function buildPurchaseInvoicePrintModel(params: {
     }>;
   };
   purchaseDateLabel: string;
-  centerLabel: string;
   partyMaster: PartyMasterRow | null;
   companyMaster: CompanyMasterRow | null;
 }): PurchaseInvoicePrintModel {
-  const { purchase, purchaseDateLabel, centerLabel, partyMaster, companyMaster } = params;
+  const { purchase, purchaseDateLabel, partyMaster, companyMaster } = params;
 
   const gstExempt = purchase.gstType === 'GST Exempted';
   const subtotal = Number(purchase.totalAmount) || 0;
@@ -179,19 +173,14 @@ export function buildPurchaseInvoicePrintModel(params: {
     reference: purchase.reference,
     gstType: purchase.gstType || '—',
     gstPercentage: pct,
-    centerLabel: centerLabel || '—',
     billedToName,
     billedToLines,
     billedToGst: companyMaster?.gstNumber,
-    billedToPhone: companyMaster?.phone,
-    billedToEmail: companyMaster?.email,
     billedToFromMaster,
     supplierName,
     supplierLines,
     supplierGstType: partyMaster?.gstType,
     supplierGstNumber: partyMaster?.gstNumber,
-    supplierPhone: partyMaster?.phone,
-    supplierEmail: partyMaster?.email,
     supplierContactPerson: partyMaster?.contactPerson,
     supplierFromMaster,
     lines,
@@ -249,13 +238,12 @@ export function buildPurchaseInvoicePrintHtml(m: PurchaseInvoicePrintModel): str
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>${escapeHtml(m.invoiceNo)} — Purchase record</title>
+<title>${escapeHtml(m.invoiceNo)} — Purchase invoice</title>
 <style>
   @page { margin: 12mm; size: A4; }
   * { box-sizing: border-box; }
   body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; font-size: 11px; color: #111; line-height: 1.45; margin: 0; padding: 16px; }
-  h1 { font-size: 16px; font-weight: 700; margin: 0 0 4px 0; letter-spacing: 0.02em; }
-  .subtitle { color: #444; margin-bottom: 16px; font-size: 11px; }
+  h1 { font-size: 16px; font-weight: 700; margin: 0 0 14px 0; letter-spacing: 0.02em; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
   @media print { .grid2 { break-inside: avoid; } }
   .box { border: 1px solid #222; padding: 10px; }
@@ -272,13 +260,10 @@ export function buildPurchaseInvoicePrintHtml(m: PurchaseInvoicePrintModel): str
   table.items th { background: #f0f0f0; font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
   table.items td.num { text-align: right; font-variant-numeric: tabular-nums; }
   table.items .strong { font-weight: 700; }
-  .stock { margin: 10px 0 14px 0; padding: 8px 10px; border: 1px dashed #444; }
-  .footer { margin-top: 20px; font-size: 10px; color: #666; border-top: 1px solid #ccc; padding-top: 8px; }
 </style>
 </head>
 <body>
-  <h1>Purchase invoice (internal record)</h1>
-  <p class="subtitle">For your files — not a tax invoice unless issued by the supplier. No logo.</p>
+  <h1>Purchase invoice</h1>
 
   <table class="meta">
     <tr><td class="k">Supplier invoice no.</td><td>${escapeHtml(m.invoiceNo)}</td></tr>
@@ -289,28 +274,22 @@ export function buildPurchaseInvoicePrintHtml(m: PurchaseInvoicePrintModel): str
 
   <div class="grid2">
     <div class="box">
-      <h2>Billed to (your entity)</h2>
+      <h2>Billed to</h2>
       ${billedNote}
       <div class="name">${escapeHtml(m.billedToName)}</div>
       ${billedAddr}
       ${m.billedToGst ? `<div><span class="muted">GSTIN:</span> ${escapeHtml(m.billedToGst)}</div>` : ''}
-      ${m.billedToPhone ? `<div><span class="muted">Phone:</span> ${escapeHtml(m.billedToPhone)}</div>` : ''}
-      ${m.billedToEmail ? `<div><span class="muted">Email:</span> ${escapeHtml(m.billedToEmail)}</div>` : ''}
     </div>
     <div class="box">
       <h2>Supplier</h2>
       ${supplierNote}
       <div class="name">${escapeHtml(m.supplierName)}</div>
-      ${m.supplierContactPerson ? `<div><span class="muted">Contact:</span> ${escapeHtml(m.supplierContactPerson)}</div>` : ''}
+      ${m.supplierContactPerson ? `<div class="muted">${escapeHtml(m.supplierContactPerson)}</div>` : ''}
       ${supplierAddr}
       ${m.supplierGstType ? `<div><span class="muted">GST type:</span> ${escapeHtml(m.supplierGstType)}</div>` : ''}
       ${m.supplierGstNumber ? `<div><span class="muted">GSTIN:</span> ${escapeHtml(m.supplierGstNumber)}</div>` : ''}
-      ${m.supplierPhone ? `<div><span class="muted">Phone:</span> ${escapeHtml(m.supplierPhone)}</div>` : ''}
-      ${m.supplierEmail ? `<div><span class="muted">Email:</span> ${escapeHtml(m.supplierEmail)}</div>` : ''}
     </div>
   </div>
-
-  <div class="stock"><strong>Stock location (center):</strong> ${escapeHtml(m.centerLabel)}</div>
 
   <table class="items">
     <thead>
@@ -327,14 +306,12 @@ export function buildPurchaseInvoicePrintHtml(m: PurchaseInvoicePrintModel): str
     <tbody>
       ${rowsHtml}
       <tr>
-        <td colspan="6" class="num strong">Subtotal (taxable value as recorded)</td>
+        <td colspan="6" class="num strong">Subtotal</td>
         <td class="num strong">${escapeHtml(formatCurrencyInr(m.subtotal))}</td>
       </tr>
       ${totalsExtra}
     </tbody>
   </table>
-
-  <p class="footer">Generated from CRM purchase record. Retain supplier’s original tax invoice where applicable.</p>
 </body>
 </html>`;
 }

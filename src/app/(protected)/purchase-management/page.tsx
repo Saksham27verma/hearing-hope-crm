@@ -60,7 +60,6 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import PurchaseForm from '@/components/purchases/PurchaseForm';
-import { fetchAllCenters, getCenterLabel, type Center } from '@/utils/centerUtils';
 import {
   buildPurchaseInvoicePrintHtml,
   buildPurchaseInvoicePrintModel,
@@ -145,7 +144,6 @@ export default function PurchaseManagement() {
   const [products, setProducts] = useState<Product[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
   const [companies, setCompanies] = useState<CompanyRecord[]>([]);
-  const [centers, setCenters] = useState<Center[]>([]);
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
@@ -165,7 +163,6 @@ export default function PurchaseManagement() {
       fetchProducts();
       fetchParties();
       fetchCompanies();
-      fetchCenters();
     } else {
       setLoading(false);
     }
@@ -302,7 +299,6 @@ export default function PurchaseManagement() {
         fetchProducts(),
         fetchParties(),
         fetchCompanies(),
-        fetchCenters(),
       ]);
     } finally {
       setRefreshing(false);
@@ -328,15 +324,6 @@ export default function PurchaseManagement() {
     }
   };
 
-  const fetchCenters = async () => {
-    try {
-      const list = await fetchAllCenters();
-      setCenters(list);
-    } catch (error) {
-      console.error('Error fetching centers:', error);
-    }
-  };
-
   const resolvePartyMaster = (purchase: Purchase): PartyMasterRow | null => {
     const row = parties.find((p) => p.id === purchase.party.id);
     if (!row) return null;
@@ -359,11 +346,9 @@ export default function PurchaseManagement() {
   const handlePrintPurchase = (purchase: Purchase) => {
     const partyMaster = resolvePartyMaster(purchase);
     const companyMaster = resolveCompanyMaster(purchase);
-    const centerLabel = getCenterLabel(purchase.location || '', centers);
     const model = buildPurchaseInvoicePrintModel({
       purchase,
       purchaseDateLabel: formatDate(purchase.purchaseDate),
-      centerLabel,
       partyMaster,
       companyMaster,
     });
@@ -882,7 +867,6 @@ export default function PurchaseManagement() {
           {previewPurchase && (() => {
             const partyM = resolvePartyMaster(previewPurchase);
             const companyM = resolveCompanyMaster(previewPurchase);
-            const centerLbl = getCenterLabel(previewPurchase.location || '', centers);
             return (
             <Box>
               {/* Invoice Details */}
@@ -921,11 +905,6 @@ export default function PurchaseManagement() {
                     </Box>
                   )}
 
-                  <Box sx={{ gridColumn: { md: '1 / -1' } }}>
-                    <Typography variant="body2" color="text.secondary">Stock location (center):</Typography>
-                    <Typography variant="body1" fontWeight="medium">{centerLbl || '—'}</Typography>
-                  </Box>
-                  
                   <Box>
                     <Typography variant="body2" color="text.secondary">GST Type:</Typography>
                     <Typography variant="body1" fontWeight="medium">{previewPurchase.gstType}</Typography>
@@ -950,7 +929,7 @@ export default function PurchaseManagement() {
               >
                 <Paper elevation={0} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
                   <Typography variant="subtitle2" color="primary" gutterBottom>
-                    Billed to (Companies module)
+                    Billed to
                     {!companyM && (
                       <Typography component="span" variant="caption" color="warning.main" sx={{ ml: 1 }}>
                         — name not matched to Companies
@@ -976,16 +955,10 @@ export default function PurchaseManagement() {
                       GSTIN: {companyM.gstNumber}
                     </Typography>
                   )}
-                  {companyM?.phone && (
-                    <Typography variant="body2">Phone: {companyM.phone}</Typography>
-                  )}
-                  {companyM?.email && (
-                    <Typography variant="body2">Email: {companyM.email}</Typography>
-                  )}
                 </Paper>
                 <Paper elevation={0} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
                   <Typography variant="subtitle2" color="primary" gutterBottom>
-                    Supplier (Parties module)
+                    Supplier
                     {!partyM && (
                       <Typography component="span" variant="caption" color="warning.main" sx={{ ml: 1 }}>
                         — party not found by id
@@ -996,7 +969,7 @@ export default function PurchaseManagement() {
                     {partyM?.name || previewPurchase.party.name}
                   </Typography>
                   {partyM?.contactPerson && (
-                    <Typography variant="body2">Contact: {partyM.contactPerson}</Typography>
+                    <Typography variant="body2">{partyM.contactPerson}</Typography>
                   )}
                   {partyM?.address && (
                     <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: 'pre-line' }}>
@@ -1010,12 +983,6 @@ export default function PurchaseManagement() {
                   )}
                   {partyM?.gstNumber && (
                     <Typography variant="body2">GSTIN: {partyM.gstNumber}</Typography>
-                  )}
-                  {partyM?.phone && (
-                    <Typography variant="body2">Phone: {partyM.phone}</Typography>
-                  )}
-                  {partyM?.email && (
-                    <Typography variant="body2">Email: {partyM.email}</Typography>
                   )}
                 </Paper>
               </Box>
