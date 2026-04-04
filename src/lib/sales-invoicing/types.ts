@@ -76,6 +76,16 @@ export interface DerivedEnquirySale {
 
 export type UnifiedRowKind = 'saved' | 'enquiry_pending';
 
+/** One line from enquiry `paymentRecords` / `payments` — shown on Sales & Invoicing for linked patients. */
+export interface PatientPaymentLine {
+  amount: number;
+  mode: string;
+  referenceNumber?: string;
+  remarks?: string;
+  /** ISO date string (YYYY-MM-DD) when available */
+  date?: string;
+}
+
 export interface UnifiedInvoiceRow {
   kind: UnifiedRowKind;
   rowId: string;
@@ -93,6 +103,8 @@ export interface UnifiedInvoiceRow {
   source: InvoiceSource | 'enquiry_pending';
   savedSale?: SaleRecord;
   derivedEnquiry?: DerivedEnquirySale;
+  /** All payments recorded on the linked enquiry (UTR, cheque #, modes, amounts). */
+  patientPayments?: PatientPaymentLine[];
 }
 
 export interface SalesInvoiceFiltersState {

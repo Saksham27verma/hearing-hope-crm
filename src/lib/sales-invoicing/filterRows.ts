@@ -21,7 +21,15 @@ export function filterUnifiedRows(
       const client = r.clientName.toLowerCase();
       const phone = (r.clientPhone || '').toLowerCase();
       const enq = (r.linkedEnquiryRef || '').toLowerCase();
-      return inv.includes(q) || client.includes(q) || phone.includes(q) || enq.includes(q);
+      const payBlob = (r.patientPayments || [])
+        .map(
+          (p) =>
+            `${p.amount} ${p.mode} ${p.referenceNumber || ''} ${p.remarks || ''} ${p.date || ''}`.toLowerCase()
+        )
+        .join(' ');
+      return (
+        inv.includes(q) || client.includes(q) || phone.includes(q) || enq.includes(q) || payBlob.includes(q)
+      );
     });
   }
 

@@ -91,6 +91,10 @@ import SalesInvoicesDataTable, { type SortKey } from '@/components/sales-invoici
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
 import ManualLineItemsEditor from '@/components/sales-invoicing/ManualLineItemsEditor';
 import { deriveEnquirySalesFromDocs } from '@/lib/sales-invoicing/enquiryDerivation';
+import {
+  buildPatientPaymentsIndexFromEnquiryDocs,
+  enrichUnifiedRowsWithPatientPayments,
+} from '@/lib/sales-invoicing/enquiryPayments';
 import { buildUnifiedInvoiceRows } from '@/lib/sales-invoicing/mergeUnifiedRows';
 import { filterUnifiedRows } from '@/lib/sales-invoicing/filterRows';
 import { timestampToMs } from '@/lib/sales-invoicing/timestamps';
@@ -98,6 +102,7 @@ import type {
   DerivedEnquirySale,
   InvoiceTablePaymentFilter,
   ManualLineItem,
+  PatientPaymentLine,
   PaymentStatus,
   SaleRecord,
   UnifiedInvoiceRow,
@@ -107,6 +112,7 @@ import { allocateNextInvoiceNumber, peekNextInvoiceNumber } from '@/services/inv
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
+import type { AccountingExportOptions } from '@/lib/sales-invoicing/accountingExport';
 
 // ─── Types ───
 
@@ -229,6 +235,9 @@ export default function SalesInvoicingPageInner() {
 
   const [sales, setSales] = useState<Sale[]>([]);
   const [derivedEnquiryLines, setDerivedEnquiryLines] = useState<DerivedEnquirySale[]>([]);
+  const [patientPaymentsByEnquiryId, setPatientPaymentsByEnquiryId] = useState<
+    Record<string, PatientPaymentLine[]>
+  >({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
@@ -258,6 +267,8 @@ export default function SalesInvoicingPageInner() {
   const [cancelDialogRow, setCancelDialogRow] = useState<UnifiedInvoiceRow | null>(null);
   const [cancelReasonInput, setCancelReasonInput] = useState('');
   const [cancellingInvoice, setCancellingInvoice] = useState(false);
+  const [exportPdfLoading, setExportPdfLoading] = useState(false);
+  const [exportExcelLoading, setExportExcelLoading] = useState(false);
 
   // Product add form state
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -347,6 +358,7 @@ export default function SalesInvoicingPageInner() {
       ]);
       const vList = visitorSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const eList = enquirySnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
+      setPatientPaymentsByEnquiryId(buildPatientPaymentsIndexFromEnquiryDocs(enquirySnap.docs));
       const fromVisitors = deriveEnquirySalesFromDocs(vList, 'visitor');
       const fromEnquiries = deriveEnquirySalesFromDocs(eList, 'enquiry');
       const uniq = new Map<string, DerivedEnquirySale>();
@@ -759,10 +771,10 @@ export default function SalesInvoicingPageInner() {
 
   // Show only persisted sales invoices (CRM + staff/mobile created sales docs).
   // Intentionally exclude enquiry-derived uninvoiced rows from this module.
-  const unifiedRows = useMemo(
-    () => buildUnifiedInvoiceRows(sales as SaleRecord[], []),
-    [sales]
-  );
+  const unifiedRows = useMemo(() => {
+    const base = buildUnifiedInvoiceRows(sales as SaleRecord[], []);
+    return enrichUnifiedRowsWithPatientPayments(base, patientPaymentsByEnquiryId);
+  }, [sales, patientPaymentsByEnquiryId]);
 
   const filteredTableRows = useMemo(
     () =>
@@ -880,6 +892,77 @@ export default function SalesInvoicingPageInner() {
     setFilterSource('all');
   }, []);
 
+  const buildAccountantExportOptions = useCallback((): AccountingExportOptions => {
+    const centerNameById: Record<string, string> = {};
+    centers.forEach((c) => {
+      centerNameById[c.id] = c.name;
+    });
+    const scopeParts: string[] = [];
+    if (filterDateFrom) scopeParts.push(`From ${filterDateFrom.toLocaleDateString('en-IN')}`);
+    if (filterDateTo) scopeParts.push(`To ${filterDateTo.toLocaleDateString('en-IN')}`);
+    if (filterSource !== 'all') scopeParts.push(`Source: ${filterSource}`);
+    if (filterPaymentStatuses.length) scopeParts.push(`Invoice payment: ${filterPaymentStatuses.join(', ')}`);
+    if (searchTerm.trim()) scopeParts.push(`Search: "${searchTerm.trim()}"`);
+    return {
+      rows: sortedTableRows,
+      patientPaymentsByEnquiryId,
+      centerNameById,
+      scopeNote:
+        scopeParts.length > 0
+          ? scopeParts.join(' · ')
+          : 'All loaded invoices (no table filters). Sorted as on screen.',
+    };
+  }, [
+    sortedTableRows,
+    patientPaymentsByEnquiryId,
+    centers,
+    filterDateFrom,
+    filterDateTo,
+    filterSource,
+    filterPaymentStatuses,
+    searchTerm,
+  ]);
+
+  const handleExportPdfLedger = useCallback(async () => {
+    const savedCount = sortedTableRows.filter((r) => r.kind === 'saved').length;
+    if (savedCount === 0) {
+      setErrorMsg('No invoices to export. Clear filters or add invoices first.');
+      return;
+    }
+    try {
+      setExportPdfLoading(true);
+      setErrorMsg('');
+      const { downloadSalesAccountingLedgerPdf } = await import('@/lib/sales-invoicing/accountingLedgerPdf');
+      await downloadSalesAccountingLedgerPdf(buildAccountantExportOptions());
+      setSuccessMsg('PDF ledger downloaded (ready to share with your accountant).');
+    } catch (e: unknown) {
+      console.error(e);
+      setErrorMsg(e instanceof Error ? e.message : 'PDF export failed');
+    } finally {
+      setExportPdfLoading(false);
+    }
+  }, [buildAccountantExportOptions, sortedTableRows]);
+
+  const handleExportExcel = useCallback(async () => {
+    const savedCount = sortedTableRows.filter((r) => r.kind === 'saved').length;
+    if (savedCount === 0) {
+      setErrorMsg('No invoices to export. Clear filters or add invoices first.');
+      return;
+    }
+    try {
+      setExportExcelLoading(true);
+      setErrorMsg('');
+      const { downloadSalesAccountingWorkbook } = await import('@/lib/sales-invoicing/accountingExport');
+      await downloadSalesAccountingWorkbook(buildAccountantExportOptions());
+      setSuccessMsg('Excel workbook downloaded.');
+    } catch (e: unknown) {
+      console.error(e);
+      setErrorMsg(e instanceof Error ? e.message : 'Excel export failed');
+    } finally {
+      setExportExcelLoading(false);
+    }
+  }, [buildAccountantExportOptions, sortedTableRows]);
+
   // ─── Render ───
 
   if (authLoading || loading) {
@@ -902,6 +985,11 @@ export default function SalesInvoicingPageInner() {
           onOpenFilters={() => setFiltersOpen(true)}
           onCreateInvoice={handleAddSale}
           filterCount={activeFilterCount}
+          onExportPdfLedger={handleExportPdfLedger}
+          onExportExcel={handleExportExcel}
+          exportDisabled={sortedTableRows.filter((r) => r.kind === 'saved').length === 0}
+          exportPdfLoading={exportPdfLoading}
+          exportExcelLoading={exportExcelLoading}
         />
 
         <Box display="flex" justifyContent="flex-end" sx={{ mb: 2 }}>

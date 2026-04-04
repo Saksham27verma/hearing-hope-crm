@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /**
+   * jspdf / jspdf-autotable / xlsx ship mixed ESM–CJS; without transpilation webpack can throw
+   * `Cannot read properties of undefined (reading 'call')` when loading export chunks.
+   */
+  transpilePackages: ["jspdf", "jspdf-autotable", "xlsx"],
+
+  /**
    * Required for HTML→PDF on Vercel: without this, webpack bundles `@sparticuz/chromium` and
    * `executablePath()` / brotli extraction break → collect-payment silently falls back to the minimal pdf-lib receipt.
    */
@@ -44,6 +50,21 @@ const nextConfig: NextConfig = {
       config.optimization.splitChunks = {
         chunks: 'all',
         cacheGroups: {
+          /** Keep jsPDF + autotable in one chunk — avoids undefined module factory at runtime. */
+          jspdfExport: {
+            test: /[\\/]node_modules[\\/](jspdf|jspdf-autotable)([\\/]|$)/,
+            name: 'jspdf-export',
+            chunks: 'all',
+            priority: 35,
+            enforce: true,
+          },
+          xlsxExport: {
+            test: /[\\/]node_modules[\\/]xlsx[\\/]/,
+            name: 'xlsx-export',
+            chunks: 'all',
+            priority: 35,
+            enforce: true,
+          },
           vendor: {
             test: /[\\/]node_modules[\\/]/,
             chunks: 'all',

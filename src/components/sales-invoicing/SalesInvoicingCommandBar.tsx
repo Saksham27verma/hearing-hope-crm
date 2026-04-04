@@ -1,8 +1,29 @@
 'use client';
 
-import React from 'react';
-import { Box, Button, TextField, InputAdornment, Typography, Stack } from '@mui/material';
-import { Search as SearchIcon, Add as AddIcon, FilterList as FilterIcon } from '@mui/icons-material';
+import React, { useState } from 'react';
+import {
+  Box,
+  Button,
+  TextField,
+  InputAdornment,
+  Typography,
+  Stack,
+  Tooltip,
+  CircularProgress,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+} from '@mui/material';
+import {
+  Search as SearchIcon,
+  Add as AddIcon,
+  FilterList as FilterIcon,
+  FileDownloadOutlined as FileDownloadOutlinedIcon,
+  KeyboardArrowDown as KeyboardArrowDownIcon,
+  PictureAsPdf as PictureAsPdfIcon,
+  TableChart as TableChartIcon,
+} from '@mui/icons-material';
 
 interface SalesInvoicingCommandBarProps {
   searchValue: string;
@@ -10,6 +31,11 @@ interface SalesInvoicingCommandBarProps {
   onOpenFilters: () => void;
   onCreateInvoice: () => void;
   filterCount?: number;
+  onExportPdfLedger?: () => void | Promise<void>;
+  onExportExcel?: () => void | Promise<void>;
+  exportDisabled?: boolean;
+  exportPdfLoading?: boolean;
+  exportExcelLoading?: boolean;
 }
 
 export default function SalesInvoicingCommandBar({
@@ -18,7 +44,17 @@ export default function SalesInvoicingCommandBar({
   onOpenFilters,
   onCreateInvoice,
   filterCount = 0,
+  onExportPdfLedger,
+  onExportExcel,
+  exportDisabled = false,
+  exportPdfLoading = false,
+  exportExcelLoading = false,
 }: SalesInvoicingCommandBarProps) {
+  const [exportMenuAnchor, setExportMenuAnchor] = useState<null | HTMLElement>(null);
+  const exportOpen = Boolean(exportMenuAnchor);
+  const exportLoading = exportPdfLoading || exportExcelLoading;
+  const showExport = Boolean(onExportPdfLedger || onExportExcel);
+
   return (
     <Box
       sx={{
@@ -56,6 +92,82 @@ export default function SalesInvoicingCommandBar({
           </Typography>
         </Box>
         <Stack direction="row" spacing={1.5} flexWrap="wrap" justifyContent={{ xs: 'stretch', md: 'flex-end' }}>
+          {showExport && (
+            <>
+              <Tooltip
+                title="Export the same invoices shown in the table (after filters). PDF: formal ledger for your CA. Excel: editable workbook."
+                arrow
+                placement="top"
+              >
+                <span>
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    startIcon={
+                      exportLoading ? (
+                        <CircularProgress size={18} thickness={5} sx={{ color: 'primary.main' }} />
+                      ) : (
+                        <FileDownloadOutlinedIcon />
+                      )
+                    }
+                    endIcon={<KeyboardArrowDownIcon />}
+                    disabled={exportDisabled || exportLoading}
+                    onClick={(e) => setExportMenuAnchor(e.currentTarget)}
+                    sx={{ borderRadius: 2, fontWeight: 600, textTransform: 'none' }}
+                  >
+                    Export
+                  </Button>
+                </span>
+              </Tooltip>
+              <Menu
+                anchorEl={exportMenuAnchor}
+                open={exportOpen}
+                onClose={() => setExportMenuAnchor(null)}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+                slotProps={{ paper: { sx: { borderRadius: 2, minWidth: 280, mt: 0.5 } } }}
+              >
+                {onExportPdfLedger && (
+                  <MenuItem
+                    disabled={exportPdfLoading || exportExcelLoading}
+                    onClick={() => {
+                      setExportMenuAnchor(null);
+                      void onExportPdfLedger();
+                    }}
+                  >
+                    <ListItemIcon>
+                      <PictureAsPdfIcon color="error" fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="PDF ledger (recommended)"
+                      secondary="Hope Digital Innovations Pvt Ltd letterhead, GST summary, lines, payments"
+                      primaryTypographyProps={{ fontWeight: 600 }}
+                      secondaryTypographyProps={{ variant: 'caption', sx: { whiteSpace: 'normal' } }}
+                    />
+                  </MenuItem>
+                )}
+                {onExportExcel && (
+                  <MenuItem
+                    disabled={exportPdfLoading || exportExcelLoading}
+                    onClick={() => {
+                      setExportMenuAnchor(null);
+                      void onExportExcel();
+                    }}
+                  >
+                    <ListItemIcon>
+                      <TableChartIcon color="primary" fontSize="small" />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary="Excel workbook"
+                      secondary="Multi-sheet register for analysis"
+                      primaryTypographyProps={{ fontWeight: 600 }}
+                      secondaryTypographyProps={{ variant: 'caption' }}
+                    />
+                  </MenuItem>
+                )}
+              </Menu>
+            </>
+          )}
           <Button
             variant="outlined"
             color="inherit"

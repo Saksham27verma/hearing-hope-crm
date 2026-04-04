@@ -18,6 +18,7 @@ import {
   Box,
   Tooltip,
   Chip,
+  Stack,
   useMediaQuery,
   useTheme,
 } from '@mui/material';
@@ -30,7 +31,7 @@ import {
   OpenInNew as OpenInNewIcon,
   HighlightOff as VoidInvoiceIcon,
 } from '@mui/icons-material';
-import type { UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
+import type { PatientPaymentLine, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import { Timestamp } from 'firebase/firestore';
 
 export type SortKey = 'invoiceNumber' | 'date' | 'client' | 'linked' | 'total';
@@ -47,6 +48,80 @@ function patientProfileHref(r: UnifiedInvoiceRow): string | null {
     if (r.derivedEnquiry.visitorId) return '/interaction/visitors';
   }
   return null;
+}
+
+function PatientPaymentHistoryCell({
+  lines,
+  formatCurrency,
+}: {
+  lines?: PatientPaymentLine[];
+  formatCurrency: (n: number) => string;
+}) {
+  if (!lines || lines.length === 0) {
+    return (
+      <Typography variant="caption" color="text.secondary">
+        —
+      </Typography>
+    );
+  }
+  return (
+    <Box sx={{ minWidth: 140, maxWidth: 320 }}>
+      <Chip
+        size="small"
+        label={`${lines.length} payment${lines.length === 1 ? '' : 's'}`}
+        sx={{ mb: 0.75, height: 22, fontWeight: 600, fontSize: '0.7rem' }}
+      />
+      <Stack spacing={0.5}>
+        {lines.map((p, i) => {
+          const line = [
+            formatCurrency(p.amount),
+            p.mode && p.mode !== '—' ? p.mode : null,
+            p.referenceNumber ? `Ref: ${p.referenceNumber}` : null,
+            p.date ? p.date : null,
+          ]
+            .filter(Boolean)
+            .join(' · ');
+          const tip = [line, p.remarks ? `Note: ${p.remarks}` : ''].filter(Boolean).join('\n');
+          return (
+            <Tooltip key={i} title={tip} placement="top" enterDelay={400}>
+              <Typography
+                variant="caption"
+                component="div"
+                sx={{
+                  lineHeight: 1.4,
+                  wordBreak: 'break-word',
+                  cursor: p.remarks ? 'help' : 'default',
+                }}
+              >
+                <Box component="span" sx={{ fontWeight: 700 }}>
+                  {formatCurrency(p.amount)}
+                </Box>
+                {p.mode && p.mode !== '—' ? ` · ${p.mode}` : ''}
+                {p.referenceNumber ? (
+                  <>
+                    {' · '}
+                    <Box component="span" sx={{ fontFamily: 'ui-monospace, monospace', fontSize: '0.7rem' }}>
+                      {p.referenceNumber}
+                    </Box>
+                  </>
+                ) : null}
+                {p.date ? (
+                  <Typography variant="caption" color="text.secondary" component="span" display="block" sx={{ mt: 0.15 }}>
+                    {p.date}
+                  </Typography>
+                ) : null}
+                {p.remarks ? (
+                  <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.15, fontStyle: 'italic' }}>
+                    {p.remarks}
+                  </Typography>
+                ) : null}
+              </Typography>
+            </Tooltip>
+          );
+        })}
+      </Stack>
+    </Box>
+  );
 }
 
 function patientProfileButtonLabel(r: UnifiedInvoiceRow): string {
@@ -129,6 +204,7 @@ export default function SalesInvoicesDataTable({
               {sortable('date', 'Date')}
               {sortable('client', 'Client')}
               {!compact && sortable('linked', 'Linked profile')}
+              <TableCell sx={{ minWidth: 160, maxWidth: 300 }}>Patient payments</TableCell>
               {sortable('total', 'Total', 'right')}
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -136,7 +212,7 @@ export default function SalesInvoicesDataTable({
           <TableBody>
             {slice.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={compact ? 5 : 6} align="center" sx={{ py: 6, color: 'text.secondary' }}>
+                <TableCell colSpan={compact ? 6 : 7} align="center" sx={{ py: 6, color: 'text.secondary' }}>
                   No invoices match your filters.
                 </TableCell>
               </TableRow>
@@ -209,6 +285,9 @@ export default function SalesInvoicesDataTable({
                       )}
                     </TableCell>
                   )}
+                  <TableCell sx={{ verticalAlign: 'top', py: 1.25 }}>
+                    <PatientPaymentHistoryCell lines={r.patientPayments} formatCurrency={formatCurrency} />
+                  </TableCell>
                   <TableCell
                     align="right"
                     sx={{

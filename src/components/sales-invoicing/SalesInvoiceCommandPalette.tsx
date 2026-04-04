@@ -41,12 +41,18 @@ export default function SalesInvoiceCommandPalette({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return rows.slice(0, 50);
-    return rows
+        return rows
       .filter((r) => {
         const inv = (r.invoiceNumber || '').toLowerCase();
         const client = r.clientName.toLowerCase();
         const enq = (r.linkedEnquiryRef || '').toLowerCase();
-        return inv.includes(q) || client.includes(q) || enq.includes(q);
+        const payBlob = (r.patientPayments || [])
+          .map(
+            (p) =>
+              `${p.amount} ${p.mode} ${p.referenceNumber || ''} ${p.remarks || ''}`.toLowerCase()
+          )
+          .join(' ');
+        return inv.includes(q) || client.includes(q) || enq.includes(q) || payBlob.includes(q);
       })
       .slice(0, 50);
   }, [rows, query]);
