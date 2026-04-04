@@ -505,35 +505,68 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }
   };
 
+  const legacyPaymentsById = new Map<string, any>(
+    (Array.isArray(enquiry?.payments) ? enquiry.payments : []).map((p: any) => [String(p?.id ?? ''), p])
+  );
+
   const normalizedPaymentRecords = Array.isArray(enquiry?.paymentRecords)
-    ? enquiry.paymentRecords.map((payment: any) => ({
-        label:
-          payment.paymentType === 'hearing_aid_test' ? 'Test' :
-          payment.paymentType === 'staff_trial_request' ? 'Trial (staff request)' :
-          payment.paymentType === 'hearing_aid_booking' ? 'Booking' :
-          payment.paymentType === 'hearing_aid_sale' ? 'Sale' :
-          payment.paymentType || 'Payment',
-        amount: Number(payment.amount || 0),
-        date: payment.paymentDate,
-        mode: payment.paymentMethod,
-      }))
+    ? enquiry.paymentRecords.map((payment: any) => {
+        const legacy = payment?.id != null ? legacyPaymentsById.get(String(payment.id)) : undefined;
+        const referenceNumber = String(
+          payment.referenceNumber ?? legacy?.referenceNumber ?? ''
+        ).trim();
+        const remarks = String(payment.remarks ?? legacy?.remarks ?? '').trim();
+        return {
+          id: payment.id,
+          label:
+            payment.paymentType === 'hearing_aid_test'
+              ? 'Test'
+              : payment.paymentType === 'staff_trial_request'
+                ? 'Trial (staff request)'
+                : payment.paymentType === 'hearing_aid_booking'
+                  ? 'Booking'
+                  : payment.paymentType === 'hearing_aid_sale'
+                    ? 'Sale'
+                    : payment.paymentType || 'Payment',
+          amount: Number(payment.amount || 0),
+          date: payment.paymentDate,
+          mode: payment.paymentMethod,
+          ...(referenceNumber ? { referenceNumber } : {}),
+          ...(remarks ? { remarks } : {}),
+        };
+      })
     : [];
   const normalizedLegacyPayments = Array.isArray(enquiry?.payments)
-    ? enquiry.payments.map((payment: any) => ({
+    ? enquiry.payments.map((payment: any) => {
+        const referenceNumber = String(payment.referenceNumber ?? '').trim();
+        const remarks = String(payment.remarks ?? '').trim();
+        return {
+          id: payment.id,
           label:
-            payment.paymentFor === 'hearing_test' ? 'Test' :
-            payment.paymentFor === 'booking_advance' ? 'Booking' :
-            payment.paymentFor === 'hearing_aid' ? 'Hearing Aid' :
-            payment.paymentFor === 'accessory' ? 'Accessory' :
-            payment.paymentFor === 'trial_home_security_deposit' ? 'Trial security deposit' :
-            payment.paymentFor === 'programming' ? 'Programming' :
-            payment.paymentFor === 'full_payment' ? 'Full Payment' :
-            payment.paymentFor === 'partial_payment' ? 'Partial Payment' :
-            payment.paymentFor || 'Payment',
+            payment.paymentFor === 'hearing_test'
+              ? 'Test'
+              : payment.paymentFor === 'booking_advance'
+                ? 'Booking'
+                : payment.paymentFor === 'hearing_aid'
+                  ? 'Hearing Aid'
+                  : payment.paymentFor === 'accessory'
+                    ? 'Accessory'
+                    : payment.paymentFor === 'trial_home_security_deposit'
+                      ? 'Trial security deposit'
+                      : payment.paymentFor === 'programming'
+                        ? 'Programming'
+                        : payment.paymentFor === 'full_payment'
+                          ? 'Full Payment'
+                          : payment.paymentFor === 'partial_payment'
+                            ? 'Partial Payment'
+                            : payment.paymentFor || 'Payment',
           amount: Number(payment.amount || 0),
           date: payment.paymentDate,
           mode: payment.paymentMode,
-        }))
+          ...(referenceNumber ? { referenceNumber } : {}),
+          ...(remarks ? { remarks } : {}),
+        };
+      })
     : [];
   const paymentEntries =
     normalizedPaymentRecords.length > 0 ? normalizedPaymentRecords : normalizedLegacyPayments;
@@ -1976,27 +2009,52 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
                   {paymentEntries.map((payment: any, index: number) => (
                     <Paper
-                      key={index}
+                      key={payment.id != null ? String(payment.id) : `pay-${index}`}
                       variant="outlined"
                       sx={{
                         p: 1.5,
                         borderRadius: 2.25,
                         display: 'flex',
                         justifyContent: 'space-between',
-                        alignItems: 'center',
+                        alignItems: 'flex-start',
                         gap: 2,
                         bgcolor: 'rgba(255,255,255,0.8)',
                       }}
                     >
-                      <Box>
+                      <Box sx={{ minWidth: 0, flex: 1 }}>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>
                           {payment.label}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {payment.date || '—'}{payment.mode ? ` · ${String(payment.mode).toUpperCase()}` : ''}
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          {payment.date || '—'}
+                          {payment.mode ? ` · ${String(payment.mode).toUpperCase()}` : ''}
                         </Typography>
+                        {payment.referenceNumber ? (
+                          <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+                            <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                              Reference:{' '}
+                            </Box>
+                            {payment.referenceNumber}
+                          </Typography>
+                        ) : null}
+                        {payment.remarks ? (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            component="div"
+                            sx={{ mt: 0.35, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                          >
+                            <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                              Remarks:{' '}
+                            </Box>
+                            {payment.remarks}
+                          </Typography>
+                        ) : null}
                       </Box>
-                      <Typography variant="body1" sx={{ fontWeight: 800, color: '#0f766e' }}>
+                      <Typography
+                        variant="body1"
+                        sx={{ fontWeight: 800, color: '#0f766e', flexShrink: 0, alignSelf: 'center' }}
+                      >
                         ₹{(payment.amount || 0).toLocaleString()}
                       </Typography>
                     </Paper>
