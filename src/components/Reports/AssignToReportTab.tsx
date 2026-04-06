@@ -25,6 +25,8 @@ import {
 import { Download as DownloadIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { fetchAllCenters, getCenterLabel } from '@/utils/centerUtils';
+import EnquiryProfileLink from '@/components/common/EnquiryProfileLink';
 
 // Avoid MUI Grid generic type noise by wrapping (consistent with other modules)
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
@@ -77,7 +79,10 @@ export default function AssignToReportTab() {
   const fetchEnquiries = useCallback(async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, 'enquiries'));
+      const [snap, centersList] = await Promise.all([
+        getDocs(collection(db, 'enquiries')),
+        fetchAllCenters(),
+      ]);
       const list: NormalizedEnquiry[] = snap.docs.map(d => {
         const e: any = d.data();
         let createdAt: Date | null = null;
@@ -95,7 +100,7 @@ export default function AssignToReportTab() {
           assignedTo: (e.assignedTo || '').toString(),
           telecaller: (e.telecaller || '').toString(),
           reference: e.reference,
-          center: (e.center || '').toString(),
+          center: getCenterLabel((e.center || '').toString(), centersList),
           status: (e.status || '').toString(),
           createdAt,
         };
@@ -157,6 +162,11 @@ export default function AssignToReportTab() {
       return true;
     });
   }, [enquiries, assignedToFilter, searchText]);
+
+  const summary = useMemo(
+    () => ({ total: filtered.length }),
+    [filtered],
+  );
 
   const exportCsv = () => {
     const headers = [
@@ -268,17 +278,26 @@ export default function AssignToReportTab() {
           />
         </Box>
 
-        <TableContainer sx={{ maxHeight: 600 }}>
-          <Table size="small" stickyHeader>
+        <Box sx={{ px: 2, pb: 2 }}>
+          <Paper variant="outlined" sx={{ p: 2, bgcolor: 'action.hover' }}>
+            <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+              Summary (filtered)
+            </Typography>
+            <Typography variant="h6">{summary.total} enquiries</Typography>
+          </Paper>
+        </Box>
+
+        <TableContainer sx={{ maxHeight: 600, width: '100%', overflowX: 'auto' }}>
+          <Table size="small" stickyHeader sx={{ minWidth: 720 }}>
             <TableHead>
               <TableRow>
                 <TableCell>Created At</TableCell>
-                <TableCell>Enquiry ID</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell>Phone</TableCell>
                 <TableCell>Email</TableCell>
                 <TableCell>Assigned To</TableCell>
                 <TableCell>Telecaller</TableCell>
+                <TableCell>Center</TableCell>
                 <TableCell>Reference</TableCell>
                 <TableCell>Status</TableCell>
               </TableRow>
@@ -288,12 +307,14 @@ export default function AssignToReportTab() {
                 filtered.map(e => (
                   <TableRow key={e.id} hover>
                     <TableCell>{e.createdAt ? e.createdAt.toLocaleString() : '—'}</TableCell>
-                    <TableCell>{e.id}</TableCell>
-                    <TableCell>{e.name}</TableCell>
+                    <TableCell sx={{ wordBreak: 'break-word' }}>
+                      <EnquiryProfileLink enquiryId={e.id}>{e.name}</EnquiryProfileLink>
+                    </TableCell>
                     <TableCell>{e.phone || '—'}</TableCell>
                     <TableCell>{e.email || '—'}</TableCell>
                     <TableCell>{e.assignedTo || 'Not assigned'}</TableCell>
                     <TableCell>{e.telecaller || '—'}</TableCell>
+                    <TableCell sx={{ wordBreak: 'break-word' }}>{e.center || '—'}</TableCell>
                     <TableCell>
                       {Array.isArray(e.reference)
                         ? e.reference.map((ref) => (

@@ -83,9 +83,9 @@ export const ENQUIRIES_OPTION_CATEGORIES: EnquiryOptionCategory[] = [
       },
       {
         fieldKey: 'journey_status_override',
-        displayName: 'Journey status (manual override)',
+        displayName: 'Journey tag (manual override)',
         usedIn:
-          'Enquiries list & enquiry detail — chip override (values must match journey logic: enquiry, in_process, in_trial, booked, sold, not_interested, completed).',
+          'Optional tag from the enquiries list or profile chip. Saving the enquiry form clears this so visits + lead outcome apply again.',
         defaults: withOrder(
           ENQUIRY_STATUS_OPTIONS.map((o) => ({ optionValue: o.value, optionLabel: o.label }))
         ),

@@ -637,12 +637,14 @@ export default function SalesInvoicingPageInner() {
         ? (sales.find((s) => s.id === currentSale.id)?.invoiceNumber || '').trim()
         : '';
 
+      const chosenName = String(currentSale.salesperson?.name || '').trim();
+      const chosenId = String(currentSale.salesperson?.id || '').trim();
       const saleToSave: Sale = {
         ...currentSale,
         invoiceNumber: finalInvoiceNumber,
         salesperson: {
-          id: user?.uid || currentSale.salesperson?.id || '',
-          name: userProfile?.displayName || user?.email || currentSale.salesperson?.name || '',
+          id: chosenName ? chosenId || user?.uid || '' : user?.uid || chosenId || '',
+          name: chosenName || userProfile?.displayName || user?.email || '',
         },
       };
 
@@ -863,9 +865,13 @@ export default function SalesInvoicingPageInner() {
         console.error('peekNextInvoiceNumber:', e);
         setErrorMsg('Could not preview the next invoice number. It will still be assigned automatically when you save.');
       }
+      const fromVisit = String(row.derivedEnquiry.whoSoldName || '').trim();
       const pre = prefillSaleFromDerivedEnquiry(row.derivedEnquiry, {
         invoiceNumber: suggested,
-        salesperson: { id: user?.uid || '', name: userProfile?.displayName || user?.email || '' },
+        salesperson: {
+          id: user?.uid || '',
+          name: fromVisit || userProfile?.displayName || user?.email || '',
+        },
       });
       setCurrentSale({ ...(pre as unknown as Sale) });
       setOpenDialog(true);

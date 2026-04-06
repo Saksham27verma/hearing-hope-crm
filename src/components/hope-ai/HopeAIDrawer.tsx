@@ -2,9 +2,9 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Avatar,
   Box,
+  Button,
   Chip,
   CircularProgress,
   Drawer,
@@ -24,7 +24,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import HopeAIAdminPanel from './HopeAIAdminPanel';
 import HopeAIMessageList from './HopeAIMessageList';
-import HopeAIPromptBox from './HopeAIPromptBox';
+import HopeAIComposer from './HopeAIComposer';
 import type { HopeAIMessageView } from './types';
 
 interface Props {
@@ -149,14 +149,14 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
         }
       }}
     >
-      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: '#f5f5f5' }}>
+      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: '#0a0a0a' }}>
         <Box
           sx={{
             px: { xs: 2, md: 3 },
             py: 1.75,
-            bgcolor: 'background.paper',
+            bgcolor: 'grey.900',
             borderBottom: '1px solid',
-            borderColor: 'divider',
+            borderColor: 'grey.800',
           }}
         >
           <Box display="flex" alignItems="center" justifyContent="space-between" gap={2}>
@@ -165,20 +165,32 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
                 sx={{
                   width: 40,
                   height: 40,
-                  bgcolor: 'grey.900',
+                  bgcolor: 'grey.800',
                   color: 'common.white',
                 }}
               >
                 <SmartToyIcon fontSize="small" />
               </Avatar>
               <Box minWidth={0}>
-                <Typography variant="h6" fontWeight={700} color="text.primary">Hope AI</Typography>
-                <Typography variant="body2" color="text.secondary" noWrap>
+                <Typography variant="h6" fontWeight={700} sx={{ color: 'grey.50' }}>
+                  Hope AI
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'grey.400' }} noWrap>
                   Ask anything across your CRM with live retrieval and cited answers.
                 </Typography>
                 <Stack direction="row" spacing={1} mt={0.75} flexWrap="wrap" useFlexGap>
-                  <Chip size="small" label={isAdmin ? 'Admin scope enabled' : 'Role-aware access'} variant="outlined" />
-                  <Chip size="small" label="Live retrieval + citations" variant="outlined" />
+                  <Chip
+                    size="small"
+                    label={isAdmin ? 'Admin scope enabled' : 'Role-aware access'}
+                    variant="outlined"
+                    sx={{ borderColor: 'grey.700', color: 'grey.300' }}
+                  />
+                  <Chip
+                    size="small"
+                    label="Live retrieval + citations"
+                    variant="outlined"
+                    sx={{ borderColor: 'grey.700', color: 'grey.300' }}
+                  />
                 </Stack>
               </Box>
             </Box>
@@ -195,13 +207,13 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
                       minWidth: 72,
                       px: 1.5,
                       borderRadius: 999,
-                      color: 'text.secondary',
+                      color: 'grey.400',
                       textTransform: 'none',
                       fontWeight: 600,
                     },
                     '& .Mui-selected': {
-                      color: 'text.primary',
-                      bgcolor: 'grey.100',
+                      color: 'warning.light',
+                      bgcolor: 'rgba(255, 183, 140, 0.2)',
                     },
                     '& .MuiTabs-indicator': {
                       display: 'none',
@@ -212,10 +224,10 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
                   <Tab value="admin" label="Admin" />
                 </Tabs>
               )}
-              <IconButton onClick={resetChat} sx={{ color: 'text.primary' }}>
+              <IconButton onClick={resetChat} sx={{ color: 'grey.200' }}>
                 <RefreshIcon />
               </IconButton>
-              <IconButton onClick={onClose} sx={{ color: 'text.primary' }}>
+              <IconButton onClick={onClose} sx={{ color: 'grey.200' }}>
                 <CloseIcon />
               </IconButton>
             </Stack>
@@ -224,8 +236,17 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
 
         {tab === 'chat' ? (
           <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-            <Box sx={{ flex: 1, overflowY: 'auto', px: { xs: 1.5, md: 3 }, py: 2 }}>
-              <Box sx={{ maxWidth: 980, mx: 'auto', minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                bgcolor: '#0a0a0a',
+                px: { xs: 2, md: 3 },
+                py: 3,
+              }}
+            >
+              <Box sx={{ maxWidth: 980, mx: 'auto', minHeight: '100%', display: 'flex', flexDirection: 'column', width: '100%' }}>
                 {!hasUserMessages && !loading && (
                   <Box
                     sx={{
@@ -236,55 +257,79 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
                       py: { xs: 4, md: 8 },
                     }}
                   >
-                    <Paper
-                      elevation={0}
-                      sx={{
-                        width: '100%',
-                        maxWidth: 900,
-                        p: { xs: 2.5, md: 4 },
-                        borderRadius: 6,
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        bgcolor: 'background.paper',
-                        boxShadow: '0 20px 60px rgba(15, 23, 42, 0.06)',
-                      }}
-                    >
-                      <Box display="flex" alignItems="center" gap={1} mb={1.25}>
-                        <AutoAwesomeIcon sx={{ color: 'text.primary', fontSize: 18 }} />
-                        <Typography variant="subtitle2" fontWeight={700}>
-                          Start A Conversation
+                    <Stack spacing={4} alignItems="center" sx={{ width: '100%', maxWidth: 900, px: 1 }}>
+                      <Box textAlign="center">
+                        <Stack direction="row" spacing={1} justifyContent="center" alignItems="center" sx={{ mb: 1.5, color: 'grey.500' }}>
+                          <AutoAwesomeIcon sx={{ fontSize: 20 }} />
+                          <Typography variant="caption" fontWeight={700} letterSpacing="0.12em" sx={{ color: 'grey.400' }}>
+                            HOPE AI
+                          </Typography>
+                        </Stack>
+                        <Typography
+                          variant="h4"
+                          component="h1"
+                          fontWeight={700}
+                          sx={{
+                            color: 'grey.50',
+                            fontSize: { xs: '1.75rem', md: '2.25rem' },
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          What can Hope AI help you find?
+                        </Typography>
+                        <Typography
+                          variant="body1"
+                          sx={{
+                            mt: 1.5,
+                            color: 'grey.400',
+                            maxWidth: 640,
+                            mx: 'auto',
+                            px: 1,
+                          }}
+                        >
+                          Ask about enquiries, sales, products, inventory movement, purchases, invoice details, serial
+                          journeys, branch activity, or report summaries.
                         </Typography>
                       </Box>
-                      <Typography variant="h4" fontWeight={700} color="text.primary" sx={{ mb: 1 }}>
-                        How can Hope AI help today?
-                      </Typography>
-                      <Typography variant="body1" color="text.secondary" sx={{ mb: 2.5, maxWidth: 700 }}>
-                        Ask about enquiries, sales, products, inventory movement, purchases, invoice details, serial journeys, branch activity, or report summaries.
-                      </Typography>
-                      <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+                          gap: 1.5,
+                          width: '100%',
+                          maxWidth: 720,
+                        }}
+                      >
                         {SUGGESTIONS.map((suggestion) => (
-                          <Chip
+                          <Button
                             key={suggestion}
-                            label={suggestion}
-                            clickable
                             variant="outlined"
                             onClick={() => sendPrompt(suggestion)}
                             sx={{
-                              justifyContent: 'flex-start',
-                              height: 'auto',
-                              py: 1.25,
-                              px: 0.5,
                               borderRadius: 999,
-                              bgcolor: '#fafafa',
-                              '& .MuiChip-label': {
-                                whiteSpace: 'normal',
-                                px: 1.25,
+                              borderColor: 'grey.800',
+                              bgcolor: 'grey.900',
+                              color: 'grey.300',
+                              textAlign: 'left',
+                              justifyContent: 'flex-start',
+                              py: 1.5,
+                              px: 2,
+                              fontSize: '0.75rem',
+                              lineHeight: 1.45,
+                              whiteSpace: 'normal',
+                              textTransform: 'none',
+                              '&:hover': {
+                                borderColor: 'grey.600',
+                                bgcolor: 'grey.800',
+                                color: 'grey.50',
                               },
                             }}
-                          />
+                          >
+                            {suggestion}
+                          </Button>
                         ))}
-                      </Stack>
-                    </Paper>
+                      </Box>
+                    </Stack>
                   </Box>
                 )}
 
@@ -294,7 +339,23 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
                   </Box>
                 )}
 
-              {error ? <Alert severity="warning" sx={{ mb: 2 }}>{error}</Alert> : null}
+                {error ? (
+                  <Box
+                    sx={{
+                      mb: 2,
+                      borderRadius: 2,
+                      border: '1px solid',
+                      borderColor: 'rgba(180, 83, 9, 0.45)',
+                      bgcolor: 'rgba(69, 26, 3, 0.45)',
+                      px: 2,
+                      py: 1.5,
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ color: 'warning.light' }}>
+                      {error}
+                    </Typography>
+                  </Box>
+                ) : null}
 
                 {loading ? (
                   <Box display="flex" justifyContent="flex-start" mt={2} width="100%">
@@ -303,18 +364,18 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
                       sx={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 1.25,
+                        gap: 1.5,
                         px: 2,
                         py: 1.5,
-                        borderRadius: 4,
+                        borderRadius: 3,
                         border: '1px solid',
-                        borderColor: 'divider',
-                        bgcolor: 'background.paper',
-                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.05)',
+                        borderColor: 'grey.800',
+                        bgcolor: 'grey.900',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
                       }}
                     >
-                      <CircularProgress size={18} />
-                      <Typography variant="body2" color="text.secondary">
+                      <CircularProgress size={18} sx={{ color: 'grey.400' }} />
+                      <Typography variant="body2" sx={{ color: 'grey.300' }}>
                         Hope AI is analyzing your CRM data...
                       </Typography>
                     </Paper>
@@ -325,9 +386,17 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
               </Box>
             </Box>
 
-            <Box sx={{ px: { xs: 1.5, md: 3 }, py: 2, borderTop: '1px solid', borderColor: 'divider', bgcolor: 'background.paper' }}>
+            <Box
+              sx={{
+                borderTop: '1px solid',
+                borderColor: 'grey.800',
+                bgcolor: '#0a0a0a',
+                px: { xs: 2, md: 3 },
+                py: 2,
+              }}
+            >
               <Box sx={{ maxWidth: 980, mx: 'auto' }}>
-                <HopeAIPromptBox
+                <HopeAIComposer
                   value={prompt}
                   onChange={setPrompt}
                   onSubmit={() => sendPrompt()}
@@ -337,7 +406,15 @@ export default function HopeAIDrawer({ open, onClose }: Props) {
             </Box>
           </Box>
         ) : (
-          <Box sx={{ flex: 1, overflowY: 'auto', px: { xs: 1.5, md: 3 }, py: 2.5 }}>
+          <Box
+            sx={{
+              flex: 1,
+              overflowY: 'auto',
+              px: { xs: 1.5, md: 3 },
+              py: 2.5,
+              bgcolor: 'grey.100',
+            }}
+          >
             <Box sx={{ maxWidth: 980, mx: 'auto' }}>
               {isAdmin ? <HopeAIAdminPanel getAuthToken={getAuthToken} /> : null}
             </Box>

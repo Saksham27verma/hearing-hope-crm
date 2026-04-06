@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -10,6 +10,14 @@ import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
+import JourneyConfirmDialog, { type JourneySelectValue } from './JourneyConfirmDialog';
+import {
+  getEnquiryStatusMeta,
+  LEAD_OUTCOME_OPTIONS,
+  parseJourneyStatusOverride,
+  type EnquiryJourneyStatus,
+  type EnquiryStatusChipColor,
+} from '@/utils/enquiryStatus';
 import EnquiryInventoryPickerDialog from './EnquiryInventoryPickerDialog';
 import {
   resolveGstFromProductMaster,
@@ -20,6 +28,7 @@ import {
 } from './enquiryInventoryUtils';
 import {
   serialsFromLineProduct,
+  splitSerialStringIntoTokens,
   applySalesCollectionToAvailabilityMaps,
   applyEnquiryVisitsSalesToAvailabilityMaps,
   makeProductLocationKey,
@@ -35,6 +44,7 @@ import {
   Grid as MuiGrid, IconButton, FormHelperText, Alert, Autocomplete,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Tabs, Tab, Chip, InputAdornment, Switch, FormControlLabel,
+  ToggleButton, ToggleButtonGroup,
   Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox, Radio,
   List, ListItem, ListItemButton, ListItemText, ListSubheader, Badge, Link as MuiLink
 } from '@mui/material';
@@ -646,7 +656,9 @@ interface FormData {
   telecaller: string;
   center: string;
   message: string;
-  
+  /** Optional: marks patient bought devices elsewhere (see LEAD_OUTCOME_OPTIONS). */
+  leadOutcome: string;
+
   // Visits array
   visits: Visit[];
   
@@ -699,6 +711,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
   const [step, setStep] = useState(0);
   const [activeVisit, setActiveVisit] = useState(-1);
+  const [journeyDialogOpen, setJourneyDialogOpen] = useState(false);
+  const [journeySelectValue, setJourneySelectValue] = useState<JourneySelectValue>('auto');
+  const [journeySuggested, setJourneySuggested] = useState<{
+    key: EnquiryJourneyStatus;
+    label: string;
+    color: EnquiryStatusChipColor;
+  } | null>(null);
+  const journeyPromiseRef = useRef<{
+    resolve: (v: 'cancel' | { override: EnquiryJourneyStatus | null }) => void;
+  } | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [currentFollowUp, setCurrentFollowUp] = useState({
     date: new Date().toISOString().split('T')[0],
@@ -774,6 +796,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     location: ''
   });
 
+  /** Hearing-aid sale line: mirror manual Sales & Invoicing pair / single serial entry. */
+  const [salePairSaleMode, setSalePairSaleMode] = useState<'single' | 'pair'>('pair');
+  const [saleSerialPrimary, setSaleSerialPrimary] = useState('');
+  const [saleSerialSecondary, setSaleSerialSecondary] = useState('');
+  /** When selling one device from a bonded pair row, both serials — user picks which to sell. */
+  const [salePairSerialOptions, setSalePairSerialOptions] = useState<[string, string] | null>(null);
+
   const [currentPayment, setCurrentPayment] = useState<{
     paymentDate: string;
     amount: number;
@@ -818,6 +847,85 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     setCurrentProduct((prev) => ({ ...prev, sellingPrice: sp }));
   };
 
+  const handleSalePairSaleModeChange = useCallback(
+    (_: React.SyntheticEvent, value: 'single' | 'pair' | null) => {
+      if (value == null) return;
+      const master = currentProduct.productId
+        ? hearingAidProducts.find((p) => p.id === currentProduct.productId)
+        : undefined;
+      const isPair =
+        (master?.quantityType ?? (master as { quantityTypeLegacy?: string } | undefined)?.quantityTypeLegacy) ===
+        'pair';
+
+      setSalePairSaleMode(value);
+
+      if (!isPair || !master) return;
+
+      const catalogMrp = roundInrRupee(Number(master.mrp) || 0);
+      const nextMrp = value === 'pair' ? catalogMrp : roundInrRupee(catalogMrp / 2);
+
+      if (value === 'single' && salePairSaleMode === 'pair' && saleSerialPrimary.trim() && saleSerialSecondary.trim()) {
+        setSalePairSerialOptions([saleSerialPrimary.trim(), saleSerialSecondary.trim()]);
+        setSaleSerialSecondary('');
+        setCurrentProduct((prev) => {
+          const gstPct = prev.gstPercent;
+          const gstAmount = gstPct > 0 ? roundInrRupee((nextMrp * gstPct) / 100) : 0;
+          return {
+            ...prev,
+            mrp: nextMrp,
+            sellingPrice: nextMrp,
+            serialNumber: saleSerialPrimary.trim(),
+            unit: 'piece',
+            gstAmount,
+            finalAmount: roundInrRupee(nextMrp + gstAmount),
+          };
+        });
+        return;
+      }
+
+      if (value === 'pair' && salePairSaleMode === 'single' && salePairSerialOptions) {
+        const [a, b] = salePairSerialOptions;
+        setSaleSerialPrimary(a);
+        setSaleSerialSecondary(b);
+        setSalePairSerialOptions(null);
+        setCurrentProduct((prev) => {
+          const gstPct = prev.gstPercent;
+          const gstAmount = gstPct > 0 ? roundInrRupee((nextMrp * gstPct) / 100) : 0;
+          return {
+            ...prev,
+            mrp: nextMrp,
+            sellingPrice: nextMrp,
+            serialNumber: `${a}, ${b}`,
+            unit: 'pair',
+            gstAmount,
+            finalAmount: roundInrRupee(nextMrp + gstAmount),
+          };
+        });
+        return;
+      }
+
+      setCurrentProduct((prev) => {
+        const gstPct = prev.gstPercent;
+        const gstAmount = gstPct > 0 ? roundInrRupee((nextMrp * gstPct) / 100) : 0;
+        return {
+          ...prev,
+          mrp: nextMrp,
+          sellingPrice: nextMrp,
+          gstAmount,
+          finalAmount: roundInrRupee(nextMrp + gstAmount),
+        };
+      });
+    },
+    [
+      currentProduct.productId,
+      hearingAidProducts,
+      salePairSaleMode,
+      saleSerialPrimary,
+      saleSerialSecondary,
+      salePairSerialOptions,
+    ]
+  );
+
   // React Hook Form setup
   const {
     control,
@@ -840,6 +948,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       telecaller: '',
       center: '',
       message: '',
+      leadOutcome: '',
       visits: [],
       followUps: [],
       payments: []
@@ -869,10 +978,35 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         || '')
     : '';
   /** Preview quantity for sale line (serialized stock = 1 unit per row). */
-  const saleLineQtyPreview =
-    currentProduct.serialNumber?.trim().length > 0
+  const saleLineQtyPreview = (() => {
+    const master = getProductById(currentProduct.productId);
+    const isPair =
+      (master?.quantityType ?? (master as { quantityTypeLegacy?: string } | undefined)?.quantityTypeLegacy) === 'pair';
+    if (isPair) {
+      if (salePairSaleMode === 'pair') {
+        return saleSerialPrimary.trim() && saleSerialSecondary.trim()
+          ? 1
+          : hearingAidLineQty({ quantity: currentProduct.quantity });
+      }
+      return saleSerialPrimary.trim() || currentProduct.serialNumber?.trim()
+        ? 1
+        : hearingAidLineQty({ quantity: currentProduct.quantity });
+    }
+    return currentProduct.serialNumber?.trim().length
       ? 1
       : hearingAidLineQty({ quantity: currentProduct.quantity });
+  })();
+
+  const saleLinePairMaster = getProductById(currentProduct.productId);
+  const saleLineIsPairProduct =
+    (saleLinePairMaster?.quantityType ??
+      (saleLinePairMaster as { quantityTypeLegacy?: string } | undefined)?.quantityTypeLegacy) === 'pair';
+  const saleLineSerialLocked = saleLineIsPairProduct
+    ? salePairSaleMode === 'pair'
+      ? !!(saleSerialPrimary.trim() && saleSerialSecondary.trim())
+      : !!(saleSerialPrimary.trim() || currentProduct.serialNumber?.trim())
+    : !!currentProduct.serialNumber?.trim();
+
   // When booking is linked to a trial, we lock device fields
   const isUsingTrialDevice = !!(
     currentVisit?.hearingAidBooked &&
@@ -1157,6 +1291,54 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     [availableInventory]
   );
 
+  /** When a pair product is selected on the sale line, filter stock rows to pair-only or single-serial-only. */
+  const hearingDeviceInventoryForPicker = useMemo(() => {
+    const master = currentProduct.productId
+      ? hearingAidProducts.find((p) => p.id === currentProduct.productId)
+      : undefined;
+    const isPair = (master?.quantityType ?? (master as { quantityTypeLegacy?: string } | undefined)?.quantityTypeLegacy) === 'pair';
+    if (!currentProduct.productId || !isPair) return hearingDeviceInventory;
+    if (salePairSaleMode === 'pair') {
+      return hearingDeviceInventory.filter((it) => (it.serialNumbers?.length ?? 0) === 2);
+    }
+    // Sell 1 device: show bonded pairs (pick which serial) and orphan single-serial rows
+    return hearingDeviceInventory.filter((it) => {
+      const n = it.serialNumbers?.length ?? 0;
+      if (n === 2 || n === 1) return true;
+      if (it.serialNumber && String(it.serialNumber).trim() && n === 0) return true;
+      return false;
+    });
+  }, [hearingDeviceInventory, currentProduct.productId, hearingAidProducts, salePairSaleMode]);
+
+  const inventoryPickerItems = useMemo((): EnquiryInventoryRow[] => {
+    if (inventoryPickerMode === 'accessory') return accessoryInventory as EnquiryInventoryRow[];
+    const visit = watchedVisits[activeVisit];
+    if (visit?.hearingAidSale) return hearingDeviceInventoryForPicker as EnquiryInventoryRow[];
+    return hearingDeviceInventory as EnquiryInventoryRow[];
+  }, [
+    inventoryPickerMode,
+    accessoryInventory,
+    hearingDeviceInventory,
+    hearingDeviceInventoryForPicker,
+    watchedVisits,
+    activeVisit,
+  ]);
+
+  /** Serials already on committed sale lines (productId|serial) — highlight in stock picker to avoid duplicates. */
+  const saleVisitReservedSerialKeys = useMemo(() => {
+    const set = new Set<string>();
+    const visit = watchedVisits[activeVisit];
+    if (!visit?.hearingAidSale || !Array.isArray(visit.products)) return set;
+    for (const p of visit.products as HearingAidProduct[]) {
+      const pid = String(p.productId || '').trim();
+      if (!pid) continue;
+      splitSerialStringIntoTokens(p.serialNumber).forEach((sn) => {
+        if (sn) set.add(`${pid}|${sn}`);
+      });
+    }
+    return set;
+  }, [watchedVisits, activeVisit]);
+
   // Sales return states
   const [previousSales, setPreviousSales] = useState<any[]>([]);
   const [serialSelectionMode, setSerialSelectionMode] = useState<'dropdown' | 'manual'>('dropdown');
@@ -1199,6 +1381,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         // Per center (locationId = Firestore `centers` doc id) — matches inventory, fixes labels vs raw ids
         const serialsByProductLoc: Record<string, Set<string>> = {};
         const qtyByProductLoc: Record<string, number> = {};
+        /** Pair bonds from each inbound line (same order as material-in / purchase), per product+location. */
+        const inboundPairsByPlKey: Record<string, [string, string][]> = {};
 
         const addSerials = (productId: string, locationId: string, serials: string[]) => {
           const k = makeProductLocationKey(productId, locationId);
@@ -1228,9 +1412,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               const productId = p.productId || p.id;
               if (!productId) return;
               const locId = String(dataLocation || headOfficeId);
+              const plKey = makeProductLocationKey(productId, locId);
               const serialArray = serialsFromLineProduct(p);
               if (serialArray.length > 0) {
                 addSerials(productId, locId, serialArray);
+                const prodRef = prodMap[productId] || {};
+                const isPairProduct =
+                  (prodRef.quantityType || prodRef.quantityTypeLegacy) === 'pair';
+                if (isPairProduct && serialArray.length >= 2) {
+                  if (!inboundPairsByPlKey[plKey]) inboundPairsByPlKey[plKey] = [];
+                  for (let i = 0; i + 1 < serialArray.length; i += 2) {
+                    const a = String(serialArray[i] || '').trim();
+                    const b = String(serialArray[i + 1] || '').trim();
+                    if (a && b) inboundPairsByPlKey[plKey].push([a, b]);
+                  }
+                }
               } else {
                 const q = Number(p.quantity ?? p.qty ?? 0);
                 addQty(productId, locId, isNaN(q) ? 0 : q);
@@ -1281,34 +1477,130 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         applyEnquiryVisitsSalesToAvailabilityMaps(enquiriesSnap.docs, serialsByProductLoc, qtyByProductLoc);
 
         // Flatten to items array (real per-center location + resolved center name)
-        const items: any[] = [];
+        const items: EnquiryInventoryRow[] = [];
+        const pushSerialRow = (args: {
+          id: string;
+          serialNumber: string;
+          serialNumbers?: string[];
+          isPairRow?: boolean;
+          quantityType?: 'piece' | 'pair';
+          productId: string;
+          locationId: string;
+          prod: Record<string, unknown>;
+          locLabel: string;
+        }) => {
+          const gstRow = gstFieldsForInventoryRowFromProd(
+            args.prod as Parameters<typeof gstFieldsForInventoryRowFromProd>[0]
+          );
+          items.push({
+            id: args.id,
+            productId: args.productId,
+            productName: String(args.prod.name || 'Product'),
+            name: String(args.prod.name || 'Product'),
+            type: String(args.prod.type || ''),
+            company: String(args.prod.company || ''),
+            serialNumber: args.serialNumber,
+            serialNumbers: args.serialNumbers,
+            isPairRow: args.isPairRow,
+            quantityType: args.quantityType,
+            isSerialTracked: true,
+            mrp: Number(args.prod.mrp) || 0,
+            dealerPrice: Number(args.prod.dealerPrice) || 0,
+            gstApplicable: gstRow.gstApplicable,
+            gstPercentage: gstRow.gstPercentage,
+            gstType: String(args.prod.gstType || 'IGST'),
+            status: 'In Stock',
+            location: args.locLabel,
+            locationId: args.locationId,
+            hsnCode: String(args.prod.hsnCode || ''),
+            productHasSerialNumber: !!args.prod.hasSerialNumber,
+          });
+        };
+
         Object.entries(serialsByProductLoc).forEach(([plKey, set]) => {
           const { productId, locationId } = splitProductLocationKey(plKey);
           const prod = prodMap[productId] || {};
-          const gstRow = gstFieldsForInventoryRowFromProd(prod);
           const locLabel = centerNameById[locationId] || locationId;
-          Array.from(set).forEach((sn) => {
-            items.push({
-              id: `${productId}-${sn}-${locationId}`,
-              productId,
-              productName: prod.name || 'Product',
-              name: prod.name || 'Product', // Alias for compatibility
-              type: prod.type || '',
-              company: prod.company || '',
-              serialNumber: sn,
-              isSerialTracked: true,
-              mrp: Number(prod.mrp) || 0,
-              dealerPrice: Number(prod.dealerPrice) || 0,
-              gstApplicable: gstRow.gstApplicable,
-              gstPercentage: gstRow.gstPercentage,
-              gstType: prod.gstType || 'IGST',
-              status: 'In Stock',
-              location: locLabel,
-              locationId,
-              hsnCode: prod.hsnCode || '',
-              productHasSerialNumber: !!prod.hasSerialNumber,
+          const isPairProduct = (prod.quantityType || prod.quantityTypeLegacy) === 'pair';
+
+          if (!isPairProduct) {
+            Array.from(set).forEach((sn) => {
+              pushSerialRow({
+                id: `${productId}-${sn}-${locationId}`,
+                productId,
+                locationId,
+                prod,
+                locLabel,
+                serialNumber: sn,
+                serialNumbers: [sn],
+                isPairRow: false,
+                quantityType: 'piece',
+              });
             });
-          });
+            return;
+          }
+
+          const available = new Set(set);
+          const consumed = new Set<string>();
+          const inboundPairs = inboundPairsByPlKey[plKey] || [];
+
+          for (const [a, b] of inboundPairs) {
+            if (
+              a &&
+              b &&
+              available.has(a) &&
+              available.has(b) &&
+              !consumed.has(a) &&
+              !consumed.has(b)
+            ) {
+              pushSerialRow({
+                id: `${productId}-${a}-${b}-${locationId}`,
+                productId,
+                locationId,
+                prod,
+                locLabel,
+                serialNumber: `${a}, ${b}`,
+                serialNumbers: [a, b],
+                isPairRow: true,
+                quantityType: 'pair',
+              });
+              consumed.add(a);
+              consumed.add(b);
+            }
+          }
+
+          const remaining = Array.from(available)
+            .filter((sn) => !consumed.has(sn))
+            .sort((x, y) => x.localeCompare(y));
+          for (let i = 0; i < remaining.length; i += 2) {
+            const a = remaining[i];
+            const b = remaining[i + 1];
+            if (b !== undefined) {
+              pushSerialRow({
+                id: `${productId}-${a}-${b}-${locationId}-fb`,
+                productId,
+                locationId,
+                prod,
+                locLabel,
+                serialNumber: `${a}, ${b}`,
+                serialNumbers: [a, b],
+                isPairRow: true,
+                quantityType: 'pair',
+              });
+            } else {
+              pushSerialRow({
+                id: `${productId}-${a}-${locationId}-single`,
+                productId,
+                locationId,
+                prod,
+                locLabel,
+                serialNumber: a,
+                serialNumbers: [a],
+                isPairRow: false,
+                quantityType: 'pair',
+              });
+            }
+          }
         });
         
         Object.entries(qtyByProductLoc).forEach(([plKey, qty]) => {
@@ -1521,6 +1813,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           telecaller: enquiry.telecaller || '',
           center: enquiry.center || '',
           message: enquiry.message || '',
+          leadOutcome: enquiry.leadOutcome || '',
           visits,
           followUps: [],
           payments: enquiry.payments || []
@@ -1604,32 +1897,87 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         return;
       }
       const { gstApplicable, gstPercent } = resolveGstFromProductMaster(item);
-      const mrp = roundInrRupee(item.mrp);
-      const gstAmount = roundInrRupee((mrp * gstPercent) / 100);
+      const sns =
+        item.serialNumbers && item.serialNumbers.length > 0
+          ? item.serialNumbers
+          : splitSerialStringIntoTokens(item.serialNumber);
+      const hearingMaster = hearingAidProducts.find((p) => p.id === item.productId);
+      const isPairProduct =
+        (hearingMaster?.quantityType ?? (hearingMaster as { quantityTypeLegacy?: string } | undefined)?.quantityTypeLegacy) ===
+        'pair';
+      const catalogMrp = roundInrRupee(Number(item.mrp) || 0);
+      let lineMrp = catalogMrp;
+      let lineSelling = catalogMrp;
+      if (visit?.hearingAidSale && isPairProduct) {
+        const sellFullPair = sns.length >= 2 && salePairSaleMode === 'pair';
+        if (!sellFullPair) {
+          lineMrp = roundInrRupee(catalogMrp / 2);
+          lineSelling = lineMrp;
+        }
+      }
+      const gstAmount = roundInrRupee((lineSelling * gstPercent) / 100);
+      if (visit?.hearingAidSale) {
+        if (sns.length >= 2) {
+          if (salePairSaleMode === 'pair') {
+            setSaleSerialPrimary(sns[0]);
+            setSaleSerialSecondary(sns[1]);
+            setSalePairSerialOptions(null);
+          } else {
+            setSalePairSerialOptions([sns[0], sns[1]]);
+            setSaleSerialPrimary(sns[0]);
+            setSaleSerialSecondary('');
+          }
+        } else if (sns.length === 1) {
+          setSaleSerialPrimary(sns[0]);
+          setSaleSerialSecondary('');
+          setSalePairSerialOptions(null);
+        } else {
+          setSaleSerialPrimary('');
+          setSaleSerialSecondary('');
+          setSalePairSerialOptions(null);
+        }
+      }
+      const combinedSerial =
+        sns.length >= 2
+          ? salePairSaleMode === 'pair'
+            ? `${sns[0]}, ${sns[1]}`
+            : sns[0]
+          : item.serialNumber || sns[0] || '';
+      const lineUnit: 'pair' | 'piece' =
+        sns.length >= 2 && salePairSaleMode === 'pair' ? 'pair' : 'piece';
       setCurrentProduct((prev) => ({
         ...prev,
         inventoryId: item.id,
         productId: item.productId,
         name: item.productName,
         hsnCode: item.hsnCode || '',
-        mrp,
+        mrp: lineMrp,
         dealerPrice: item.dealerPrice ?? prev.dealerPrice ?? 0,
         gstPercent,
         gstApplicable,
         gstType: (item.gstType as 'CGST' | 'IGST') || 'IGST',
-        unit: 'piece',
+        unit: lineUnit,
         quantity: 1,
-        serialNumber: item.serialNumber || '',
-        sellingPrice: mrp,
+        serialNumber: combinedSerial,
+        sellingPrice: lineSelling,
         discountPercent: 0,
         discountAmount: 0,
         gstAmount,
-        finalAmount: roundInrRupee(mrp + gstAmount),
+        finalAmount: roundInrRupee(lineSelling + gstAmount),
         company: item.company ?? prev.company ?? '',
         location: item.location ?? prev.location ?? '',
       }));
     },
-    [activeVisit, getValues, inventoryPickerMode, products, updateVisit, updateVisitFields]
+    [
+      activeVisit,
+      getValues,
+      inventoryPickerMode,
+      products,
+      updateVisit,
+      updateVisitFields,
+      hearingAidProducts,
+      salePairSaleMode,
+    ]
   );
 
   const applyCatalogHearingAidSelection = useCallback(
@@ -1901,7 +2249,35 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   // Handle product changes
   const addProduct = () => {
     if (currentProduct.name && currentProduct.mrp > 0) {
-      const hasSerial = !!(currentProduct.serialNumber && String(currentProduct.serialNumber).trim());
+      const master = currentProduct.productId
+        ? hearingAidProducts.find((p) => p.id === currentProduct.productId)
+        : undefined;
+      const isPair =
+        (master?.quantityType ?? (master as { quantityTypeLegacy?: string } | undefined)?.quantityTypeLegacy) ===
+        'pair';
+
+      let finalSerial = '';
+      if (isPair) {
+        if (salePairSaleMode === 'pair') {
+          const a = saleSerialPrimary.trim();
+          const b = saleSerialSecondary.trim();
+          if (!a || !b) {
+            alert('Please enter both serial numbers for a pair sale.');
+            return;
+          }
+          finalSerial = `${a}, ${b}`;
+        } else {
+          finalSerial = (saleSerialPrimary.trim() || currentProduct.serialNumber || '').trim();
+          if (!finalSerial) {
+            alert('Please enter the serial number.');
+            return;
+          }
+        }
+      } else {
+        finalSerial = String(currentProduct.serialNumber || '').trim();
+      }
+
+      const hasSerial = !!finalSerial;
       const qty = hasSerial ? 1 : hearingAidLineQty({ quantity: currentProduct.quantity });
       const discountPercent = roundDiscountPercent(currentProduct.discountPercent);
       const sellingPrice = roundInrRupee(currentProduct.sellingPrice);
@@ -1918,8 +2294,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         productId: currentProduct.productId,
         name: currentProduct.name,
         hsnCode: currentProduct.hsnCode,
-        serialNumber: currentProduct.serialNumber,
-        unit: currentProduct.unit,
+        serialNumber: finalSerial,
+        unit: isPair && salePairSaleMode === 'pair' ? 'pair' : currentProduct.unit,
         quantity: qty,
         saleDate: currentProduct.saleDate,
         mrp: currentProduct.mrp,
@@ -1972,6 +2348,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         company: '',
         location: '',
       });
+      setSalePairSaleMode('pair');
+      setSaleSerialPrimary('');
+      setSaleSerialSecondary('');
+      setSalePairSerialOptions(null);
     }
   };
 
@@ -2389,9 +2769,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
     const formattedData = {
       ...data,
+      leadOutcome: (data.leadOutcome || '').trim() || null,
       visits: visitsForSave,
       followUps,
       status: 'active',
+      journeyStatusOverride: null,
       // Keep legacy and normalized payment arrays in sync so profile/payment widgets
       // reflect deletes/edits made from CRM enquiry form immediately.
       paymentRecords: normalizedPaymentRecords,
@@ -2532,7 +2914,42 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     
     // Remove all undefined values from the entire data structure before submitting
     const cleanedData = removeUndefined(formattedData);
-    await onSubmit(cleanedData);
+
+    const autoDerived = getEnquiryStatusMeta({ ...cleanedData, journeyStatusOverride: null });
+    setJourneySuggested({
+      key: autoDerived.key,
+      label: autoDerived.label,
+      color: autoDerived.color,
+    });
+    const existingPin = parseJourneyStatusOverride(enquiry?.journeyStatusOverride);
+    setJourneySelectValue(existingPin ?? 'auto');
+
+    const result = await new Promise<'cancel' | { override: EnquiryJourneyStatus | null }>(
+      (resolve) => {
+        journeyPromiseRef.current = { resolve };
+        setJourneyDialogOpen(true);
+      }
+    );
+
+    if (result === 'cancel') return;
+
+    await onSubmit({
+      ...cleanedData,
+      journeyStatusOverride: result.override,
+    });
+  };
+
+  const handleJourneyDialogConfirm = () => {
+    const override = journeySelectValue === 'auto' ? null : journeySelectValue;
+    journeyPromiseRef.current?.resolve({ override });
+    journeyPromiseRef.current = null;
+    setJourneyDialogOpen(false);
+  };
+
+  const handleJourneyDialogCancel = () => {
+    journeyPromiseRef.current?.resolve('cancel');
+    journeyPromiseRef.current = null;
+    setJourneyDialogOpen(false);
   };
 
   const stepTitles = ['Patient Information & Services', 'Review & Submit'];
@@ -2924,6 +3341,34 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           {errors.center && (
                             <FormHelperText>{errors.center.message}</FormHelperText>
                           )}
+                        </FormControl>
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Controller
+                      name="leadOutcome"
+                      control={control}
+                      render={({ field }) => (
+                        <FormControl fullWidth disabled={isAudiologist}>
+                          <InputLabel id="lead-outcome-label">Lead outcome</InputLabel>
+                          <Select
+                            {...field}
+                            labelId="lead-outcome-label"
+                            label="Lead outcome"
+                            value={field.value ?? ''}
+                            sx={{ borderRadius: 2 }}
+                          >
+                            {LEAD_OUTCOME_OPTIONS.map((opt) => (
+                              <MenuItem key={opt.value || 'none'} value={opt.value}>
+                                {opt.label}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                          <FormHelperText>
+                            If they bought devices elsewhere, tag updates accordingly (booking or sale
+                            here overrides this).
+                          </FormHelperText>
                         </FormControl>
                       )}
                     />
@@ -5099,7 +5544,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     </Box>
                                   ) : (
                                     <Typography>
-                                      Select device stock ({hearingDeviceInventory.length} lines)
+                                      Select device stock ({inventoryPickerItems.length} lines)
                                     </Typography>
                                   )}
                                 </Button>
@@ -5122,27 +5567,125 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   onChange={(e) => setCurrentProduct((prev) => ({ ...prev, hsnCode: e.target.value }))}
                                 />
                               </Grid>
-                              <Grid item xs={6} sm={3} md={2}>
-                                <TextField
-                                  fullWidth
-                                  size="small"
-                                  label="Serial no."
-                                  value={currentProduct.serialNumber}
-                                  onChange={(e) => {
-                                    const sn = e.target.value;
-                                    setCurrentProduct((prev) => ({
-                                      ...prev,
-                                      serialNumber: sn,
-                                      quantity: sn.trim() ? 1 : Math.max(1, prev.quantity || 1),
-                                    }));
-                                  }}
-                                  helperText={
-                                    currentProduct.serialNumber?.trim()
-                                      ? 'Quantity locked to 1 per serial'
-                                      : undefined
-                                  }
-                                />
-                              </Grid>
+                              {saleLineIsPairProduct ? (
+                                <Grid item xs={12} md={6}>
+                                  <Stack spacing={1}>
+                                    <ToggleButtonGroup
+                                      exclusive
+                                      size="small"
+                                      value={salePairSaleMode}
+                                      onChange={handleSalePairSaleModeChange}
+                                      fullWidth
+                                    >
+                                      <ToggleButton value="single">Sell 1 device</ToggleButton>
+                                      <ToggleButton value="pair">Sell both</ToggleButton>
+                                    </ToggleButtonGroup>
+                                    <TextField
+                                      fullWidth
+                                      size="small"
+                                      label={
+                                        salePairSaleMode === 'pair'
+                                          ? 'Serial 1 (Left/Right)'
+                                          : 'Serial number'
+                                      }
+                                      value={saleSerialPrimary}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setSaleSerialPrimary(v);
+                                        setCurrentProduct((prev) => {
+                                          const nextSerial =
+                                            salePairSaleMode === 'pair'
+                                              ? [v.trim(), saleSerialSecondary.trim()].filter(Boolean).join(', ')
+                                              : v.trim();
+                                          return {
+                                            ...prev,
+                                            serialNumber: nextSerial,
+                                            quantity: nextSerial ? 1 : Math.max(1, prev.quantity || 1),
+                                          };
+                                        });
+                                      }}
+                                      placeholder="S/N 1"
+                                    />
+                                    {salePairSaleMode === 'pair' && (
+                                      <TextField
+                                        fullWidth
+                                        size="small"
+                                        label="Serial 2 (Right/Left)"
+                                        value={saleSerialSecondary}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          setSaleSerialSecondary(v);
+                                          setCurrentProduct((prev) => ({
+                                            ...prev,
+                                            serialNumber: [saleSerialPrimary.trim(), v.trim()]
+                                              .filter(Boolean)
+                                              .join(', '),
+                                            quantity:
+                                              saleSerialPrimary.trim() && v.trim()
+                                                ? 1
+                                                : Math.max(1, prev.quantity || 1),
+                                          }));
+                                        }}
+                                        placeholder="S/N 2"
+                                      />
+                                    )}
+                                    {salePairSaleMode === 'single' && salePairSerialOptions && (
+                                      <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+                                        <Typography variant="caption" color="text.secondary">
+                                          Which serial from this pair?
+                                        </Typography>
+                                        <ToggleButtonGroup
+                                          exclusive
+                                          size="small"
+                                          value={
+                                            saleSerialPrimary === salePairSerialOptions[0]
+                                              ? '0'
+                                              : saleSerialPrimary === salePairSerialOptions[1]
+                                                ? '1'
+                                                : '0'
+                                          }
+                                          onChange={(_, v) => {
+                                            if (v == null) return;
+                                            const sn = salePairSerialOptions[v === '0' ? 0 : 1];
+                                            setSaleSerialPrimary(sn);
+                                            setCurrentProduct((prev) => ({
+                                              ...prev,
+                                              serialNumber: sn,
+                                              quantity: 1,
+                                            }));
+                                          }}
+                                          fullWidth
+                                        >
+                                          <ToggleButton value="0">{salePairSerialOptions[0]}</ToggleButton>
+                                          <ToggleButton value="1">{salePairSerialOptions[1]}</ToggleButton>
+                                        </ToggleButtonGroup>
+                                      </Stack>
+                                    )}
+                                  </Stack>
+                                </Grid>
+                              ) : (
+                                <Grid item xs={6} sm={3} md={2}>
+                                  <TextField
+                                    fullWidth
+                                    size="small"
+                                    label="Serial no."
+                                    value={currentProduct.serialNumber}
+                                    onChange={(e) => {
+                                      const sn = e.target.value;
+                                      setCurrentProduct((prev) => ({
+                                        ...prev,
+                                        serialNumber: sn,
+                                        quantity: sn.trim() ? 1 : Math.max(1, prev.quantity || 1),
+                                      }));
+                                    }}
+                                    helperText={
+                                      currentProduct.serialNumber?.trim()
+                                        ? 'Quantity locked to 1 per serial'
+                                        : undefined
+                                    }
+                                  />
+                                </Grid>
+                              )}
 
                               <Grid item xs={6} sm={4} md={2}>
                                 <TextField
@@ -5150,8 +5693,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   size="small"
                                   label="Quantity"
                                   type="number"
-                                  disabled={!!currentProduct.serialNumber?.trim()}
-                                  value={currentProduct.serialNumber?.trim() ? 1 : currentProduct.quantity}
+                                  disabled={saleLineSerialLocked}
+                                  value={saleLineSerialLocked ? 1 : currentProduct.quantity}
                                   onChange={(e) =>
                                     setCurrentProduct((prev) => ({
                                       ...prev,
@@ -5166,7 +5709,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <TextField
                                   fullWidth
                                   size="small"
-                                  label="MRP (per unit)"
+                                  label={
+                                    saleLineIsPairProduct && salePairSaleMode === 'single'
+                                      ? 'MRP (one device)'
+                                      : 'MRP (per unit)'
+                                  }
                                   type="number"
                                   value={currentProduct.mrp}
                                   onChange={(e) => {
@@ -5177,6 +5724,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       sellingPrice: newMrp > 0 ? newMrp : prev.sellingPrice,
                                     }));
                                   }}
+                                  helperText={
+                                    saleLineIsPairProduct && salePairSaleMode === 'pair'
+                                      ? 'Full pair (catalog)'
+                                      : saleLineIsPairProduct && salePairSaleMode === 'single'
+                                        ? 'Half of pair catalog MRP'
+                                        : undefined
+                                  }
                                 />
                               </Grid>
                               <Grid item xs={6} sm={4} md={2}>
@@ -7981,15 +8535,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       <EnquiryInventoryPickerDialog
         open={inventoryDialogOpen}
         onClose={() => setInventoryDialogOpen(false)}
-        items={
-          (inventoryPickerMode === 'hearing_device' ? hearingDeviceInventory : accessoryInventory) as EnquiryInventoryRow[]
-        }
+        items={inventoryPickerItems}
         mode={inventoryPickerMode}
         selectedInventoryId={
           inventoryPickerMode === 'hearing_device' ? currentProduct.inventoryId || undefined : undefined
         }
         formatCurrency={formatCurrency}
         onSelectItem={handleInventoryItemSelected}
+        reservedSerialProductKeys={
+          inventoryPickerMode === 'hearing_device' && currentVisit?.hearingAidSale
+            ? saleVisitReservedSerialKeys
+            : undefined
+        }
       />
 
       {/* Staff Management Dialog */}
@@ -8145,6 +8702,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           </Button>
         </DialogActions>
       </Dialog>
+
+      {journeySuggested && (
+        <JourneyConfirmDialog
+          open={journeyDialogOpen}
+          suggested={journeySuggested}
+          value={journeySelectValue}
+          onChange={setJourneySelectValue}
+          onConfirm={handleJourneyDialogConfirm}
+          onCancel={handleJourneyDialogCancel}
+        />
+      )}
     </Box>
   );
 };

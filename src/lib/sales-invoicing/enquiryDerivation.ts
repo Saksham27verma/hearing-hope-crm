@@ -32,9 +32,13 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
         Number.isFinite(salesAfterTax) && salesAfterTax > 0 ? salesAfterTax : productTotal;
       const totalAmount = haAfterTax + accessoryTotal;
       const invoiceGrandTotal = haAfterTax + accessoryTotal;
+      const whoSoldName = String(
+        visit?.hearingAidDetails?.whoSold ?? visit?.hearingAidBrand ?? '',
+      ).trim();
       const base: DerivedEnquirySale = {
         id: `${rec.id}-${idx}`,
         visitIndex: idx,
+        ...(whoSoldName ? { whoSoldName } : {}),
         patientName: name,
         visitDate: ts,
         products: prods,

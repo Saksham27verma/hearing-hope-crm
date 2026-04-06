@@ -27,6 +27,7 @@ import {
 } from 'recharts';
 import { collection, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import EnquiryProfileLink from '@/components/common/EnquiryProfileLink';
 
 // Format currency
 const formatCurrency = (amount: number) => {
@@ -42,6 +43,8 @@ interface SalesGSTItem {
   id: string;
   date: Date;
   customerName: string;
+  /** Linked enquiry profile when sale is tied to an enquiry */
+  enquiryId?: string;
   subtotal: number;
   gstPercentage: number;
   gstAmount: number;
@@ -124,10 +127,12 @@ export default function GSTReportTab() {
         const gstAmount = Number(data.gstAmount || 0);
         const total = subtotal + gstAmount;
         const gstPercentage = Number(data.gstPercentage || (subtotal ? (gstAmount * 100) / subtotal : 0));
+        const saleEnquiryId = (data.enquiryId || '').toString().trim();
         salesGST.push({
           id: docSnap.id,
           date,
           customerName: (data.patientName || '—').toString(),
+          enquiryId: saleEnquiryId || undefined,
           subtotal,
           gstPercentage,
           gstAmount,
@@ -173,6 +178,7 @@ export default function GSTReportTab() {
             id: `ENQ-${docSnap.id}-V${visit.id || idx}`,
             date,
             customerName,
+            enquiryId: docSnap.id,
             subtotal,
             gstPercentage,
             gstAmount,
@@ -346,7 +352,13 @@ export default function GSTReportTab() {
                 <TableRow key={item.id} hover>
                   <TableCell>{item.date.toLocaleDateString()}</TableCell>
                   <TableCell>{item.id}</TableCell>
-                  <TableCell>{item.customerName}</TableCell>
+                  <TableCell sx={{ wordBreak: 'break-word' }}>
+                    {item.enquiryId ? (
+                      <EnquiryProfileLink enquiryId={item.enquiryId}>{item.customerName}</EnquiryProfileLink>
+                    ) : (
+                      item.customerName
+                    )}
+                  </TableCell>
                   <TableCell align="right">{formatCurrency(item.subtotal)}</TableCell>
                   <TableCell align="right">{item.gstPercentage}%</TableCell>
                   <TableCell align="right">{formatCurrency(item.gstAmount)}</TableCell>

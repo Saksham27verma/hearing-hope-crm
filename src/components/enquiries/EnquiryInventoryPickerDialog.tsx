@@ -27,6 +27,7 @@ import {
 } from '@mui/icons-material';
 import type { EnquiryInventoryRow } from './enquiryInventoryUtils';
 import { resolveGstFromProductMaster } from './enquiryInventoryUtils';
+import { splitSerialStringIntoTokens } from '@/lib/enquiryInventoryAvailability';
 
 export type InventoryPickerMode = 'hearing_device' | 'accessory';
 
@@ -38,6 +39,10 @@ export type EnquiryInventoryPickerDialogProps = {
   selectedInventoryId?: string;
   formatCurrency: (n: number) => string;
   onSelectItem: (item: EnquiryInventoryRow) => void;
+  /**
+   * Serials already on sale lines for this visit (`productId|serial`). Rows touching these keys get a warning highlight.
+   */
+  reservedSerialProductKeys?: Set<string>;
 };
 
 const FONT_STACK = 'var(--font-inter), Inter, system-ui, -apple-system, sans-serif';
@@ -72,6 +77,35 @@ function getModelsByCompany(list: EnquiryInventoryRow[], company: string) {
       modelGroups[model].push(item);
     });
   return modelGroups;
+}
+
+/** Physical serial keys for one inventory row (product + each serial token). */
+function buildSerialProductKeys(item: EnquiryInventoryRow): string[] {
+  const pid = String(item.productId || '').trim();
+  if (!pid) return [];
+  const sns =
+    item.serialNumbers && item.serialNumbers.length > 0
+      ? item.serialNumbers
+      : splitSerialStringIntoTokens(item.serialNumber);
+  return sns
+    .map((sn) => `${pid}|${String(sn).trim()}`)
+    .filter((k) => k.length > pid.length + 1);
+}
+
+function serialHighlightForRow(
+  item: EnquiryInventoryRow,
+  usedKeys: Set<string> | undefined
+): 'none' | 'partial' | 'full' {
+  if (!usedKeys?.size) return 'none';
+  const keys = buildSerialProductKeys(item);
+  if (keys.length === 0) return 'none';
+  let matched = 0;
+  keys.forEach((k) => {
+    if (usedKeys.has(k)) matched++;
+  });
+  if (matched === 0) return 'none';
+  if (matched === keys.length) return 'full';
+  return 'partial';
 }
 
 function filterInventory(list: EnquiryInventoryRow[], term: string) {
@@ -148,9 +182,19 @@ type TileProps = {
   onClick: () => void;
   selected?: boolean;
   isDark: boolean;
+  /** Serial(s) on this row already added to the current sale */
+  reservedHighlight?: 'none' | 'partial' | 'full';
 };
 
-const InteractiveTile = memo(function InteractiveTile({ children, onClick, selected, isDark }: TileProps) {
+const InteractiveTile = memo(function InteractiveTile({
+  children,
+  onClick,
+  selected,
+  isDark,
+  reservedHighlight = 'none',
+}: TileProps) {
+  const warnFull = reservedHighlight === 'full';
+  const warnPartial = reservedHighlight === 'partial';
   return (
     <Box
       onClick={onClick}
@@ -167,10 +211,24 @@ const InteractiveTile = memo(function InteractiveTile({ children, onClick, selec
         borderRadius: '14px',
         border: selected
           ? '1px solid rgba(59, 130, 246, 0.55)'
-          : isDark
-            ? '1px solid rgba(255,255,255,0.08)'
-            : '1px solid rgba(0, 0, 0, 0.05)',
-        bgcolor: isDark ? 'rgba(255,255,255,0.04)' : '#ffffff',
+          : warnFull
+            ? '2px solid rgba(234, 88, 12, 0.85)'
+            : warnPartial
+              ? '2px dashed rgba(234, 88, 12, 0.65)'
+              : isDark
+                ? '1px solid rgba(255,255,255,0.08)'
+                : '1px solid rgba(0, 0, 0, 0.05)',
+        bgcolor: warnFull
+          ? isDark
+            ? 'rgba(234, 88, 12, 0.14)'
+            : 'rgba(255, 237, 213, 0.95)'
+          : warnPartial
+            ? isDark
+              ? 'rgba(234, 88, 12, 0.08)'
+              : 'rgba(255, 247, 237, 0.9)'
+            : isDark
+              ? 'rgba(255,255,255,0.04)'
+              : '#ffffff',
         boxShadow: isDark
           ? '0 1px 3px rgba(0,0,0,0.25)'
           : '0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04)',
@@ -178,7 +236,7 @@ const InteractiveTile = memo(function InteractiveTile({ children, onClick, selec
         outline: 'none',
         '&:hover': {
           transform: 'scale(1.02)',
-          borderColor: 'rgba(59, 130, 246, 0.45)',
+          borderColor: warnFull || warnPartial ? 'rgba(234, 88, 12, 0.95)' : 'rgba(59, 130, 246, 0.45)',
           boxShadow: isDark
             ? '0 0 0 1px rgba(96, 165, 250, 0.35), 0 20px 40px rgba(0,0,0,0.35)'
             : '0 0 0 1px rgba(59, 130, 246, 0.35), 0 16px 48px rgba(59, 130, 246, 0.14), 0 8px 24px rgba(15, 23, 42, 0.08)',
@@ -224,6 +282,7 @@ export default function EnquiryInventoryPickerDialog({
   selectedInventoryId,
   formatCurrency,
   onSelectItem,
+  reservedSerialProductKeys,
 }: EnquiryInventoryPickerDialogProps) {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
@@ -327,11 +386,13 @@ export default function EnquiryInventoryPickerDialog({
         {filtered.map((item) => {
           const selected = selectedInventoryId === item.id;
           const qtyLabel = quantityRowChipLabel(item);
+          const rh = serialHighlightForRow(item, reservedSerialProductKeys);
           return (
             <InteractiveTile
               key={item.id}
               selected={selected}
               isDark={isDark}
+              reservedHighlight={rh}
               onClick={() => handleSelect(item)}
             >
               <Box sx={{ p: 2.25 }}>
@@ -344,8 +405,34 @@ export default function EnquiryInventoryPickerDialog({
                       {item.company}
                     </Typography>
                     <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 1.25 }}>
+                      {rh !== 'none' && (
+                        <Chip
+                          label={rh === 'full' ? 'On sale' : 'Part on sale'}
+                          size="small"
+                          color="warning"
+                          variant="filled"
+                          sx={{ height: 24, fontWeight: 700, fontSize: '0.65rem' }}
+                        />
+                      )}
+                      {item.isPairRow && item.serialNumbers && item.serialNumbers.length === 2 && (
+                        <Chip
+                          label="Pair"
+                          size="small"
+                          color="secondary"
+                          variant="outlined"
+                          sx={{ height: 24, fontWeight: 700, fontSize: '0.68rem' }}
+                        />
+                      )}
                       {item.serialNumber && (
-                        <Chip label={item.serialNumber} size="small" sx={{ height: 24, fontWeight: 600, fontSize: '0.7rem' }} />
+                        <Chip
+                          label={
+                            item.isPairRow && item.serialNumbers?.length === 2
+                              ? `${item.serialNumbers[0]} · ${item.serialNumbers[1]}`
+                              : item.serialNumber
+                          }
+                          size="small"
+                          sx={{ height: 24, fontWeight: 600, fontSize: '0.7rem' }}
+                        />
                       )}
                       {!item.serialNumber && item.quantity != null && qtyLabel && (
                         <Chip label={qtyLabel} size="small" sx={{ height: 24, fontWeight: 600 }} />
@@ -570,11 +657,15 @@ export default function EnquiryInventoryPickerDialog({
                     <Stack direction="row" flexWrap="wrap" gap={1}>
                       {rows.map((item) => {
                         const selected = selectedInventoryId === item.id;
+                        const rh = serialHighlightForRow(item, reservedSerialProductKeys);
                         const label = item.serialNumber?.trim()
-                          ? item.serialNumber
+                          ? item.isPairRow && item.serialNumbers?.length === 2
+                            ? `Pair: ${item.serialNumbers[0]} · ${item.serialNumbers[1]}`
+                            : item.serialNumber
                           : item.quantity != null
                             ? quantityRowChipLabel(item) || item.id
                             : item.id;
+                        const warn = rh !== 'none';
                         return (
                           <Chip
                             key={item.id}
@@ -588,17 +679,33 @@ export default function EnquiryInventoryPickerDialog({
                               cursor: 'pointer',
                               border: selected
                                 ? '2px solid'
-                                : isDark
-                                  ? '1px solid rgba(255,255,255,0.12)'
-                                  : '1px solid rgba(0,0,0,0.08)',
-                              borderColor: selected ? 'primary.main' : undefined,
+                                : warn && rh === 'full'
+                                  ? '2px solid'
+                                  : warn && rh === 'partial'
+                                    ? '2px dashed'
+                                    : isDark
+                                      ? '1px solid rgba(255,255,255,0.12)'
+                                      : '1px solid rgba(0,0,0,0.08)',
+                              borderColor: selected
+                                ? 'primary.main'
+                                : warn
+                                  ? 'warning.main'
+                                  : undefined,
                               bgcolor: selected
                                 ? isDark
                                   ? 'rgba(59, 130, 246, 0.2)'
                                   : 'rgba(59, 130, 246, 0.1)'
-                                : isDark
-                                  ? 'rgba(255,255,255,0.06)'
-                                  : '#ffffff',
+                                : warn && rh === 'full'
+                                  ? isDark
+                                    ? 'rgba(234, 88, 12, 0.22)'
+                                    : 'rgba(255, 237, 213, 1)'
+                                  : warn && rh === 'partial'
+                                    ? isDark
+                                      ? 'rgba(234, 88, 12, 0.12)'
+                                      : 'rgba(255, 247, 237, 1)'
+                                    : isDark
+                                      ? 'rgba(255,255,255,0.06)'
+                                      : '#ffffff',
                               boxShadow: isDark ? 'none' : '0 1px 2px rgba(15,23,42,0.05)',
                               transition: 'transform 0.18s ease, box-shadow 0.18s ease',
                               '&:hover': {
@@ -743,6 +850,14 @@ export default function EnquiryInventoryPickerDialog({
             }}
           />
         </Box>
+
+        {mode === 'hearing_device' && (reservedSerialProductKeys?.size ?? 0) > 0 && (
+          <Box sx={{ px: 3, pt: 1, pb: 0.5, flexShrink: 0, bgcolor: paperBg }}>
+            <Typography variant="caption" color="warning.dark" sx={{ display: 'block', lineHeight: 1.45 }}>
+              Orange highlight: serial(s) already added on this sale — avoid duplicates.
+            </Typography>
+          </Box>
+        )}
 
         <Box
           sx={{

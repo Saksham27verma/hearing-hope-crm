@@ -12,6 +12,8 @@ export interface UserProfile {
   uid: string;
   email: string;
   displayName?: string;
+  /** Preferred short name for greetings; falls back to displayName when unset. */
+  nickname?: string;
   role: UserRole;
   allowedModules?: string[];
   createdAt: number;

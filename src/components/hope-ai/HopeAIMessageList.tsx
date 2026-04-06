@@ -1,20 +1,20 @@
 'use client';
 
 import React from 'react';
-import {
-  Avatar,
-  Box,
-  Paper,
-  Stack,
-  Typography,
-} from '@mui/material';
+import { Avatar, Box, Paper, Stack, Typography } from '@mui/material';
 import type { HopeAIMessageView } from './types';
 
 interface Props {
   messages: HopeAIMessageView[];
 }
 
-function renderMessageBody(content: string) {
+function renderMessageBody(content: string, message: HopeAIMessageView) {
+  const isUser = message.role === 'user';
+  const isError = Boolean(message.error);
+
+  const primary = isError ? 'error.light' : isUser ? 'common.white' : 'grey.100';
+  const secondary = isError ? 'error.light' : isUser ? 'rgba(255,255,255,0.75)' : 'grey.400';
+
   return content.split('\n').map((line, index) => {
     const trimmed = line.trim();
 
@@ -24,7 +24,12 @@ function renderMessageBody(content: string) {
 
     if (/^#{1,3}\s/.test(trimmed)) {
       return (
-        <Typography key={`heading-${index}`} variant="subtitle2" fontWeight={700} sx={{ mt: index === 0 ? 0 : 1.25 }}>
+        <Typography
+          key={`heading-${index}`}
+          variant="body2"
+          fontWeight={700}
+          sx={{ mt: index === 0 ? 0 : 1.5, color: primary }}
+        >
           {trimmed.replace(/^#{1,3}\s/, '')}
         </Typography>
       );
@@ -32,7 +37,12 @@ function renderMessageBody(content: string) {
 
     if ((trimmed.endsWith(':') || trimmed.endsWith(':**')) && trimmed.length < 60) {
       return (
-        <Typography key={`heading-${index}`} variant="subtitle2" fontWeight={700} sx={{ mt: index === 0 ? 0 : 1.25 }}>
+        <Typography
+          key={`heading-${index}`}
+          variant="body2"
+          fontWeight={700}
+          sx={{ mt: index === 0 ? 0 : 1.5, color: primary }}
+        >
           {trimmed.replace(/\*\*/g, '')}
         </Typography>
       );
@@ -42,9 +52,22 @@ function renderMessageBody(content: string) {
       const text = trimmed.startsWith('- ') ? trimmed.slice(2) : trimmed.slice(2);
       return (
         <Box key={`bullet-${index}`} display="flex" gap={1} alignItems="flex-start" sx={{ mt: 0.5 }}>
-          <Box sx={{ width: 5, height: 5, borderRadius: '50%', bgcolor: 'text.secondary', mt: 0.9, flexShrink: 0 }} />
-          <Typography variant="body2" color="text.primary" sx={{ '& strong': { fontWeight: 600 } }}
-            dangerouslySetInnerHTML={{ __html: text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }}
+          <Box
+            sx={{
+              width: 5,
+              height: 5,
+              borderRadius: '50%',
+              bgcolor: isUser ? 'rgba(255,255,255,0.6)' : 'grey.500',
+              mt: 0.9,
+              flexShrink: 0,
+            }}
+          />
+          <Typography
+            variant="body2"
+            sx={{ color: primary, '& strong': { fontWeight: 600 } }}
+            dangerouslySetInnerHTML={{
+              __html: text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+            }}
           />
         </Box>
       );
@@ -53,19 +76,32 @@ function renderMessageBody(content: string) {
     if (/^\d+\.\s/.test(trimmed)) {
       return (
         <Box key={`numbered-${index}`} display="flex" gap={1} alignItems="flex-start" sx={{ mt: 0.5 }}>
-          <Typography variant="body2" color="text.secondary" fontWeight={600} sx={{ minWidth: 18, flexShrink: 0 }}>
+          <Typography
+            variant="body2"
+            fontWeight={600}
+            sx={{ minWidth: 18, flexShrink: 0, color: secondary }}
+          >
             {trimmed.match(/^\d+/)?.[0]}.
           </Typography>
-          <Typography variant="body2" color="text.primary" sx={{ '& strong': { fontWeight: 600 } }}
-            dangerouslySetInnerHTML={{ __html: trimmed.replace(/^\d+\.\s/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }}
+          <Typography
+            variant="body2"
+            sx={{ color: primary, '& strong': { fontWeight: 600 } }}
+            dangerouslySetInnerHTML={{
+              __html: trimmed.replace(/^\d+\.\s/, '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+            }}
           />
         </Box>
       );
     }
 
     return (
-      <Typography key={`line-${index}`} variant="body2" color="text.primary" sx={{ mt: 0.25, '& strong': { fontWeight: 600 } }}
-        dangerouslySetInnerHTML={{ __html: trimmed.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') }}
+      <Typography
+        key={`line-${index}`}
+        variant="body2"
+        sx={{ mt: 0.25, color: primary, '& strong': { fontWeight: 600 } }}
+        dangerouslySetInnerHTML={{
+          __html: trimmed.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'),
+        }}
       />
     );
   });
@@ -73,58 +109,84 @@ function renderMessageBody(content: string) {
 
 export default function HopeAIMessageList({ messages }: Props) {
   return (
-    <Stack spacing={2.5}>
-      {messages.map((message) => (
-        <Box
-          key={message.id}
-          display="flex"
-          justifyContent={message.role === 'user' ? 'flex-end' : 'flex-start'}
-          gap={1.25}
-        >
-          {message.role === 'assistant' && (
-            <Avatar
+    <Stack spacing={3}>
+      {messages.map((message) => {
+        const isUser = message.role === 'user';
+        return (
+          <Box
+            key={message.id}
+            display="flex"
+            justifyContent={isUser ? 'flex-end' : 'flex-start'}
+            gap={1.5}
+          >
+            {!isUser && (
+              <Avatar
+                sx={{
+                  width: 36,
+                  height: 36,
+                  mt: 0.5,
+                  bgcolor: message.error ? 'error.main' : 'grey.700',
+                  color: 'common.white',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                }}
+              >
+                H
+              </Avatar>
+            )}
+            <Paper
+              elevation={0}
               sx={{
-                width: 36,
-                height: 36,
-                bgcolor: message.error ? 'error.main' : 'grey.900',
-                color: 'common.white',
-                mt: 0.5,
+                p: 2,
+                maxWidth: { xs: '92%', md: '82%' },
+                borderRadius: 4,
+                border: '1px solid',
+                borderColor: isUser
+                  ? 'grey.700'
+                  : message.error
+                    ? 'error.dark'
+                    : 'grey.700',
+                bgcolor: isUser ? 'grey.900' : message.error ? 'rgba(127, 29, 29, 0.25)' : 'rgba(23, 23, 23, 0.85)',
+                color: isUser ? 'common.white' : 'grey.100',
+                boxShadow: isUser ? '0 14px 34px rgba(0,0,0,0.35)' : '0 8px 24px rgba(0,0,0,0.25)',
               }}
             >
-              H
-            </Avatar>
-          )}
-          <Paper
-            elevation={0}
-            sx={{
-              p: 2,
-              maxWidth: { xs: '92%', md: '82%' },
-              borderRadius: 4,
-              border: '1px solid',
-              borderColor: message.role === 'user' ? 'grey.900' : 'divider',
-              bgcolor: message.role === 'user' ? 'grey.900' : 'background.paper',
-              color: message.role === 'user' ? 'common.white' : 'text.primary',
-              boxShadow: message.role === 'user' ? '0 14px 34px rgba(15, 23, 42, 0.14)' : '0 8px 24px rgba(15, 23, 42, 0.06)',
-            }}
-          >
-            <Typography
-              variant="caption"
-              color={message.role === 'user' ? 'rgba(255,255,255,0.7)' : 'text.secondary'}
-              sx={{ display: 'block', mb: 0.75 }}
-            >
-              {message.role === 'user' ? 'You' : 'Hope AI'}
-            </Typography>
-            <Box color={message.error ? 'error.main' : 'inherit'}>
-              {renderMessageBody(message.content)}
-            </Box>
-          </Paper>
-          {message.role === 'user' && (
-            <Avatar sx={{ width: 36, height: 36, bgcolor: 'grey.700', color: 'common.white', mt: 0.5 }}>
-              Y
-            </Avatar>
-          )}
-        </Box>
-      ))}
+              <Typography
+                variant="caption"
+                sx={{
+                  display: 'block',
+                  mb: 0.75,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  fontWeight: 600,
+                  fontSize: '0.6875rem',
+                  color: isUser ? 'rgba(255,255,255,0.6)' : 'grey.500',
+                }}
+              >
+                {isUser ? 'You' : 'Hope AI'}
+              </Typography>
+              <Box sx={message.error ? { color: 'error.light' } : undefined}>
+                {renderMessageBody(message.content, message)}
+              </Box>
+            </Paper>
+            {isUser && (
+              <Avatar
+                sx={{
+                  width: 36,
+                  height: 36,
+                  mt: 0.5,
+                  bgcolor: 'grey.600',
+                  color: 'common.white',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                }}
+              >
+                Y
+              </Avatar>
+            )}
+          </Box>
+        );
+      })}
     </Stack>
   );
 }

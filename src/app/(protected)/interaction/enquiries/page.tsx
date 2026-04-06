@@ -2199,8 +2199,7 @@ export default function EnquiriesPage() {
       });
     }
   };
-  
-  // Status change handler
+
   const handleJourneyStatusOverrideSave = async (
     enquiryId: string,
     next: EnquiryJourneyStatus | 'auto'
@@ -2220,13 +2219,13 @@ export default function EnquiriesPage() {
         setSelectedEnquiry({ ...selectedEnquiry, journeyStatusOverride });
       }
       setJourneyStatusMenu(null);
-      setAlert({ open: true, message: 'Journey status updated', severity: 'success' });
+      setAlert({ open: true, message: 'Journey tag updated', severity: 'success' });
     } catch (error) {
-      console.error('Error updating journey status:', error);
-      setAlert({ open: true, message: 'Could not update journey status', severity: 'error' });
+      console.error('Error updating journey tag:', error);
+      setAlert({ open: true, message: 'Could not update journey tag', severity: 'error' });
     }
   };
-
+  
   const handleStatusChange = async (enquiryId: string | undefined, newStatus: string) => {
     if (!enquiryId) return;
     
@@ -6077,7 +6076,7 @@ export default function EnquiriesPage() {
                   handleJourneyStatusOverrideSave(journeyStatusMenu.enquiryId, 'auto')
                 }
               >
-                Automatic (latest visit)
+                Automatic (from visits & lead outcome)
               </MenuItem>
               <Divider />
               {ENQUIRY_STATUS_OPTIONS.map((opt) => (

@@ -16,6 +16,7 @@ import {
 } from '@/lib/tenant/centerScope';
 
 const STORAGE_KEY = 'crm-scope-view-center-v1';
+const STORAGE_KEY_TOOLBAR_EXPANDED = 'crm-scope-toolbar-expanded-v1';
 
 export type CenterScopeContextValue = {
   /** Center the user cannot leave when exactly one center is assigned (banner + no switcher). */
@@ -30,6 +31,9 @@ export type CenterScopeContextValue = {
   setViewCenterMode: (mode: 'all' | string) => void;
   centers: Array<{ id: string; name: string }>;
   centersLoading: boolean;
+  /** Full data-scope bar vs minimized one-line strip (persisted in localStorage). */
+  scopeToolbarExpanded: boolean;
+  setScopeToolbarExpanded: (expanded: boolean) => void;
 };
 
 const CenterScopeContext = createContext<CenterScopeContextValue | null>(null);
@@ -39,6 +43,7 @@ export function CenterScopeProvider({ children }: { children: React.ReactNode })
   const [centers, setCenters] = useState<Array<{ id: string; name: string }>>([]);
   const [centersLoading, setCentersLoading] = useState(true);
   const [viewCenterMode, setViewState] = useState<'all' | string>('all');
+  const [scopeToolbarExpanded, setScopeToolbarExpandedState] = useState(true);
 
   const allowedCenterIds = useMemo(() => getAllowedCenterIds(userProfile), [userProfile]);
 
@@ -46,6 +51,9 @@ export function CenterScopeProvider({ children }: { children: React.ReactNode })
     if (typeof window === 'undefined') return;
     const v = localStorage.getItem(STORAGE_KEY);
     if (v && v !== 'all') setViewState(v);
+    if (localStorage.getItem(STORAGE_KEY_TOOLBAR_EXPANDED) === '0') {
+      setScopeToolbarExpandedState(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -81,6 +89,13 @@ export function CenterScopeProvider({ children }: { children: React.ReactNode })
     if (lockedCenterId) return lockedCenterId;
     return viewCenterMode;
   }, [lockedCenterId, viewCenterMode]);
+
+  const setScopeToolbarExpanded = useCallback((expanded: boolean) => {
+    setScopeToolbarExpandedState(expanded);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY_TOOLBAR_EXPANDED, expanded ? '1' : '0');
+    }
+  }, []);
 
   const setViewCenterMode = useCallback(
     (mode: 'all' | string) => {
@@ -137,6 +152,8 @@ export function CenterScopeProvider({ children }: { children: React.ReactNode })
       setViewCenterMode,
       centers,
       centersLoading,
+      scopeToolbarExpanded,
+      setScopeToolbarExpanded,
     }),
     [
       lockedCenterId,
@@ -147,6 +164,8 @@ export function CenterScopeProvider({ children }: { children: React.ReactNode })
       setViewCenterMode,
       centers,
       centersLoading,
+      scopeToolbarExpanded,
+      setScopeToolbarExpanded,
     ],
   );
 

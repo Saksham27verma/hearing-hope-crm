@@ -5,8 +5,6 @@ import {
   Box, 
   Typography, 
   Paper, 
-  Card, 
-  CardContent, 
   Table,
   TableBody,
   TableCell,
@@ -17,8 +15,6 @@ import {
   Button,
   Chip,
   Avatar,
-  Stack,
-  Divider,
   IconButton,
   Tooltip,
   LinearProgress,
@@ -27,18 +23,14 @@ import {
   Inventory as InventoryIcon,
   People as PeopleIcon,
   Receipt as ReceiptIcon,
-  TrendingUp as TrendingUpIcon,
   AttachMoney as MoneyIcon,
-  ShoppingCart as ShoppingCartIcon,
-  LocalShipping as ShippingIcon,
   Assignment as AssignmentIcon,
   Store as StoreIcon,
   SwapHoriz as TransferIcon,
   ArrowForward as ArrowForwardIcon,
   Refresh as RefreshIcon,
-  Visibility as ViewIcon,
-  Event as EventIcon,
-  PhoneCallback as FollowUpIcon,
+  EventAvailable as EventAvailableIcon,
+  BookmarkAdded as BookmarkAddedIcon,
 } from '@mui/icons-material';
 import { collection, getDocs, query, orderBy, limit, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -47,13 +39,20 @@ import { useCenterScope } from '@/hooks/useCenterScope';
 import {
   appointmentMatchesDataScope,
   enquiryMatchesDataScope,
-  inventoryCollectionDocMatchesScope,
   isGlobalDataScope,
-  resolveDataScope,
   saleMatchesDataScope,
   stockTransferMatchesDataScope,
 } from '@/lib/tenant/centerScope';
 import { useRouter } from 'next/navigation';
+import { alpha } from '@mui/material/styles';
+import SvgIcon from '@mui/material/SvgIcon';
+import AdminDashboardInsights from '@/components/dashboard/AdminDashboardInsights';
+import {
+  getBookingAdvancePaidDateKey,
+  getEnquiryVisitSchedules,
+  isBookingVisitRow,
+} from '@/utils/bookingAdvancePaidDate';
+import { CRM_ACCENT, CRM_ORANGE_GHOST } from '@/components/Layout/crm-theme';
 
 // Format currency
 const formatCurrency = (amount: number) => {
@@ -74,6 +73,230 @@ const formatDate = (timestamp: Timestamp) => {
   });
 };
 
+function getLocalDayBounds() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function getTimeOfDayKey(): 'morning' | 'afternoon' | 'evening' {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 17) return 'afternoon';
+  return 'evening';
+}
+
+function getGreetingLine(displayName: string): string {
+  const key = getTimeOfDayKey();
+  const name = displayName || 'there';
+  if (key === 'morning') return `Good morning, ${name} 👋`;
+  if (key === 'afternoon') return `Good afternoon, ${name} 👋`;
+  return `Good evening, ${name} 👋`;
+}
+
+/** Local calendar YYYY-MM-DD (avoid UTC drift vs payment date keys). */
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function formatDateKeyEnIn(key: string): string {
+  const parts = key.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return key;
+  const [y, mo, da] = parts;
+  return new Date(y, mo - 1, da).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+  });
+}
+
+/** Softer orange ring for dashboard cards (sidebar glow scaled down). */
+const PULSE_SECTION_GLOW =
+  '0 0 0 1px rgba(241, 115, 54, 0.2), 0 0 16px rgba(241, 115, 54, 0.1), 0 4px 14px rgba(15, 23, 42, 0.06)';
+
+const pulseCardSx = {
+  border: '1px solid',
+  borderColor: 'rgba(241, 115, 54, 0.22)',
+  borderRadius: 2,
+  overflow: 'hidden',
+  bgcolor: CRM_ORANGE_GHOST,
+  height: '100%',
+  boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+  borderLeft: '3px solid',
+  borderLeftColor: CRM_ACCENT,
+} as const;
+
+/** Minimal pill for dates / status (Today's Pulse tables). */
+const pulsePillSx = {
+  display: 'inline-block',
+  bgcolor: 'grey.100',
+  color: 'grey.600',
+  fontSize: '10px',
+  lineHeight: 1.35,
+  px: 0.75,
+  py: 0.125,
+  borderRadius: 1,
+  fontWeight: 600,
+} as const;
+
+const pulseRowSx = {
+  cursor: 'pointer',
+  transition: 'background-color 0.15s ease',
+  '&:hover': { bgcolor: 'grey.50' },
+  '& td': { py: 0.75, borderColor: 'divider' },
+} as const;
+
+const pulseHeadCellSx = {
+  fontSize: '0.6875rem',
+  fontWeight: 600,
+  color: 'grey.600',
+  py: 0.5,
+  px: 1,
+  borderBottom: '1px solid',
+  borderColor: 'divider',
+  bgcolor: 'rgba(255,255,255,0.72)',
+} as const;
+
+const pulseBodyTypographySx = {
+  fontSize: '0.75rem',
+  lineHeight: 1.35,
+} as const;
+
+const EMERALD = '#059669';
+
+type StatStripItem = {
+  title: string;
+  value: React.ReactNode;
+  color: string;
+  icon: typeof SvgIcon;
+  path: string;
+};
+
+/** Ultra-compact single-row stat strip (Vercel/Stripe-style): one surface, vertical hairlines, micro icons. */
+function DashboardStatStrip({ items }: { items: StatStripItem[] }) {
+  const router = useRouter();
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        border: '1px solid',
+        borderColor: (t) =>
+          t.palette.mode === 'dark' ? alpha(t.palette.divider, 0.8) : 'rgba(226, 232, 240, 0.75)',
+        borderRadius: 1.5,
+        boxShadow: '0 1px 2px 0 rgba(15, 23, 42, 0.05)',
+        bgcolor: (t) => (t.palette.mode === 'dark' ? t.palette.grey[900] : '#FFFFFF'),
+        overflow: 'hidden',
+        mb: 2,
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'row',
+          flexWrap: 'nowrap',
+          overflowX: 'auto',
+          WebkitOverflowScrolling: 'touch',
+          '&::-webkit-scrollbar': { height: 4 },
+          '&::-webkit-scrollbar-thumb': {
+            bgcolor: 'action.disabledBackground',
+            borderRadius: 2,
+          },
+        }}
+      >
+        {items.map((item, index) => {
+          const Icon = item.icon;
+          return (
+            <Box
+              key={`${item.title}-${index}`}
+              onClick={() => router.push(item.path)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  router.push(item.path);
+                }
+              }}
+              sx={{
+                flex: '1 1 0',
+                minWidth: { xs: 104, sm: 112, md: 0 },
+                maxWidth: { xs: 'none', md: 'none' },
+                py: 1,
+                px: 1.5,
+                cursor: 'pointer',
+                borderLeft:
+                  index === 0
+                    ? 'none'
+                    : (t) =>
+                        `1px solid ${
+                          t.palette.mode === 'dark' ? alpha(t.palette.divider, 0.5) : 'rgba(243, 244, 246, 1)'
+                        }`,
+                transition: 'background-color 0.15s ease',
+                '&:hover': {
+                  bgcolor: (t) =>
+                    t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : 'rgba(249, 250, 251, 0.9)',
+                },
+              }}
+            >
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  mb: 0,
+                  minWidth: 0,
+                }}
+              >
+                <Icon
+                  sx={{
+                    fontSize: 16,
+                    width: 16,
+                    height: 16,
+                    flexShrink: 0,
+                    color: item.color,
+                  }}
+                />
+                <Typography
+                  component="span"
+                  sx={{
+                    fontSize: '0.6875rem',
+                    fontWeight: 600,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color: (t) => (t.palette.mode === 'dark' ? t.palette.grey[500] : '#6b7280'),
+                    lineHeight: 1.1,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {item.title}
+                </Typography>
+              </Box>
+              <Typography
+                sx={{
+                  fontSize: '1.125rem',
+                  fontWeight: 700,
+                  color: (t) => (t.palette.mode === 'dark' ? t.palette.grey[50] : '#111827'),
+                  lineHeight: 1,
+                  letterSpacing: '-0.02em',
+                  mt: 0,
+                }}
+              >
+                {item.value}
+              </Typography>
+            </Box>
+          );
+        })}
+      </Box>
+    </Paper>
+  );
+}
+
 export default function DashboardPage() {
   const { user, userProfile } = useAuth();
   const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
@@ -88,14 +311,16 @@ export default function DashboardPage() {
     monthlyRevenue: 0,
     totalInventory: 0,
     totalStockTransfers: 0,
-    totalParties: 0,
-    totalCenters: 0,
   });
-  const [recentSales, setRecentSales] = useState<any[]>([]);
+  const [todaysSales, setTodaysSales] = useState<any[]>([]);
+  const [todaysEnquiries, setTodaysEnquiries] = useState<any[]>([]);
+  const [todaysTransfers, setTodaysTransfers] = useState<any[]>([]);
+  const [todaysAppointments, setTodaysAppointments] = useState<any[]>([]);
+  const [todaysBookingAdvances, setTodaysBookingAdvances] = useState<any[]>([]);
+  /** Audiologist-only pending audiogram list (reuses enquiry state name in that branch). */
   const [recentEnquiries, setRecentEnquiries] = useState<any[]>([]);
-  const [recentTransfers, setRecentTransfers] = useState<any[]>([]);
-  const [upcomingAppointments, setUpcomingAppointments] = useState<any[]>([]);
-  const [followUpPatients, setFollowUpPatients] = useState<any[]>([]);
+  /** Bumps child insights when user hits Refresh (see AdminDashboardInsights). */
+  const [insightsRefresh, setInsightsRefresh] = useState(0);
 
   const fetchDashboardData = async (isRefresh = false) => {
     try {
@@ -170,16 +395,14 @@ export default function DashboardPage() {
         salesSnapshot,
         inventorySnapshot,
         transfersSnapshot,
-        partiesSnapshot,
-        centersSnapshot,
+        appointmentsSnapshot,
       ] = await Promise.all([
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'enquiries')),
         getDocs(collection(db, 'sales')),
-        getDocs(query(collection(db, 'inventory'), where('status', '==', 'In Stock'))),
+        getDocs(collection(db, 'inventory')),
         getDocs(collection(db, 'stockTransfers')),
-        getDocs(collection(db, 'parties')),
-        getDocs(collection(db, 'centers')),
+        getDocs(collection(db, 'appointments')),
       ]);
       
       // Calculate monthly data (current month)
@@ -199,105 +422,87 @@ export default function DashboardPage() {
         if (!saleMatchesDataScope(saleData, effectiveScopeCenterId, allowedCenterIds)) return;
         monthlyRevenue += Number(saleData.totalAmount) || 0;
       });
-      
-      // Recent sales
-      const recentSalesQuery = query(
-        collection(db, 'sales'),
-        orderBy('saleDate', 'desc'),
-        limit(5)
-      );
-      const recentSalesSnapshot = await getDocs(recentSalesQuery);
-      const recentSalesData = recentSalesSnapshot.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() }))
-        .filter((row) => saleMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
-      
-      // Recent enquiries - For other users, show recent enquiries as before
-      const recentEnquiriesQuery = query(
-        collection(db, 'enquiries'),
-        orderBy('createdAt', 'desc'),
-        limit(5)
-      );
-      const recentEnquiriesSnapshot = await getDocs(recentEnquiriesQuery);
-      const recentEnquiriesData = recentEnquiriesSnapshot.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() }))
-        .filter((row) => enquiryMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
-      
-      // Recent stock transfers
-      const recentTransfersQuery = query(
-        collection(db, 'stockTransfers'),
-        orderBy('createdAt', 'desc'),
-        limit(5)
-      );
-      const recentTransfersSnapshot = await getDocs(recentTransfersQuery);
-      const recentTransfersData = recentTransfersSnapshot.docs
-        .map((doc) => ({ id: doc.id, ...doc.data() }))
-        .filter((row) => stockTransferMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
-      
-      // Fetch upcoming appointments (for staff)
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const allAppointmentsSnapshot = await getDocs(collection(db, 'appointments'));
-      const upcomingAppointmentsData = allAppointmentsSnapshot.docs
+
+      const { start: dayStart, end: dayEnd } = getLocalDayBounds();
+      const tDay0 = dayStart.getTime();
+      const tDay1 = dayEnd.getTime();
+
+      const tsToMs = (ts: unknown): number | null => {
+        if (!ts) return null;
+        const t = ts as Timestamp & { seconds?: number };
+        if (typeof t.toMillis === 'function') return t.toMillis();
+        if (typeof t.seconds === 'number') return t.seconds * 1000;
+        return null;
+      };
+
+      const inLocalDay = (ms: number | null) => ms != null && ms >= tDay0 && ms <= tDay1;
+
+      const todaysSalesData = salesSnapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown> & { id: string }))
+        .filter((row) => saleMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
+        .filter((row) => inLocalDay(tsToMs(row.saleDate)))
+        .sort((a, b) => (tsToMs(b.saleDate) || 0) - (tsToMs(a.saleDate) || 0))
+        .slice(0, 12);
+
+      const todaysEnquiriesData = enquiriesSnapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown> & { id: string }))
+        .filter((row) => enquiryMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
+        .filter((row) => inLocalDay(tsToMs(row.createdAt)))
+        .sort((a, b) => (tsToMs(b.createdAt) || 0) - (tsToMs(a.createdAt) || 0))
+        .slice(0, 12);
+
+      const todaysTransfersData = transfersSnapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown> & { id: string }))
+        .filter((row) => stockTransferMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
+        .filter((row) => inLocalDay(tsToMs(row.transferDate)))
+        .sort((a, b) => (tsToMs(b.transferDate) || 0) - (tsToMs(a.transferDate) || 0))
+        .slice(0, 12);
+
+      const todaysAppointmentsData = appointmentsSnapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() }))
         .filter((appt: any) => appointmentMatchesDataScope(appt as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
         .filter((appt: any) => {
           if (!appt.start) return false;
-          const apptDate = new Date(appt.start);
-          return apptDate >= today;
+          const t = new Date(appt.start).getTime();
+          return t >= tDay0 && t <= tDay1;
         })
-        .sort((a: any, b: any) => {
-          const dateA = new Date(a.start).getTime();
-          const dateB = new Date(b.start).getTime();
-          return dateA - dateB;
-        })
-        .slice(0, 10);
-      
-      // Fetch follow-up patients (enquiries with followUps where nextFollowUpDate is today or upcoming)
-      const allEnquiriesForFollowUp = await getDocs(collection(db, 'enquiries'));
-      const followUpPatientsData: any[] = [];
-      const todayDateStr = today.toISOString().split('T')[0];
-      
-      allEnquiriesForFollowUp.docs.forEach((doc) => {
-        const enquiry: any = { id: doc.id, ...doc.data() };
-        if (!enquiryMatchesDataScope(enquiry as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds)) {
-          return;
-        }
-        if (enquiry.followUps && Array.isArray(enquiry.followUps) && enquiry.followUps.length > 0) {
-          // Get the most recent follow-up
-          const sortedFollowUps = [...enquiry.followUps].sort((a: any, b: any) => {
-            const dateA = a.nextFollowUpDate || a.date || '';
-            const dateB = b.nextFollowUpDate || b.date || '';
-            return dateB.localeCompare(dateA);
+        .sort((a: any, b: any) => new Date(a.start).getTime() - new Date(b.start).getTime())
+        .slice(0, 12);
+
+      const todayKey = localDateKey(new Date());
+      const todaysBookingAdvancesData: {
+        enquiryId: string;
+        patientName: string;
+        advance: number;
+        visitId: string;
+        paidDateKey: string;
+      }[] = [];
+      enquiriesSnapshot.docs.forEach((doc) => {
+        const e = { id: doc.id, ...doc.data() } as Record<string, unknown> & { id: string };
+        if (!enquiryMatchesDataScope(e, effectiveScopeCenterId, allowedCenterIds)) return;
+        const visits = getEnquiryVisitSchedules(e);
+        for (const visit of visits) {
+          if (!isBookingVisitRow(visit)) continue;
+          const ha = visit.hearingAidDetails as Record<string, unknown> | undefined;
+          const advance =
+            Number(visit.bookingAdvanceAmount ?? ha?.bookingAdvanceAmount ?? 0) || 0;
+          if (advance <= 0) continue;
+          const paidKey = getBookingAdvancePaidDateKey(e, visit);
+          if (!paidKey || paidKey !== todayKey) continue;
+          const visitId = String(visit.id ?? '');
+          todaysBookingAdvancesData.push({
+            enquiryId: doc.id,
+            patientName: String(e.name ?? '—'),
+            advance,
+            visitId,
+            paidDateKey: paidKey,
           });
-          const latestFollowUp = sortedFollowUps[0];
-          
-          if (latestFollowUp.nextFollowUpDate) {
-            const followUpDate = new Date(latestFollowUp.nextFollowUpDate);
-            const followUpDateStr = followUpDate.toISOString().split('T')[0];
-            
-            // Include if follow-up date is today or in the future (within next 30 days)
-            if (followUpDateStr >= todayDateStr) {
-              const daysUntilFollowUp = Math.ceil((followUpDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-              if (daysUntilFollowUp <= 30) {
-                followUpPatientsData.push({
-                  ...enquiry,
-                  nextFollowUpDate: latestFollowUp.nextFollowUpDate,
-                  followUpRemarks: latestFollowUp.remarks,
-                  daysUntilFollowUp
-                });
-              }
-            }
-          }
         }
       });
-      
-      // Sort by next follow-up date
-      followUpPatientsData.sort((a, b) => {
-        const dateA = new Date(a.nextFollowUpDate).getTime();
-        const dateB = new Date(b.nextFollowUpDate).getTime();
-        return dateA - dateB;
-      });
+      todaysBookingAdvancesData.sort((a, b) => b.advance - a.advance);
+      if (todaysBookingAdvancesData.length > 12) {
+        todaysBookingAdvancesData.length = 12;
+      }
       
       const scopeActive = !isGlobalDataScope(effectiveScopeCenterId, allowedCenterIds);
       const enquiriesRows = enquiriesSnapshot.docs
@@ -309,20 +514,27 @@ export default function DashboardPage() {
       const monthlySalesScoped = monthlySalesSnapshot.docs.filter((d) =>
         saleMatchesDataScope(d.data() as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
       ).length;
-      const inventoryRows = inventorySnapshot.docs.filter((d) =>
-        inventoryCollectionDocMatchesScope(d.data() as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
-      );
+      /** In-stock rows: sum units like the inventory list; legacy rows may omit status (treat as in stock if not sold/reserved). */
+      const isInventoryRowInStock = (row: Record<string, unknown>) => {
+        const s = row.status;
+        if (s === 'Sold' || s === 'Reserved' || s === 'Damaged') return false;
+        if (s === 'In Stock') return true;
+        if (s === undefined || s === null || s === '') return true;
+        return false;
+      };
+      const inventoryRowUnits = (row: Record<string, unknown>) => {
+        const q = Number(row.quantity);
+        if (Number.isFinite(q) && q > 0) return q;
+        return 1;
+      };
+      const inventoryDataRows = inventorySnapshot.docs.map((d) => d.data() as Record<string, unknown>);
+      /** Org-wide in-stock units (all centers / companies). Scope filter is not applied — matches expectation vs per-center strip confusion. */
+      const totalInventoryUnits = inventoryDataRows
+        .filter((row) => isInventoryRowInStock(row))
+        .reduce((sum, row) => sum + inventoryRowUnits(row), 0);
       const transfersRows = transfersSnapshot.docs.filter((d) =>
         stockTransferMatchesDataScope(d.data() as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
       );
-
-      const centersMode = resolveDataScope(effectiveScopeCenterId, allowedCenterIds);
-      const totalCentersStat =
-        centersMode.type === 'global'
-          ? centersSnapshot.size
-          : centersMode.type === 'union'
-            ? centersMode.centerIds.length
-            : 1;
 
       setStats({
         totalProducts: productsSnapshot.size,
@@ -330,22 +542,23 @@ export default function DashboardPage() {
         totalSales: scopeActive ? salesRows.length : salesSnapshot.size,
         monthlySales: scopeActive ? monthlySalesScoped : monthlySalesSnapshot.size,
         monthlyRevenue,
-        totalInventory: scopeActive ? inventoryRows.length : inventorySnapshot.size,
+        totalInventory: totalInventoryUnits,
         totalStockTransfers: scopeActive ? transfersRows.length : transfersSnapshot.size,
-        totalParties: partiesSnapshot.size,
-        totalCenters: totalCentersStat,
       });
       
-      setRecentSales(recentSalesData);
-      setRecentEnquiries(recentEnquiriesData);
-      setRecentTransfers(recentTransfersData);
-      setUpcomingAppointments(upcomingAppointmentsData);
-      setFollowUpPatients(followUpPatientsData.slice(0, 10));
+      setTodaysSales(todaysSalesData);
+      setTodaysEnquiries(todaysEnquiriesData);
+      setTodaysTransfers(todaysTransfersData);
+      setTodaysAppointments(todaysAppointmentsData);
+      setTodaysBookingAdvances(todaysBookingAdvancesData);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      if (isRefresh) {
+        setInsightsRefresh((x) => x + 1);
+      }
     }
   };
 
@@ -366,9 +579,18 @@ export default function DashboardPage() {
   // For audiologists, show custom dashboard with only pending audiogram enquiries
   if (userProfile?.role === 'audiologist') {
     return (
-      <Box sx={{ p: 3 }}>
+      <Box
+        sx={{
+          bgcolor: (t) => (t.palette.mode === 'dark' ? t.palette.background.default : '#F8F9FA'),
+          minHeight: '100%',
+          width: '100%',
+          px: { xs: 1.5, sm: 2 },
+          py: { xs: 1.5, sm: 2 },
+          pb: 3,
+        }}
+      >
         {/* Header */}
-        <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box>
             <Typography variant="h4" fontWeight="bold" color="primary" gutterBottom>
               Pending Audiogram Entries
@@ -532,783 +754,604 @@ export default function DashboardPage() {
     );
   }
 
-  // Different stat cards for staff vs admin
-  const statCards = userProfile?.role === 'staff' ? [
-    {
-      title: 'Total Products',
-      value: stats.totalProducts,
-      icon: <InventoryIcon sx={{ fontSize: 40 }} />,
-      color: '#ff6b35',
-      bgGradient: 'linear-gradient(135deg, #ff6b35 0%, #ff8c5a 100%)',
-      path: '/products',
-    },
-    {
-      title: 'Enquiries',
-      value: stats.totalEnquiries,
-      icon: <PeopleIcon sx={{ fontSize: 40 }} />,
-      color: '#2196f3',
-      bgGradient: 'linear-gradient(135deg, #2196f3 0%, #42a5f5 100%)',
-      path: '/interaction/enquiries',
-    },
-    {
-      title: 'Inventory Items',
-      value: stats.totalInventory,
-      icon: <StoreIcon sx={{ fontSize: 40 }} />,
-      color: '#9c27b0',
-      bgGradient: 'linear-gradient(135deg, #9c27b0 0%, #ba68c8 100%)',
-      path: '/inventory',
-    },
-    {
-      title: 'Stock Transfers',
-      value: stats.totalStockTransfers,
-      icon: <TransferIcon sx={{ fontSize: 40 }} />,
-      color: '#00bcd4',
-      bgGradient: 'linear-gradient(135deg, #00bcd4 0%, #4dd0e1 100%)',
-      path: '/stock-transfer',
-    },
-  ] : [
-    {
-      title: 'Total Products',
-      value: stats.totalProducts,
-      icon: <InventoryIcon sx={{ fontSize: 40 }} />,
-      color: '#ff6b35',
-      bgGradient: 'linear-gradient(135deg, #ff6b35 0%, #ff8c5a 100%)',
-      path: '/products',
-    },
-    {
-      title: 'Enquiries',
-      value: stats.totalEnquiries,
-      icon: <PeopleIcon sx={{ fontSize: 40 }} />,
-      color: '#2196f3',
-      bgGradient: 'linear-gradient(135deg, #2196f3 0%, #42a5f5 100%)',
-      path: '/interaction/enquiries',
-    },
-    {
-      title: 'Total Sales',
-      value: stats.totalSales,
-      icon: <ReceiptIcon sx={{ fontSize: 40 }} />,
-      color: '#4caf50',
-      bgGradient: 'linear-gradient(135deg, #4caf50 0%, #66bb6a 100%)',
-      path: '/sales',
-    },
-    {
-      title: 'Monthly Revenue',
-      value: formatCurrency(stats.monthlyRevenue),
-      icon: <MoneyIcon sx={{ fontSize: 40 }} />,
-      color: '#ff9800',
-      bgGradient: 'linear-gradient(135deg, #ff9800 0%, #ffb74d 100%)',
-      path: '/reports',
-    },
-    {
-      title: 'Inventory Items',
-      value: stats.totalInventory,
-      icon: <StoreIcon sx={{ fontSize: 40 }} />,
-      color: '#9c27b0',
-      bgGradient: 'linear-gradient(135deg, #9c27b0 0%, #ba68c8 100%)',
-      path: '/inventory',
-    },
-    {
-      title: 'Stock Transfers',
-      value: stats.totalStockTransfers,
-      icon: <TransferIcon sx={{ fontSize: 40 }} />,
-      color: '#00bcd4',
-      bgGradient: 'linear-gradient(135deg, #00bcd4 0%, #4dd0e1 100%)',
-      path: '/stock-transfer',
-    },
-  ];
+  /** Single strip (admin: 6 metrics; no Parties/Centers). */
+  const statStripItems: StatStripItem[] =
+    userProfile?.role === 'staff'
+      ? [
+          {
+            title: 'Products',
+            value: stats.totalProducts,
+            icon: InventoryIcon,
+            color: '#ff6b35',
+            path: '/products',
+          },
+          {
+            title: 'Enquiries',
+            value: stats.totalEnquiries,
+            icon: PeopleIcon,
+            color: '#2196f3',
+            path: '/interaction/enquiries',
+          },
+          {
+            title: 'All in stock',
+            value: stats.totalInventory,
+            icon: StoreIcon,
+            color: '#9c27b0',
+            path: '/inventory',
+          },
+          {
+            title: 'Stock Transfers',
+            value: stats.totalStockTransfers,
+            icon: TransferIcon,
+            color: '#00bcd4',
+            path: '/stock-transfer',
+          },
+        ]
+      : [
+          {
+            title: 'Products',
+            value: stats.totalProducts,
+            icon: InventoryIcon,
+            color: '#ff6b35',
+            path: '/products',
+          },
+          {
+            title: 'Enquiries',
+            value: stats.totalEnquiries,
+            icon: PeopleIcon,
+            color: '#2196f3',
+            path: '/interaction/enquiries',
+          },
+          {
+            title: 'Total Sales',
+            value: stats.totalSales,
+            icon: ReceiptIcon,
+            color: '#4caf50',
+            path: '/sales',
+          },
+          {
+            title: 'Monthly Revenue',
+            value: formatCurrency(stats.monthlyRevenue),
+            icon: MoneyIcon,
+            color: '#ff9800',
+            path: '/reports',
+          },
+          {
+            title: 'All in stock',
+            value: stats.totalInventory,
+            icon: StoreIcon,
+            color: '#9c27b0',
+            path: '/inventory',
+          },
+          {
+            title: 'Stock Transfers',
+            value: stats.totalStockTransfers,
+            icon: TransferIcon,
+            color: '#00bcd4',
+            path: '/stock-transfer',
+          },
+        ];
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box
+      sx={{
+        bgcolor: (t) => (t.palette.mode === 'dark' ? t.palette.background.default : '#F8F9FA'),
+        minHeight: '100%',
+        width: '100%',
+        px: { xs: 1.5, sm: 2 },
+        py: { xs: 1.5, sm: 2 },
+        pb: 3,
+      }}
+    >
       {/* Header */}
-      <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Box>
-          <Typography variant="h4" fontWeight="bold" color="primary" gutterBottom>
-            Dashboard Overview
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Welcome back! Here's what's happening with your business today.
-          </Typography>
-        </Box>
-        <Tooltip title="Refresh Data">
-          <IconButton 
-            onClick={() => fetchDashboardData(true)}
-            disabled={refreshing}
-            sx={{ 
-              bgcolor: 'primary.50',
-              '&:hover': { bgcolor: 'primary.100' }
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 2 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography
+            component="h1"
+            sx={{
+              fontSize: { xs: '1.375rem', sm: '1.5rem' },
+              fontWeight: 700,
+              color: 'grey.900',
+              letterSpacing: '-0.02em',
+              lineHeight: 1.35,
             }}
           >
-            <RefreshIcon />
+            {getGreetingLine(
+              (userProfile?.nickname?.trim() ||
+                userProfile?.displayName?.trim() ||
+                user?.displayName?.trim() ||
+                user?.email?.split('@')[0] ||
+                'there') as string,
+            )}
+          </Typography>
+          <Typography variant="body2" sx={{ color: 'grey.500', mt: 0.5, fontSize: '0.875rem' }}>
+            Your workspace at a glance — scoped to your current data view.
+          </Typography>
+        </Box>
+        <Tooltip title="Refresh data">
+          <IconButton
+            onClick={() => fetchDashboardData(true)}
+            disabled={refreshing}
+            size="small"
+            sx={{
+              bgcolor: 'grey.100',
+              color: 'grey.700',
+              '&:hover': { bgcolor: 'grey.200' },
+            }}
+          >
+            <RefreshIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </Box>
 
       {refreshing && (
-        <LinearProgress sx={{ mb: 3, borderRadius: 1 }} />
+        <LinearProgress sx={{ mb: 1.5, borderRadius: 1 }} />
       )}
 
-      {/* Stats Cards */}
-      <Box sx={{ display: 'grid', gridTemplateColumns: { 
-        xs: '1fr', 
-        sm: 'repeat(2, 1fr)', 
-        md: userProfile?.role === 'staff' ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)', 
-        lg: userProfile?.role === 'staff' ? 'repeat(4, 1fr)' : 'repeat(6, 1fr)' 
-      }, gap: 3, mb: 4 }}>
-        {statCards.map((card, index) => (
-          <Box key={index}>
-            <Card
-              elevation={0}
-              sx={{
-                height: '100%',
-                cursor: 'pointer',
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 3,
-                overflow: 'hidden',
-                transition: 'all 0.3s ease',
-                position: 'relative',
-                '&:hover': {
-                  transform: 'translateY(-8px)',
-                  boxShadow: 6,
-                  borderColor: card.color,
-                },
-              }}
-              onClick={() => router.push(card.path)}
-            >
-              <Box
-                sx={{
-                  background: card.bgGradient,
-                  p: 2,
-                  color: 'white',
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <Box>
-                    <Typography variant="caption" sx={{ opacity: 0.9, fontWeight: 500 }}>
-                      {card.title}
-                    </Typography>
-                    <Typography variant="h4" fontWeight="bold" sx={{ mt: 0.5 }}>
-                      {card.value}
-                    </Typography>
-                  </Box>
-                  <Avatar
-                    sx={{
-                      bgcolor: 'rgba(255,255,255,0.2)',
-                      width: 56,
-                      height: 56,
-                      color: 'white',
-                    }}
-                  >
-                    {card.icon}
-                  </Avatar>
-                </Box>
-              </Box>
-              <Box
-                sx={{
-                  p: 1.5,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  bgcolor: 'grey.50',
-                }}
-              >
-                <Typography variant="caption" color="text.secondary">
-                  View Details
-                </Typography>
-                <ArrowForwardIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-              </Box>
-            </Card>
-          </Box>
-        ))}
-      </Box>
+      {/* Unified stat strip — single surface, hairline dividers, horizontal scroll on narrow viewports */}
+      <DashboardStatStrip items={statStripItems} />
 
-      {/* Additional Stats Row - Only for Admin */}
-      {userProfile?.role !== 'staff' && (
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 3, mb: 4 }}>
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                p: 2.5,
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 2,
-                textAlign: 'center',
-                bgcolor: 'info.50',
-              }}
-            >
-              <ShoppingCartIcon sx={{ fontSize: 32, color: 'info.main', mb: 1 }} />
-              <Typography variant="h5" fontWeight="bold" color="info.main">
-                {stats.totalParties}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Parties
-              </Typography>
-            </Paper>
-          </Box>
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                p: 2.5,
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 2,
-                textAlign: 'center',
-                bgcolor: 'success.50',
-              }}
-            >
-              <StoreIcon sx={{ fontSize: 32, color: 'success.main', mb: 1 }} />
-              <Typography variant="h5" fontWeight="bold" color="success.main">
-                {stats.totalCenters}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Centers
-              </Typography>
-            </Paper>
-          </Box>
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                p: 2.5,
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 2,
-                textAlign: 'center',
-                bgcolor: 'warning.50',
-              }}
-            >
-              <TrendingUpIcon sx={{ fontSize: 32, color: 'warning.main', mb: 1 }} />
-              <Typography variant="h5" fontWeight="bold" color="warning.main">
-                {stats.monthlySales}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Sales This Month
-              </Typography>
-            </Paper>
-          </Box>
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                p: 2.5,
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 2,
-                textAlign: 'center',
-                bgcolor: 'secondary.50',
-              }}
-            >
-              <ShippingIcon sx={{ fontSize: 32, color: 'secondary.main', mb: 1 }} />
-              <Typography variant="h5" fontWeight="bold" color="secondary.main">
-                {stats.totalStockTransfers}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Stock Transfers
-              </Typography>
-            </Paper>
-          </Box>
-        </Box>
+      {/* Admin: month center sales + booked pipeline */}
+      {userProfile && !['staff', 'audiologist'].includes(userProfile.role) && (
+        <AdminDashboardInsights refreshSignal={insightsRefresh} />
       )}
 
-      {/* Recent Activity Section */}
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h5" fontWeight="bold" color="primary" gutterBottom>
-          Recent Activity
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Latest updates from your CRM
-        </Typography>
-      </Box>
-
-      <Box sx={{ display: 'grid', gridTemplateColumns: { 
-        xs: '1fr', 
-        md: userProfile?.role === 'staff' ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)' 
-      }, gap: 3 }}>
-        {/* Recent Sales - Only for Admin */}
-        {userProfile?.role !== 'staff' && (
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 3,
-                overflow: 'hidden',
-                height: '100%',
-              }}
-            >
-              <Box
-                sx={{
-                  p: 2.5,
-                  bgcolor: 'success.50',
-                  borderBottom: '1px solid',
-                  borderColor: 'divider',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Avatar sx={{ bgcolor: 'success.main', width: 40, height: 40 }}>
-                    <ReceiptIcon />
-                  </Avatar>
-                  <Typography variant="h6" fontWeight="bold">
-                    Recent Sales
-                  </Typography>
-                </Box>
-                <Button
-                  variant="text"
-                  size="small"
-                  endIcon={<ArrowForwardIcon />}
-                  onClick={() => router.push('/sales')}
-                >
-                  View All
-                </Button>
-              </Box>
-              <TableContainer>
-                <Table size="small">
-                  <TableHead sx={{ bgcolor: 'grey.50' }}>
-                    <TableRow>
-                      <TableCell><strong>Date</strong></TableCell>
-                      <TableCell><strong>Customer</strong></TableCell>
-                      <TableCell align="right"><strong>Amount</strong></TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {recentSales.length > 0 ? (
-                      recentSales.map((sale) => (
-                        <TableRow
-                          key={sale.id}
-                          hover
-                          sx={{ cursor: 'pointer' }}
-                          onClick={() => router.push(`/sales`)}
-                        >
-                          <TableCell>
-                            <Chip
-                              label={formatDate(sale.saleDate)}
-                              size="small"
-                              variant="outlined"
-                              sx={{ fontSize: '0.7rem' }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              {sale.customerName || 'N/A'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Typography variant="body2" fontWeight="bold" color="success.main">
-                              {formatCurrency(sale.totalAmount || 0)}
-                            </Typography>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                          <Typography variant="body2" color="text.secondary">
-                            No recent sales
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
-          </Box>
-        )}
-
-        {/* Upcoming Appointments - For Staff */}
-        {userProfile?.role === 'staff' && (
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 3,
-                overflow: 'hidden',
-                height: '100%',
-              }}
-            >
-              <Box
-                sx={{
-                  p: 2.5,
-                  bgcolor: 'primary.50',
-                  borderBottom: '1px solid',
-                  borderColor: 'divider',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Avatar sx={{ bgcolor: 'primary.main', width: 40, height: 40 }}>
-                    <EventIcon />
-                  </Avatar>
-                  <Typography variant="h6" fontWeight="bold">
-                    Upcoming Appointments
-                  </Typography>
-                </Box>
-                <Button
-                  variant="text"
-                  size="small"
-                  endIcon={<ArrowForwardIcon />}
-                  onClick={() => router.push('/appointments')}
-                >
-                  View All
-                </Button>
-              </Box>
-              <TableContainer>
-                <Table size="small">
-                  <TableHead sx={{ bgcolor: 'grey.50' }}>
-                    <TableRow>
-                      <TableCell><strong>Date & Time</strong></TableCell>
-                      <TableCell><strong>Patient</strong></TableCell>
-                      <TableCell><strong>Type</strong></TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {upcomingAppointments.length > 0 ? (
-                      upcomingAppointments.map((appt) => (
-                        <TableRow
-                          key={appt.id}
-                          hover
-                          sx={{ cursor: 'pointer' }}
-                          onClick={() => router.push(`/appointments`)}
-                        >
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              {appt.start ? new Date(appt.start).toLocaleString('en-IN', {
-                                day: '2-digit',
-                                month: 'short',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              }) : 'N/A'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              {appt.patientName || appt.title || 'N/A'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={appt.type === 'home' ? 'Home Visit' : 'Center'}
-                              size="small"
-                              color={appt.type === 'home' ? 'secondary' : 'primary'}
-                              variant="outlined"
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                          <Typography variant="body2" color="text.secondary">
-                            No upcoming appointments
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
-          </Box>
-        )}
-
-        {/* Recent Enquiries */}
-        <Box>
-          <Paper
-            elevation={0}
+      {/* Today's Pulse */}
+      <Box
+        sx={{
+          borderRadius: 3,
+          p: { xs: 1.5, sm: 2 },
+          mb: 3,
+          boxShadow: PULSE_SECTION_GLOW,
+          border: '1px solid rgba(241, 115, 54, 0.2)',
+          bgcolor: (t) =>
+            t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.35) : 'rgba(255,255,255,0.94)',
+        }}
+      >
+        <Box sx={{ mb: 2 }}>
+          <Typography
             sx={{
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: 3,
-              overflow: 'hidden',
-              height: '100%',
+              fontSize: '1.125rem',
+              fontWeight: 600,
+              color: 'grey.900',
+              letterSpacing: '-0.01em',
             }}
           >
-            <Box
-              sx={{
-                p: 2.5,
-                bgcolor: 'info.50',
-                borderBottom: '1px solid',
-                borderColor: 'divider',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <Avatar sx={{ bgcolor: 'info.main', width: 40, height: 40 }}>
-                  <PeopleIcon />
-                </Avatar>
-                <Typography variant="h6" fontWeight="bold">
-                  Recent Enquiries
-                </Typography>
-              </Box>
-              <Button
-                variant="text"
-                size="small"
-                endIcon={<ArrowForwardIcon />}
-                onClick={() => router.push('/interaction/enquiries')}
-              >
-                View All
-              </Button>
+            Today&apos;s Pulse
+          </Typography>
+          <Typography variant="body2" sx={{ color: 'grey.500', mt: 0.25, fontSize: '0.8125rem' }}>
+            Sales, enquiries, transfers, booking advances collected today, and appointments scheduled for today
+            (local time) — respects your data scope.
+          </Typography>
+        </Box>
+
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: '1fr',
+              sm: 'repeat(2, minmax(0, 1fr))',
+              lg: 'repeat(3, minmax(0, 1fr))',
+              xl: 'repeat(5, minmax(0, 1fr))',
+            },
+            gap: 2,
+          }}
+        >
+        {/* Today's Sales */}
+        <Paper elevation={0} sx={pulseCardSx}>
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <ReceiptIcon sx={{ fontSize: 20, color: 'grey.500' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+                Today&apos;s Sales
+              </Typography>
             </Box>
-            <TableContainer>
-              <Table size="small">
-                <TableHead sx={{ bgcolor: 'grey.50' }}>
-                  <TableRow>
-                    <TableCell><strong>Date</strong></TableCell>
-                    <TableCell><strong>Name</strong></TableCell>
-                    <TableCell><strong>Phone</strong></TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {recentEnquiries.length > 0 ? (
-                    recentEnquiries.map((enquiry) => (
-                      <TableRow
-                        key={enquiry.id}
-                        hover
-                        sx={{ cursor: 'pointer' }}
-                        onClick={() => router.push(`/interaction/enquiries/${enquiry.id}`)}
-                      >
-                        <TableCell>
-                          <Chip
-                            label={formatDate(enquiry.createdAt)}
-                            size="small"
-                            variant="outlined"
-                            sx={{ fontSize: '0.7rem' }}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight={500}>
-                            {enquiry.name || 'N/A'}
+            <Tooltip title="View all">
+              <IconButton
+                size="small"
+                onClick={() => router.push('/sales')}
+                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                aria-label="View all sales"
+              >
+                <ArrowForwardIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+            <Table size="small" sx={{ tableLayout: 'fixed' }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '28%' }}>Date</TableCell>
+                  <TableCell sx={pulseHeadCellSx}>Customer</TableCell>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '30%' }} align="right">
+                    Amount
+                  </TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {todaysSales.length > 0 ? (
+                  todaysSales.map((sale: any) => (
+                    <TableRow key={sale.id} onClick={() => router.push('/sales')} sx={pulseRowSx}>
+                      <TableCell>
+                        <Box component="span" sx={pulsePillSx}>
+                          {formatDate(sale.saleDate)}
+                        </Box>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={sale.customerName || '—'} placement="top-start">
+                          <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
+                            {sale.customerName || '—'}
                           </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" color="text.secondary">
-                            {enquiry.phone || 'N/A'}
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                        <Typography variant="body2" color="text.secondary">
-                          No recent enquiries
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography
+                          fontWeight={600}
+                          sx={{
+                            ...pulseBodyTypographySx,
+                            fontVariantNumeric: 'tabular-nums',
+                            color: EMERALD,
+                          }}
+                        >
+                          {formatCurrency(sale.totalAmount || 0)}
                         </Typography>
                       </TableCell>
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </Paper>
-        </Box>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No sales today
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
 
-        {/* Recent Stock Transfers - Only for Admin */}
-        {userProfile?.role !== 'staff' && (
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 3,
-                overflow: 'hidden',
-                height: '100%',
-              }}
-            >
-              <Box
-                sx={{
-                  p: 2.5,
-                  bgcolor: 'secondary.50',
-                  borderBottom: '1px solid',
-                  borderColor: 'divider',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
+        {/* Today's Enquiries */}
+        <Paper elevation={0} sx={pulseCardSx}>
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <PeopleIcon sx={{ fontSize: 20, color: 'grey.500' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+                Today&apos;s Enquiries
+              </Typography>
+            </Box>
+            <Tooltip title="View all">
+              <IconButton
+                size="small"
+                onClick={() => router.push('/interaction/enquiries')}
+                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                aria-label="View all enquiries"
               >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Avatar sx={{ bgcolor: 'secondary.main', width: 40, height: 40 }}>
-                    <TransferIcon />
-                  </Avatar>
-                  <Typography variant="h6" fontWeight="bold">
-                    Recent Transfers
-                  </Typography>
-                </Box>
-                <Button
-                  variant="text"
-                  size="small"
-                  endIcon={<ArrowForwardIcon />}
-                  onClick={() => router.push('/stock-transfer')}
-                >
-                  View All
-                </Button>
-              </Box>
-              <TableContainer>
-                <Table size="small">
-                  <TableHead sx={{ bgcolor: 'grey.50' }}>
-                    <TableRow>
-                      <TableCell><strong>Date</strong></TableCell>
-                      <TableCell><strong>Transfer #</strong></TableCell>
-                      <TableCell><strong>Type</strong></TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {recentTransfers.length > 0 ? (
-                      recentTransfers.map((transfer) => (
-                        <TableRow
-                          key={transfer.id}
-                          hover
-                          sx={{ cursor: 'pointer' }}
-                          onClick={() => router.push(`/stock-transfer`)}
-                        >
-                          <TableCell>
-                            <Chip
-                              label={formatDate(transfer.transferDate)}
-                              size="small"
-                              variant="outlined"
-                              sx={{ fontSize: '0.7rem' }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              {transfer.transferNumber || 'N/A'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={transfer.transferType === 'intracompany' ? 'Intra' : 'Inter'}
-                              size="small"
-                              color={transfer.transferType === 'intracompany' ? 'primary' : 'secondary'}
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                          <Typography variant="body2" color="text.secondary">
-                            No recent transfers
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
+                <ArrowForwardIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
-        )}
-
-        {/* Follow-up Patients - For Staff */}
-        {userProfile?.role === 'staff' && (
-          <Box>
-            <Paper
-              elevation={0}
-              sx={{
-                border: '1px solid',
-                borderColor: 'divider',
-                borderRadius: 3,
-                overflow: 'hidden',
-                height: '100%',
-              }}
-            >
-              <Box
-                sx={{
-                  p: 2.5,
-                  bgcolor: 'warning.50',
-                  borderBottom: '1px solid',
-                  borderColor: 'divider',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                  <Avatar sx={{ bgcolor: 'warning.main', width: 40, height: 40 }}>
-                    <FollowUpIcon />
-                  </Avatar>
-                  <Typography variant="h6" fontWeight="bold">
-                    Follow-up Patients
-                  </Typography>
-                </Box>
-                <Button
-                  variant="text"
-                  size="small"
-                  endIcon={<ArrowForwardIcon />}
-                  onClick={() => router.push('/interaction/enquiries')}
-                >
-                  View All
-                </Button>
-              </Box>
-              <TableContainer>
-                <Table size="small">
-                  <TableHead sx={{ bgcolor: 'grey.50' }}>
-                    <TableRow>
-                      <TableCell><strong>Patient Name</strong></TableCell>
-                      <TableCell><strong>Phone</strong></TableCell>
-                      <TableCell><strong>Follow-up Date</strong></TableCell>
+          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+            <Table size="small" sx={{ tableLayout: 'fixed' }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '28%' }}>Date</TableCell>
+                  <TableCell sx={pulseHeadCellSx}>Name</TableCell>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '32%' }}>Phone</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {todaysEnquiries.length > 0 ? (
+                  todaysEnquiries.map((enquiry: any) => (
+                    <TableRow
+                      key={enquiry.id}
+                      onClick={() => router.push(`/interaction/enquiries/${enquiry.id}`)}
+                      sx={pulseRowSx}
+                    >
+                      <TableCell>
+                        <Box component="span" sx={pulsePillSx}>
+                          {formatDate(enquiry.createdAt)}
+                        </Box>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={enquiry.name || '—'} placement="top-start">
+                          <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
+                            {enquiry.name || '—'}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={enquiry.phone || '—'} placement="top-start">
+                          <Typography color="text.secondary" noWrap sx={pulseBodyTypographySx}>
+                            {enquiry.phone || '—'}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
                     </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {followUpPatients.length > 0 ? (
-                      followUpPatients.map((patient) => (
-                        <TableRow
-                          key={patient.id}
-                          hover
-                          sx={{ cursor: 'pointer' }}
-                          onClick={() => router.push(`/interaction/enquiries/${patient.id}`)}
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No enquiries today
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+
+        {/* Today's Transfers */}
+        <Paper elevation={0} sx={pulseCardSx}>
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <TransferIcon sx={{ fontSize: 20, color: 'grey.500' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+                Today&apos;s Transfers
+              </Typography>
+            </Box>
+            <Tooltip title="View all">
+              <IconButton
+                size="small"
+                onClick={() => router.push('/stock-transfer')}
+                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                aria-label="View all transfers"
+              >
+                <ArrowForwardIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+            <Table size="small" sx={{ tableLayout: 'fixed' }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '28%' }}>Date</TableCell>
+                  <TableCell sx={pulseHeadCellSx}>Transfer #</TableCell>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '22%' }}>Type</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {todaysTransfers.length > 0 ? (
+                  todaysTransfers.map((transfer: any) => (
+                    <TableRow key={transfer.id} onClick={() => router.push('/stock-transfer')} sx={pulseRowSx}>
+                      <TableCell>
+                        <Box component="span" sx={pulsePillSx}>
+                          {formatDate(transfer.transferDate)}
+                        </Box>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={transfer.transferNumber || '—'} placement="top-start">
+                          <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
+                            {transfer.transferNumber || '—'}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>
+                        <Box component="span" sx={pulsePillSx}>
+                          {transfer.transferType === 'intracompany' ? 'Intra' : 'Inter'}
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        No transfers today
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+
+        {/* Today's booking advances (paid today) */}
+        <Paper elevation={0} sx={pulseCardSx}>
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <BookmarkAddedIcon sx={{ fontSize: 20, color: 'grey.500' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+                Today&apos;s booking advances
+              </Typography>
+            </Box>
+            <Tooltip title="Booked enquiries report">
+              <IconButton
+                size="small"
+                onClick={() => router.push('/reports')}
+                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                aria-label="Open reports"
+              >
+                <ArrowForwardIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+            <Table size="small" sx={{ tableLayout: 'fixed' }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={pulseHeadCellSx}>Patient</TableCell>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '34%' }} align="right">
+                    Advance
+                  </TableCell>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '28%' }}>Paid</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {todaysBookingAdvances.length > 0 ? (
+                  todaysBookingAdvances.map((row: any) => (
+                    <TableRow
+                      key={`${row.enquiryId}-${row.visitId || row.paidDateKey}`}
+                      onClick={() => router.push(`/interaction/enquiries/${row.enquiryId}`)}
+                      sx={pulseRowSx}
+                    >
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={row.patientName || '—'} placement="top-start">
+                          <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
+                            {row.patientName || '—'}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography
+                          fontWeight={600}
+                          sx={{
+                            ...pulseBodyTypographySx,
+                            fontVariantNumeric: 'tabular-nums',
+                            color: EMERALD,
+                          }}
                         >
-                          <TableCell>
-                            <Typography variant="body2" fontWeight={500}>
-                              {patient.name || 'N/A'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Typography variant="body2" color="text.secondary">
-                              {patient.phone || 'N/A'}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>
-                            <Chip
-                              label={patient.nextFollowUpDate ? new Date(patient.nextFollowUpDate).toLocaleDateString('en-IN', {
+                          {formatCurrency(row.advance || 0)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Box component="span" sx={pulsePillSx}>
+                          {formatDateKeyEnIn(row.paidDateKey)}
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
+                      <Typography variant="body2" color="text.secondary" sx={pulseBodyTypographySx}>
+                        No booking advances recorded today
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+
+        {/* Today's appointments (scheduled today) */}
+        <Paper elevation={0} sx={pulseCardSx}>
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <EventAvailableIcon sx={{ fontSize: 20, color: 'grey.500' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+                Today&apos;s appointments
+              </Typography>
+            </Box>
+            <Tooltip title="View all">
+              <IconButton
+                size="small"
+                onClick={() => router.push('/appointments')}
+                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                aria-label="View all appointments"
+              >
+                <ArrowForwardIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+            <Table size="small" sx={{ tableLayout: 'fixed' }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '36%' }}>Time</TableCell>
+                  <TableCell sx={pulseHeadCellSx}>Patient</TableCell>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '22%' }}>Type</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {todaysAppointments.length > 0 ? (
+                  todaysAppointments.map((appt: any) => (
+                    <TableRow key={appt.id} onClick={() => router.push('/appointments')} sx={pulseRowSx}>
+                      <TableCell>
+                        <Typography fontWeight={500} sx={{ ...pulseBodyTypographySx, fontVariantNumeric: 'tabular-nums' }}>
+                          {appt.start
+                            ? new Date(appt.start).toLocaleString('en-IN', {
                                 day: '2-digit',
                                 month: 'short',
-                                year: 'numeric'
-                              }) : 'N/A'}
-                              size="small"
-                              color={patient.daysUntilFollowUp === 0 ? 'error' : patient.daysUntilFollowUp <= 3 ? 'warning' : 'default'}
-                              variant="outlined"
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={3} align="center" sx={{ py: 4 }}>
-                          <Typography variant="body2" color="text.secondary">
-                            No follow-up patients
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : '—'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={appt.patientName || appt.title || '—'} placement="top-start">
+                          <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
+                            {appt.patientName || appt.title || '—'}
                           </Typography>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
-          </Box>
-        )}
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>
+                        <Box component="span" sx={pulsePillSx}>
+                          {appt.type === 'home' ? 'Home' : 'Center'}
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
+                      <Typography variant="body2" color="text.secondary" sx={pulseBodyTypographySx}>
+                        No appointments today
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+        </Box>
       </Box>
     </Box>
   );

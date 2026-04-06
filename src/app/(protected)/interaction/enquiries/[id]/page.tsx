@@ -35,9 +35,9 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Menu,
   Tooltip,
   Link,
+  Menu,
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -275,8 +275,6 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const [staffList, setStaffList] = useState<StaffRecord[]>([]);
   const [telecallerDialogOptions, setTelecallerDialogOptions] = useState<string[]>([]);
   const [enquiryAppointments, setEnquiryAppointments] = useState<any[]>([]);
-  const [journeyMenuAnchor, setJourneyMenuAnchor] = useState<null | HTMLElement>(null);
-  const [journeyStatusSaving, setJourneyStatusSaving] = useState(false);
   const [invoicePdfOpen, setInvoicePdfOpen] = useState(false);
   const [invoicePdfData, setInvoicePdfData] = useState<ReturnType<typeof convertSaleToInvoiceData> | null>(null);
 
@@ -340,6 +338,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }
   };
 
+  const [journeyMenuAnchor, setJourneyMenuAnchor] = useState<null | HTMLElement>(null);
+  const [journeyStatusSaving, setJourneyStatusSaving] = useState(false);
+
   const saveJourneyStatusOverride = async (next: EnquiryJourneyStatus | 'auto') => {
     if (!resolvedParams?.id || !enquiry || userProfile?.role === 'audiologist') return;
     setJourneyStatusSaving(true);
@@ -353,15 +354,15 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         open: true,
         message:
           next === 'auto'
-            ? 'Status now follows the latest visit automatically'
-            : 'Journey status updated',
+            ? 'Tag follows visits again (until set manually)'
+            : 'Journey tag updated',
         severity: 'success',
       });
     } catch (e) {
       console.error(e);
       setFollowUpFeedback({
         open: true,
-        message: 'Could not update journey status',
+        message: 'Could not update journey tag',
         severity: 'error',
       });
     } finally {
@@ -581,14 +582,25 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     return Boolean(value);
   };
 
-  /** Booking block only when this visit is actually a booking — not trial/sale device fields alone (default qty 1 was opening the section for every visit). */
+  /** True when this visit is explicitly a booking (or clearly booking-related), not trial-only. */
+  const visitIsBookingService = (v: any) =>
+    !!(
+      v?.hearingAidBooked ||
+      (Array.isArray(v?.medicalServices) && v.medicalServices.includes('hearing_aid_booked')) ||
+      v?.medicalService === 'hearing_aid_booked'
+    );
+
+  /**
+   * Booking Details block only for real booking visits.
+   * Trial-only visits must not show it: `bookingSellingPrice` / other fields can be filled from
+   * `grossSalesBeforeTax` when loading from Firestore, which looked like random booking data.
+   */
   const visitShowsBookingDetails = (v: any) => {
     if (!v) return false;
-    const bookingService =
-      !!v.hearingAidBooked ||
-      (Array.isArray(v.medicalServices) && v.medicalServices.includes('hearing_aid_booked')) ||
-      v.medicalService === 'hearing_aid_booked';
-    if (bookingService) return true;
+    const isBooking = visitIsBookingService(v);
+    const trialOnly = !!v.hearingAidTrial && !isBooking && !v.bookingFromTrial;
+    if (trialOnly) return false;
+    if (isBooking) return true;
     if (v.bookingFromTrial) return true;
     if (Number(v.bookingAdvanceAmount) > 0) return true;
     if (Number(v.bookingSellingPrice) > 0) return true;
@@ -669,7 +681,14 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const services: Array<{ label: string; color: 'primary' | 'secondary' | 'info' | 'warning' | 'success' | 'error' | 'default' }> = [];
     if (visit.hearingTest) services.push({ label: 'Hearing Test', color: 'info' });
     if (visit.hearingAidTrial || visit.trialGiven) services.push({ label: 'Trial', color: 'warning' });
-    if (visit.hearingAidBooked || hasValue(visit.bookingAdvanceAmount)) services.push({ label: 'Booking', color: 'primary' });
+    if (
+      visit.hearingAidBooked ||
+      (Array.isArray(visit.medicalServices) && visit.medicalServices.includes('hearing_aid_booked')) ||
+      visit.bookingFromTrial ||
+      (hasValue(visit.bookingAdvanceAmount) && !(visit.hearingAidTrial && !visit.hearingAidBooked && !visit.bookingFromTrial))
+    ) {
+      services.push({ label: 'Booking', color: 'primary' });
+    }
     if (visit.hearingAidSale || visit.purchaseFromTrial) services.push({ label: 'Sale', color: 'success' });
     if (visit.accessory) services.push({ label: 'Accessory', color: 'secondary' });
     if (visit.programming) services.push({ label: 'Programming', color: 'default' });
@@ -959,8 +978,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   userProfile?.role === 'audiologist'
                     ? journeyStatus.label
                     : journeyStatus.source === 'manual'
-                      ? 'Manual status — click to change'
-                      : 'From latest visit (by date) — click to set manually'
+                      ? 'Manual tag — click to change or reset to automatic'
+                      : 'From visits & lead outcome — click to set tag manually if needed'
                 }
               >
                 <Chip
@@ -989,7 +1008,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   selected={!parseJourneyStatusOverride(enquiry?.journeyStatusOverride)}
                   onClick={() => saveJourneyStatusOverride('auto')}
                 >
-                  Automatic (latest visit)
+                  Automatic (from visits & lead outcome)
                 </MenuItem>
                 <Divider />
                 {ENQUIRY_STATUS_OPTIONS.map((opt) => (

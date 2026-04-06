@@ -12,12 +12,14 @@ import { CRM_ACCENT, CRM_PAGE_BG, HEADER_HEIGHT, mainOffsetLeftPx } from '@/comp
 import { useCenterScope } from '@/hooks/useCenterScope';
 import CenterScopeToolbar from '@/components/Layout/CenterScopeToolbar';
 
-const SCOPE_TOOLBAR_HEIGHT = 42;
+/** Reserved space below header for fixed scope bar (expanded vs collapsed strip). */
+const SCOPE_TOOLBAR_HEIGHT_EXPANDED = 88;
+const SCOPE_TOOLBAR_HEIGHT_COLLAPSED = 40;
 import SqueezeLoader from '@/components/ui/loading-indicator';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
-  const { canOverrideScope, lockedCenterId } = useCenterScope();
+  const { canOverrideScope, lockedCenterId, scopeToolbarExpanded } = useCenterScope();
   const showScopeToolbar = canOverrideScope || !!lockedCenterId;
   const router = useRouter();
   const pathname = usePathname();
@@ -225,7 +227,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }, []);
 
   const mainOffset = mainOffsetLeftPx(shouldHideSidebar, isDesktop, drawerOpen);
-  const scopeBarOffset = showScopeToolbar ? SCOPE_TOOLBAR_HEIGHT : 0;
+  const scopeBarOffset = showScopeToolbar
+    ? scopeToolbarExpanded
+      ? SCOPE_TOOLBAR_HEIGHT_EXPANDED
+      : SCOPE_TOOLBAR_HEIGHT_COLLAPSED
+    : 0;
 
   const errorContainer: React.CSSProperties = {
     backgroundColor: CRM_ACCENT,

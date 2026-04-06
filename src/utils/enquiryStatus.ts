@@ -1,26 +1,40 @@
 export type EnquiryJourneyStatus =
-  | 'enquiry'
   | 'in_process'
+  | 'tests_only'
   | 'in_trial'
   | 'booked'
   | 'sold'
   | 'not_interested'
+  | 'bought_elsewhere'
+  /** @deprecated Derived pipeline no longer emits this; kept for legacy Firestore */
+  | 'enquiry'
+  /** @deprecated Use sold; kept for legacy */
   | 'completed';
 
 export type EnquiryStatusChipColor =
   'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning';
 
+/** Values stored on `enquiries.leadOutcome` (optional closure / note for tagging). */
+export const LEAD_OUTCOME_OPTIONS = [
+  { value: '', label: 'None' },
+  { value: 'bought_elsewhere', label: 'Bought hearing aids elsewhere' },
+] as const;
+
 export const ENQUIRY_STATUS_OPTIONS: Array<{ value: EnquiryJourneyStatus; label: string }> = [
-  { value: 'enquiry', label: 'New Enquiry' },
   { value: 'in_process', label: 'In Process' },
+  { value: 'tests_only', label: 'Tests only' },
   { value: 'in_trial', label: 'In Trial' },
   { value: 'booked', label: 'Booked' },
   { value: 'sold', label: 'Sold' },
   { value: 'not_interested', label: 'Not Interested' },
-  { value: 'completed', label: 'Completed' },
+  { value: 'bought_elsewhere', label: 'Bought elsewhere' },
 ];
 
-const VALID_OVERRIDE = new Set<string>(ENQUIRY_STATUS_OPTIONS.map((o) => o.value));
+const VALID_OVERRIDE = new Set<string>([
+  ...ENQUIRY_STATUS_OPTIONS.map((o) => o.value),
+  'enquiry',
+  'completed',
+]);
 
 const normalize = (value: any) => String(value || '').toLowerCase();
 
@@ -28,29 +42,39 @@ const JOURNEY_META: Record<
   EnquiryJourneyStatus,
   { label: string; color: EnquiryStatusChipColor }
 > = {
-  enquiry: { label: 'New Enquiry', color: 'default' },
   in_process: { label: 'In Process', color: 'info' },
+  tests_only: { label: 'Tests only', color: 'info' },
   in_trial: { label: 'In Trial', color: 'warning' },
   booked: { label: 'Booked', color: 'primary' },
   sold: { label: 'Sold', color: 'success' },
   not_interested: { label: 'Not Interested', color: 'error' },
-  completed: { label: 'Completed', color: 'success' },
+  bought_elsewhere: { label: 'Bought elsewhere', color: 'warning' },
+  enquiry: { label: 'In Process', color: 'info' },
+  completed: { label: 'Sold', color: 'success' },
 };
 
-/** Firestore `journeyStatusOverride`: set to a journey key to pin the chip; null/omit for auto. */
+/**
+ * Firestore `journeyStatusOverride`: optional manual tag for quick corrections from the list/profile chip.
+ * Cleared when the enquiry form is saved so visits + lead outcome drive the tag again.
+ */
 export const parseJourneyStatusOverride = (raw: any): EnquiryJourneyStatus | null => {
   if (raw == null || raw === '') return null;
   const s = String(raw).trim();
   if (!VALID_OVERRIDE.has(s)) return null;
+  if (s === 'enquiry') return 'in_process';
+  if (s === 'completed') return 'sold';
   return s as EnquiryJourneyStatus;
 };
 
 export const journeyKeyToMeta = (
   key: EnquiryJourneyStatus
-): { key: EnquiryJourneyStatus; label: string; color: EnquiryStatusChipColor } => ({
-  key,
-  ...JOURNEY_META[key],
-});
+): { key: EnquiryJourneyStatus; label: string; color: EnquiryStatusChipColor } => {
+  const meta = JOURNEY_META[key];
+  if (!meta) {
+    return { key: 'in_process', label: 'In Process', color: 'info' };
+  }
+  return { key, ...meta };
+};
 
 const getVisitSchedules = (enquiry: any): any[] => {
   if (Array.isArray(enquiry?.visitSchedules) && enquiry.visitSchedules.length > 0) {
@@ -62,10 +86,6 @@ const getVisitSchedules = (enquiry: any): any[] => {
   return [];
 };
 
-/**
- * Saved visits use `medicalServices` + nested `hearingAidDetails`; journey derivation originally
- * expected flat flags on the visit. Merge both shapes so last-visit status matches the CRM form.
- */
 const expandVisitForJourney = (visit: any): any => {
   if (!visit || typeof visit !== 'object') return visit;
   const ha =
@@ -86,12 +106,16 @@ const expandVisitForJourney = (visit: any): any => {
     hearingTest: Boolean(visit.hearingTest) || has('hearing_test'),
     purchaseFromTrial: Boolean(visit.purchaseFromTrial) || Boolean(ha.purchaseFromTrial),
     trialGiven: Boolean(visit.trialGiven) || Boolean(ha.trialGiven),
+    bookingFromTrial: Boolean(visit.bookingFromTrial) || Boolean(ha.bookingFromTrial),
     bookingAdvanceAmount:
       Number(visit.bookingAdvanceAmount ?? ha.bookingAdvanceAmount ?? 0) || 0,
     hearingAidStatus: visit.hearingAidStatus || ha.hearingAidStatus || '',
     trialResult: visit.trialResult || ha.trialResult || '',
   };
 };
+
+const isTrialOnlyVisit = (v: ReturnType<typeof expandVisitForJourney>): boolean =>
+  Boolean(v.hearingAidTrial) && !v.hearingAidBooked && !v.bookingFromTrial;
 
 const getVisitSortTime = (visit: any): number => {
   const candidates = [visit?.visitDate, visit?.date, visit?.bookingDate, visit?.trialStartDate];
@@ -113,7 +137,10 @@ const visitHasHaSignals = (visit: any): boolean => {
   if (!visit) return false;
   const v = expandVisitForJourney(visit);
   if (v.hearingAidSale || v.purchaseFromTrial) return true;
-  if (v.hearingAidBooked || Number(v.bookingAdvanceAmount || 0) > 0) return true;
+  const trialOnly = isTrialOnlyVisit(v);
+  if (v.hearingAidBooked || (!trialOnly && Number(v.bookingAdvanceAmount || 0) > 0)) {
+    return true;
+  }
   if (v.hearingAidTrial || v.trialGiven) return true;
   const hs = normalize(v.hearingAidStatus);
   if (
@@ -128,10 +155,96 @@ const visitHasHaSignals = (visit: any): boolean => {
   return false;
 };
 
-/**
- * Prefer the latest visit by date. Pure "cancelled" placeholder rows (no HA activity) are skipped
- * so a follow-up cancellation does not hide an earlier sale/booking/trial.
- */
+/** Higher = further in funnel; max wins across visits. */
+const RANK = {
+  in_process: 20,
+  tests_only: 28,
+  in_trial: 35,
+  booked: 45,
+  sold: 55,
+  not_interested: 60,
+} as const;
+
+const rankToKey = (rank: number): EnquiryJourneyStatus => {
+  if (rank >= RANK.not_interested) return 'not_interested';
+  if (rank >= RANK.sold) return 'sold';
+  if (rank >= RANK.booked) return 'booked';
+  if (rank >= RANK.in_trial) return 'in_trial';
+  if (rank >= RANK.tests_only) return 'tests_only';
+  return 'in_process';
+};
+
+/** Hearing test (or PTA) only — no HA trial/booking/sale or other services on this visit. */
+const isHearingTestOnlyVisit = (raw: any): boolean => {
+  const v = expandVisitForJourney(raw);
+  if (!v.hearingTest) return false;
+  if (
+    v.hearingAidSale ||
+    v.purchaseFromTrial ||
+    v.hearingAidBooked ||
+    v.hearingAidTrial ||
+    v.trialGiven
+  ) {
+    return false;
+  }
+  if (raw.accessory || raw.programming || raw.repair || raw.counselling || raw.salesReturn) {
+    return false;
+  }
+  const ms = Array.isArray(raw.medicalServices) ? raw.medicalServices : [];
+  const other = ms.filter((s: string) => s !== 'hearing_test');
+  if (other.length > 0) return false;
+  return true;
+};
+
+const deriveVisitRank = (raw: any): number => {
+  const v = expandVisitForJourney(raw);
+
+  if (normalize(v.hearingAidStatus) === 'not_interested' || normalize(v.trialResult) === 'unsuccessful') {
+    return RANK.not_interested;
+  }
+
+  if (
+    Boolean(v.hearingAidSale) ||
+    Boolean(v.purchaseFromTrial) ||
+    normalize(v.hearingAidStatus) === 'sold'
+  ) {
+    return RANK.sold;
+  }
+
+  const trialOnly = isTrialOnlyVisit(v);
+  const hasBookingSignal =
+    Boolean(v.hearingAidBooked) ||
+    normalize(v.hearingAidStatus) === 'booked' ||
+    (!trialOnly && Number(v.bookingAdvanceAmount || 0) > 0);
+
+  if (hasBookingSignal) {
+    return RANK.booked;
+  }
+
+  const trNorm = normalize(v.trialResult);
+  const trialResultMeansActive =
+    ['ongoing', 'extended'].includes(trNorm) &&
+    (Boolean(v.hearingAidTrial) || Boolean(v.trialGiven));
+  if (
+    Boolean(v.hearingAidTrial) ||
+    Boolean(v.trialGiven) ||
+    ['trial_given', 'trial_completed', 'trial_extended'].includes(normalize(v.hearingAidStatus)) ||
+    trialResultMeansActive
+  ) {
+    return RANK.in_trial;
+  }
+
+  if (isHearingTestOnlyVisit(raw)) {
+    return RANK.tests_only;
+  }
+
+  if (normalize(v.visitStatus) === 'completed' || normalize(v.status) === 'completed') {
+    return RANK.in_process;
+  }
+
+  return RANK.in_process;
+};
+
 const pickVisitForStatus = (schedules: any[]): any | undefined => {
   if (!schedules.length) return undefined;
   const sorted = [...schedules].sort((a, b) => {
@@ -145,77 +258,40 @@ const pickVisitForStatus = (schedules: any[]): any | undefined => {
   return sorted[0];
 };
 
-const deriveFromLastVisit = (
+const deriveFromVisitsFunnel = (
   enquiry: any
 ): { key: EnquiryJourneyStatus; label: string; color: EnquiryStatusChipColor } => {
   const schedules = getVisitSchedules(enquiry);
-  const financialStatus = normalize(enquiry?.financialSummary?.paymentStatus);
-  const hasAnyProgress =
-    schedules.length > 0 ||
-    (Array.isArray(enquiry?.followUps) && enquiry.followUps.length > 0) ||
-    Boolean(enquiry?.assignedTo) ||
-    Boolean(enquiry?.telecaller);
 
   if (schedules.length === 0) {
-    if (hasAnyProgress) return journeyKeyToMeta('in_process');
-    return journeyKeyToMeta('enquiry');
-  }
-
-  const raw = pickVisitForStatus(schedules);
-  if (!raw) {
-    if (hasAnyProgress) return journeyKeyToMeta('in_process');
-    return journeyKeyToMeta('enquiry');
-  }
-
-  const v = expandVisitForJourney(raw);
-
-  if (isVisitCancelled(raw) && !visitHasHaSignals(raw)) {
-    return { key: 'in_process', label: 'Latest visit cancelled', color: 'default' };
-  }
-
-  if (
-    normalize(v.hearingAidStatus) === 'not_interested' ||
-    normalize(v.trialResult) === 'unsuccessful'
-  ) {
-    return journeyKeyToMeta('not_interested');
-  }
-
-  if (
-    Boolean(v.hearingAidSale) ||
-    Boolean(v.purchaseFromTrial) ||
-    normalize(v.hearingAidStatus) === 'sold'
-  ) {
-    if (financialStatus === 'fully_paid') return journeyKeyToMeta('completed');
-    return journeyKeyToMeta('sold');
-  }
-
-  if (
-    Boolean(v.hearingAidBooked) ||
-    Number(v.bookingAdvanceAmount || 0) > 0 ||
-    normalize(v.hearingAidStatus) === 'booked'
-  ) {
-    return journeyKeyToMeta('booked');
-  }
-
-  const trNorm = normalize(v.trialResult);
-  const trialResultMeansActive =
-    ['ongoing', 'extended'].includes(trNorm) &&
-    (Boolean(v.hearingAidTrial) || Boolean(v.trialGiven));
-  if (
-    Boolean(v.hearingAidTrial) ||
-    Boolean(v.trialGiven) ||
-    ['trial_given', 'trial_completed', 'trial_extended'].includes(normalize(v.hearingAidStatus)) ||
-    trialResultMeansActive
-  ) {
-    return journeyKeyToMeta('in_trial');
-  }
-
-  if (normalize(v.visitStatus) === 'completed' || normalize(v.status) === 'completed') {
     return journeyKeyToMeta('in_process');
   }
 
-  if (hasAnyProgress) return journeyKeyToMeta('in_process');
-  return journeyKeyToMeta('enquiry');
+  let maxRank = -1;
+  for (const visit of schedules) {
+    if (isVisitCancelled(visit) && !visitHasHaSignals(visit)) continue;
+    const r = deriveVisitRank(visit);
+    if (r > maxRank) maxRank = r;
+  }
+
+  if (maxRank < 0) {
+    const raw = pickVisitForStatus(schedules);
+    if (raw && isVisitCancelled(raw) && !visitHasHaSignals(raw)) {
+      return { key: 'in_process', label: 'Latest visit cancelled', color: 'default' };
+    }
+    return journeyKeyToMeta('in_process');
+  }
+
+  const key = rankToKey(maxRank);
+
+  if (
+    normalize(enquiry?.leadOutcome) === 'bought_elsewhere' &&
+    maxRank < RANK.booked
+  ) {
+    return journeyKeyToMeta('bought_elsewhere');
+  }
+
+  return journeyKeyToMeta(key);
 };
 
 export const getEnquiryStatusMeta = (
@@ -230,5 +306,5 @@ export const getEnquiryStatusMeta = (
   if (manual) {
     return { ...journeyKeyToMeta(manual), source: 'manual' };
   }
-  return { ...deriveFromLastVisit(enquiry), source: 'auto' };
+  return { ...deriveFromVisitsFunnel(enquiry), source: 'auto' };
 };

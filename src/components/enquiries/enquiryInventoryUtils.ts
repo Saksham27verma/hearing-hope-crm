@@ -9,6 +9,11 @@ export type EnquiryInventoryRow = {
   type?: string;
   company?: string;
   serialNumber?: string;
+  /** Physical serials when this row is a bonded pair (inventory / invoicing use "S1, S2"). */
+  serialNumbers?: string[];
+  /** True when this row represents two devices sold together (pair product). */
+  isPairRow?: boolean;
+  quantityType?: 'piece' | 'pair';
   isSerialTracked?: boolean;
   quantity?: number;
   mrp: number;

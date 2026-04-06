@@ -60,6 +60,8 @@ export interface DerivedEnquirySale {
   enquiryId?: string;
   visitorId?: string;
   visitIndex: number;
+  /** Staff name from visit "Who Sold" (`hearingAidBrand` / `hearingAidDetails.whoSold`). */
+  whoSoldName?: string;
   patientName: string;
   phone?: string;
   address?: string;

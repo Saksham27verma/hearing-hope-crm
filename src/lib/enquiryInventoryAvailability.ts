@@ -66,16 +66,32 @@ export function serialsFromLineProduct(p: {
   return [];
 }
 
-/** Serials sold on a sales line or enquiry product row (multiple possible fields). */
+/** Split one stored field into physical serial tokens (pair sales use "S1, S2"). */
+export function splitSerialStringIntoTokens(value: unknown): string[] {
+  if (value == null) return [];
+  const s = String(value).trim();
+  if (!s) return [];
+  return s
+    .split(/[,;\n]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Physical serials sold on a sales line or enquiry product row.
+ * Expands comma/semicolon-separated `serialNumber` so pair lines deduct both units from stock.
+ */
 export function serialCandidatesFromSaleProduct(p: {
   serialNumbers?: unknown;
   serialNumber?: unknown;
   trialSerialNumber?: unknown;
 }): string[] {
   const set = new Set<string>();
-  serialsFromLineProduct(p).forEach((s) => set.add(s));
+  serialsFromLineProduct(p).forEach((s) => {
+    splitSerialStringIntoTokens(s).forEach((t) => set.add(t));
+  });
   [p.serialNumber, p.trialSerialNumber].forEach((v) => {
-    if (v != null && String(v).trim()) set.add(String(v).trim());
+    splitSerialStringIntoTokens(v).forEach((t) => set.add(t));
   });
   return Array.from(set);
 }
