@@ -525,7 +525,6 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
       grossSalesBeforeTax: totals.grossSalesBeforeTax,
       taxAmount: totals.taxAmount,
       salesAfterTax: totals.salesAfterTax,
-      bookingReceiptNumber: `BR-${String(v.id || '').trim()}`,
     });
   }
 
@@ -590,7 +589,6 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
       grossSalesBeforeTax: totals.grossSalesBeforeTax,
       taxAmount: totals.taxAmount,
       salesAfterTax: totals.salesAfterTax,
-      trialReceiptNumber: `TR-${String(v.id || '').trim()}`,
     });
   }
 

@@ -215,6 +215,10 @@ const formatCurrency = (amount: number) => {
 const roundInrRupee = (n: number) => Math.round(Number(n) || 0);
 
 const formatCurrencySale = (amount: number) => formatCurrency(roundInrRupee(amount));
+const normalizePhoneDigits = (value: unknown) =>
+  String(value || '')
+    .replace(/\D/g, '')
+    .slice(0, 10);
 
 /** Warranty options for sale lines — stored verbatim for invoices. */
 const HEARING_AID_SALE_WARRANTY_OPTIONS = [
@@ -1715,6 +1719,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const visits = enquiry.visitSchedules?.map((visit: any, index: number) => {
           const savedFlat = enquiry.visits?.[index];
           const had = visit.hearingAidDetails || {};
+          const isBookingService =
+            visit.medicalServices?.includes('hearing_aid_booked') ||
+            false;
+          const isSaleService =
+            visit.medicalServices?.includes('hearing_aid_sale') ||
+            visit.medicalServices?.includes('hearing_aid') ||
+            false;
+          const allowBookingFallbackFromSaleTotals = isBookingService && !isSaleService;
           const normalizedItems = normalizeSalesReturnItemsFromSaved(savedFlat, had);
           const persistedSerial = String(
             savedFlat?.returnSerialNumber ?? had.returnSerialNumber ?? ''
@@ -1788,7 +1800,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           bookingAdvanceAmount: visit.hearingAidDetails?.bookingAdvanceAmount || 0,
           bookingDate: visit.hearingAidDetails?.bookingDate || '',
           bookingFromVisitId: visit.hearingAidDetails?.bookingFromVisitId || '',
-          bookingSellingPrice: visit.hearingAidDetails?.bookingSellingPrice || visit.hearingAidDetails?.grossSalesBeforeTax || 0,
+          bookingSellingPrice:
+            visit.hearingAidDetails?.bookingSellingPrice ||
+            (allowBookingFallbackFromSaleTotals
+              ? visit.hearingAidDetails?.grossSalesBeforeTax
+              : 0) ||
+            0,
           bookingQuantity: visit.hearingAidDetails?.bookingQuantity || 1,
           // Purchase related fields
           purchaseFromTrial: visit.hearingAidDetails?.purchaseFromTrial || false,
@@ -2863,6 +2880,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           hearingTestDetails.externalPtaReport = visit.externalPtaReport;
         }
 
+        const shouldPersistBookingFields =
+          (visit.hearingAidBooked && !visit.hearingAidSale) ||
+          visit.bookingFromTrial ||
+          Number(visit.bookingAdvanceAmount) > 0;
+
         return removeUndefined({
           id: visit.id,
           visitType: visit.visitType,
@@ -2915,13 +2937,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           trialHomeSecurityDepositAmount: visit.trialHomeSecurityDepositAmount,
           trialNotes: visit.trialNotes,
           trialResult: visit.trialResult,
-          // Persist booking fields
-          bookingFromTrial: visit.bookingFromTrial,
-          bookingAdvanceAmount: visit.bookingAdvanceAmount,
-          bookingDate: visit.bookingDate,
-          bookingFromVisitId: visit.bookingFromVisitId,
-          bookingSellingPrice: visit.bookingSellingPrice,
-          bookingQuantity: visit.bookingQuantity,
+          // Persist booking fields only when visit is truly booking-related.
+          bookingFromTrial: shouldPersistBookingFields ? visit.bookingFromTrial : false,
+          bookingAdvanceAmount: shouldPersistBookingFields ? visit.bookingAdvanceAmount : 0,
+          bookingDate: shouldPersistBookingFields ? visit.bookingDate : '',
+          bookingFromVisitId: shouldPersistBookingFields ? visit.bookingFromVisitId : '',
+          bookingSellingPrice: shouldPersistBookingFields ? visit.bookingSellingPrice : 0,
+          bookingQuantity: shouldPersistBookingFields ? visit.bookingQuantity : 1,
           // Persist purchase fields
           purchaseFromTrial: visit.purchaseFromTrial,
           purchaseDate: visit.purchaseDate,
@@ -3103,7 +3125,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       <Controller
                         name="phone"
                         control={control}
-                        rules={{ required: 'Phone is required' }}
+                        rules={{
+                          required: 'Phone is required',
+                          validate: (value) =>
+                            normalizePhoneDigits(value).length === 10 ||
+                            'Phone number must be exactly 10 digits',
+                        }}
                         render={({ field }) => (
                           <TextField
                             {...field}
@@ -3112,12 +3139,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             required
                             error={!!errors.phone}
                             helperText={errors.phone?.message}
+                            value={field.value || ''}
+                            onChange={(e) => field.onChange(normalizePhoneDigits(e.target.value))}
                             InputProps={{
                               startAdornment: (
                                 <InputAdornment position="start">
                                   <PhoneIcon color="action" />
                                 </InputAdornment>
                               ),
+                              inputProps: {
+                                maxLength: 10,
+                                inputMode: 'numeric',
+                                pattern: '[0-9]*',
+                              },
                             }}
                             sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                           />

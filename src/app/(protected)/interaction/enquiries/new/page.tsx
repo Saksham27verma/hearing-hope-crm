@@ -62,6 +62,25 @@ export default function NewEnquiryPage() {
     return null;
   }
 
+  const normalizePhoneDigits = (value: unknown) =>
+    String(value || '')
+      .replace(/\D/g, '')
+      .slice(0, 10);
+
+  const assertUniquePhone = async (rawPhone: unknown) => {
+    const phone = normalizePhoneDigits(rawPhone);
+    if (phone.length !== 10) {
+      throw new Error('Phone number must be exactly 10 digits');
+    }
+    const dupSnap = await getDocs(
+      query(collection(db, 'enquiries'), where('phone', '==', phone), limit(1)),
+    );
+    if (!dupSnap.empty) {
+      throw new Error('An enquiry with this phone number already exists');
+    }
+    return phone;
+  };
+
   // Helper function to reduce inventory for sales
   const reduceInventoryForSales = async (visits: any[]) => {
     const inventoryUpdates: any[] = [];
@@ -163,9 +182,12 @@ export default function NewEnquiryPage() {
     try {
       setSaving(true);
       
+      const phone = await assertUniquePhone(data?.phone);
+
       // Add timestamp and status
       const enquiryData = {
         ...data,
+        phone,
         status: 'open',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()

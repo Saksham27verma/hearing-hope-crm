@@ -33,7 +33,6 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
-import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 interface EditEnquiryPageProps {
@@ -47,6 +46,26 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resolvedParams, setResolvedParams] = useState<{ id: string } | null>(null);
+
+  const normalizePhoneDigits = (value: unknown) =>
+    String(value || '')
+      .replace(/\D/g, '')
+      .slice(0, 10);
+
+  const assertUniquePhoneForEdit = async (rawPhone: unknown, enquiryId: string) => {
+    const phone = normalizePhoneDigits(rawPhone);
+    if (phone.length !== 10) {
+      throw new Error('Phone number must be exactly 10 digits');
+    }
+    const dupSnap = await getDocs(
+      query(collection(db, 'enquiries'), where('phone', '==', phone), limit(5)),
+    );
+    const hasOther = dupSnap.docs.some((d) => d.id !== enquiryId);
+    if (hasOther) {
+      throw new Error('Another enquiry with this phone number already exists');
+    }
+    return phone;
+  };
 
   useEffect(() => {
     const resolveParams = async () => {
@@ -206,13 +225,14 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
     try {
       setSaving(true);
       
+      if (!resolvedParams?.id) return;
+      const phone = await assertUniquePhoneForEdit(data?.phone, resolvedParams.id);
+
       // Find new sales that need inventory reduction
       const oldVisits = enquiry?.visits || [];
       const newSalesProducts = findNewSales(oldVisits, data.visits || []);
       
       const visits = Array.isArray(data.visits) ? [...data.visits] : [];
-      let visitsPatched = false;
-
       // Upsert sale visits into `sales` collection and ensure invoice numbers.
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
@@ -227,13 +247,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         );
         if (!isSale || !resolvedParams?.id) continue;
 
-        let invoiceNumber = String(visit.invoiceNumber || '').trim();
-        const needsInvoiceAlloc = !saleHasBillableInvoiceNumber(invoiceNumber);
-        if (needsInvoiceAlloc) {
-          invoiceNumber = await allocateNextInvoiceNumber(db);
-          visits[visitIndex] = { ...visit, invoiceNumber };
-          visitsPatched = true;
-        }
+        const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
 
         const saleDateRaw = visit.purchaseDate || visit.visitDate;
         const saleDate = saleDateRaw
@@ -251,6 +265,17 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
             limit(1)
           )
         );
+        const existingSalesInvoice = existing.empty
+          ? ''
+          : String(existing.docs[0].data()?.invoiceNumber || '').trim();
+        const priorVisitInvoice = String(oldVisits?.[visitIndex]?.invoiceNumber || '').trim();
+        const invoiceNumber = saleHasBillableInvoiceNumber(existingVisitInvoice)
+          ? existingVisitInvoice
+          : saleHasBillableInvoiceNumber(existingSalesInvoice)
+            ? existingSalesInvoice
+            : saleHasBillableInvoiceNumber(priorVisitInvoice)
+              ? priorVisitInvoice
+              : '';
 
         const payload = {
           invoiceNumber,
@@ -293,12 +318,11 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       // Add updated timestamp
       const enquiryData = {
         ...data,
+        phone,
         visits,
         updatedAt: serverTimestamp()
       };
 
-      if (!resolvedParams) return;
-      
       // Update in Firestore
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
       

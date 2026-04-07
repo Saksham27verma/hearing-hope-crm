@@ -39,21 +39,29 @@ type StoredDocumentTemplate = {
   createdAt?: unknown;
 };
 
-/** html2canvas often fails to paint external SVGs; inline as data URL before capture. */
-const inlineSvgImagesForHtml2Canvas = async (root: HTMLElement): Promise<void> => {
+/**
+ * html2canvas can fail on cross-origin images (logos on Firebase Storage).
+ * Inline remote images as data URLs before capture to preserve quality and avoid CORS paint errors.
+ */
+const inlineImagesForHtml2Canvas = async (root: HTMLElement): Promise<void> => {
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const imgs = Array.from(root.querySelectorAll('img'));
   await Promise.all(
     imgs.map(async (img) => {
       const src = (img.getAttribute('src') || '').trim();
-      if (!src || src.startsWith('data:image/svg+xml')) return;
-      if (!src.includes('.svg')) return;
+      if (!src || src.startsWith('data:')) return;
       try {
         const abs = src.startsWith('http') ? src : `${origin}${src.startsWith('/') ? src : `/${src}`}`;
-        const res = await fetch(abs);
+        const res = await fetch(abs, { mode: 'cors' });
         if (!res.ok) return;
-        const text = await res.text();
-        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`;
+        const blob = await res.blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(new Error('Failed to convert image blob to data URL'));
+          reader.readAsDataURL(blob);
+        });
+        if (dataUrl) img.src = dataUrl;
       } catch {
         /* keep original src */
       }
@@ -119,7 +127,7 @@ const createPdfFromHtml = async (html: string): Promise<Blob> => {
   document.body.appendChild(container);
 
   try {
-    await inlineSvgImagesForHtml2Canvas(container);
+    await inlineImagesForHtml2Canvas(container);
 
     const images = Array.from(container.querySelectorAll('img'));
     await Promise.all(
@@ -193,6 +201,34 @@ async function generateReceiptPdfServer(
   return res.blob();
 }
 
+/**
+ * Uses the same Invoice Manager template resolution as `/api/receipts/render` (admin + routing),
+ * but returns HTML only — then rasterizes in-browser. Use when Puppeteer/Chrome PDF fails locally.
+ */
+async function generateReceiptPdfFromServerHtmlFragment(
+  receiptType: 'booking' | 'trial',
+  enquiry: EnquiryLike,
+  visit: VisitLike,
+  options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
+): Promise<Blob> {
+  const res = await fetch('/api/receipts/render-html', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      receiptType,
+      enquiry,
+      visit,
+      options,
+    }),
+  });
+  const j = (await res.json()) as { ok?: boolean; htmlFragment?: string; error?: string };
+  if (!res.ok || !j?.htmlFragment) {
+    const msg = j?.error || `Failed to load ${receiptType} receipt HTML`;
+    throw new Error(msg);
+  }
+  return createPdfFromHtml(j.htmlFragment);
+}
+
 export { buildBookingReceiptData, buildTrialReceiptData } from '@/utils/receiptDataBuilders';
 
 /** Generate booking receipt PDF blob. */
@@ -201,7 +237,17 @@ export async function generateBookingReceiptPDF(
   visit: VisitLike,
   options?: { receiptNumber?: string; centerName?: string; paymentMode?: string }
 ): Promise<Blob> {
-  return generateReceiptPdfServer('booking', enquiry, visit, options);
+  try {
+    return await generateReceiptPdfServer('booking', enquiry, visit, options);
+  } catch (error) {
+    console.warn('generateBookingReceiptPDF: server PDF failed, trying HTML fragment + client rasterize', error);
+    try {
+      return await generateReceiptPdfFromServerHtmlFragment('booking', enquiry, visit, options);
+    } catch (e2) {
+      console.warn('generateBookingReceiptPDF: server HTML fragment failed, legacy client template pick', e2);
+      return _legacyClientBookingPdf(enquiry, visit, options);
+    }
+  }
 }
 
 /** Generate trial receipt PDF blob. */
@@ -210,7 +256,17 @@ export async function generateTrialReceiptPDF(
   visit: VisitLike,
   options?: { receiptNumber?: string; centerName?: string }
 ): Promise<Blob> {
-  return generateReceiptPdfServer('trial', enquiry, visit, options);
+  try {
+    return await generateReceiptPdfServer('trial', enquiry, visit, options);
+  } catch (error) {
+    console.warn('generateTrialReceiptPDF: server PDF failed, trying HTML fragment + client rasterize', error);
+    try {
+      return await generateReceiptPdfFromServerHtmlFragment('trial', enquiry, visit, options);
+    } catch (e2) {
+      console.warn('generateTrialReceiptPDF: server HTML fragment failed, legacy client template pick', e2);
+      return _legacyClientTrialPdf(enquiry, visit, options);
+    }
+  }
 }
 
 /* Legacy client-side renderer retained for fallback/dev utility only. */

@@ -7,12 +7,14 @@ import {
   Receipt as ReceiptIcon,
   PendingActions as PendingActionsIcon,
   BookmarkAdded as BookmarkAddedIcon,
+  Analytics as AnalyticsIcon,
 } from '@mui/icons-material';
 
 import InProcessEnquiriesReportTab from '@/components/Reports/InProcessEnquiriesReportTab';
 import BookedEnquiriesReportTab from '@/components/Reports/BookedEnquiriesReportTab';
 import SalesReportsTab from '@/components/Reports/SalesReportsTab';
 import AssignToReportTab from '@/components/Reports/AssignToReportTab';
+import ExecutiveAnalysisReportTab from '@/components/Reports/ExecutiveAnalysisReportTab';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -64,6 +66,7 @@ export default function ReportsPage() {
           <Tab label="Booked Report" icon={<BookmarkAddedIcon />} iconPosition="start" />
           <Tab label="Sales Report" icon={<SalesIcon />} iconPosition="start" />
           <Tab label="Assign To Report" icon={<ReceiptIcon />} iconPosition="start" />
+          <Tab label="Executive Analysis" icon={<AnalyticsIcon />} iconPosition="start" />
         </Tabs>
       </Box>
 
@@ -81,6 +84,10 @@ export default function ReportsPage() {
 
       <TabPanel value={tabValue} index={3}>
         <AssignToReportTab />
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={4}>
+        <ExecutiveAnalysisReportTab />
       </TabPanel>
     </Box>
   );

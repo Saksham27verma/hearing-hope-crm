@@ -84,7 +84,6 @@ import {
 } from '@/utils/receiptGenerator';
 import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
-import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import {
@@ -109,6 +108,15 @@ import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { formatPtaTestDateForDisplay } from '@/lib/ptaIntegration';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
+
+/** Home trials: duration/dates/result and trial receipts; in-office trials do not. */
+function isHomeTrialVisit(visit: any): boolean {
+  return (
+    String(
+      visit?.trialHearingAidType ?? visit?.hearingAidDetails?.trialHearingAidType ?? ''
+    ).toLowerCase() === 'home'
+  );
+}
 
 const PageShell = styled(Box)(({ theme }) => ({
   minHeight: '100vh',
@@ -598,7 +606,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const visitShowsBookingDetails = (v: any) => {
     if (!v) return false;
     const isBooking = visitIsBookingService(v);
+    const isSaleOnly = !!v.hearingAidSale && !isBooking && !v.bookingFromTrial;
     const trialOnly = !!v.hearingAidTrial && !isBooking && !v.bookingFromTrial;
+    if (isSaleOnly) return false;
     if (trialOnly) return false;
     if (isBooking) return true;
     if (v.bookingFromTrial) return true;
@@ -612,10 +622,17 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   // Receipt data
   const bookingReceipts = visits
     .map((visit: any, index: number) => ({ visit, index }))
-    .filter(({ visit }: { visit: any }) => visit.hearingAidBooked || (Number(visit.bookingAdvanceAmount) > 0));
+    .filter(
+      ({ visit }: { visit: any }) =>
+        (visit.hearingAidBooked && !visit.hearingAidSale) ||
+        (visit.bookingFromTrial && Number(visit.bookingAdvanceAmount) > 0)
+    );
   const trialReceipts = visits
     .map((visit: any, index: number) => ({ visit, index }))
-    .filter(({ visit }: { visit: any }) => visit.trialGiven || visit.hearingAidTrial);
+    .filter(
+      ({ visit }: { visit: any }) =>
+        (visit.trialGiven || visit.hearingAidTrial) && isHomeTrialVisit(visit)
+    );
   const saleInvoiceReceipts = visits
     .map((visit: any, index: number) => ({ visit, index }))
     .filter(
@@ -632,7 +649,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     return centerId ? (centers.find(c => c.id === centerId)?.name) || undefined : undefined;
   };
 
-  const ensureVisitInvoiceNumber = async (visitIndex: number): Promise<string> => {
+  const getVisitInvoiceNumber = async (visitIndex: number): Promise<string> => {
     const visitsKey = Array.isArray(enquiry?.visits) ? 'visits' : 'visitSchedules';
     const visitList = Array.isArray(enquiry?.[visitsKey]) ? [...enquiry[visitsKey]] : [];
     const currentVisit = visitList[visitIndex] || {};
@@ -640,16 +657,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     if (saleHasBillableInvoiceNumber(existing)) {
       return existing;
     }
-    const nextNumber = await allocateNextInvoiceNumber(db);
-    visitList[visitIndex] = { ...currentVisit, invoiceNumber: nextNumber };
     if (resolvedParams?.id) {
-      await updateDoc(doc(db, 'enquiries', resolvedParams.id), {
-        [visitsKey]: visitList,
-        updatedAt: serverTimestamp(),
-      });
-
-      // Keep `sales.invoiceNumber` in sync for the same (enquiryId, visitIndex),
-      // so the Sales & Invoicing module never shows a stale/provisional number.
       const existingSalesSnap = await getDocs(
         query(
           collection(db, 'sales'),
@@ -659,14 +667,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         )
       );
       if (!existingSalesSnap.empty) {
-        await updateDoc(doc(db, 'sales', existingSalesSnap.docs[0].id), {
-          invoiceNumber: nextNumber,
-          updatedAt: serverTimestamp(),
-        });
+        const fromSales = normalizeInvoiceNumberString(existingSalesSnap.docs[0].data()?.invoiceNumber);
+        if (saleHasBillableInvoiceNumber(fromSales)) return fromSales;
       }
     }
-    setEnquiry((prev: any) => ({ ...prev, [visitsKey]: visitList }));
-    return nextNumber;
+    throw new Error('Invoice number is missing for this visit');
   };
 
   const formatCurrency = (value?: number) =>
@@ -1440,15 +1445,27 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             <Grid item xs={12} sm={6}>{renderVisitField('Device Type', activeVisit.trialHearingAidType || activeVisit.hearingAidType)}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Serial Number', activeVisit.trialSerialNumber)}</Grid>
                             <Grid item xs={12} sm={6}>{renderVisitField('Ear', activeVisit.whichEar)}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Duration', hasValue(activeVisit.trialDuration) ? `${activeVisit.trialDuration} days` : undefined)}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Start Date', activeVisit.trialStartDate)}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('End Date', activeVisit.trialEndDate)}</Grid>
+                            {isHomeTrialVisit(activeVisit) && (
+                              <>
+                                <Grid item xs={12} sm={6}>
+                                  {renderVisitField(
+                                    'Duration',
+                                    hasValue(activeVisit.trialDuration)
+                                      ? `${activeVisit.trialDuration} days`
+                                      : undefined
+                                  )}
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  {renderVisitField('Start Date', activeVisit.trialStartDate)}
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  {renderVisitField('End Date', activeVisit.trialEndDate)}
+                                </Grid>
+                              </>
+                            )}
                             {(() => {
-                              const isHome =
-                                activeVisit.trialHearingAidType === 'home' ||
-                                activeVisit.hearingAidDetails?.trialHearingAidType === 'home';
                               const agreed = getHomeTrialSecurityDepositAmount(activeVisit);
-                              if (!isHome || agreed <= 0) return null;
+                              if (!isHomeTrialVisit(activeVisit) || agreed <= 0) return null;
                               const trialPaymentCandidates = [
                                 ...(Array.isArray(enquiry?.payments) ? enquiry.payments : []),
                                 ...(Array.isArray(enquiry?.paymentRecords) ? enquiry.paymentRecords : []),
@@ -1495,7 +1512,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                 </>
                               );
                             })()}
-                            <Grid item xs={12} sm={6}>{renderVisitField('Result', activeVisit.trialResult)}</Grid>
+                            {isHomeTrialVisit(activeVisit) && (
+                              <Grid item xs={12} sm={6}>
+                                {renderVisitField('Result', activeVisit.trialResult)}
+                              </Grid>
+                            )}
                             <Grid item xs={12}>{renderVisitField('Notes', activeVisit.trialNotes)}</Grid>
                           </Grid>
                         </Paper>
@@ -1882,9 +1903,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         {[visit.trialHearingAidBrand, visit.trialHearingAidModel, visit.hearingAidBrand, visit.hearingAidModel].filter(Boolean).join(' ') || 'Trial Device'}
                       </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.6 }}>
-                        {(visit.trialHearingAidType === 'home' || visit.visitType === 'home') ? 'Home Trial' : 'Clinic Trial'}
-                        {visit.trialDuration ? ` · ${visit.trialDuration} days` : ''}
-                        {(visit.trialHearingAidType === 'home' || visit.visitType === 'home') && visit.trialSerialNumber ? ` · ${visit.trialSerialNumber}` : ''}
+                        {isHomeTrialVisit(visit) ? 'Home Trial' : 'Clinic / In-office Trial'}
+                        {isHomeTrialVisit(visit) && visit.trialDuration ? ` · ${visit.trialDuration} days` : ''}
+                        {isHomeTrialVisit(visit) && visit.trialSerialNumber ? ` · ${visit.trialSerialNumber}` : ''}
                       </Typography>
                       <Stack direction="row" spacing={1}>
                         <Button
@@ -1948,7 +1969,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           startIcon={<PictureAsPdfIcon />}
                           onClick={async () => {
                             try {
-                              const invoiceNumber = await ensureVisitInvoiceNumber(index);
+                              const invoiceNumber = await getVisitInvoiceNumber(index);
                               const payload = enquiryVisitToInvoiceSalePayload(enquiry, {
                                 ...visit,
                                 invoiceNumber,
@@ -1959,7 +1980,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                               console.error('Failed to prepare invoice PDF number:', e);
                               setFollowUpFeedback({
                                 open: true,
-                                message: 'Could not allocate invoice number. Please try again.',
+                                message: 'Invoice number is missing. Ask admin to set it in Sales & Invoicing.',
                                 severity: 'error',
                               });
                             }

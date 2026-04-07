@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
-import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 function jsonError(message: string, status: number) {
@@ -24,12 +23,10 @@ export async function POST(req: Request) {
     let processedVisits = 0;
     let createdSales = 0;
     let updatedSales = 0;
-    let allocatedInvoiceNumbers = 0;
 
     for (const enquiryDoc of enquiriesSnap.docs) {
       const data = enquiryDoc.data() as Record<string, unknown>;
       const visits = Array.isArray(data.visits) ? [...(data.visits as Record<string, unknown>[])] : [];
-      let visitsChanged = false;
 
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
@@ -42,14 +39,7 @@ export async function POST(req: Request) {
         if (!isSale) continue;
         processedVisits++;
 
-        let invoiceNumber = String(visit.invoiceNumber || '').trim();
-        const needsInvoiceAlloc = !saleHasBillableInvoiceNumber(invoiceNumber);
-        if (needsInvoiceAlloc) {
-          invoiceNumber = await allocateNextInvoiceNumberAdmin(db);
-          visits[visitIndex] = { ...visit, invoiceNumber };
-          visitsChanged = true;
-          allocatedInvoiceNumbers++;
-        }
+        const visitInvoiceNumber = String(visit.invoiceNumber || '').trim();
 
         const saleDateRaw = String(visit.purchaseDate || visit.visitDate || '').trim();
         const saleDate = saleDateRaw
@@ -65,6 +55,14 @@ export async function POST(req: Request) {
           .where('enquiryVisitIndex', '==', visitIndex)
           .limit(1)
           .get();
+        const existingSalesInvoice = existingSaleSnap.empty
+          ? ''
+          : String(existingSaleSnap.docs[0].data()?.invoiceNumber || '').trim();
+        const invoiceNumber = saleHasBillableInvoiceNumber(visitInvoiceNumber)
+          ? visitInvoiceNumber
+          : saleHasBillableInvoiceNumber(existingSalesInvoice)
+            ? existingSalesInvoice
+            : '';
 
         const payload = {
           invoiceNumber,
@@ -106,15 +104,6 @@ export async function POST(req: Request) {
         }
       }
 
-      if (visitsChanged) {
-        await db.collection('enquiries').doc(enquiryDoc.id).set(
-          {
-            visits,
-            updatedAt: FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
     }
 
     return NextResponse.json({
@@ -122,7 +111,6 @@ export async function POST(req: Request) {
       processedVisits,
       createdSales,
       updatedSales,
-      allocatedInvoiceNumbers,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to resync enquiry sales';

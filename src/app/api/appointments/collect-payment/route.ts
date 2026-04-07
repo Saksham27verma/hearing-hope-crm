@@ -16,6 +16,7 @@ import { docToCatalogProduct, type CatalogProductDoc } from '@/server/staffEnqui
 import { sendStaffPaymentNotifyEmail } from '@/server/sendStaffPaymentNotifyEmail';
 import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmails';
 import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
+import { allocateNextReceiptNumberAdmin, type ReceiptNumberKind } from '@/server/allocateReceiptNumber';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
@@ -136,7 +137,13 @@ function buildSalesDocFromStaffInvoice(args: {
       id: args.staffUid,
       name: args.staffName,
     },
-    totalAmount: grossSalesBeforeTax + accessories.reduce((s: number, a: any) => s + (a.isFree ? 0 : a.price * a.quantity), 0),
+    totalAmount:
+      grossSalesBeforeTax +
+      accessories.reduce(
+        (s: number, a: { isFree: boolean; price: number; quantity: number }) =>
+          s + (a.isFree ? 0 : a.price * a.quantity),
+        0
+      ),
     gstAmount,
     gstPercentage: 0,
     grandTotal,
@@ -174,6 +181,14 @@ function isAppointmentTodayServer(start: unknown): boolean {
 type ReceiptType = 'trial' | 'booking' | 'invoice';
 const RECEIPT_TYPES: ReceiptType[] = ['trial', 'booking', 'invoice'];
 const PAYMENT_MODES = ['cash', 'upi', 'card'] as const;
+const STRICT_BOOKING_RECEIPT_RE = /^BR-\d{6}$/;
+const STRICT_TRIAL_RECEIPT_RE = /^TR-\d{6}$/;
+
+function isStrictReceiptNumber(kind: ReceiptNumberKind, value: unknown): boolean {
+  const s = String(value ?? '').trim();
+  if (!s) return false;
+  return kind === 'booking' ? STRICT_BOOKING_RECEIPT_RE.test(s) : STRICT_TRIAL_RECEIPT_RE.test(s);
+}
 
 function mapReceiptTypeToPaymentType(receiptType: ReceiptType): string {
   switch (receiptType) {
@@ -566,6 +581,26 @@ export async function POST(req: Request) {
             merged.visitSchedules[lastIdx] = {
               ...merged.visitSchedules[lastIdx],
               invoiceNumber: allocatedInvoiceNumber,
+            };
+          }
+        }
+      }
+    }
+
+    if (receiptType === 'booking' || receiptType === 'trial') {
+      const lastIdx = merged.visits.length - 1;
+      if (lastIdx >= 0) {
+        const kind: ReceiptNumberKind = receiptType === 'booking' ? 'booking' : 'trial';
+        const field = kind === 'booking' ? 'bookingReceiptNumber' : 'trialReceiptNumber';
+        const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
+        const existing = String(lastVisit[field] || '').trim();
+        if (!isStrictReceiptNumber(kind, existing)) {
+          const allocated = String(await allocateNextReceiptNumberAdmin(db, kind)).trim();
+          merged.visits[lastIdx] = { ...lastVisit, [field]: allocated };
+          if (merged.visitSchedules[lastIdx]) {
+            merged.visitSchedules[lastIdx] = {
+              ...merged.visitSchedules[lastIdx],
+              [field]: allocated,
             };
           }
         }

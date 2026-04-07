@@ -67,6 +67,7 @@ import APIIntegrations from '@/components/invoice-integrations/APIIntegrations';
 import HTMLTemplateCreator, { HTMLTemplateData } from '@/components/invoices/HTMLTemplateCreator';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import InvoiceNumberingSettingsCard from '@/components/invoice-manager/InvoiceNumberingSettingsCard';
+import ReceiptNumberingSettingsCard from '@/components/invoice-manager/ReceiptNumberingSettingsCard';
 import {
   getDocumentTypeLabel,
   getTemplatePreviewHtml,
@@ -598,6 +599,7 @@ const InvoiceManagerPage = () => {
       {/* Content */}
       <Box sx={{ px: 3 }}>
         <InvoiceNumberingSettingsCard />
+        <ReceiptNumberingSettingsCard />
         <TabPanel value={selectedTab} index={selectedTab}>
           <Grid container spacing={3}>
             {filteredTemplates.map((template) => (
