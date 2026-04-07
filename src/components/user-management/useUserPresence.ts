@@ -7,6 +7,7 @@ import type { User } from 'firebase/auth';
 
 /** Heartbeat every 25s; consider online if lastSeen within this window */
 const ONLINE_MS = 75_000;
+const ONLINE_RECHECK_MS = 10_000;
 
 function lastSeenMs(value: unknown): number {
   if (value instanceof Timestamp) return value.toMillis();
@@ -34,19 +35,32 @@ export function useUserPresenceHeartbeat(authUser: User | null, enabled: boolean
       );
     };
     pulse();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') pulse();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     const id = window.setInterval(pulse, 20_000);
-    return () => window.clearInterval(id);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.clearInterval(id);
+    };
   }, [authUser, enabled]);
 }
 
 /** Subscribes to `userPresence/{uid}` for a bounded list of user ids. */
 export function usePresenceOnlineMap(userIds: string[]): Record<string, boolean> {
-  const [map, setMap] = useState<Record<string, boolean>>({});
+  const [presence, setPresence] = useState<Record<string, { lastSeen: number; pending: boolean }>>({});
+  const [nowMs, setNowMs] = useState<number>(Date.now());
   const idKey = useMemo(() => [...userIds].sort().join('|'), [userIds]);
 
   useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), ONLINE_RECHECK_MS);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     if (!db || userIds.length === 0) {
-      setMap({});
+      setPresence({});
       return;
     }
     const unsubs = userIds.map((uid) =>
@@ -55,19 +69,18 @@ export function usePresenceOnlineMap(userIds: string[]): Record<string, boolean>
         { includeMetadataChanges: true },
         (snap) => {
           if (!snap.exists()) {
-            setMap((m) => ({ ...m, [uid]: false }));
+            setPresence((m) => ({ ...m, [uid]: { lastSeen: 0, pending: false } }));
             return;
           }
           const d = snap.data() as { lastSeen?: unknown };
           const ms = lastSeenMs(d.lastSeen);
           // Local pending writes (e.g. your own heartbeat) may not have lastSeen resolved yet
           const pending = snap.metadata.hasPendingWrites;
-          const alive = pending || (ms > 0 && Date.now() - ms < ONLINE_MS);
-          setMap((m) => ({ ...m, [uid]: alive }));
+          setPresence((m) => ({ ...m, [uid]: { lastSeen: ms, pending } }));
         },
         (err) => {
           console.warn('userPresence snapshot error', uid, err);
-          setMap((m) => ({ ...m, [uid]: false }));
+          setPresence((m) => ({ ...m, [uid]: { lastSeen: 0, pending: false } }));
         },
       ),
     );
@@ -76,5 +89,12 @@ export function usePresenceOnlineMap(userIds: string[]): Record<string, boolean>
     };
   }, [idKey]);
 
-  return map;
+  return useMemo(() => {
+    const out: Record<string, boolean> = {};
+    for (const uid of userIds) {
+      const entry = presence[uid];
+      out[uid] = Boolean(entry && (entry.pending || (entry.lastSeen > 0 && nowMs - entry.lastSeen < ONLINE_MS)));
+    }
+    return out;
+  }, [userIds, presence, nowMs]);
 }
