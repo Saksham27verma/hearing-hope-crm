@@ -10,6 +10,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Autocomplete,
   Box,
   Button,
   Chip,
@@ -40,9 +41,11 @@ import { buildUnifiedInvoiceRows } from '@/lib/sales-invoicing/mergeUnifiedRows'
 import type { SaleRecord, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import {
   Bar,
+  BarChart,
   CartesianGrid,
   Cell,
   ComposedChart,
+  LabelList,
   Legend,
   Line,
   ResponsiveContainer,
@@ -67,6 +70,15 @@ const formatAxisInr = (n: number) => {
   if (v >= 1e5) return `${(n / 1e5).toFixed(1)}L`;
   if (v >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
   return String(Math.round(n));
+};
+
+/** MRP discount line + table emphasis — high contrast on light/dark tooltips. */
+const DISC_PCT_COLOR = '#b71c1c';
+
+const discPctTableCellSx = {
+  fontWeight: 700,
+  fontVariantNumeric: 'tabular-nums' as const,
+  color: DISC_PCT_COLOR,
 };
 
 type CompetitiveChartRow = {
@@ -101,6 +113,8 @@ function SalesCompetitiveChart({
 }) {
   if (!rows.length) return null;
   const tilt = rows.length > 5;
+  /** Avoid overlapping text when many categories. */
+  const showValueLabels = rows.length <= 12;
   const innerMinWidth = Math.min(1280, Math.max(520, rows.length * 88));
   const gradTop =
     accent === 'executive' ? '#004d40' : accent === 'source' ? '#4e342e' : '#0d47a1';
@@ -168,7 +182,15 @@ function SalesCompetitiveChart({
           }}
         >
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={rows} margin={{ top: 12, right: 20, left: 4, bottom: 4 }}>
+            <ComposedChart
+              data={rows}
+              margin={{
+                top: showValueLabels ? 36 : 12,
+                right: 20,
+                left: 4,
+                bottom: 4,
+              }}
+            >
               <defs>
                 <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={gradTop} stopOpacity={1} />
@@ -204,7 +226,7 @@ function SalesCompetitiveChart({
                 orientation="right"
                 domain={[0, 'auto']}
                 tickFormatter={(v) => `${Math.round(v)}%`}
-                tick={{ fontSize: 11, fill: '#b71c1c' }}
+                tick={{ fontSize: 11, fill: DISC_PCT_COLOR, fontWeight: 600 }}
                 tickLine={false}
                 axisLine={false}
                 width={44}
@@ -241,7 +263,15 @@ function SalesCompetitiveChart({
                       <Typography variant="body2" color="text.secondary">
                         Grand total: {formatCurrency(row?.total ?? 0)}
                       </Typography>
-                      <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 600, color: 'error.dark' }}>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          mt: 0.75,
+                          fontWeight: 700,
+                          color: DISC_PCT_COLOR,
+                          letterSpacing: 0.02,
+                        }}
+                      >
                         Avg. discount vs MRP:{' '}
                         {pct != null && Number.isFinite(pct) ? `${pct.toFixed(1)}%` : '—'}
                       </Typography>
@@ -250,17 +280,6 @@ function SalesCompetitiveChart({
                 }}
               />
               <Legend wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="avgDiscountPct"
-                name="Avg. discount % vs MRP"
-                stroke="#c62828"
-                strokeWidth={2.5}
-                dot={{ r: 4, fill: '#c62828', strokeWidth: 2, stroke: '#fff' }}
-                activeDot={{ r: 6 }}
-                style={{ pointerEvents: 'none' }}
-              />
               <Bar
                 yAxisId="left"
                 dataKey="selling"
@@ -279,6 +298,15 @@ function SalesCompetitiveChart({
                     : undefined
                 }
               >
+                {showValueLabels ? (
+                  <LabelList
+                    dataKey="selling"
+                    position="top"
+                    offset={8}
+                    formatter={(v: number | string) => formatAxisInr(Number(v))}
+                    style={{ fill: '#1e293b', fontSize: 11, fontWeight: 600 }}
+                  />
+                ) : null}
                 {rows.map((entry, index) => {
                   const selected =
                     selectedFilterKey != null &&
@@ -315,6 +343,29 @@ function SalesCompetitiveChart({
                   );
                 })}
               </Bar>
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="avgDiscountPct"
+                name="Avg. discount % vs MRP"
+                stroke={DISC_PCT_COLOR}
+                strokeWidth={2.5}
+                dot={{ r: 4, fill: DISC_PCT_COLOR, strokeWidth: 2, stroke: '#fff' }}
+                activeDot={{ r: 6 }}
+                style={{ pointerEvents: 'none' }}
+              >
+                {showValueLabels ? (
+                  <LabelList
+                    dataKey="avgDiscountPct"
+                    position="top"
+                    offset={10}
+                    formatter={(v: number | string) =>
+                      v != null && v !== '' && Number.isFinite(Number(v)) ? `${Number(v).toFixed(1)}%` : ''
+                    }
+                    style={{ fill: DISC_PCT_COLOR, fontSize: 11, fontWeight: 700 }}
+                  />
+                ) : null}
+              </Line>
             </ComposedChart>
           </ResponsiveContainer>
         </Box>
@@ -690,6 +741,46 @@ function inRange(d: Date, from?: Date | null, to?: Date | null) {
   return true;
 }
 
+/** 0-based index: days 1–7 → 0, 8–14 → 1, … within the calendar month (local). */
+function getMonthWeekIndex(d: Date): number {
+  return Math.floor((d.getDate() - 1) / 7);
+}
+
+/**
+ * Buckets each sale into a fixed “week of month” band (7-day chunks) for analysis.
+ * Week 1 = days 1–7, week 2 = 8–14, … last band may be shorter (e.g. 29–31).
+ */
+function getMonthWeekMeta(d: Date): {
+  sortKey: string;
+  monthTitle: string;
+  dayRangeLabel: string;
+  weekIndex: number;
+} {
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  const weekIndex = getMonthWeekIndex(d);
+  const lastDay = new Date(y, m + 1, 0).getDate();
+  const startDay = weekIndex * 7 + 1;
+  const endDay = Math.min((weekIndex + 1) * 7, lastDay);
+  const monthTitle = new Date(y, m, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+  const dayRangeLabel = `${startDay}–${endDay}`;
+  const sortKey = `${y}-${String(m + 1).padStart(2, '0')}-${weekIndex}`;
+  return { sortKey, monthTitle, dayRangeLabel, weekIndex };
+}
+
+type WeekBucketRow = {
+  sortKey: string;
+  monthTitle: string;
+  dayRangeLabel: string;
+  weekIndex: number;
+  count: number;
+  subtotal: number;
+  gstAmount: number;
+  total: number;
+  discountMrpBasis: number;
+  discountOffMrp: number;
+};
+
 export default function SalesReportsTab() {
   const [tab, setTab] = useState(0);
 
@@ -698,6 +789,11 @@ export default function SalesReportsTab() {
   const [centerFilter, setCenterFilter] = useState<string>('all');
   const [execFilter, setExecFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
+
+  /** Week-wise tab only: empty arrays = all centers / references / salespeople. */
+  const [weekCenterIds, setWeekCenterIds] = useState<string[]>([]);
+  const [weekReferenceKeys, setWeekReferenceKeys] = useState<string[]>([]);
+  const [weekEmployeeNames, setWeekEmployeeNames] = useState<string[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [centers, setCenters] = useState<Center[]>([]);
@@ -804,6 +900,81 @@ export default function SalesReportsTab() {
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [records]);
+
+  /** Date range from the top + multi-selects (independent of the single-select filters on other tabs). */
+  const weekViewRecords = useMemo(() => {
+    return records.filter((s) => {
+      if (!inRange(s.date, dateFromObj, dateToObj)) return false;
+      if (weekCenterIds.length > 0 && !weekCenterIds.includes(s.centerKey)) return false;
+      if (weekReferenceKeys.length > 0 && !weekReferenceKeys.includes(s.referenceKey)) return false;
+      if (weekEmployeeNames.length > 0 && !weekEmployeeNames.includes(s.executiveName)) return false;
+      return true;
+    });
+  }, [records, dateFromObj, dateToObj, weekCenterIds, weekReferenceKeys, weekEmployeeNames]);
+
+  const weekWiseRows = useMemo((): WeekBucketRow[] => {
+    const map = new Map<string, WeekBucketRow>();
+    for (const s of weekViewRecords) {
+      const meta = getMonthWeekMeta(s.date);
+      const key = meta.sortKey;
+      const prev = map.get(key);
+      if (prev) {
+        map.set(key, {
+          ...prev,
+          count: prev.count + 1,
+          subtotal: prev.subtotal + (s.subtotal || 0),
+          gstAmount: prev.gstAmount + (s.gstAmount || 0),
+          total: prev.total + (s.total || 0),
+          discountMrpBasis: prev.discountMrpBasis + (s.discountMrpBasis || 0),
+          discountOffMrp: prev.discountOffMrp + (s.discountOffMrp || 0),
+        });
+      } else {
+        map.set(key, {
+          sortKey: key,
+          monthTitle: meta.monthTitle,
+          dayRangeLabel: meta.dayRangeLabel,
+          weekIndex: meta.weekIndex,
+          count: 1,
+          subtotal: s.subtotal || 0,
+          gstAmount: s.gstAmount || 0,
+          total: s.total || 0,
+          discountMrpBasis: s.discountMrpBasis || 0,
+          discountOffMrp: s.discountOffMrp || 0,
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  }, [weekViewRecords]);
+
+  const weekTotals = useMemo(() => {
+    const subtotal = weekWiseRows.reduce((a, r) => a + r.subtotal, 0);
+    const gst = weekWiseRows.reduce((a, r) => a + r.gstAmount, 0);
+    const total = weekWiseRows.reduce((a, r) => a + r.total, 0);
+    const count = weekWiseRows.reduce((a, r) => a + r.count, 0);
+    const discountMrpBasis = weekWiseRows.reduce((a, r) => a + r.discountMrpBasis, 0);
+    const discountOffMrp = weekWiseRows.reduce((a, r) => a + r.discountOffMrp, 0);
+    const avgDiscountPct =
+      discountMrpBasis > 0 ? (100 * discountOffMrp) / discountMrpBasis : null;
+    return { subtotal, gst, total, count, discountMrpBasis, discountOffMrp, avgDiscountPct };
+  }, [weekWiseRows]);
+
+  const weekChartData = useMemo(() => {
+    return weekWiseRows.map((r) => {
+      const monthWord = r.monthTitle.split(' ')[0] || r.monthTitle;
+      const avgDiscountPct =
+        r.discountMrpBasis > 0 ? (100 * r.discountOffMrp) / r.discountMrpBasis : null;
+      return {
+        sortKey: r.sortKey,
+        chartLabel: `${monthWord} · ${r.dayRangeLabel}`,
+        subtotal: r.subtotal,
+        total: r.total,
+        count: r.count,
+        avgDiscountPct,
+      };
+    });
+  }, [weekWiseRows]);
+
+  const showWeekBarLabels = weekChartData.length > 0 && weekChartData.length <= 14;
 
   const centerWise = useMemo(() => {
     const map = new Map<
@@ -1080,6 +1251,34 @@ export default function SalesReportsTab() {
     downloadCsv(`sales-records-${dateFrom || 'all'}-to-${dateTo || 'all'}.csv`, headers, rows);
   };
 
+  const exportWeekWise = () => {
+    const headers = [
+      'Month',
+      'Day range (local)',
+      'Week band (1–5)',
+      'Records',
+      'Taxable (INR)',
+      'GST (INR)',
+      'Grand total (INR)',
+      'Avg. discount % vs MRP',
+    ];
+    const rows = weekWiseRows.map((r) => {
+      const pct =
+        r.discountMrpBasis > 0 ? ((100 * r.discountOffMrp) / r.discountMrpBasis).toFixed(1) : '';
+      return [
+        r.monthTitle,
+        r.dayRangeLabel,
+        String(r.weekIndex + 1),
+        r.count,
+        r.subtotal,
+        r.gstAmount,
+        r.total,
+        pct ? `${pct}%` : '',
+      ];
+    });
+    downloadCsv(`week-wise-sales-${dateFrom || 'all'}-to-${dateTo || 'all'}.csv`, headers, rows);
+  };
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight={300}>
@@ -1227,7 +1426,15 @@ export default function SalesReportsTab() {
             <Typography variant="caption" color="text.secondary">
               Avg. discount vs MRP
             </Typography>
-            <Typography variant="h6" sx={{ fontWeight: 700 }} title="Σ(line discount) ÷ Σ(MRP) on product lines with MRP">
+            <Typography
+              variant="h6"
+              sx={{
+                fontWeight: 800,
+                color: DISC_PCT_COLOR,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+              title="Σ(line discount) ÷ Σ(MRP) on product lines with MRP"
+            >
               {totals.avgDiscountPct != null ? `${totals.avgDiscountPct.toFixed(1)}%` : '—'}
             </Typography>
             <Typography variant="caption" color="text.secondary" display="block">
@@ -1248,6 +1455,7 @@ export default function SalesReportsTab() {
           <Tab label="Center-wise Sales" />
           <Tab label="Executive-wise Sales" />
           <Tab label="Source-wise Sales" />
+          <Tab label="Week-wise (month)" />
         </Tabs>
       </Paper>
 
@@ -1294,7 +1502,7 @@ export default function SalesReportsTab() {
                           <TableCell>{r.center}</TableCell>
                           <TableCell align="right">{r.count}</TableCell>
                           <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
-                          <TableCell align="right">
+                          <TableCell align="right" sx={discPctTableCellSx}>
                             {pct != null ? `${pct.toFixed(1)}%` : '—'}
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
@@ -1311,7 +1519,7 @@ export default function SalesReportsTab() {
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
                         {formatCurrency(totals.subtotal)}
                       </TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
                         {totals.avgDiscountPct != null ? `${totals.avgDiscountPct.toFixed(1)}%` : '—'}
                       </TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
@@ -1375,7 +1583,7 @@ export default function SalesReportsTab() {
                           <TableCell>{r.executive}</TableCell>
                           <TableCell align="right">{r.count}</TableCell>
                           <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
-                          <TableCell align="right">
+                          <TableCell align="right" sx={discPctTableCellSx}>
                             {pct != null ? `${pct.toFixed(1)}%` : '—'}
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
@@ -1392,7 +1600,7 @@ export default function SalesReportsTab() {
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
                         {formatCurrency(totals.subtotal)}
                       </TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
                         {totals.avgDiscountPct != null ? `${totals.avgDiscountPct.toFixed(1)}%` : '—'}
                       </TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
@@ -1486,7 +1694,7 @@ export default function SalesReportsTab() {
                           <TableCell>{r.referenceLabel}</TableCell>
                           <TableCell align="right">{r.count}</TableCell>
                           <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
-                          <TableCell align="right">
+                          <TableCell align="right" sx={discPctTableCellSx}>
                             {pct != null ? `${pct.toFixed(1)}%` : '—'}
                           </TableCell>
                           <TableCell align="right" sx={{ fontWeight: 600 }}>
@@ -1503,7 +1711,7 @@ export default function SalesReportsTab() {
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
                         {formatCurrency(totals.subtotal)}
                       </TableCell>
-                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
                         {totals.avgDiscountPct != null ? `${totals.avgDiscountPct.toFixed(1)}%` : '—'}
                       </TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
@@ -1515,6 +1723,312 @@ export default function SalesReportsTab() {
                   <TableRow>
                     <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
                       No records in this date range for the selected filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      )}
+
+      {tab === 3 && (
+        <Box sx={{ mb: 3 }}>
+          <Box
+            display="flex"
+            flexWrap="wrap"
+            alignItems="flex-start"
+            justifyContent="space-between"
+            gap={1.5}
+            mb={1.5}
+          >
+            <Box sx={{ minWidth: 220 }}>
+              <Typography variant="h6">Week-wise (within each month)</Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
+                Uses the <strong>From / To</strong> range above. Each month is split into five 7-day bands (days
+                1–7, 8–14, …; last band may be shorter). Filters below are multi-select; leave empty for all.
+              </Typography>
+            </Box>
+            <Button variant="outlined" size="small" onClick={exportWeekWise} startIcon={<DownloadIcon />}>
+              Export week-wise CSV
+            </Button>
+          </Box>
+
+          <Paper variant="outlined" sx={{ p: 2, mb: 2, bgcolor: 'action.hover' }}>
+            <Grid container spacing={2} alignItems="flex-start">
+              <Grid item xs={12} md={4}>
+                <Autocomplete
+                  multiple
+                  options={centerOptions}
+                  getOptionLabel={(o) => o.name}
+                  value={centerOptions.filter((c) => weekCenterIds.includes(c.id))}
+                  onChange={(_, v) => setWeekCenterIds(v.map((x) => x.id))}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Centers" size="small" placeholder="All centers" />
+                  )}
+                  disableCloseOnSelect
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Autocomplete
+                  multiple
+                  options={sourceOptions}
+                  getOptionLabel={(o) => o.name}
+                  value={sourceOptions.filter((o) => weekReferenceKeys.includes(o.id))}
+                  onChange={(_, v) => setWeekReferenceKeys(v.map((x) => x.id))}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Reference / source"
+                      size="small"
+                      placeholder="All references"
+                    />
+                  )}
+                  disableCloseOnSelect
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Autocomplete
+                  multiple
+                  freeSolo={false}
+                  options={execOptions}
+                  value={weekEmployeeNames}
+                  onChange={(_, v) => setWeekEmployeeNames(v)}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Salespeople" size="small" placeholder="All salespeople" />
+                  )}
+                  disableCloseOnSelect
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={() => {
+                    setWeekCenterIds([]);
+                    setWeekReferenceKeys([]);
+                    setWeekEmployeeNames([]);
+                  }}
+                >
+                  Clear week-wise filters
+                </Button>
+              </Grid>
+            </Grid>
+          </Paper>
+
+          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+            <Grid container spacing={2} sx={{ mb: weekChartData.length ? 2 : 0 }}>
+              <Grid item xs={6} sm={4} md={2}>
+                <Typography variant="caption" color="text.secondary">
+                  Records (week view)
+                </Typography>
+                <Typography variant="h6">{weekViewRecords.length}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Typography variant="caption" color="text.secondary">
+                  Taxable
+                </Typography>
+                <Typography variant="h6">{formatCurrency(weekTotals.subtotal)}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Typography variant="caption" color="text.secondary">
+                  Grand total
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                  {formatCurrency(weekTotals.total)}
+                </Typography>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Typography variant="caption" color="text.secondary">
+                  Avg. discount vs MRP
+                </Typography>
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontWeight: 800,
+                    color: DISC_PCT_COLOR,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {weekTotals.avgDiscountPct != null ? `${weekTotals.avgDiscountPct.toFixed(1)}%` : '—'}
+                </Typography>
+              </Grid>
+            </Grid>
+
+            {weekChartData.length > 0 ? (
+              <Box sx={{ width: '100%', height: 400, overflowX: 'auto' }}>
+                <Box sx={{ minWidth: Math.max(520, weekChartData.length * 80), height: 380 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={weekChartData}
+                      margin={{
+                        top: showWeekBarLabels ? 40 : 8,
+                        right: 12,
+                        left: 4,
+                        bottom: 56,
+                      }}
+                    >
+                      <CartesianGrid strokeDasharray="3 4" vertical={false} stroke="rgba(148,163,184,0.45)" />
+                      <XAxis
+                        dataKey="chartLabel"
+                        tick={{ fontSize: 11, fill: '#64748b' }}
+                        interval={0}
+                        angle={weekChartData.length > 5 ? -32 : 0}
+                        textAnchor={weekChartData.length > 5 ? 'end' : 'middle'}
+                        height={weekChartData.length > 5 ? 72 : 36}
+                      />
+                      <YAxis
+                        tickFormatter={formatAxisInr}
+                        tick={{ fontSize: 11, fill: '#64748b' }}
+                        width={58}
+                      />
+                      <RechartsTooltip
+                        cursor={{ fill: 'rgba(25, 118, 210, 0.07)' }}
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          const row = payload[0]?.payload as {
+                            chartLabel?: string;
+                            subtotal?: number;
+                            avgDiscountPct?: number | null;
+                          };
+                          const pct = row?.avgDiscountPct;
+                          return (
+                            <Box
+                              sx={{
+                                bgcolor: 'background.paper',
+                                border: 1,
+                                borderColor: 'divider',
+                                borderRadius: 1.5,
+                                px: 1.5,
+                                py: 1,
+                                boxShadow: 3,
+                              }}
+                            >
+                              <Typography variant="caption" fontWeight={700} display="block">
+                                {String(label ?? row?.chartLabel ?? '')}
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                Taxable: {formatCurrency(Number(row?.subtotal) || 0)}
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 700, color: DISC_PCT_COLOR, mt: 0.5 }}>
+                                Avg. discount vs MRP:{' '}
+                                {pct != null && Number.isFinite(pct) ? `${pct.toFixed(1)}%` : '—'}
+                              </Typography>
+                            </Box>
+                          );
+                        }}
+                      />
+                      <Bar dataKey="subtotal" fill="#1565c0" name="subtotal" radius={[5, 5, 0, 0]} maxBarSize={56}>
+                        {showWeekBarLabels ? (
+                          <LabelList
+                            dataKey="subtotal"
+                            content={(props: any) => {
+                              const { x, y, width, value, index } = props;
+                              if (x == null || y == null || width == null || value == null) return null;
+                              const row = weekChartData[index];
+                              const pct = row?.avgDiscountPct;
+                              const cx = x + width / 2;
+                              const amt = formatAxisInr(Number(value));
+                              return (
+                                <g>
+                                  {pct != null && Number.isFinite(pct) ? (
+                                    <text
+                                      x={cx}
+                                      y={y - 22}
+                                      textAnchor="middle"
+                                      fill={DISC_PCT_COLOR}
+                                      fontSize={10}
+                                      fontWeight={700}
+                                    >
+                                      {pct.toFixed(1)}%
+                                    </text>
+                                  ) : null}
+                                  <text
+                                    x={cx}
+                                    y={y - 8}
+                                    textAnchor="middle"
+                                    fill="#1e293b"
+                                    fontSize={11}
+                                    fontWeight={600}
+                                  >
+                                    {amt}
+                                  </text>
+                                </g>
+                              );
+                            }}
+                          />
+                        ) : null}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Box>
+              </Box>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                No sales in this date range for the selected week-wise filters.
+              </Typography>
+            )}
+          </Paper>
+
+          <TableContainer component={Paper} elevation={0} variant="outlined">
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Month</TableCell>
+                  <TableCell>Day range</TableCell>
+                  <TableCell>Band</TableCell>
+                  <TableCell align="right">Records</TableCell>
+                  <TableCell align="right">Taxable (selling)</TableCell>
+                  <TableCell align="right">Avg. disc. %</TableCell>
+                  <TableCell align="right">Grand total</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {weekWiseRows.length ? (
+                  <>
+                    {weekWiseRows.map((r) => {
+                      const pct =
+                        r.discountMrpBasis > 0
+                          ? (100 * r.discountOffMrp) / r.discountMrpBasis
+                          : null;
+                      return (
+                        <TableRow key={r.sortKey} hover>
+                          <TableCell>{r.monthTitle}</TableCell>
+                          <TableCell>{r.dayRangeLabel}</TableCell>
+                          <TableCell>Week {r.weekIndex + 1} of month</TableCell>
+                          <TableCell align="right">{r.count}</TableCell>
+                          <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
+                          <TableCell align="right" sx={discPctTableCellSx}>
+                            {pct != null ? `${pct.toFixed(1)}%` : '—'}
+                          </TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {formatCurrency(r.total)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    <TableRow sx={{ bgcolor: 'action.hover' }}>
+                      <TableCell colSpan={3} sx={{ fontWeight: 700 }}>
+                        Total
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                        {weekTotals.count}
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                        {formatCurrency(weekTotals.subtotal)}
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
+                        {weekTotals.avgDiscountPct != null ? `${weekTotals.avgDiscountPct.toFixed(1)}%` : '—'}
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                        {formatCurrency(weekTotals.total)}
+                      </TableCell>
+                    </TableRow>
+                  </>
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={7} align="center" sx={{ py: 3 }}>
+                      No rows for this range / filters.
                     </TableCell>
                   </TableRow>
                 )}

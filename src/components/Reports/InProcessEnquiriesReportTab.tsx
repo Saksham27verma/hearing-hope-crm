@@ -484,7 +484,7 @@ export default function InProcessEnquiriesReportTab() {
               label="Search"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
-              placeholder="Name, phone, notes, journey…"
+              placeholder="Name, phone, reference, notes, journey…"
             />
           </Grid>
 
@@ -620,13 +620,14 @@ export default function InProcessEnquiriesReportTab() {
         </Box>
 
         <TableContainer sx={{ maxHeight: 600, width: '100%', overflowX: 'auto' }}>
-          <Table size="small" stickyHeader sx={{ minWidth: 1100 }}>
+          <Table size="small" stickyHeader sx={{ minWidth: 1220 }}>
             <TableHead>
               <TableRow>
                 <TableCell sx={{ width: '10%' }}>Journey</TableCell>
                 <TableCell sx={{ width: '10%' }}>Name</TableCell>
                 <TableCell sx={{ width: '8%' }}>Phone</TableCell>
-                <TableCell sx={{ width: '28%' }}>Messages &amp; notes</TableCell>
+                <TableCell sx={{ width: '10%' }}>Reference</TableCell>
+                <TableCell sx={{ width: '24%' }}>Messages &amp; notes</TableCell>
                 <TableCell sx={{ width: '8%' }}>Next follow-up</TableCell>
                 <TableCell sx={{ width: '8%' }}>Last visit</TableCell>
                 <TableCell sx={{ width: '8%' }}>Assigned</TableCell>
@@ -655,6 +656,11 @@ export default function InProcessEnquiriesReportTab() {
                       <EnquiryProfileLink enquiryId={r.id}>{r.name}</EnquiryProfileLink>
                     </TableCell>
                     <TableCell sx={{ verticalAlign: 'top' }}>{r.phone || '—'}</TableCell>
+                    <TableCell
+                      sx={{ verticalAlign: 'top', wordBreak: 'break-word', maxWidth: 160 }}
+                    >
+                      {r.reference || '—'}
+                    </TableCell>
                     <TableCell
                       sx={{
                         verticalAlign: 'top',
@@ -703,7 +709,7 @@ export default function InProcessEnquiriesReportTab() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 3 }}>
+                  <TableCell colSpan={10} align="center" sx={{ py: 3 }}>
                     No enquiries match this filter.
                   </TableCell>
                 </TableRow>
