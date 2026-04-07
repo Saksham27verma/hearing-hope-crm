@@ -211,6 +211,14 @@ export default function AppointmentSchedulerPage() {
     );
   }, [allEnquiries, enquirySearch]);
 
+  const staffById = useMemo(() => {
+    const map = new Map<string, any>();
+    staffList.forEach((s: any) => {
+      if (s?.id) map.set(String(s.id), s);
+    });
+    return map;
+  }, [staffList]);
+
   // Filter appointments based on selected filters
   const filteredAppointments = useMemo(() => {
     let filtered = [...appointments];
@@ -222,11 +230,25 @@ export default function AppointmentSchedulerPage() {
     
     // Filter by executive (staff)
     if (selectedExecutive !== 'all') {
-      filtered = filtered.filter(apt => apt.homeVisitorStaffId === selectedExecutive);
+      const selectedStaff = staffById.get(selectedExecutive);
+      const selectedName = String(selectedStaff?.name || '').trim().toLowerCase();
+      filtered = filtered.filter((apt) => {
+        const homeId = String(apt.homeVisitorStaffId || '').trim();
+        const centerId = String(apt.assignedStaffId || '').trim();
+        if (homeId === selectedExecutive || centerId === selectedExecutive) return true;
+
+        // Legacy-safe fallback: some older records may only have names saved.
+        if (selectedName) {
+          const homeName = String(apt.homeVisitorName || '').trim().toLowerCase();
+          const centerName = String(apt.assignedStaffName || '').trim().toLowerCase();
+          return homeName === selectedName || centerName === selectedName;
+        }
+        return false;
+      });
     }
     
     return filtered;
-  }, [appointments, selectedCenter, selectedExecutive]);
+  }, [appointments, selectedCenter, selectedExecutive, staffById]);
 
   // Get upcoming appointments (future appointments)
   const getApptStatus = (apt: Appointment): AppointmentStatus =>

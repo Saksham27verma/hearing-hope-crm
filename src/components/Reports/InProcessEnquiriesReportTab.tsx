@@ -161,6 +161,7 @@ type Row = {
   centerId: string;
   center: string;
   reference: string;
+  referenceTokens: string[];
   createdAt: Date | null;
   journeyKey: EnquiryJourneyStatus;
   journeyLabel: string;
@@ -177,10 +178,11 @@ export default function InProcessEnquiriesReportTab() {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<Row[]>([]);
 
-  const [assignedToFilter, setAssignedToFilter] = useState<string>('all');
-  const [centerFilter, setCenterFilter] = useState<string>('all');
-  const [journeyFilter, setJourneyFilter] = useState<string>('all');
-  const [telecallerFilter, setTelecallerFilter] = useState<string>('all');
+  const [assignedToFilter, setAssignedToFilter] = useState<string[]>([]);
+  const [centerFilter, setCenterFilter] = useState<string[]>([]);
+  const [journeyFilter, setJourneyFilter] = useState<string[]>([]);
+  const [telecallerFilter, setTelecallerFilter] = useState<string[]>([]);
+  const [referenceFilter, setReferenceFilter] = useState<string[]>([]);
   const [searchText, setSearchText] = useState<string>('');
   const [requireNextFollowUp, setRequireNextFollowUp] = useState(false);
   const [overdueFollowUpOnly, setOverdueFollowUpOnly] = useState(false);
@@ -207,6 +209,10 @@ export default function InProcessEnquiriesReportTab() {
         const ref = Array.isArray(e.reference)
           ? e.reference.join(' | ')
           : String(e.reference || '');
+        const referenceTokens = ref
+          .split('|')
+          .map((x) => x.trim())
+          .filter(Boolean);
         const centerId = (e.center || '').toString().trim();
         const enquiryMessage = String(e.message || '').trim();
         const followUpNotes = buildFollowUpsNotesText(e);
@@ -222,6 +228,7 @@ export default function InProcessEnquiriesReportTab() {
           centerId,
           center: getCenterLabel(centerId, centersList),
           reference: ref,
+          referenceTokens,
           createdAt,
           journeyKey: meta.key,
           journeyLabel: meta.label,
@@ -288,15 +295,40 @@ export default function InProcessEnquiriesReportTab() {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [rows]);
 
+  const referenceOptions = useMemo(() => {
+    const set = new Set<string>();
+    rows.forEach((r) => {
+      r.referenceTokens.forEach((ref) => {
+        const v = ref.trim();
+        if (v) set.add(v);
+      });
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
   const filtered = useMemo(() => {
     const search = norm(searchText);
     return rows.filter((r) => {
-      if (assignedToFilter !== 'all' && norm(r.assignedTo) !== norm(assignedToFilter)) {
+      if (
+        assignedToFilter.length > 0 &&
+        !assignedToFilter.some((v) => norm(v) === norm(r.assignedTo))
+      ) {
         return false;
       }
-      if (centerFilter !== 'all' && r.centerId !== centerFilter) return false;
-      if (journeyFilter !== 'all' && r.journeyKey !== journeyFilter) return false;
-      if (telecallerFilter !== 'all' && norm(r.telecaller) !== norm(telecallerFilter)) {
+      if (centerFilter.length > 0 && !centerFilter.includes(r.centerId)) return false;
+      if (journeyFilter.length > 0 && !journeyFilter.includes(r.journeyKey)) return false;
+      if (
+        telecallerFilter.length > 0 &&
+        !telecallerFilter.some((v) => norm(v) === norm(r.telecaller))
+      ) {
+        return false;
+      }
+      if (
+        referenceFilter.length > 0 &&
+        !referenceFilter.some((v) =>
+          r.referenceTokens.some((token) => norm(token) === norm(v)),
+        )
+      ) {
         return false;
       }
       if (requireNextFollowUp && !r.nextFollowUp) return false;
@@ -335,6 +367,7 @@ export default function InProcessEnquiriesReportTab() {
     centerFilter,
     journeyFilter,
     telecallerFilter,
+    referenceFilter,
     searchText,
     requireNextFollowUp,
     overdueFollowUpOnly,
@@ -407,10 +440,13 @@ export default function InProcessEnquiriesReportTab() {
               <Select
                 labelId="inproc-assigned-label"
                 label="Assigned To"
+                multiple
                 value={assignedToFilter}
-                onChange={(e) => setAssignedToFilter(e.target.value)}
+                onChange={(e) => setAssignedToFilter(e.target.value as string[])}
+                renderValue={(selected) =>
+                  (selected as string[]).length ? (selected as string[]).join(', ') : 'All'
+                }
               >
-                <MenuItem value="all">All</MenuItem>
                 {assignedToOptions.map((name) => (
                   <MenuItem key={name} value={name}>
                     {name}
@@ -426,10 +462,17 @@ export default function InProcessEnquiriesReportTab() {
               <Select
                 labelId="inproc-center-label"
                 label="Center"
+                multiple
                 value={centerFilter}
-                onChange={(e) => setCenterFilter(e.target.value)}
+                onChange={(e) => setCenterFilter(e.target.value as string[])}
+                renderValue={(selected) => {
+                  const ids = selected as string[];
+                  if (!ids.length) return 'All centers';
+                  return ids
+                    .map((id) => centerOptions.find((c) => c.id === id)?.name || id)
+                    .join(', ');
+                }}
               >
-                <MenuItem value="all">All centers</MenuItem>
                 {centerOptions.map((c) => (
                   <MenuItem key={c.id} value={c.id}>
                     {c.name}
@@ -445,10 +488,17 @@ export default function InProcessEnquiriesReportTab() {
               <Select
                 labelId="inproc-journey-label"
                 label="Journey"
+                multiple
                 value={journeyFilter}
-                onChange={(e) => setJourneyFilter(e.target.value)}
+                onChange={(e) => setJourneyFilter(e.target.value as string[])}
+                renderValue={(selected) => {
+                  const keys = selected as string[];
+                  if (!keys.length) return 'All stages';
+                  return keys
+                    .map((key) => journeyOptions.find(([k]) => k === key)?.[1] || key)
+                    .join(', ');
+                }}
               >
-                <MenuItem value="all">All stages</MenuItem>
                 {journeyOptions.map(([key, label]) => (
                   <MenuItem key={key} value={key}>
                     {label}
@@ -464,13 +514,38 @@ export default function InProcessEnquiriesReportTab() {
               <Select
                 labelId="inproc-tc-label"
                 label="Telecaller"
+                multiple
                 value={telecallerFilter}
-                onChange={(e) => setTelecallerFilter(e.target.value)}
+                onChange={(e) => setTelecallerFilter(e.target.value as string[])}
+                renderValue={(selected) =>
+                  (selected as string[]).length ? (selected as string[]).join(', ') : 'All'
+                }
               >
-                <MenuItem value="all">All</MenuItem>
                 {telecallerOptions.map((name) => (
                   <MenuItem key={name} value={name}>
                     {name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={2}>
+            <FormControl fullWidth size="small">
+              <InputLabel id="inproc-reference-label">Reference</InputLabel>
+              <Select
+                labelId="inproc-reference-label"
+                label="Reference"
+                multiple
+                value={referenceFilter}
+                onChange={(e) => setReferenceFilter(e.target.value as string[])}
+                renderValue={(selected) =>
+                  (selected as string[]).length ? (selected as string[]).join(', ') : 'All'
+                }
+              >
+                {referenceOptions.map((ref) => (
+                  <MenuItem key={ref} value={ref}>
+                    {ref}
                   </MenuItem>
                 ))}
               </Select>
@@ -513,6 +588,20 @@ export default function InProcessEnquiriesReportTab() {
           </Grid>
 
           <Grid item xs={12}>
+            <Box sx={{ mb: 1 }}>
+              <Button
+                size="small"
+                onClick={() => {
+                  setAssignedToFilter([]);
+                  setCenterFilter([]);
+                  setJourneyFilter([]);
+                  setTelecallerFilter([]);
+                  setReferenceFilter([]);
+                }}
+              >
+                Clear selected filters
+              </Button>
+            </Box>
             <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
               Follow-up &amp; notes
             </Typography>
