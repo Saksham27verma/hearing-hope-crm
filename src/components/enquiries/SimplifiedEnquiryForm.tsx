@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useForm, Controller } from 'react-hook-form';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
@@ -167,12 +167,39 @@ interface StaffMember {
   status: 'active' | 'inactive';
 }
 
-// Default fallback staff options (for backward compatibility)
-const fallbackStaffOptions = [
-  'Aditya', 'Chirag', 'Deepika', 'Deepika Jain', 'Manish', 'Nisha', 
-  'Pankaj', 'Priya', 'Raghav', 'Rohit', 'Saksham', 'Sanjana', 
-  'Siddharth', 'Tushar', 'Vikash'
-];
+const DEFAULT_ENQUIRY_STAFF_ROLES: Record<
+  'telecaller' | 'assignedTo' | 'testBy' | 'programmingBy' | 'sales' | 'general',
+  string[]
+> = {
+  telecaller: ['Telecaller', 'Customer Support'],
+  assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
+  testBy: ['Audiologist', 'Technician'],
+  programmingBy: ['Audiologist', 'Technician'],
+  sales: ['Sales Executive', 'Manager'],
+  general: JOB_ROLES,
+};
+
+function normalizeEnquiryStaffRoleConfig(
+  raw: unknown,
+): Record<keyof typeof DEFAULT_ENQUIRY_STAFF_ROLES, string[]> {
+  const out = { ...DEFAULT_ENQUIRY_STAFF_ROLES } as Record<
+    keyof typeof DEFAULT_ENQUIRY_STAFF_ROLES,
+    string[]
+  >;
+  if (!raw || typeof raw !== 'object') return out;
+  const src = raw as Record<string, unknown>;
+  (Object.keys(DEFAULT_ENQUIRY_STAFF_ROLES) as Array<
+    keyof typeof DEFAULT_ENQUIRY_STAFF_ROLES
+  >).forEach((k) => {
+    const arr = src[k];
+    if (Array.isArray(arr)) {
+      out[k] = arr
+        .map((v) => String(v || '').trim())
+        .filter(Boolean);
+    }
+  });
+  return out;
+}
 
 // Utility function
 const formatCurrency = (amount: number) => {
@@ -746,17 +773,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         }
       }
     }
-    return {
-      telecaller: ['Telecaller', 'Customer Support'],
-      assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
-      testBy: ['Audiologist', 'Technician'], 
-      programmingBy: ['Audiologist', 'Technician'],
-      sales: ['Sales Executive', 'Manager'],
-      general: JOB_ROLES
-    };
+    return { ...DEFAULT_ENQUIRY_STAFF_ROLES };
   };
   
   const [selectedRoles, setSelectedRoles] = useState<Record<string, string[]>>(getInitialSelectedRoles());
+  // Load shared role config so staff users see the same exact dropdown setup as admin.
+  useEffect(() => {
+    const loadSharedRoleConfig = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'appSettings', 'enquiryStaffRoles'));
+        if (!snap.exists()) return;
+        const data = snap.data() as { roles?: unknown };
+        const normalized = normalizeEnquiryStaffRoleConfig(data?.roles);
+        setSelectedRoles(normalized);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('enquiryStaffRoles', JSON.stringify(normalized));
+        }
+      } catch (e) {
+        // Firestore read can be rule-limited for some users; localStorage/default remains fallback.
+        console.warn('Failed to load shared enquiry staff roles:', e);
+      }
+    };
+    void loadSharedRoleConfig();
+  }, []);
+
   const [currentField, setCurrentField] = useState<keyof typeof selectedRoles>('telecaller');
   const [products, setProducts] = useState<any[]>([]);
   const [hearingAidProducts, setHearingAidProducts] = useState<Product[]>([]);
@@ -1247,7 +1287,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         if (dn && !isGenericLoginDisplayName(dn)) return [dn];
         return [];
       }
-      return fallbackStaffOptions;
+      // Avoid stale hardcoded names; prefer actual staff roster.
+      const fromRoster = Array.from(
+        new Set(staffMembers.map((s) => String(s.name || '').trim()).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b));
+      return fromRoster;
     },
     [
       staffByRole,
@@ -1259,6 +1303,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       watchedVisits,
       enquiry,
       userProfile?.displayName,
+      staffMembers,
     ]
   );
 
@@ -8666,19 +8711,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
           <Button
             onClick={() => {
-              const defaultRoles = {
-                telecaller: ['Telecaller', 'Customer Support'],
-                assignedTo: ['Manager', 'Sales Executive', 'Audiologist'],
-                testBy: ['Audiologist', 'Technician'], 
-                programmingBy: ['Audiologist', 'Technician'],
-                sales: ['Sales Executive', 'Manager'],
-                general: JOB_ROLES
-              };
+              const defaultRoles = { ...DEFAULT_ENQUIRY_STAFF_ROLES };
               setSelectedRoles(defaultRoles);
               // Save to localStorage immediately
               if (typeof window !== 'undefined') {
                 localStorage.setItem('enquiryStaffRoles', JSON.stringify(defaultRoles));
               }
+              void setDoc(
+                doc(db, 'appSettings', 'enquiryStaffRoles'),
+                { roles: defaultRoles, updatedAt: new Date().toISOString() },
+                { merge: true },
+              ).catch((e) => console.warn('Failed to save default enquiry staff roles:', e));
             }}
             sx={{ color: '#666' }}
           >
@@ -8690,6 +8733,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               if (typeof window !== 'undefined') {
                 localStorage.setItem('enquiryStaffRoles', JSON.stringify(selectedRoles));
               }
+              void setDoc(
+                doc(db, 'appSettings', 'enquiryStaffRoles'),
+                { roles: selectedRoles, updatedAt: new Date().toISOString() },
+                { merge: true },
+              ).catch((e) => console.warn('Failed to save enquiry staff roles:', e));
               setStaffManagementOpen(false);
             }}
             variant="contained"
