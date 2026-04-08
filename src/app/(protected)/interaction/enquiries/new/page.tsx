@@ -62,15 +62,15 @@ export default function NewEnquiryPage() {
     return null;
   }
 
-  const normalizePhoneDigits = (value: unknown) =>
+  const normalizeEnquiryPhone = (value: unknown) =>
     String(value || '')
-      .replace(/\D/g, '')
+      .replace(/[^a-zA-Z0-9]/g, '')
       .slice(0, 10);
 
   const assertUniquePhone = async (rawPhone: unknown) => {
-    const phone = normalizePhoneDigits(rawPhone);
+    const phone = normalizeEnquiryPhone(rawPhone);
     if (phone.length !== 10) {
-      throw new Error('Phone number must be exactly 10 digits');
+      throw new Error('Contact phone must be exactly 10 letters or digits');
     }
     const dupSnap = await getDocs(
       query(collection(db, 'enquiries'), where('phone', '==', phone), limit(1)),

@@ -47,15 +47,15 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [resolvedParams, setResolvedParams] = useState<{ id: string } | null>(null);
 
-  const normalizePhoneDigits = (value: unknown) =>
+  const normalizeEnquiryPhone = (value: unknown) =>
     String(value || '')
-      .replace(/\D/g, '')
+      .replace(/[^a-zA-Z0-9]/g, '')
       .slice(0, 10);
 
   const assertUniquePhoneForEdit = async (rawPhone: unknown, enquiryId: string) => {
-    const phone = normalizePhoneDigits(rawPhone);
+    const phone = normalizeEnquiryPhone(rawPhone);
     if (phone.length !== 10) {
-      throw new Error('Phone number must be exactly 10 digits');
+      throw new Error('Contact phone must be exactly 10 letters or digits');
     }
     const dupSnap = await getDocs(
       query(collection(db, 'enquiries'), where('phone', '==', phone), limit(5)),

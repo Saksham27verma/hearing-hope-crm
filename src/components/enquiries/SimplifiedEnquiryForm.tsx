@@ -215,9 +215,10 @@ const formatCurrency = (amount: number) => {
 const roundInrRupee = (n: number) => Math.round(Number(n) || 0);
 
 const formatCurrencySale = (amount: number) => formatCurrency(roundInrRupee(amount));
-const normalizePhoneDigits = (value: unknown) =>
+/** Contact phone: up to 10 letters/digits (e.g. masked numbers like 123xxx8984). */
+const normalizeEnquiryPhone = (value: unknown) =>
   String(value || '')
-    .replace(/\D/g, '')
+    .replace(/[^a-zA-Z0-9]/g, '')
     .slice(0, 10);
 
 /** Warranty options for sale lines — stored verbatim for invoices. */
@@ -1105,9 +1106,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const watchReference = watch('reference');
 
   // Check if step 0 is valid (must match submit validation: center + reference required)
+  const phoneStepOk = isAudiologist || normalizeEnquiryPhone(watchPhone).length === 10;
   const isStep0Valid =
     watchName?.trim().length > 0 &&
-    watchPhone?.trim().length > 0 &&
+    phoneStepOk &&
     selectedCenter != null &&
     String(selectedCenter).trim().length > 0 &&
     Array.isArray(watchReference) &&
@@ -3128,8 +3130,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         rules={{
                           required: 'Phone is required',
                           validate: (value) =>
-                            normalizePhoneDigits(value).length === 10 ||
-                            'Phone number must be exactly 10 digits',
+                            normalizeEnquiryPhone(value).length === 10 ||
+                            'Contact phone must be exactly 10 letters or digits',
                         }}
                         render={({ field }) => (
                           <TextField
@@ -3140,7 +3142,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             error={!!errors.phone}
                             helperText={errors.phone?.message}
                             value={field.value || ''}
-                            onChange={(e) => field.onChange(normalizePhoneDigits(e.target.value))}
+                            onChange={(e) => field.onChange(normalizeEnquiryPhone(e.target.value))}
                             InputProps={{
                               startAdornment: (
                                 <InputAdornment position="start">
@@ -3149,8 +3151,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               ),
                               inputProps: {
                                 maxLength: 10,
-                                inputMode: 'numeric',
-                                pattern: '[0-9]*',
+                                inputMode: 'text',
+                                autoComplete: 'tel',
                               },
                             }}
                             sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
