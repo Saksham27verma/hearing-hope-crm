@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   Container,
   Typography,
@@ -118,6 +119,7 @@ function firestoreTimeToDate(data: Enquiry): Date {
 }
 
 export default function TelecallingRecordsPage() {
+  const searchParams = useSearchParams();
   const [records, setRecords] = useState<TelecallingRecord[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<TelecallingRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -136,6 +138,33 @@ export default function TelecallingRecordsPage() {
   // Pagination
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
+
+  useEffect(() => {
+    const quick = (searchParams.get('quickFilter') || '').trim();
+    const telecaller = (searchParams.get('telecaller') || '').trim();
+    const validQuickFilters = new Set([
+      '',
+      'today_calls',
+      'yesterday_calls',
+      'last_week_calls',
+      'last_month_calls',
+      'all_due_calls',
+      'due_today',
+      'due_tomorrow',
+      'due_this_week',
+    ]);
+    if (quick && validQuickFilters.has(quick)) {
+      setQuickFilter(quick);
+      // When deep-linking from notifications, keep date filters clear.
+      setFollowUpDateFrom(null);
+      setFollowUpDateTo(null);
+      setNextFollowUpDateFrom(null);
+      setNextFollowUpDateTo(null);
+    }
+    if (telecaller) {
+      setSelectedTelecaller(telecaller);
+    }
+  }, [searchParams]);
 
   // Fetch data
   const fetchTelecallingRecords = async () => {

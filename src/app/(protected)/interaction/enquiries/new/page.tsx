@@ -35,6 +35,7 @@ import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 
 export default function NewEnquiryPage() {
   const router = useRouter();
@@ -266,10 +267,11 @@ export default function NewEnquiryPage() {
         } as Record<string, unknown>;
 
         if (existing.empty) {
-          await addDoc(collection(db, 'sales'), {
+          const saleRef = await addDoc(collection(db, 'sales'), {
             ...payload,
             createdAt: serverTimestamp(),
           });
+          void notifyAdminsNewSale(saleRef.id);
         } else {
           await updateDoc(doc(db, 'sales', existing.docs[0].id), payload);
         }

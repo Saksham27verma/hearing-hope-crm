@@ -113,6 +113,7 @@ import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import type { AccountingExportOptions } from '@/lib/sales-invoicing/accountingExport';
+import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 
 // ─── Types ───
 
@@ -570,6 +571,7 @@ export default function SalesInvoicingPageInner() {
         ...prev,
       ]);
       setSuccessMsg('Sale created');
+      void notifyAdminsNewSale(docRef.id);
     }
     return true;
   };

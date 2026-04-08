@@ -34,6 +34,7 @@ import {
 import { db } from '@/firebase/config';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -306,10 +307,11 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         } as Record<string, unknown>;
 
         if (existing.empty) {
-          await addDoc(collection(db, 'sales'), {
+          const saleRef = await addDoc(collection(db, 'sales'), {
             ...payload,
             createdAt: serverTimestamp(),
           });
+          void notifyAdminsNewSale(saleRef.id);
         } else {
           await updateDoc(doc(db, 'sales', existing.docs[0].id), payload);
         }

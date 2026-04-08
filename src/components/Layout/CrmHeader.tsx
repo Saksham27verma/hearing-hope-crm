@@ -7,6 +7,7 @@ import { Menu, PanelLeftClose, Sparkles, LogOut, Search } from 'lucide-react';
 import type { UserProfile } from '@/context/AuthContext';
 import { getCrmBreadcrumbs } from './crm-breadcrumbs';
 import { CRM_ACCENT, CRM_ACCENT_DEEP, CRM_PAGE_BG, HEADER_HEIGHT, RADIUS_XL, RADIUS_2XL } from './crm-theme';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 export type CrmHeaderProps = {
   shouldHideSidebar: boolean;
@@ -288,6 +289,9 @@ export default function CrmHeader({
             <Search size={20} strokeWidth={1.75} />
           </button>
         )}
+
+        <NotificationBell />
+
         <button
           type="button"
           onClick={onOpenHopeAi}

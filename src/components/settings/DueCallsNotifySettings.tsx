@@ -3,8 +3,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
+  Chip,
   CircularProgress,
   FormControlLabel,
   Paper,
@@ -25,6 +27,13 @@ type ServerStatus = {
   smtpConfigured: boolean;
   recipientCount: number;
   recipientsPreview: string[];
+  selectedNotificationUserIds?: string[];
+  userOptions?: Array<{
+    uid: string;
+    displayName: string;
+    email: string;
+    role: string;
+  }>;
   schedule?: {
     enabled: boolean;
     sendHourIst: number;
@@ -56,9 +65,14 @@ export default function DueCallsNotifySettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testingNotification, setTestingNotification] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [sendHourIst, setSendHourIst] = useState(9);
   const [sendMinuteIst, setSendMinuteIst] = useState(0);
+  const [notificationUserIds, setNotificationUserIds] = useState<string[]>([]);
+  const [notificationUsers, setNotificationUsers] = useState<
+    Array<{ uid: string; displayName: string; email: string; role: string }>
+  >([]);
   const [serverStatus, setServerStatus] = useState<ServerStatus>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
@@ -91,6 +105,8 @@ export default function DueCallsNotifySettings() {
           smtpConfigured: !!data.smtpConfigured,
           recipientCount: Number(data.recipientCount) || 0,
           recipientsPreview: Array.isArray(data.recipientsPreview) ? data.recipientsPreview : [],
+          selectedNotificationUserIds: Array.isArray(data.selectedNotificationUserIds) ? data.selectedNotificationUserIds : [],
+          userOptions: Array.isArray(data.userOptions) ? data.userOptions : [],
           schedule: {
             enabled: enabledFromServer,
             sendHourIst: hourFromServer,
@@ -98,6 +114,8 @@ export default function DueCallsNotifySettings() {
           },
           latestRun: (data.latestRun || null) as ServerStatus extends { latestRun: infer T } ? T : never,
         });
+        setNotificationUsers(Array.isArray(data.userOptions) ? data.userOptions : []);
+        setNotificationUserIds(Array.isArray(data.selectedNotificationUserIds) ? data.selectedNotificationUserIds : []);
         setEnabled(enabledFromServer);
         setSendHourIst(hourFromServer);
         setSendMinuteIst(minuteFromServer);
@@ -151,6 +169,7 @@ export default function DueCallsNotifySettings() {
         ref,
         {
           emails,
+          notificationUserIds,
           enabled,
           sendHourIst: Math.max(0, Math.min(23, Number(sendHourIst) || 0)),
           sendMinuteIst: Math.max(0, Math.min(59, Number(sendMinuteIst) || 0)),
@@ -161,7 +180,7 @@ export default function DueCallsNotifySettings() {
       setRawText(emails.join('\n'));
       setMessage({
         type: 'success',
-        text: `Saved ${emails.length} recipient${emails.length === 1 ? '' : 's'}.`,
+        text: `Saved settings (${emails.length} email recipient${emails.length === 1 ? '' : 's'}, ${notificationUserIds.length} notification user${notificationUserIds.length === 1 ? '' : 's'}).`,
       });
       void fetchServerStatus();
     } catch (e) {
@@ -211,6 +230,44 @@ export default function DueCallsNotifySettings() {
     }
   };
 
+  const handleTestNotification = async () => {
+    const user = auth?.currentUser;
+    if (!user) {
+      setMessage({ type: 'error', text: 'Sign in to the CRM to send a test notification.' });
+      return;
+    }
+    setTestingNotification(true);
+    setMessage(null);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/settings/due-calls-test-notification', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setMessage({
+          type: 'error',
+          text: (data as { error?: string }).error || `Test failed (${res.status})`,
+        });
+        return;
+      }
+      setMessage({
+        type: 'success',
+        text:
+          (data as { message?: string }).message ||
+          `Test notification sent to ${((data as { sentToUserIds?: string[] }).sentToUserIds || []).length} user(s).`,
+      });
+    } catch (e) {
+      setMessage({ type: 'error', text: e instanceof Error ? e.message : 'Request failed' });
+    } finally {
+      setTestingNotification(false);
+    }
+  };
+
   const preview = parseEmailsInput(rawText);
   const latestRun = serverStatus?.latestRun;
 
@@ -249,6 +306,37 @@ export default function DueCallsNotifySettings() {
               fullWidth
               disabled={saving}
               helperText="One email per line, or separate with commas/semicolons."
+            />
+            <Autocomplete
+              multiple
+              options={notificationUsers}
+              value={notificationUsers.filter((u) => notificationUserIds.includes(u.uid))}
+              onChange={(_, val) => setNotificationUserIds(val.map((v) => v.uid))}
+              getOptionLabel={(opt) => opt.displayName || opt.email || opt.uid}
+              isOptionEqualToValue={(opt, val) => opt.uid === val.uid}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Due-call notification users"
+                  helperText="Select users who should receive due-call notifications. If empty, auto-mapping by telecaller name is used."
+                />
+              )}
+              renderOption={(props, opt) => {
+                const { key, ...optionProps } = props;
+                return (
+                <Box component="li" key={key} {...optionProps}>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" fontWeight={600}>
+                      {opt.displayName || opt.email || opt.uid}
+                    </Typography>
+                    <Chip size="small" variant="outlined" label={opt.role} />
+                    <Typography variant="caption" color="text.secondary" noWrap>
+                      {opt.email}
+                    </Typography>
+                  </Stack>
+                </Box>
+                );
+              }}
             />
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
               <FormControlLabel
@@ -295,6 +383,10 @@ export default function DueCallsNotifySettings() {
                 .
               </Typography>
             )}
+            <Typography variant="caption" color="text.secondary" display="block">
+              Notification users selected: {notificationUserIds.length}
+              {notificationUserIds.length === 0 ? ' (auto-map by telecaller names)' : ''}.
+            </Typography>
             <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'action.hover' }}>
               <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
                 Last run status
@@ -349,6 +441,14 @@ export default function DueCallsNotifySettings() {
                 disabled={testing || saving}
               >
                 {testing ? 'Sending…' : 'Send test email'}
+              </Button>
+              <Button
+                variant="outlined"
+                color="info"
+                onClick={() => void handleTestNotification()}
+                disabled={testingNotification || saving}
+              >
+                {testingNotification ? 'Sending…' : 'Send test due-call notification'}
               </Button>
             </Box>
           </>

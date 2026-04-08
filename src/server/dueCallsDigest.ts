@@ -17,8 +17,12 @@ type EnquiryLike = {
   assignedTo?: string;
   telecaller?: string;
   followUpDate?: string;
+  center?: string;
+  visitingCenter?: string;
+  centerId?: string;
   reference?: string | string[];
   followUps?: FollowUpLike[];
+  visits?: Array<{ centerId?: string; center?: string; visitingCenter?: string }>;
 };
 
 export type DueCallRow = {
@@ -30,6 +34,8 @@ export type DueCallRow = {
   statusTag: string;
   assignedTo: string;
   telecaller: string;
+  /** Best-effort center id/name for center-scoped notifications. */
+  centerId: string | null;
   remarks: string;
   allFollowUpLogs: string;
   dueDate: string;
@@ -74,6 +80,25 @@ function formatFollowUpLogsReadable(followUps: FollowUpLike[]): string {
     .join('\n');
 }
 
+function extractEnquiryCenterId(enquiry: EnquiryLike): string | null {
+  const candidates: string[] = [];
+  const push = (v: unknown) => {
+    const t = String(v ?? '').trim();
+    if (t) candidates.push(t);
+  };
+  push(enquiry.centerId);
+  push(enquiry.visitingCenter);
+  push(enquiry.center);
+  const visits = Array.isArray(enquiry.visits) ? enquiry.visits : [];
+  for (const v of visits) {
+    push(v?.centerId);
+    push(v?.visitingCenter);
+    push(v?.center);
+  }
+  const uniq = [...new Set(candidates)];
+  return uniq.length > 0 ? uniq[0] : null;
+}
+
 export async function collectTodayDueCallsDigest(now = new Date()): Promise<{
   dateYmdIst: string;
   rows: DueCallRow[];
@@ -98,6 +123,7 @@ export async function collectTodayDueCallsDigest(now = new Date()): Promise<{
       ? rawRef.map((v) => String(v || '').trim()).filter(Boolean).join(' | ')
       : String(rawRef || '').trim();
     const statusTag = getEnquiryStatusMeta({ ...enquiry, id: enquiryId }).label;
+    const centerId = extractEnquiryCenterId(enquiry);
 
     const followUps = Array.isArray(enquiry.followUps) ? enquiry.followUps : [];
     const allFollowUpLogs = formatFollowUpLogsReadable(followUps);
@@ -122,6 +148,7 @@ export async function collectTodayDueCallsDigest(now = new Date()): Promise<{
         statusTag,
         assignedTo,
         telecaller,
+        centerId,
         remarks,
         allFollowUpLogs,
         dueDate: dueYmd,
@@ -143,6 +170,7 @@ export async function collectTodayDueCallsDigest(now = new Date()): Promise<{
           statusTag,
           assignedTo,
           telecaller: telecallerFallback,
+          centerId,
           remarks: 'Follow-up date from patient information. No call log found for today.',
           allFollowUpLogs: allFollowUpLogs || '-',
           dueDate: patientDue,

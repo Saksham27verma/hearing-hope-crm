@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getDueCallsNotificationUserIds } from '@/server/dueCallsNotifyEmails';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { isSmtpConfigured, sendSimpleSmtpMail } from '@/server/sendStaffPaymentNotifyEmail';
 import { getDueCallsNotifyEmailList, getDueCallsNotifySchedule } from '@/server/dueCallsNotifyEmails';
@@ -35,17 +36,34 @@ export async function GET(req: Request) {
   const user = await verifyCrmUser(req);
   if (!user) return jsonError('Unauthorized', 401);
 
-  const [recipients, schedule, latestRunSnap] = await Promise.all([
+  const [recipients, schedule, selectedNotificationUserIds, latestRunSnap, usersSnap] = await Promise.all([
     getDueCallsNotifyEmailList(),
     getDueCallsNotifySchedule(),
+    getDueCallsNotificationUserIds(),
     adminDb().collection('cronRuns').doc('dueCallsDigest-latest').get(),
+    adminDb().collection('users').get(),
   ]);
   const latestRun = latestRunSnap.exists ? latestRunSnap.data() : null;
+  const userOptions = usersSnap.docs
+    .map((d) => {
+      const data = d.data() as { displayName?: string; email?: string; role?: string };
+      return {
+        uid: d.id,
+        displayName: String(data.displayName || '').trim(),
+        email: String(data.email || '').trim(),
+        role: String(data.role || '').trim().toLowerCase(),
+      };
+    })
+    .filter((u) => ['admin', 'staff', 'audiologist'].includes(u.role))
+    .sort((a, b) => (a.displayName || a.email || a.uid).localeCompare(b.displayName || b.email || b.uid));
+
   return NextResponse.json({
     ok: true,
     smtpConfigured: isSmtpConfigured(),
     recipientCount: recipients.length,
     recipientsPreview: recipients.slice(0, 8),
+    selectedNotificationUserIds,
+    userOptions,
     schedule,
     latestRun,
   });

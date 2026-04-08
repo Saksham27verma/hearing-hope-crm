@@ -36,6 +36,23 @@ export async function getDueCallsNotifyEmailList(): Promise<string[]> {
   return parseDueCallsNotifyEmailsFromEnv();
 }
 
+/** Optional allow-list for due-call notifications. Empty => auto-map by telecaller names. */
+export async function getDueCallsNotificationUserIds(): Promise<string[]> {
+  try {
+    const snap = await adminDb()
+      .collection(CRM_DUE_CALLS_NOTIFY_COLLECTION)
+      .doc(CRM_DUE_CALLS_NOTIFY_DOC_ID)
+      .get();
+    if (!snap.exists) return [];
+    const raw = snap.data()?.notificationUserIds;
+    if (!Array.isArray(raw)) return [];
+    return [...new Set(raw.map((v) => String(v || '').trim()).filter(Boolean))];
+  } catch (err) {
+    console.error('getDueCallsNotificationUserIds:', err);
+    return [];
+  }
+}
+
 export type DueCallsNotifySchedule = {
   enabled: boolean;
   sendHourIst: number;
