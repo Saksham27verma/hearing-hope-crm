@@ -6,8 +6,10 @@ import {
   Box,
   Button,
   CircularProgress,
+  FormControlLabel,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from '@mui/material';
@@ -23,6 +25,21 @@ type ServerStatus = {
   smtpConfigured: boolean;
   recipientCount: number;
   recipientsPreview: string[];
+  schedule?: {
+    enabled: boolean;
+    sendHourIst: number;
+    sendMinuteIst: number;
+  };
+  latestRun?: {
+    key?: string;
+    sent?: boolean;
+    inProgress?: boolean;
+    sentAt?: string;
+    failedAt?: string;
+    error?: string | null;
+    dueCount?: number;
+    recipientCount?: number;
+  } | null;
 } | null;
 
 function parseEmailsInput(text: string): string[] {
@@ -39,6 +56,9 @@ export default function DueCallsNotifySettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [enabled, setEnabled] = useState(true);
+  const [sendHourIst, setSendHourIst] = useState(9);
+  const [sendMinuteIst, setSendMinuteIst] = useState(0);
   const [serverStatus, setServerStatus] = useState<ServerStatus>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
@@ -55,11 +75,32 @@ export default function DueCallsNotifySettings() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) {
+        const schedule = (data.schedule || {}) as { enabled?: boolean; sendHourIst?: number; sendMinuteIst?: number };
+        const enabledFromServer = schedule.enabled !== false;
+        const hourFromServer =
+          Number.isFinite(Number(schedule.sendHourIst)) && Number(schedule.sendHourIst) >= 0 && Number(schedule.sendHourIst) <= 23
+            ? Number(schedule.sendHourIst)
+            : 9;
+        const minuteFromServer =
+          Number.isFinite(Number(schedule.sendMinuteIst)) &&
+          Number(schedule.sendMinuteIst) >= 0 &&
+          Number(schedule.sendMinuteIst) <= 59
+            ? Number(schedule.sendMinuteIst)
+            : 0;
         setServerStatus({
           smtpConfigured: !!data.smtpConfigured,
           recipientCount: Number(data.recipientCount) || 0,
           recipientsPreview: Array.isArray(data.recipientsPreview) ? data.recipientsPreview : [],
+          schedule: {
+            enabled: enabledFromServer,
+            sendHourIst: hourFromServer,
+            sendMinuteIst: minuteFromServer,
+          },
+          latestRun: (data.latestRun || null) as ServerStatus extends { latestRun: infer T } ? T : never,
         });
+        setEnabled(enabledFromServer);
+        setSendHourIst(hourFromServer);
+        setSendMinuteIst(minuteFromServer);
       } else {
         setServerStatus(null);
       }
@@ -110,6 +151,9 @@ export default function DueCallsNotifySettings() {
         ref,
         {
           emails,
+          enabled,
+          sendHourIst: Math.max(0, Math.min(23, Number(sendHourIst) || 0)),
+          sendMinuteIst: Math.max(0, Math.min(59, Number(sendMinuteIst) || 0)),
           updatedAt: serverTimestamp(),
         },
         { merge: true },
@@ -168,6 +212,7 @@ export default function DueCallsNotifySettings() {
   };
 
   const preview = parseEmailsInput(rawText);
+  const latestRun = serverStatus?.latestRun;
 
   return (
     <Paper elevation={0} sx={{ p: 2.5, borderRadius: 2, border: '1px solid', borderColor: 'divider', mb: 3 }}>
@@ -179,7 +224,7 @@ export default function DueCallsNotifySettings() {
               Daily due-calls digest emails
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-              Every day at <strong>9:00 AM IST</strong>, the system sends today&apos;s due-calls details to these recipients.
+              The system sends today&apos;s due-calls details daily at your configured <strong>IST time</strong>.
             </Typography>
           </Box>
         </Box>
@@ -205,6 +250,31 @@ export default function DueCallsNotifySettings() {
               disabled={saving}
               helperText="One email per line, or separate with commas/semicolons."
             />
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ md: 'center' }}>
+              <FormControlLabel
+                control={<Switch checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />}
+                label="Enable daily due-calls digest"
+              />
+              <TextField
+                label="Send hour (IST)"
+                type="number"
+                value={sendHourIst}
+                onChange={(e) => setSendHourIst(Math.max(0, Math.min(23, Number(e.target.value) || 0)))}
+                inputProps={{ min: 0, max: 23 }}
+                sx={{ width: 180 }}
+              />
+              <TextField
+                label="Send minute (IST)"
+                type="number"
+                value={sendMinuteIst}
+                onChange={(e) => setSendMinuteIst(Math.max(0, Math.min(59, Number(e.target.value) || 0)))}
+                inputProps={{ min: 0, max: 59 }}
+                sx={{ width: 180 }}
+              />
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              Scheduled time: {String(sendHourIst).padStart(2, '0')}:{String(sendMinuteIst).padStart(2, '0')} IST
+            </Typography>
             {preview.length > 0 && (
               <Typography variant="caption" color="text.secondary">
                 Will send to: {preview.join(', ')}
@@ -219,6 +289,41 @@ export default function DueCallsNotifySettings() {
                 .
               </Typography>
             )}
+            <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'action.hover' }}>
+              <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                Last run status
+              </Typography>
+              {!latestRun ? (
+                <Typography variant="caption" color="text.secondary">
+                  No run data yet.
+                </Typography>
+              ) : (
+                <Stack spacing={0.5}>
+                  <Typography variant="caption">Run key: {latestRun.key || '-'}</Typography>
+                  <Typography variant="caption">
+                    Status:{' '}
+                    {latestRun.inProgress
+                      ? 'In progress'
+                      : latestRun.sent
+                        ? 'Sent'
+                        : latestRun.error
+                          ? 'Failed'
+                          : 'Not sent'}
+                  </Typography>
+                  <Typography variant="caption">
+                    Sent at: {latestRun.sentAt || '-'} | Failed at: {latestRun.failedAt || '-'}
+                  </Typography>
+                  <Typography variant="caption">
+                    Due calls: {latestRun.dueCount ?? '-'} | Recipients: {latestRun.recipientCount ?? '-'}
+                  </Typography>
+                  {latestRun.error ? (
+                    <Typography variant="caption" color="error.main">
+                      Error: {latestRun.error}
+                    </Typography>
+                  ) : null}
+                </Stack>
+              )}
+            </Paper>
             {message && (
               <Alert severity={message.type === 'info' ? 'info' : message.type} onClose={() => setMessage(null)}>
                 {message.text}

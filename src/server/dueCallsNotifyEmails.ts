@@ -35,3 +35,36 @@ export async function getDueCallsNotifyEmailList(): Promise<string[]> {
   }
   return parseDueCallsNotifyEmailsFromEnv();
 }
+
+export type DueCallsNotifySchedule = {
+  enabled: boolean;
+  sendHourIst: number;
+  sendMinuteIst: number;
+};
+
+export async function getDueCallsNotifySchedule(): Promise<DueCallsNotifySchedule> {
+  const fallback: DueCallsNotifySchedule = {
+    enabled: true,
+    sendHourIst: 9,
+    sendMinuteIst: 0,
+  };
+  try {
+    const snap = await adminDb()
+      .collection(CRM_DUE_CALLS_NOTIFY_COLLECTION)
+      .doc(CRM_DUE_CALLS_NOTIFY_DOC_ID)
+      .get();
+    if (!snap.exists) return fallback;
+    const data = snap.data() || {};
+    const sendHourIst = Number(data.sendHourIst);
+    const sendMinuteIst = Number(data.sendMinuteIst);
+    return {
+      enabled: data.enabled !== false,
+      sendHourIst: Number.isFinite(sendHourIst) && sendHourIst >= 0 && sendHourIst <= 23 ? sendHourIst : fallback.sendHourIst,
+      sendMinuteIst:
+        Number.isFinite(sendMinuteIst) && sendMinuteIst >= 0 && sendMinuteIst <= 59 ? sendMinuteIst : fallback.sendMinuteIst,
+    };
+  } catch (err) {
+    console.error('getDueCallsNotifySchedule:', err);
+    return fallback;
+  }
+}

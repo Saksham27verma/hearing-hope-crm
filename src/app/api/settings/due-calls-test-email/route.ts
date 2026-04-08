@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { isSmtpConfigured, sendSimpleSmtpMail } from '@/server/sendStaffPaymentNotifyEmail';
-import { getDueCallsNotifyEmailList } from '@/server/dueCallsNotifyEmails';
+import { getDueCallsNotifyEmailList, getDueCallsNotifySchedule } from '@/server/dueCallsNotifyEmails';
 import {
   buildDueCallsDigestEmailSubject,
   buildDueCallsDigestHtml,
@@ -35,12 +35,19 @@ export async function GET(req: Request) {
   const user = await verifyCrmUser(req);
   if (!user) return jsonError('Unauthorized', 401);
 
-  const recipients = await getDueCallsNotifyEmailList();
+  const [recipients, schedule, latestRunSnap] = await Promise.all([
+    getDueCallsNotifyEmailList(),
+    getDueCallsNotifySchedule(),
+    adminDb().collection('cronRuns').doc('dueCallsDigest-latest').get(),
+  ]);
+  const latestRun = latestRunSnap.exists ? latestRunSnap.data() : null;
   return NextResponse.json({
     ok: true,
     smtpConfigured: isSmtpConfigured(),
     recipientCount: recipients.length,
     recipientsPreview: recipients.slice(0, 8),
+    schedule,
+    latestRun,
   });
 }
 

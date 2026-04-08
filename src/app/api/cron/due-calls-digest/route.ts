@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/server/firebaseAdmin';
 import { sendSimpleSmtpMail, isSmtpConfigured } from '@/server/sendStaffPaymentNotifyEmail';
-import { getDueCallsNotifyEmailList } from '@/server/dueCallsNotifyEmails';
+import { getDueCallsNotifyEmailList, getDueCallsNotifySchedule } from '@/server/dueCallsNotifyEmails';
 import {
   buildDueCallsDigestEmailSubject,
   buildDueCallsDigestHtml,
@@ -27,9 +27,9 @@ function getIstParts(now = new Date()): { ymd: string; hour: number; minute: num
   return { ymd: `${year}-${month}-${day}`, hour, minute };
 }
 
-function inAllowedIstWindow(now = new Date()): boolean {
+function inAllowedIstWindow(targetHourIst: number, targetMinuteIst: number, now = new Date()): boolean {
   const { hour, minute } = getIstParts(now);
-  return hour === 9 && minute >= 0 && minute <= 15;
+  return hour === targetHourIst && minute >= targetMinuteIst && minute <= Math.min(targetMinuteIst + 15, 59);
 }
 
 /**
@@ -45,11 +45,22 @@ export async function GET(request: Request) {
     }
   }
 
-  if (!inAllowedIstWindow()) {
+  const schedule = await getDueCallsNotifySchedule();
+  if (!schedule.enabled) {
     return NextResponse.json({
       ok: true,
       sent: false,
-      skippedReason: 'Outside 9:00-9:15 IST window',
+      skippedReason: 'Daily due-calls digest is disabled',
+    });
+  }
+
+  if (!inAllowedIstWindow(schedule.sendHourIst, schedule.sendMinuteIst)) {
+    return NextResponse.json({
+      ok: true,
+      sent: false,
+      skippedReason: `Outside configured IST window (${String(schedule.sendHourIst).padStart(2, '0')}:${String(
+        schedule.sendMinuteIst,
+      ).padStart(2, '0')} to +15m)`,
     });
   }
 
@@ -65,25 +76,29 @@ export async function GET(request: Request) {
   const db = adminDb();
   const runKey = `dueCallsDigest-${dateYmdIst}-IST`;
   const runRef = db.collection('cronRuns').doc(runKey);
-  const alreadySent = await db.runTransaction(async (tx) => {
+  const latestRef = db.collection('cronRuns').doc('dueCallsDigest-latest');
+  const lockState = await db.runTransaction(async (tx) => {
     const snap = await tx.get(runRef);
-    if (snap.exists && snap.data()?.sent === true) return true;
+    const data = snap.exists ? (snap.data() as Record<string, unknown>) : {};
+    if (data?.sent === true) return 'already_sent' as const;
+    if (data?.inProgress === true) return 'in_progress' as const;
     tx.set(
       runRef,
       {
         key: runKey,
-        sent: true,
-        sentAt: new Date().toISOString(),
+        sent: false,
+        inProgress: true,
+        startedAt: new Date().toISOString(),
         dateYmdIst,
         recipientCount: recipients.length,
         dueCount: rows.length,
       },
       { merge: true },
     );
-    return false;
+    return 'locked' as const;
   });
 
-  if (alreadySent) {
+  if (lockState === 'already_sent') {
     return NextResponse.json({
       ok: true,
       sent: false,
@@ -92,11 +107,79 @@ export async function GET(request: Request) {
       recipients: recipients.length,
     });
   }
+  if (lockState === 'in_progress') {
+    return NextResponse.json({
+      ok: true,
+      sent: false,
+      skippedReason: 'Another send is already in progress',
+      dueCount: rows.length,
+      recipients: recipients.length,
+    });
+  }
 
-  const subject = buildDueCallsDigestEmailSubject(dateYmdIst);
-  const text = buildDueCallsDigestText(dateYmdIst, rows);
-  const html = buildDueCallsDigestHtml(dateYmdIst, rows, process.env.NEXT_PUBLIC_APP_URL);
-  await sendSimpleSmtpMail({ to: recipients, subject, text, html });
+  try {
+    const subject = buildDueCallsDigestEmailSubject(dateYmdIst);
+    const text = buildDueCallsDigestText(dateYmdIst, rows);
+    const html = buildDueCallsDigestHtml(dateYmdIst, rows, process.env.NEXT_PUBLIC_APP_URL);
+    await sendSimpleSmtpMail({ to: recipients, subject, text, html });
+    const sentAt = new Date().toISOString();
+    await runRef.set(
+      {
+        sent: true,
+        inProgress: false,
+        sentAt,
+        error: null,
+      },
+      { merge: true },
+    );
+    await latestRef.set(
+      {
+        key: runKey,
+        sent: true,
+        inProgress: false,
+        sentAt,
+        error: null,
+        dueCount: rows.length,
+        recipientCount: recipients.length,
+        schedule: {
+          enabled: schedule.enabled,
+          sendHourIst: schedule.sendHourIst,
+          sendMinuteIst: schedule.sendMinuteIst,
+        },
+      },
+      { merge: true },
+    );
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    const errMsg = error instanceof Error ? error.message : String(error);
+    await runRef.set(
+      {
+        sent: false,
+        inProgress: false,
+        error: errMsg,
+        failedAt,
+      },
+      { merge: true },
+    );
+    await latestRef.set(
+      {
+        key: runKey,
+        sent: false,
+        inProgress: false,
+        failedAt,
+        error: errMsg,
+        dueCount: rows.length,
+        recipientCount: recipients.length,
+        schedule: {
+          enabled: schedule.enabled,
+          sendHourIst: schedule.sendHourIst,
+          sendMinuteIst: schedule.sendMinuteIst,
+        },
+      },
+      { merge: true },
+    );
+    throw error;
+  }
 
   return NextResponse.json({
     ok: true,
