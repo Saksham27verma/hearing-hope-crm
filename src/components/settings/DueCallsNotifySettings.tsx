@@ -275,6 +275,12 @@ export default function DueCallsNotifySettings() {
             <Typography variant="caption" color="text.secondary">
               Scheduled time: {String(sendHourIst).padStart(2, '0')}:{String(sendMinuteIst).padStart(2, '0')} IST
             </Typography>
+            <Alert severity="info">
+              Vercel Hobby supports only one cron run per day. If you set a custom time different from your deployed
+              cron trigger, use an external scheduler (for example cron-job.org) to call{' '}
+              <code>/api/cron/due-calls-digest</code> around your selected IST time with the <code>CRON_SECRET</code>{' '}
+              bearer token.
+            </Alert>
             {preview.length > 0 && (
               <Typography variant="caption" color="text.secondary">
                 Will send to: {preview.join(', ')}
