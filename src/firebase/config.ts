@@ -1,5 +1,10 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import {
+  getFirestore as getFirestoreLite,
+  connectFirestoreEmulator as connectFirestoreEmulatorLite,
+} from 'firebase/firestore/lite';
+import type { Firestore as FirestoreLite } from 'firebase/firestore/lite';
 import { getAuth, connectAuthEmulator, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
@@ -27,9 +32,14 @@ const isConfigValid = sanitizeEnvVar(process.env.NEXT_PUBLIC_FIREBASE_API_KEY) &
                      sanitizeEnvVar(process.env.NEXT_PUBLIC_FIREBASE_APP_ID) &&
                      sanitizeEnvVar(process.env.NEXT_PUBLIC_FIREBASE_API_KEY) !== "demo-api-key";
 
+/** Isolated app + Firestore Lite for heavy one-shot reads (avoids full SDK watch-stream bugs with overlapping getDocs). */
+const PROFIT_REPORT_LITE_APP_NAME = 'crm-profit-report-lite';
+
 // Initialize Firebase
 let app: any = null;
 let db: any = null;
+/** Firestore Lite instance — use only from `firebase/firestore/lite` imports in callers. */
+let dbProfitReportLite: FirestoreLite | null = null;
 let auth: any = null;
 let storage: any = null;
 
@@ -43,6 +53,15 @@ try {
     db = getFirestore(app);
     auth = getAuth(app);
     storage = getStorage(app);
+    try {
+      const profitApp =
+        getApps().find((a) => a.name === PROFIT_REPORT_LITE_APP_NAME) ??
+        initializeApp(firebaseConfig, PROFIT_REPORT_LITE_APP_NAME);
+      dbProfitReportLite = getFirestoreLite(profitApp);
+    } catch (liteErr) {
+      console.warn('Firestore Lite (profit report) init failed:', liteErr);
+      dbProfitReportLite = null;
+    }
     console.log('Firebase initialized successfully');
   } else {
     console.warn('Firebase environment variables not found or using demo values.');
@@ -59,6 +78,15 @@ try {
       db = getFirestore(app);
       auth = getAuth(app);
       storage = getStorage(app);
+      try {
+        const profitApp =
+          getApps().find((a) => a.name === PROFIT_REPORT_LITE_APP_NAME) ??
+          initializeApp(firebaseConfig, PROFIT_REPORT_LITE_APP_NAME);
+        dbProfitReportLite = getFirestoreLite(profitApp);
+      } catch (liteErr) {
+        console.warn('Firestore Lite (profit report) init failed:', liteErr);
+        dbProfitReportLite = null;
+      }
     } else {
       throw new Error('Firebase configuration invalid in production');
     }
@@ -74,6 +102,7 @@ try {
   // Create fallback objects to prevent app crashes
   app = null;
   db = null;
+  dbProfitReportLite = null;
   auth = null;
   storage = null;
 }
@@ -97,6 +126,10 @@ if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true' && app && db && au
     const port = parseInt(portStr, 10);
     connectFirestoreEmulator(db, host, port);
     console.log(`Connected to Firestore emulator at ${host}:${port}`);
+    if (dbProfitReportLite) {
+      connectFirestoreEmulatorLite(dbProfitReportLite, host, port);
+      console.log(`Connected Firestore Lite (profit report) to same emulator`);
+    }
   }
 
   // Connect to Auth emulator
@@ -114,4 +147,4 @@ if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true' && app && db && au
   }
 }
 
-export { app, db, auth, storage }; 
+export { app, db, dbProfitReportLite, auth, storage }; 

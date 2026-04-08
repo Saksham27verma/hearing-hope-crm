@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Tab, Tabs } from '@mui/material';
 import {
   TrendingUp as SalesIcon,
@@ -8,6 +8,7 @@ import {
   PendingActions as PendingActionsIcon,
   BookmarkAdded as BookmarkAddedIcon,
   Analytics as AnalyticsIcon,
+  MonetizationOn as ProfitIcon,
 } from '@mui/icons-material';
 
 import InProcessEnquiriesReportTab from '@/components/Reports/InProcessEnquiriesReportTab';
@@ -15,6 +16,9 @@ import BookedEnquiriesReportTab from '@/components/Reports/BookedEnquiriesReport
 import SalesReportsTab from '@/components/Reports/SalesReportsTab';
 import AssignToReportTab from '@/components/Reports/AssignToReportTab';
 import ExecutiveAnalysisReportTab from '@/components/Reports/ExecutiveAnalysisReportTab';
+import ProfitReportTab from '@/components/Reports/ProfitReportTab';
+import { useAuth } from '@/context/AuthContext';
+import { isSuperAdminViewer } from '@/lib/tenant/centerScope';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -43,10 +47,59 @@ function TabPanel(props: TabPanelProps) {
 
 export default function ReportsPage() {
   const [tabValue, setTabValue] = useState(0);
+  const { userProfile } = useAuth();
+  const showProfitTab = isSuperAdminViewer(userProfile);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
   };
+
+  const tabs = [
+    {
+      key: 'in-process',
+      label: 'In-process & follow-up',
+      icon: <PendingActionsIcon />,
+      content: <InProcessEnquiriesReportTab />,
+    },
+    {
+      key: 'booked',
+      label: 'Booked Report',
+      icon: <BookmarkAddedIcon />,
+      content: <BookedEnquiriesReportTab />,
+    },
+    {
+      key: 'sales',
+      label: 'Sales Report',
+      icon: <SalesIcon />,
+      content: <SalesReportsTab />,
+    },
+    {
+      key: 'assign-to',
+      label: 'Assign To Report',
+      icon: <ReceiptIcon />,
+      content: <AssignToReportTab />,
+    },
+    {
+      key: 'executive-analysis',
+      label: 'Executive Analysis',
+      icon: <AnalyticsIcon />,
+      content: <ExecutiveAnalysisReportTab />,
+    },
+    ...(showProfitTab
+      ? [
+          {
+            key: 'profit-analysis',
+            label: 'Profit Analysis',
+            icon: <ProfitIcon />,
+            content: <ProfitReportTab />,
+          },
+        ]
+      : []),
+  ];
+
+  useEffect(() => {
+    if (tabValue >= tabs.length) setTabValue(0);
+  }, [tabValue, tabs.length]);
 
   return (
     <Box>
@@ -58,37 +111,17 @@ export default function ReportsPage() {
           variant="scrollable"
           scrollButtons="auto"
         >
-          <Tab
-            label="In-process & follow-up"
-            icon={<PendingActionsIcon />}
-            iconPosition="start"
-          />
-          <Tab label="Booked Report" icon={<BookmarkAddedIcon />} iconPosition="start" />
-          <Tab label="Sales Report" icon={<SalesIcon />} iconPosition="start" />
-          <Tab label="Assign To Report" icon={<ReceiptIcon />} iconPosition="start" />
-          <Tab label="Executive Analysis" icon={<AnalyticsIcon />} iconPosition="start" />
+          {tabs.map((tab) => (
+            <Tab key={tab.key} label={tab.label} icon={tab.icon} iconPosition="start" />
+          ))}
         </Tabs>
       </Box>
 
-      <TabPanel value={tabValue} index={0}>
-        <InProcessEnquiriesReportTab />
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={1}>
-        <BookedEnquiriesReportTab />
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={2}>
-        <SalesReportsTab />
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={3}>
-        <AssignToReportTab />
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={4}>
-        <ExecutiveAnalysisReportTab />
-      </TabPanel>
+      {tabs.map((tab, index) => (
+        <TabPanel key={tab.key} value={tabValue} index={index}>
+          {tab.content}
+        </TabPanel>
+      ))}
     </Box>
   );
 }
