@@ -2572,6 +2572,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         visit.hearingAidTrial &&
         visit.trialHearingAidType === 'home' &&
         Number(visit.trialHomeSecurityDepositAmount) > 0 &&
+        String(visit.trialResult || '').toLowerCase() !== 'unsuccessful' &&
         !homeTrialSecurityAbsorbedIntoLaterVisit(visits, visitIndex)
       ) {
         total += Number(visit.trialHomeSecurityDepositAmount) || 0;
@@ -2674,7 +2675,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             value: 'trial_home_security_deposit_refund' as const,
             label: 'Home trial security deposit refund',
             amount: Number(visit.trialRefundAmount) || Number(visit.trialHomeSecurityDepositAmount) || 0,
-            description: `Refund for unsuccessful trial · Visit ${visit.id}${visit.visitDate ? ` (${visit.visitDate})` : ''}`,
+            description: `Outgoing refund entry for unsuccessful trial · Source Visit ${visit.id}${visit.visitDate ? ` (${visit.visitDate})` : ''} · record on separate refund/follow-up date`,
             visitId: visit.id,
           });
         }
@@ -2748,7 +2749,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         paymentFor: 'trial_home_security_deposit_refund',
         relatedVisitId: visitId,
         amount: amt,
-        paymentDate: visit?.trialRefundDate || visit?.trialEndDate || new Date().toISOString().split('T')[0],
+        paymentDate: visit?.trialRefundDate || new Date().toISOString().split('T')[0],
       }));
       return;
     }
@@ -2771,12 +2772,64 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     }, 0);
   };
 
+  const isOutgoingPayment = (paymentFor: PaymentRecord['paymentFor']) =>
+    paymentFor === 'trial_home_security_deposit_refund';
+
+  const calculateTotalIncoming = () => {
+    const payments = getValues('payments');
+    return payments.reduce((sum, payment) => {
+      const amt = Number(payment.amount || 0);
+      return isOutgoingPayment(payment.paymentFor) ? sum : sum + amt;
+    }, 0);
+  };
+
+  const calculateTotalOutgoing = () => {
+    const payments = getValues('payments');
+    return payments.reduce((sum, payment) => {
+      const amt = Number(payment.amount || 0);
+      return isOutgoingPayment(payment.paymentFor) ? sum + amt : sum;
+    }, 0);
+  };
+
+  const calculatePendingRefundDue = () => {
+    const visits = getValues('visits');
+    return visits.reduce((sum, visit) => {
+      const isHomeTrial = Boolean(visit.hearingAidTrial) && visit.trialHearingAidType === 'home';
+      const isUnsuccessful = String(visit.trialResult || '').toLowerCase() === 'unsuccessful';
+      if (!isHomeTrial || !isUnsuccessful) return sum;
+      const refundTarget =
+        Number(visit.trialRefundAmount) > 0
+          ? Number(visit.trialRefundAmount)
+          : Number(visit.trialHomeSecurityDepositAmount) || 0;
+      return sum + Math.max(0, refundTarget);
+    }, 0);
+  };
+
   const calculateOutstanding = () => {
-    return calculateTotalDue() - calculateTotalPaid();
+    const incomingOutstanding = Math.max(calculateTotalDue() - calculateTotalIncoming(), 0);
+    const refundOutstanding = Math.max(calculatePendingRefundDue() - calculateTotalOutgoing(), 0);
+    return incomingOutstanding + refundOutstanding;
   };
 
   const addPayment = () => {
     if (currentPayment.amount > 0) {
+      if (
+        currentPayment.paymentFor === 'trial_home_security_deposit_refund' &&
+        currentPayment.relatedVisitId
+      ) {
+        const sourceVisit = getValues('visits').find((v) => v.id === currentPayment.relatedVisitId);
+        const sourceDate = String(
+          sourceVisit?.trialEndDate || sourceVisit?.visitDate || sourceVisit?.trialStartDate || ''
+        ).trim();
+        const paymentDate = String(currentPayment.paymentDate || '').trim();
+        if (sourceDate && paymentDate && sourceDate === paymentDate) {
+          alert(
+            'Please record refund on a separate follow-up/refund visit date, not the same trial visit date.'
+          );
+          return;
+        }
+      }
+
       const payments = getValues('payments');
       const newPayment: PaymentRecord = {
         id: Date.now().toString(),
@@ -7460,26 +7513,33 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Grid>
                       <Grid item xs={12} md={3}>
                         <Box sx={{ textAlign: 'center' }}>
-                          <Typography variant="body2" color="text.secondary">Total Paid</Typography>
+                          <Typography variant="body2" color="text.secondary">Money In</Typography>
                           <Typography variant="h5" sx={{ fontWeight: 700, color: 'success.main' }}>
+                            {formatCurrency(calculateTotalIncoming())}
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12} md={3}>
+                        <Box sx={{ textAlign: 'center' }}>
+                          <Typography variant="body2" color="text.secondary">Money Out (Refunds)</Typography>
+                          <Typography variant="h5" sx={{ fontWeight: 700, color: 'error.main' }}>
+                            {formatCurrency(calculateTotalOutgoing())}
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12} md={3}>
+                        <Box sx={{ textAlign: 'center' }}>
+                          <Typography variant="body2" color="text.secondary">Net Collected</Typography>
+                          <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main' }}>
                             {formatCurrency(calculateTotalPaid())}
                           </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <Typography variant="body2" color="text.secondary">Outstanding</Typography>
-                          <Typography variant="h5" sx={{ 
-                            fontWeight: 700, 
-                            color: calculateOutstanding() > 0 ? 'error.main' : 'success.main' 
-                          }}>
-                            {formatCurrency(calculateOutstanding())}
+                          <Typography variant="caption" color="text.secondary">
+                            Outstanding: {formatCurrency(calculateOutstanding())}
                           </Typography>
                         </Box>
                       </Grid>
-                      <Grid item xs={12} md={3}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <Typography variant="body2" color="text.secondary">Payment Status</Typography>
+                      <Grid item xs={12}>
+                        <Box sx={{ textAlign: 'center', mt: -1 }}>
                           <Chip 
                             label={calculateOutstanding() <= 0 ? 'Fully Paid' : 'Pending'} 
                             color={calculateOutstanding() <= 0 ? 'success' : 'warning'}
@@ -7586,6 +7646,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             ? 'Enter custom amount'
                             : currentPayment.paymentFor === 'trial_home_security_deposit'
                             ? 'Matches home trial security amount for this visit'
+                            : currentPayment.paymentFor === 'trial_home_security_deposit_refund'
+                            ? 'Outgoing refund amount (money out). Record this on a separate refund/follow-up visit date.'
                             : 'Auto-filled from service'
                         }
                         size="small"
@@ -7666,6 +7728,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               option.value === 'trial_home_security_deposit' && vid
                                 ? currentPayment.paymentFor === 'trial_home_security_deposit' &&
                                   currentPayment.relatedVisitId === vid
+                                : option.value === 'trial_home_security_deposit_refund' && vid
+                                ? currentPayment.paymentFor === 'trial_home_security_deposit_refund' &&
+                                  currentPayment.relatedVisitId === vid
                                 : currentPayment.paymentFor === option.value;
                             return (
                             <Chip
@@ -7676,7 +7741,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               clickable
                               onClick={() =>
                                 vid
-                                  ? handlePaymentPurposeRawChange(`trial_sd__${vid}`)
+                                  ? handlePaymentPurposeRawChange(
+                                      option.value === 'trial_home_security_deposit_refund'
+                                        ? `trial_sd_ref__${vid}`
+                                        : `trial_sd__${vid}`
+                                    )
                                   : handlePaymentForChange(option.value as PaymentRecord['paymentFor'])
                               }
                               color={chipActive ? 'primary' : 'default'}
@@ -7699,6 +7768,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                            <TableRow sx={{ bgcolor: 'info.100' }}>
                              <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
                              <TableCell sx={{ fontWeight: 600 }}>Payment For</TableCell>
+                             <TableCell sx={{ fontWeight: 600 }}>Direction</TableCell>
                              <TableCell sx={{ fontWeight: 600 }}>Amount</TableCell>
                              <TableCell sx={{ fontWeight: 600 }}>Payment Mode</TableCell>
                              <TableCell sx={{ fontWeight: 600 }}>Reference</TableCell>
@@ -7714,18 +7784,20 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                accessory: 'Accessory',
                                 booking_advance: 'Booking Advance',
                                trial_home_security_deposit: 'Home trial security deposit',
+                               trial_home_security_deposit_refund: 'Home trial security deposit refund',
                                programming: 'Programming',
                                full_payment: 'Full Payment',
                                partial_payment: 'Partial Payment',
                                other: 'Other'
                              };
                              
-                              const paymentForColors: Record<string, 'primary' | 'secondary' | 'success' | 'warning' | 'info' | 'default'> = {
+                             const paymentForColors: Record<string, 'primary' | 'secondary' | 'success' | 'warning' | 'info' | 'default' | 'error'> = {
                                hearing_test: 'primary',
                                hearing_aid: 'secondary',
                                accessory: 'success',
                                 booking_advance: 'warning',
                                trial_home_security_deposit: 'info',
+                               trial_home_security_deposit_refund: 'error',
                                programming: 'default',
                                full_payment: 'info',
                                partial_payment: 'warning',
@@ -7738,7 +7810,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                  <TableCell>
                                    <Chip 
                                      label={
-                                       payment.paymentFor === 'trial_home_security_deposit' && payment.relatedVisitId
+                                      (payment.paymentFor === 'trial_home_security_deposit' || payment.paymentFor === 'trial_home_security_deposit_refund') && payment.relatedVisitId
                                          ? `${paymentForLabels[payment.paymentFor]} (Visit ${payment.relatedVisitId})`
                                          : paymentForLabels[payment.paymentFor] || payment.paymentFor
                                      } 
@@ -7747,8 +7819,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                      variant="outlined" 
                                    />
                                  </TableCell>
-                                 <TableCell sx={{ fontWeight: 600, color: 'success.main' }}>
-                                   {formatCurrency(payment.amount)}
+                                 <TableCell>
+                                   <Chip
+                                     size="small"
+                                     variant="outlined"
+                                     color={isOutgoingPayment(payment.paymentFor) ? 'error' : 'success'}
+                                     label={isOutgoingPayment(payment.paymentFor) ? 'OUT' : 'IN'}
+                                   />
+                                 </TableCell>
+                                 <TableCell sx={{ fontWeight: 600, color: isOutgoingPayment(payment.paymentFor) ? 'error.main' : 'success.main' }}>
+                                   {isOutgoingPayment(payment.paymentFor) ? '-' : '+'}{formatCurrency(payment.amount)}
                                  </TableCell>
                                  <TableCell>
                                    <Chip 
@@ -7775,9 +7855,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </TableBody>
                                                  <TableHead>
                            <TableRow sx={{ bgcolor: 'success.50' }}>
-                             <TableCell sx={{ fontWeight: 700 }}>Total Paid</TableCell>
+                             <TableCell sx={{ fontWeight: 700 }}>Net Collected</TableCell>
                              <TableCell></TableCell>
-                             <TableCell sx={{ fontWeight: 700, color: 'success.main' }}>
+                             <TableCell></TableCell>
+                             <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>
                                {formatCurrency(calculateTotalPaid())}
                              </TableCell>
                              <TableCell colSpan={4}></TableCell>
@@ -8216,26 +8297,29 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     </Grid>
                     <Grid item xs={12} md={3}>
                       <Box sx={{ p: 2, bgcolor: 'success.50', borderRadius: 2, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">Amount Paid</Typography>
+                        <Typography variant="body2" color="text.secondary">Money In</Typography>
                         <Typography variant="h6" sx={{ fontWeight: 600, color: 'success.main' }}>
-                          {formatCurrency(totalPaid)}
+                          {formatCurrency(calculateTotalIncoming())}
                         </Typography>
                       </Box>
                     </Grid>
                     <Grid item xs={12} md={3}>
-                      <Box sx={{ p: 2, bgcolor: outstanding > 0 ? 'error.50' : 'success.50', borderRadius: 2, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">Outstanding</Typography>
-                        <Typography variant="h6" sx={{ 
-                          fontWeight: 600, 
-                          color: outstanding > 0 ? 'error.main' : 'success.main'
-                        }}>
-                          {formatCurrency(outstanding)}
+                      <Box sx={{ p: 2, bgcolor: 'error.50', borderRadius: 2, textAlign: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">Money Out (Refunds)</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 600, color: 'error.main' }}>
+                          {formatCurrency(calculateTotalOutgoing())}
                         </Typography>
                       </Box>
                     </Grid>
                     <Grid item xs={12} md={3}>
                       <Box sx={{ p: 2, bgcolor: 'grey.100', borderRadius: 2, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">Status</Typography>
+                        <Typography variant="body2" color="text.secondary">Net Collected</Typography>
+                        <Typography variant="h6" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                          {formatCurrency(totalPaid)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                          Outstanding: {formatCurrency(outstanding)}
+                        </Typography>
                         <Chip 
                           label={outstanding <= 0 ? 'Fully Paid' : 'Pending'} 
                           color={outstanding <= 0 ? 'success' : 'warning'}
@@ -8259,6 +8343,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                            accessory: 'Accessory',
                            booking_advance: 'Booking Advance',
                            trial_home_security_deposit: 'Home trial security deposit',
+                           trial_home_security_deposit_refund: 'Home trial security deposit refund',
                            programming: 'Programming',
                            full_payment: 'Full Payment',
                            partial_payment: 'Partial Payment',
@@ -8273,7 +8358,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                            <Box key={payment.id} sx={{ 
                              mb: 2, 
                              p: 2, 
-                             bgcolor: 'success.50', 
+                              bgcolor: isOutgoingPayment(payment.paymentFor) ? 'error.50' : 'success.50', 
                              borderRadius: 2,
                              display: 'flex',
                              justifyContent: 'space-between',
@@ -8281,7 +8366,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                            }}>
                              <Box>
                                <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                                 {formatCurrency(payment.amount)} - {payment.paymentMode}
+                                {isOutgoingPayment(payment.paymentFor) ? '-' : '+'}{formatCurrency(payment.amount)} - {payment.paymentMode}
                                </Typography>
                                <Typography variant="body2" color="text.secondary">
                                  {payment.paymentDate} • For: {forLabel}
@@ -8290,8 +8375,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                </Typography>
                              </Box>
                              <Chip 
-                               label="Paid" 
-                               color="success" 
+                              label={isOutgoingPayment(payment.paymentFor) ? 'Money Out' : 'Money In'} 
+                              color={isOutgoingPayment(payment.paymentFor) ? 'error' : 'success'} 
                                size="small" 
                                variant="outlined"
                              />
