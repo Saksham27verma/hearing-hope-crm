@@ -368,6 +368,7 @@ interface PaymentRecord {
     | 'accessory'
     | 'booking_advance'
     | 'trial_home_security_deposit'
+    | 'trial_home_security_deposit_refund'
     | 'programming'
     | 'full_payment'
     | 'partial_payment'
@@ -439,6 +440,8 @@ interface Visit {
   trialHomeSecurityDepositAmount: number;
   trialNotes: string;
   trialResult: 'ongoing' | 'successful' | 'unsuccessful' | 'extended';
+  trialRefundAmount?: number;
+  trialRefundDate?: string;
   // Booking related fields
   bookingFromTrial: boolean;
   bookingAdvanceAmount: number;
@@ -678,6 +681,7 @@ function getBookingAdvanceCreditForSale(visits: Visit[], saleIndex: number): num
 interface FormData {
   // Basic Information
   name: string;
+  customerName: string;
   phone: string;
   email: string;
   address: string;
@@ -984,6 +988,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     mode: 'onChange',
     defaultValues: {
       name: '',
+      customerName: '',
       phone: '',
       email: '',
       address: '',
@@ -1102,6 +1107,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   }, [currentVisit, hearingAidProducts]);
 
   const watchName = watch('name');
+  const watchCustomerName = watch('customerName');
   const watchPhone = watch('phone');
   const watchReference = watch('reference');
 
@@ -1797,6 +1803,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             Number(visit.hearingAidDetails?.trialHomeSecurityDepositAmount) || 0,
           trialNotes: visit.hearingAidDetails?.trialNotes || '',
           trialResult: visit.hearingAidDetails?.trialResult || 'ongoing',
+          trialRefundAmount: Number(visit.hearingAidDetails?.trialRefundAmount) || 0,
+          trialRefundDate: visit.hearingAidDetails?.trialRefundDate || '',
           // Booking related fields
           bookingFromTrial: visit.hearingAidDetails?.bookingFromTrial || false,
           bookingAdvanceAmount: visit.hearingAidDetails?.bookingAdvanceAmount || 0,
@@ -1866,6 +1874,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
         reset({
           name: enquiry.name || '',
+          customerName: enquiry.customerName || '',
           phone: enquiry.phone || '',
           email: enquiry.email || '',
           address: enquiry.address || '',
@@ -2254,6 +2263,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       trialHomeSecurityDepositAmount: 0,
       trialNotes: '',
       trialResult: 'ongoing',
+      trialRefundAmount: 0,
+      trialRefundDate: '',
       // Booking related fields
       bookingFromTrial: false,
       bookingAdvanceAmount: 0,
@@ -2657,6 +2668,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           description: `Refundable deposit · Visit ${visit.id}${visit.visitDate ? ` (${visit.visitDate})` : ''}`,
           visitId: visit.id,
         });
+        
+        if (visit.trialResult === 'unsuccessful') {
+          options.push({
+            value: 'trial_home_security_deposit_refund' as const,
+            label: 'Home trial security deposit refund',
+            amount: Number(visit.trialRefundAmount) || Number(visit.trialHomeSecurityDepositAmount) || 0,
+            description: `Refund for unsuccessful trial · Visit ${visit.id}${visit.visitDate ? ` (${visit.visitDate})` : ''}`,
+            visitId: visit.id,
+          });
+        }
       }
     });
 
@@ -2718,6 +2739,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   };
 
   const handlePaymentPurposeRawChange = (raw: string) => {
+    if (raw.startsWith('trial_sd_ref__')) {
+      const visitId = raw.slice('trial_sd_ref__'.length);
+      const visit = getValues('visits').find((v) => v.id === visitId);
+      const amt = Number(visit?.trialRefundAmount) || Number(visit?.trialHomeSecurityDepositAmount) || 0;
+      setCurrentPayment((prev) => ({
+        ...prev,
+        paymentFor: 'trial_home_security_deposit_refund',
+        relatedVisitId: visitId,
+        amount: amt,
+        paymentDate: visit?.trialRefundDate || visit?.trialEndDate || new Date().toISOString().split('T')[0],
+      }));
+      return;
+    }
     if (raw.startsWith('trial_sd__')) {
       applyTrialHomeSecurityPaymentForVisit(raw.slice('trial_sd__'.length));
       return;
@@ -2728,7 +2762,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const calculateTotalPaid = () => {
     const payments = getValues('payments');
     // Count only actual entries added in the Payments section.
-    return payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
+    return payments.reduce((sum, payment) => {
+      const amt = payment.amount || 0;
+      if (payment.paymentFor === 'trial_home_security_deposit_refund') {
+        return sum - amt;
+      }
+      return sum + amt;
+    }, 0);
   };
 
   const calculateOutstanding = () => {
@@ -2822,6 +2862,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         payment.paymentFor === 'full_payment' ? 'hearing_aid_sale' :
         payment.paymentFor === 'partial_payment' ? 'hearing_aid_sale' :
         payment.paymentFor === 'trial_home_security_deposit' ? 'staff_trial_request' :
+        payment.paymentFor === 'trial_home_security_deposit_refund' ? 'staff_trial_request' :
         payment.paymentFor || 'other',
       amount: Number(payment.amount || 0),
       paymentDate: payment.paymentDate || null,
@@ -2939,6 +2980,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           trialHomeSecurityDepositAmount: visit.trialHomeSecurityDepositAmount,
           trialNotes: visit.trialNotes,
           trialResult: visit.trialResult,
+          trialRefundAmount: visit.trialRefundAmount,
+          trialRefundDate: visit.trialRefundDate,
           // Persist booking fields only when visit is truly booking-related.
           bookingFromTrial: shouldPersistBookingFields ? visit.bookingFromTrial : false,
           bookingAdvanceAmount: shouldPersistBookingFields ? visit.bookingAdvanceAmount : 0,
@@ -3117,6 +3160,23 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           helperText={errors.name?.message}
                           variant="outlined"
                           disabled={isAudiologist}
+                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Controller
+                      name="customerName"
+                      control={control}
+                      render={({ field }) => (
+                        <TextField
+                          {...field}
+                          fullWidth
+                          label="Customer Name"
+                          variant="outlined"
+                          disabled={isAudiologist}
+                          helperText="Use when payer/decision-maker differs from patient."
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
                       )}
@@ -4823,6 +4883,50 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   helperText="Refundable deposit for taking the device home. Record the actual collection under Payments & Billing (mode, reference, remarks)."
                                 />
                               </Grid>
+                            )}
+
+                            {/* Trial Result & Refund fields */}
+                            <Grid item xs={12} md={6}>
+                              <FormControl fullWidth>
+                                <InputLabel>Trial Result</InputLabel>
+                                <Select
+                                  value={currentVisit.trialResult || 'ongoing'}
+                                  label="Trial Result"
+                                  onChange={(e) => updateVisit(activeVisit, 'trialResult', e.target.value)}
+                                >
+                                  <MenuItem value="ongoing">Ongoing</MenuItem>
+                                  <MenuItem value="successful">Successful</MenuItem>
+                                  <MenuItem value="unsuccessful">Unsuccessful</MenuItem>
+                                  <MenuItem value="extended">Extended</MenuItem>
+                                </Select>
+                              </FormControl>
+                            </Grid>
+                            
+                            {currentVisit.trialResult === 'unsuccessful' && (
+                              <>
+                                <Grid item xs={12} md={3}>
+                                  <TextField
+                                    fullWidth
+                                    label="Refund Amount"
+                                    type="number"
+                                    value={currentVisit.trialRefundAmount || ''}
+                                    onChange={(e) => updateVisit(activeVisit, 'trialRefundAmount', parseFloat(e.target.value) || 0)}
+                                    InputProps={{
+                                      startAdornment: <InputAdornment position="start"><RupeeIcon /></InputAdornment>
+                                    }}
+                                  />
+                                </Grid>
+                                <Grid item xs={12} md={3}>
+                                  <TextField
+                                    fullWidth
+                                    label="Refund Date"
+                                    type="date"
+                                    value={currentVisit.trialRefundDate || ''}
+                                    onChange={(e) => updateVisit(activeVisit, 'trialRefundDate', e.target.value)}
+                                    InputLabelProps={{ shrink: true }}
+                                  />
+                                </Grid>
+                              </>
                             )}
 
                             {/* Trial Notes */}
@@ -7404,6 +7508,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             currentPayment.paymentFor === 'trial_home_security_deposit' &&
                             currentPayment.relatedVisitId
                               ? `trial_sd__${currentPayment.relatedVisitId}`
+                              : currentPayment.paymentFor === 'trial_home_security_deposit_refund' &&
+                                currentPayment.relatedVisitId
+                              ? `trial_sd_ref__${currentPayment.relatedVisitId}`
                               : currentPayment.paymentFor
                           }
                           onChange={(e) => handlePaymentPurposeRawChange(String(e.target.value))}
@@ -7413,7 +7520,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           {getAvailablePaymentOptions().map((option) => {
                             const visitId = (option as { visitId?: string }).visitId;
                             const selectValue = visitId
-                              ? `trial_sd__${visitId}`
+                              ? (option.value === 'trial_home_security_deposit_refund' ? `trial_sd_ref__${visitId}` : `trial_sd__${visitId}`)
                               : option.value;
                             return (
                             <MenuItem key={selectValue} value={selectValue}>
@@ -7708,6 +7815,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchName}</Typography>
                   </Box>
                 </Grid>
+                {watchCustomerName && (
+                  <Grid item xs={12} md={6}>
+                    <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                      <Typography variant="body2" color="text.secondary">Customer Name</Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchCustomerName}</Typography>
+                    </Box>
+                  </Grid>
+                )}
                 {!isAudiologist && (
                   <Grid item xs={12} md={6}>
                     <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>

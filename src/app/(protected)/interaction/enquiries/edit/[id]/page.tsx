@@ -33,7 +33,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
-import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 
 interface EditEnquiryPageProps {
@@ -248,8 +248,6 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         );
         if (!isSale || !resolvedParams?.id) continue;
 
-        const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
-
         const saleDateRaw = visit.purchaseDate || visit.visitDate;
         const saleDate = saleDateRaw
           ? Timestamp.fromDate(new Date(`${String(saleDateRaw)}T00:00:00+05:30`))
@@ -266,17 +264,18 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
             limit(1)
           )
         );
-        const existingSalesInvoice = existing.empty
-          ? ''
-          : String(existing.docs[0].data()?.invoiceNumber || '').trim();
-        const priorVisitInvoice = String(oldVisits?.[visitIndex]?.invoiceNumber || '').trim();
-        const invoiceNumber = saleHasBillableInvoiceNumber(existingVisitInvoice)
-          ? existingVisitInvoice
-          : saleHasBillableInvoiceNumber(existingSalesInvoice)
-            ? existingSalesInvoice
-            : saleHasBillableInvoiceNumber(priorVisitInvoice)
-              ? priorVisitInvoice
-              : '';
+        const existingSaleDoc = existing.empty ? null : existing.docs[0];
+        const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
+        const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
+          db,
+          existingVisitInvoice,
+          existingSalesInvoice: existingSaleDoc?.data()?.invoiceNumber,
+          priorVisitInvoice: oldVisits?.[visitIndex]?.invoiceNumber,
+          currentSaleId: existingSaleDoc?.id,
+        });
+        if (invoiceNumber !== existingVisitInvoice) {
+          visits[visitIndex] = { ...visit, invoiceNumber };
+        }
 
         const payload = {
           invoiceNumber,
@@ -306,14 +305,14 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           updatedAt: serverTimestamp(),
         } as Record<string, unknown>;
 
-        if (existing.empty) {
+        if (existingSaleDoc == null) {
           const saleRef = await addDoc(collection(db, 'sales'), {
             ...payload,
             createdAt: serverTimestamp(),
           });
           void notifyAdminsNewSale(saleRef.id);
         } else {
-          await updateDoc(doc(db, 'sales', existing.docs[0].id), payload);
+          await updateDoc(doc(db, 'sales', existingSaleDoc.id), payload);
         }
       }
 

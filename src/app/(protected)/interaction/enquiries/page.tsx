@@ -166,6 +166,7 @@ const specializedFormTypes = [
 interface Enquiry {
   id?: string;
   name?: string;
+  customerName?: string;
   phone?: string;
   email?: string;
   address?: string;
@@ -689,6 +690,7 @@ export default function EnquiriesPage() {
   
   const [newEnquiry, setNewEnquiry] = useState<Enquiry>({
     name: '',
+    customerName: '',
     phone: '',
     email: '',
     address: '',
@@ -1313,6 +1315,7 @@ export default function EnquiriesPage() {
       if (term.length > 0) {
         result = result.filter((enquiry: any) =>
           norm(enquiry.name).includes(term) ||
+          norm(enquiry.customerName).includes(term) ||
           norm(enquiry.phone).includes(term) ||
           norm(enquiry.email).includes(term) ||
           norm(enquiry.subject).includes(term) ||
@@ -1562,6 +1565,7 @@ export default function EnquiriesPage() {
     // Initialize only the basic fields without specialized form details
     setNewEnquiry({
       name: '',
+      customerName: '',
       phone: '',
       email: '',
       address: '',
@@ -2386,6 +2390,7 @@ export default function EnquiriesPage() {
   // Column management functions
   const availableColumns = [
     { key: 'name', label: 'Name', category: 'Basic' },
+    { key: 'customerName', label: 'Customer Name', category: 'Basic' },
     { key: 'phone', label: 'Phone', category: 'Contact' },
     { key: 'email', label: 'Email', category: 'Contact' },
     { key: 'address', label: 'Address', category: 'Contact' },
@@ -2462,6 +2467,8 @@ export default function EnquiriesPage() {
     switch (columnKey) {
       case 'name':
         return enquiry.name || '';
+      case 'customerName':
+        return enquiry.customerName || '';
       case 'phone':
         return enquiry.phone || '';
       case 'email':
@@ -2951,6 +2958,7 @@ export default function EnquiriesPage() {
     try {
       const enquiryData: any = {
         name: newEnquiry.name,
+        customerName: newEnquiry.customerName || '',
         phone: newEnquiry.phone,
         email: newEnquiry.email || '',
         address: newEnquiry.address || '',
@@ -3617,6 +3625,9 @@ export default function EnquiriesPage() {
                   </Typography>
                   <Box sx={{ '& > div': { mb: 1 } }}>
                     <Typography variant="body2"><strong>Name:</strong> {newEnquiry.name || 'Not provided'}</Typography>
+                    {newEnquiry.customerName && (
+                      <Typography variant="body2"><strong>Customer Name:</strong> {newEnquiry.customerName}</Typography>
+                    )}
                     {userProfile?.role !== 'audiologist' && (
                       <Typography variant="body2"><strong>Phone:</strong> {newEnquiry.phone || 'Not provided'}</Typography>
                     )}
@@ -4341,6 +4352,11 @@ export default function EnquiriesPage() {
                           <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', fontWeight: 600, color: '#333' }}>
                             {enquiry.name || '-'}
                           </Typography>
+                          {enquiry.customerName && (
+                            <Typography variant="caption" noWrap sx={{ color: '#666' }}>
+                              Customer: {enquiry.customerName}
+                            </Typography>
+                          )}
                           {(() => {
                             const derivedStatus = getEnquiryStatusMeta(enquiry);
                             return (
@@ -4630,6 +4646,17 @@ export default function EnquiriesPage() {
                         variant="outlined"
                     />
                   </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="Customer Name"
+                        name="customerName"
+                        value={newEnquiry.customerName || ''}
+                        onChange={handleInputChange}
+                        variant="outlined"
+                        helperText="Use when customer differs from patient."
+                      />
+                    </Grid>
                     <Grid item xs={12} md={6}>
                     <TextField
                         fullWidth

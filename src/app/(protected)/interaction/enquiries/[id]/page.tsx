@@ -955,6 +955,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
             <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }}>
               {enquiry.name || 'Patient Name'}
             </Typography>
+            {enquiry.customerName && (
+              <Typography variant="body2" sx={{ fontWeight: 700, mb: 1, color: '#92400e' }}>
+                Customer Name: {enquiry.customerName}
+              </Typography>
+            )}
             <Typography variant="body1" color="text.secondary" sx={{ mb: 2, maxWidth: 760 }}>
               Enquiry journey, visits (test, trial, booking, sale lines), receipts, invoices, and payments in one place.
               Use Share profile to copy this page URL for your team.
@@ -1063,6 +1068,15 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
               <SectionHeading icon={<PersonIcon fontSize="small" />} title="Patient Information" subtitle="Core details entered in the form" />
               
               <Grid container spacing={2}>
+                {enquiry.customerName && (
+                  <Grid item xs={12} sm={6}>
+                    <InfoRow
+                      icon={<PersonIcon fontSize="small" />}
+                      label="Customer Name"
+                      value={enquiry.customerName}
+                    />
+                  </Grid>
+                )}
                 <Grid item xs={12} sm={6}>
                   <InfoRow 
                     icon={<HomeIcon fontSize="small" />} 
@@ -1516,6 +1530,16 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                               <Grid item xs={12} sm={6}>
                                 {renderVisitField('Result', activeVisit.trialResult)}
                               </Grid>
+                            )}
+                            {isHomeTrialVisit(activeVisit) && activeVisit.trialResult === 'unsuccessful' && (
+                              <>
+                                <Grid item xs={12} sm={6}>
+                                  {renderVisitField('Refund Amount', formatCurrency(activeVisit.trialRefundAmount))}
+                                </Grid>
+                                <Grid item xs={12} sm={6}>
+                                  {renderVisitField('Refund Date', activeVisit.trialRefundDate)}
+                                </Grid>
+                              </>
                             )}
                             <Grid item xs={12}>{renderVisitField('Notes', activeVisit.trialNotes)}</Grid>
                           </Grid>

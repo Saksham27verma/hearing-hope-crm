@@ -22,7 +22,6 @@ import {
   serverTimestamp,
   doc,
   updateDoc,
-  getDoc,
   runTransaction,
   getDocs,
   query,
@@ -33,8 +32,7 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
-import { allocateNextInvoiceNumber } from '@/services/invoiceNumbering';
-import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 
 export default function NewEnquiryPage() {
@@ -213,14 +211,6 @@ export default function NewEnquiryPage() {
         );
         if (!isSale) continue;
 
-        let invoiceNumber = String(visit.invoiceNumber || '').trim();
-        const needsInvoiceAlloc = !saleHasBillableInvoiceNumber(invoiceNumber);
-        if (needsInvoiceAlloc) {
-          invoiceNumber = await allocateNextInvoiceNumber(db);
-          visits[visitIndex] = { ...visit, invoiceNumber };
-          visitsPatched = true;
-        }
-
         const saleDateRaw = visit.purchaseDate || visit.visitDate;
         const saleDate = saleDateRaw
           ? Timestamp.fromDate(new Date(`${String(saleDateRaw)}T00:00:00+05:30`))
@@ -237,6 +227,18 @@ export default function NewEnquiryPage() {
             limit(1)
           )
         );
+        const existingSaleDoc = existing.empty ? null : existing.docs[0];
+        const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
+        const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
+          db,
+          existingVisitInvoice,
+          existingSalesInvoice: existingSaleDoc?.data()?.invoiceNumber,
+          currentSaleId: existingSaleDoc?.id,
+        });
+        if (invoiceNumber !== existingVisitInvoice) {
+          visits[visitIndex] = { ...visit, invoiceNumber };
+          visitsPatched = true;
+        }
 
         const payload = {
           invoiceNumber,
@@ -266,14 +268,14 @@ export default function NewEnquiryPage() {
           updatedAt: serverTimestamp(),
         } as Record<string, unknown>;
 
-        if (existing.empty) {
+        if (existingSaleDoc == null) {
           const saleRef = await addDoc(collection(db, 'sales'), {
             ...payload,
             createdAt: serverTimestamp(),
           });
           void notifyAdminsNewSale(saleRef.id);
         } else {
-          await updateDoc(doc(db, 'sales', existing.docs[0].id), payload);
+          await updateDoc(doc(db, 'sales', existingSaleDoc.id), payload);
         }
       }
 
