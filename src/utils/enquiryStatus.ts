@@ -1,6 +1,7 @@
 export type EnquiryJourneyStatus =
   | 'in_process'
   | 'tests_only'
+  | 'repair'
   | 'in_trial'
   | 'booked'
   | 'sold'
@@ -23,6 +24,7 @@ export const LEAD_OUTCOME_OPTIONS = [
 export const ENQUIRY_STATUS_OPTIONS: Array<{ value: EnquiryJourneyStatus; label: string }> = [
   { value: 'in_process', label: 'In Process' },
   { value: 'tests_only', label: 'Tests only' },
+  { value: 'repair', label: 'Repair' },
   { value: 'in_trial', label: 'In Trial' },
   { value: 'booked', label: 'Booked' },
   { value: 'sold', label: 'Sold' },
@@ -44,6 +46,7 @@ const JOURNEY_META: Record<
 > = {
   in_process: { label: 'In Process', color: 'info' },
   tests_only: { label: 'Tests only', color: 'info' },
+  repair: { label: 'Repair', color: 'secondary' },
   in_trial: { label: 'In Trial', color: 'warning' },
   booked: { label: 'Booked', color: 'primary' },
   sold: { label: 'Sold', color: 'success' },
@@ -159,6 +162,7 @@ const visitHasHaSignals = (visit: any): boolean => {
 const RANK = {
   in_process: 20,
   tests_only: 28,
+  repair: 32,
   in_trial: 35,
   booked: 45,
   sold: 55,
@@ -170,6 +174,7 @@ const rankToKey = (rank: number): EnquiryJourneyStatus => {
   if (rank >= RANK.sold) return 'sold';
   if (rank >= RANK.booked) return 'booked';
   if (rank >= RANK.in_trial) return 'in_trial';
+  if (rank >= RANK.repair) return 'repair';
   if (rank >= RANK.tests_only) return 'tests_only';
   return 'in_process';
 };
@@ -236,6 +241,15 @@ const deriveVisitRank = (raw: any): number => {
 
   if (isHearingTestOnlyVisit(raw)) {
     return RANK.tests_only;
+  }
+
+  const ms = Array.isArray(raw?.medicalServices) ? raw.medicalServices : [];
+  const hasRepairSignal =
+    Boolean(raw?.repair) ||
+    ms.includes('repair') ||
+    normalize(raw?.medicalService) === 'repair';
+  if (hasRepairSignal) {
+    return RANK.repair;
   }
 
   if (normalize(v.visitStatus) === 'completed' || normalize(v.status) === 'completed') {
