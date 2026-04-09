@@ -1201,9 +1201,33 @@ const StockTransferPage = () => {
       setErrorMsg('Please fill all required fields');
       return;
     }
-    
-    if (currentTransfer.fromBranch === currentTransfer.toBranch) {
-      setErrorMsg('Source and destination branches cannot be the same');
+
+    const fromBranch = currentTransfer.fromBranch.trim();
+    const toBranch = currentTransfer.toBranch.trim();
+    const transferType = currentTransfer.transferType;
+    const fromCompany = (currentTransfer.fromCompany || '').trim();
+    const toCompany = (currentTransfer.toCompany || '').trim();
+    const company = (currentTransfer.company || '').trim();
+    const sameBranch = fromBranch === toBranch;
+    const sameIntercompany = fromCompany && toCompany && fromCompany === toCompany;
+
+    if (transferType === 'intracompany' && sameBranch) {
+      setErrorMsg('For intracompany transfer, source and destination branches cannot be the same');
+      return;
+    }
+
+    if (transferType === 'intercompany' && sameBranch && sameIntercompany) {
+      setErrorMsg('For intercompany transfer, same branch is allowed only when source and destination companies are different');
+      return;
+    }
+
+    if (transferType === 'intercompany' && fromCompany && toCompany && fromCompany === toCompany && !sameBranch) {
+      setErrorMsg('For intercompany transfer, source and destination companies must be different');
+      return;
+    }
+
+    if (transferType === 'intracompany' && company && (fromCompany || toCompany)) {
+      setErrorMsg('Please use only one company for intracompany transfer');
       return;
     }
     if (!currentTransfer.products || currentTransfer.products.length === 0) {
