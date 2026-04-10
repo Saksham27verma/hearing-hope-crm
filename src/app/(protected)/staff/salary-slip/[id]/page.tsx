@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -19,10 +19,11 @@ import {
   TableHead,
   TableRow,
   CircularProgress,
-  Stack,
   alpha,
   Tooltip,
   IconButton,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import {
   PrintOutlined as PrintIcon,
@@ -30,6 +31,7 @@ import {
   CheckCircle as PaidIcon,
   Error as UnpaidIcon,
   Download as DownloadIcon,
+  OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -44,6 +46,8 @@ import { db } from '@/firebase/config';
 import { format } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { generateSalarySlipHtml } from '@/utils/salarySlipHtmlTemplate';
+import type { SalarySlipData } from '@/utils/salarySlipHtmlTemplate';
 
 interface Staff {
   id?: string;
@@ -142,27 +146,107 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [loading, setLoading] = useState(true);
   const [monthLoading, setMonthLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<{ msg: string; severity: 'success' | 'error' } | null>(null);
 
-  /* ── Inject print CSS ─────────────────────────────────────── */
-  useEffect(() => {
-    const style = document.createElement('style');
-    style.id = '__salary-slip-print-css';
-    style.textContent = `
-      @media print {
-        @page { size: A4 portrait; margin: 12mm 14mm; }
-        body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        .MuiDrawer-root,
-        .MuiAppBar-root,
-        nav,
-        aside,
-        .salary-slip-toolbar { display: none !important; }
-        .salary-slip-doc { box-shadow: none !important; border-radius: 0 !important; }
+  /* ── Build SalarySlipData for the HTML template ────────────── */
+  const buildSlipData = useCallback((): SalarySlipData | null => {
+    if (!staff || !salary) return null;
+    return {
+      staffId: staff.id || params.id,
+      staffName: staff.name,
+      staffNumber: staff.staffNumber,
+      email: staff.email,
+      phone: staff.phone,
+      jobRole: staff.jobRole,
+      department: staff.department,
+      joiningDate: staff.joiningDate,
+      bankName: staff.bankName,
+      accountNumber: staff.accountNumber,
+      ifscCode: staff.ifscCode,
+      panNumber: staff.panNumber,
+      month: salary.month,
+      basicSalary: salary.basicSalary,
+      hra: salary.hra,
+      travelAllowance: salary.travelAllowance,
+      incentives: salary.incentives,
+      festivalAdvance: salary.festivalAdvance,
+      generalAdvance: salary.generalAdvance,
+      deductions: salary.deductions,
+      totalEarnings: salary.totalEarnings,
+      totalDeductions: salary.totalDeductions,
+      netSalary: salary.netSalary,
+      isPaid: salary.isPaid,
+      paidDate: salary.paidDate,
+      remarks: salary.remarks,
+      logoUrl: '/images/logohope.svg',
+    };
+  }, [staff, salary, params.id]);
+
+  /* ── Print: open HTML template in a new window and print ───── */
+  const handlePrint = useCallback(() => {
+    const slipData = buildSlipData();
+    if (!slipData) return;
+    setPrinting(true);
+    try {
+      const html = generateSalarySlipHtml(slipData);
+      const win = window.open('', '_blank', 'width=900,height=700');
+      if (!win) {
+        setToastMsg({ msg: 'Popup blocked. Allow popups and try again.', severity: 'error' });
+        return;
       }
-    `;
-    document.head.appendChild(style);
-    return () => { document.getElementById('__salary-slip-print-css')?.remove(); };
-  }, []);
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      win.onload = () => {
+        win.focus();
+        win.print();
+      };
+    } finally {
+      setPrinting(false);
+    }
+  }, [buildSlipData]);
+
+  /* ── Download PDF: call server API ─────────────────────────── */
+  const handleDownloadPdf = useCallback(async () => {
+    if (!staff || !salary) return;
+    setDownloading(true);
+    try {
+      const url = `/api/staff/salary-slip-pdf?staffId=${encodeURIComponent(staff.id || params.id)}&month=${encodeURIComponent(salary.month)}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as { error?: string }).error || 'Failed to generate PDF');
+      }
+      const blob = await res.blob();
+      const safeName = staff.name.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
+      const filename = `salary-slip-${safeName}-${salary.month}.pdf`;
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      setToastMsg({ msg: 'PDF downloaded successfully', severity: 'success' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to download PDF';
+      setToastMsg({ msg, severity: 'error' });
+    } finally {
+      setDownloading(false);
+    }
+  }, [staff, salary, params.id]);
+
+  /* ── Preview in new tab ─────────────────────────────────────── */
+  const handlePreview = useCallback(() => {
+    const slipData = buildSlipData();
+    if (!slipData) return;
+    const html = generateSalarySlipHtml(slipData);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }, [buildSlipData]);
 
   useEffect(() => {
     if (!user) return;
@@ -393,22 +477,34 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
           </Select>
         </FormControl>
 
-        {/* Print button */}
-        <Button
-          variant="contained"
-          startIcon={<PrintIcon />}
-          onClick={() => window.print()}
-          sx={{ borderRadius: 2, fontWeight: 700, boxShadow: 'none', '&:hover': { boxShadow: 'none' } }}
-        >
-          Print Slip
-        </Button>
+        {/* Action buttons */}
+        <Tooltip title="Open professional HTML slip in a new tab">
+          <IconButton
+            size="small"
+            onClick={handlePreview}
+            disabled={!staff || !salary}
+            sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5 }}
+          >
+            <OpenInNewIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
         <Button
           variant="outlined"
-          startIcon={<DownloadIcon />}
-          onClick={() => window.print()}
+          startIcon={<PrintIcon />}
+          onClick={handlePrint}
+          disabled={!staff || !salary || printing}
           sx={{ borderRadius: 2, fontWeight: 700 }}
         >
-          Download PDF
+          {printing ? 'Opening…' : 'Print Slip'}
+        </Button>
+        <Button
+          variant="contained"
+          startIcon={<DownloadIcon />}
+          onClick={handleDownloadPdf}
+          disabled={!staff || !salary || downloading}
+          sx={{ borderRadius: 2, fontWeight: 700, boxShadow: 'none', '&:hover': { boxShadow: 'none' } }}
+        >
+          {downloading ? 'Generating…' : 'Download PDF'}
         </Button>
       </Box>
 
@@ -820,6 +916,23 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
           </Typography>
         </Box>
       </Paper>
+
+      {/* Toast */}
+      <Snackbar
+        open={!!toastMsg}
+        autoHideDuration={5000}
+        onClose={() => setToastMsg(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity={toastMsg?.severity || 'info'}
+          variant="filled"
+          onClose={() => setToastMsg(null)}
+          sx={{ borderRadius: 2 }}
+        >
+          {toastMsg?.msg}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
