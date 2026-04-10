@@ -27,12 +27,12 @@ import {
   query,
   where,
   limit,
-  Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
+import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 
 export default function NewEnquiryPage() {
@@ -212,28 +212,19 @@ export default function NewEnquiryPage() {
         if (!isSale) continue;
 
         const saleDateRaw = visit.purchaseDate || visit.visitDate;
-        const saleDate = saleDateRaw
-          ? Timestamp.fromDate(new Date(`${String(saleDateRaw)}T00:00:00+05:30`))
-          : Timestamp.now();
+        const saleDate = enquiryVisitSaleDateToTimestamp(saleDateRaw);
         const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
         const gstAmount = Number(visit.taxAmount) || 0;
         const grandTotal = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
 
-        const existing = await getDocs(
-          query(
-            collection(db, 'sales'),
-            where('enquiryId', '==', docRef.id),
-            where('enquiryVisitIndex', '==', visitIndex),
-            limit(1)
-          )
-        );
-        const existingSaleDoc = existing.empty ? null : existing.docs[0];
+        // No mirrored `sales` row can exist yet for this brand-new enquiryId (avoids a
+        // compound Firestore query that requires a composite index).
         const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
         const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
           db,
           existingVisitInvoice,
-          existingSalesInvoice: existingSaleDoc?.data()?.invoiceNumber,
-          currentSaleId: existingSaleDoc?.id,
+          existingSalesInvoice: undefined,
+          currentSaleId: undefined,
         });
         if (invoiceNumber !== existingVisitInvoice) {
           visits[visitIndex] = { ...visit, invoiceNumber };
@@ -268,15 +259,11 @@ export default function NewEnquiryPage() {
           updatedAt: serverTimestamp(),
         } as Record<string, unknown>;
 
-        if (existingSaleDoc == null) {
-          const saleRef = await addDoc(collection(db, 'sales'), {
-            ...payload,
-            createdAt: serverTimestamp(),
-          });
-          void notifyAdminsNewSale(saleRef.id);
-        } else {
-          await updateDoc(doc(db, 'sales', existingSaleDoc.id), payload);
-        }
+        const saleRef = await addDoc(collection(db, 'sales'), {
+          ...payload,
+          createdAt: serverTimestamp(),
+        });
+        void notifyAdminsNewSale(saleRef.id);
       }
 
       if (visitsPatched) {

@@ -29,11 +29,11 @@ import {
   where,
   limit,
   addDoc,
-  Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
+import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 
 interface EditEnquiryPageProps {
@@ -249,9 +249,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         if (!isSale || !resolvedParams?.id) continue;
 
         const saleDateRaw = visit.purchaseDate || visit.visitDate;
-        const saleDate = saleDateRaw
-          ? Timestamp.fromDate(new Date(`${String(saleDateRaw)}T00:00:00+05:30`))
-          : Timestamp.now();
+        const saleDate = enquiryVisitSaleDateToTimestamp(saleDateRaw);
         const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
         const gstAmount = Number(visit.taxAmount) || 0;
         const grandTotal = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
