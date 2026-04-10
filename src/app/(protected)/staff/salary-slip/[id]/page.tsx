@@ -38,7 +38,6 @@ import {
   getDoc,
   query,
   where,
-  orderBy,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -95,6 +94,25 @@ const buildSalaryDocId = (staffId: string, month: string) => `${staffId}_${month
 
 const salaryTimestampValue = (salary?: Salary) =>
   salary?.updatedAt?.seconds || salary?.createdAt?.seconds || 0;
+
+function getFirestoreErrorMessage(error: unknown, fallback: string): string {
+  const code = (error as { code?: string })?.code;
+  const message = (error as { message?: string })?.message;
+  switch (code) {
+    case 'permission-denied':
+      return `${fallback}: you do not have permission to access salary records.`;
+    case 'failed-precondition':
+      return `${fallback}: Firestore index/config is missing. Please ask admin to create required index.`;
+    case 'unavailable':
+      return `${fallback}: Firestore service is temporarily unavailable. Please retry.`;
+    case 'deadline-exceeded':
+      return `${fallback}: request timed out. Please retry.`;
+    case 'network-request-failed':
+      return `${fallback}: network issue detected. Check internet and retry.`;
+    default:
+      return message ? `${fallback}: ${message}` : fallback;
+  }
+}
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -170,8 +188,7 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
 
       const salaryQuery = query(
         collection(db, 'salaries'),
-        where('staffId', '==', params.id),
-        orderBy('month', 'desc')
+        where('staffId', '==', params.id)
       );
       const snap = await getDocs(salaryQuery);
 
@@ -206,33 +223,41 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
       setSalary(chosen || null);
       setLoading(false);
     } catch (err) {
-      console.error(err);
-      setError('Failed to load data');
+      console.error('Salary slip load error:', err);
+      setError(getFirestoreErrorMessage(err, 'Failed to load salary slip data'));
       setLoading(false);
     }
   };
 
   const handleMonthChange = async (month: string) => {
     if (!staff?.id) return;
-    setMonthLoading(true);
-    setSelectedMonth(month);
-    router.replace(`/staff/salary-slip/${staff.id}?month=${month}`);
+    try {
+      setMonthLoading(true);
+      setSelectedMonth(month);
+      setError(null);
+      router.replace(`/staff/salary-slip/${staff.id}?month=${month}`);
 
-    const deterministicRef = doc(db, 'salaries', buildSalaryDocId(staff.id, month));
-    const deterministicDoc = await getDoc(deterministicRef);
-    if (deterministicDoc.exists()) {
-      setSalary({ id: deterministicDoc.id, ...(deterministicDoc.data() as Salary) });
+      const deterministicRef = doc(db, 'salaries', buildSalaryDocId(staff.id, month));
+      const deterministicDoc = await getDoc(deterministicRef);
+      if (deterministicDoc.exists()) {
+        setSalary({ id: deterministicDoc.id, ...(deterministicDoc.data() as Salary) });
+        return;
+      }
+
+      const fallback = await getDocs(
+        query(collection(db, 'salaries'), where('staffId', '==', staff.id), where('month', '==', month))
+      );
+      if (!fallback.empty) {
+        setSalary({ id: fallback.docs[0].id, ...(fallback.docs[0].data() as Salary) });
+      } else {
+        setError(`No salary record found for ${fmtMonth(month)}.`);
+      }
+    } catch (err) {
+      console.error('Salary month load error:', err);
+      setError(getFirestoreErrorMessage(err, `Failed to load salary data for ${fmtMonth(month)}`));
+    } finally {
       setMonthLoading(false);
-      return;
     }
-
-    const fallback = await getDocs(
-      query(collection(db, 'salaries'), where('staffId', '==', staff.id), where('month', '==', month))
-    );
-    if (!fallback.empty) {
-      setSalary({ id: fallback.docs[0].id, ...(fallback.docs[0].data() as Salary) });
-    }
-    setMonthLoading(false);
   };
 
   /* ── Derived display values ───────────────────────────────── */
@@ -376,6 +401,14 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
           sx={{ borderRadius: 2, fontWeight: 700, boxShadow: 'none', '&:hover': { boxShadow: 'none' } }}
         >
           Print Slip
+        </Button>
+        <Button
+          variant="outlined"
+          startIcon={<DownloadIcon />}
+          onClick={() => window.print()}
+          sx={{ borderRadius: 2, fontWeight: 700 }}
+        >
+          Download PDF
         </Button>
       </Box>
 
