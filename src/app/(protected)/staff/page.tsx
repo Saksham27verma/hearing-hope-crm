@@ -39,16 +39,10 @@ import {
   Print as PrintIcon,
   CreditCard as PaymentIcon,
   Badge as BadgeIcon,
-  Description as ReportIcon,
-  FilterList as FilterIcon,
 } from '@mui/icons-material';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { 
   collection, 
   getDocs, 
-  addDoc, 
   updateDoc, 
   deleteDoc, 
   doc, 
@@ -121,6 +115,9 @@ interface SalaryRecordSummary {
 }
 
 const buildSalaryDocId = (staffId: string, month: string) => `${staffId}_${month}`;
+
+const salaryTimestampValue = (salary?: Salary) =>
+  salary?.updatedAt?.seconds || salary?.createdAt?.seconds || 0;
 
 export default function StaffPage() {
   const { user, isAllowedModule } = useAuth();
@@ -281,22 +278,37 @@ export default function StaffPage() {
       );
       const snapshot = await getDocs(salaryQuery);
 
-      const history = snapshot.docs.map((salaryDoc) => {
+      const monthlyBestRecord = new Map<string, SalaryRecordSummary>();
+      const monthlyBestData = new Map<string, Salary>();
+
+      snapshot.docs.forEach((salaryDoc) => {
         const data = salaryDoc.data() as Salary;
-        return {
+        const record: SalaryRecordSummary = {
           id: salaryDoc.id,
           month: data.month,
           netSalary: data.netSalary || 0,
           isPaid: !!data.isPaid,
         };
+        const previous = monthlyBestData.get(data.month);
+        const preferCurrent =
+          !previous ||
+          salaryTimestampValue(data) > salaryTimestampValue(previous) ||
+          salaryDoc.id === buildSalaryDocId(staffMember.id || '', data.month);
+
+        if (preferCurrent) {
+          monthlyBestRecord.set(data.month, record);
+          monthlyBestData.set(data.month, { id: salaryDoc.id, ...data });
+        }
       });
 
+      const history = Array.from(monthlyBestRecord.values()).sort((a, b) =>
+        b.month.localeCompare(a.month)
+      );
+
       setSalaryHistory(history);
-      if (snapshot.docs.length > 0) {
-        setCurrentSalaryData({
-          id: snapshot.docs[0].id,
-          ...(snapshot.docs[0].data() as Salary),
-        });
+      if (history.length > 0) {
+        const latest = monthlyBestData.get(history[0].month);
+        setCurrentSalaryData(latest);
       }
     } catch (error) {
       console.error('Error loading salary context:', error);
@@ -345,7 +357,20 @@ export default function StaffPage() {
           ...(salaryDoc.data() as Salary),
         });
       } else {
-        setCurrentSalaryData(undefined);
+        const fallbackQuery = query(
+          collection(db, 'salaries'),
+          where('staffId', '==', currentStaff.id),
+          where('month', '==', month)
+        );
+        const fallbackSnapshot = await getDocs(fallbackQuery);
+        if (!fallbackSnapshot.empty) {
+          setCurrentSalaryData({
+            id: fallbackSnapshot.docs[0].id,
+            ...(fallbackSnapshot.docs[0].data() as Salary),
+          });
+        } else {
+          setCurrentSalaryData(undefined);
+        }
       }
     } catch (error) {
       console.error('Error loading salary month:', error);
@@ -361,7 +386,6 @@ export default function StaffPage() {
     try {
       setSavingStaff(true);
       if (currentStaff?.id) {
-        // Update existing staff
         const staffRef = doc(db, 'staff', currentStaff.id);
         const updateData: Record<string, unknown> = {
           ...stripUndefinedForFirestore(staffData as unknown as Record<string, unknown>),
@@ -372,7 +396,6 @@ export default function StaffPage() {
         }
         await updateDoc(staffRef, updateData as any);
         
-        // Update local state
         setStaff(prevStaff => 
           prevStaff.map(s => 
             s.id === currentStaff.id ? { ...staffData, id: currentStaff.id } : s
@@ -381,16 +404,15 @@ export default function StaffPage() {
         
         setSuccessMsg('Staff member updated successfully');
       } else {
-        // Add new staff
         const newStaffData = {
           ...stripUndefinedForFirestore(staffData as unknown as Record<string, unknown>),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         };
 
-        const docRef = await addDoc(collection(db, 'staff'), newStaffData);
+        const docRef = doc(collection(db, 'staff'));
+        await setDoc(docRef, newStaffData);
         
-        // Update local state with timestamps converted to current time for UI
         const newStaffWithTimestamp = {
           ...staffData,
           id: docRef.id,
@@ -673,24 +695,21 @@ export default function StaffPage() {
       </Dialog>
       
       {/* Salary Form Dialog */}
-      <Dialog 
-        open={openSalaryDialog} 
+      <Dialog
+        open={openSalaryDialog}
         onClose={handleCloseSalaryDialog}
-        maxWidth="md"
+        maxWidth="lg"
         fullWidth
-        PaperProps={{ 
-          sx: { 
-            borderRadius: 2,
-            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.12)'
-          } 
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            boxShadow: '0 32px 80px rgba(0,0,0,0.2)',
+            height: '90vh',
+            overflow: 'hidden',
+          },
         }}
       >
-        <DialogContent sx={{ p: 3 }}>
-          {loadingSalaryContext && (
-            <Box display="flex" justifyContent="center" alignItems="center" minHeight={120}>
-              <CircularProgress size={28} />
-            </Box>
-          )}
+        <DialogContent sx={{ p: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {currentStaff && (
             <SalaryForm
               staff={currentStaff}
@@ -700,6 +719,7 @@ export default function StaffPage() {
               onSave={handleSaveSalary}
               isSaving={savingSalary}
               onCancel={handleCloseSalaryDialog}
+              loading={loadingSalaryContext}
             />
           )}
         </DialogContent>

@@ -1,12 +1,17 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
   Paper,
   Button,
   Divider,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Chip,
   Table,
   TableBody,
   TableCell,
@@ -15,33 +20,53 @@ import {
   TableRow,
   CircularProgress,
   Stack,
+  alpha,
+  Tooltip,
+  IconButton,
 } from '@mui/material';
-import { PrintOutlined as PrintIcon } from '@mui/icons-material';
-import { collection, getDocs, doc, getDoc, query, where, orderBy, limit, Timestamp } from 'firebase/firestore';
+import {
+  PrintOutlined as PrintIcon,
+  ArrowBack as BackIcon,
+  CheckCircle as PaidIcon,
+  Error as UnpaidIcon,
+  Download as DownloadIcon,
+} from '@mui/icons-material';
+import {
+  collection,
+  getDocs,
+  doc,
+  getDoc,
+  query,
+  where,
+  orderBy,
+  Timestamp,
+} from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { format } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-// Define Staff interface
 interface Staff {
   id?: string;
   name: string;
-  staffNumber: string;
+  staffNumber?: string;
   email: string;
   phone: string;
   joiningDate: Timestamp;
   jobRole: string;
-  department: string;
+  department?: string;
   basicSalary: number;
-  hra: number;
   status: 'active' | 'inactive';
+  bankName?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  panNumber?: string;
 }
 
-// Define Salary interface
 interface Salary {
   id?: string;
   staffId: string;
-  month: string; // Format: YYYY-MM
+  month: string;
   basicSalary: number;
   hra: number;
   travelAllowance: number;
@@ -59,16 +84,70 @@ interface Salary {
   updatedAt?: Timestamp;
 }
 
+interface SalaryRecordSummary {
+  id: string;
+  month: string;
+  netSalary: number;
+  isPaid: boolean;
+}
+
+const buildSalaryDocId = (staffId: string, month: string) => `${staffId}_${month}`;
+
+const salaryTimestampValue = (salary?: Salary) =>
+  salary?.updatedAt?.seconds || salary?.createdAt?.seconds || 0;
+
+const fmt = (n: number) =>
+  new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(n);
+
+const fmtDate = (ts?: Timestamp) => {
+  if (!ts) return 'N/A';
+  return format(new Date(ts.seconds * 1000), 'dd MMM yyyy');
+};
+
+const fmtMonth = (m: string) => {
+  const [y, mo] = m.split('-');
+  return format(new Date(parseInt(y), parseInt(mo) - 1), 'MMMM yyyy');
+};
+
 export default function SalarySlipPage({ params }: { params: { id: string } }) {
   const { user, isAllowedModule } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [staff, setStaff] = useState<Staff | null>(null);
   const [salary, setSalary] = useState<Salary | null>(null);
+  const [salaryHistory, setSalaryHistory] = useState<SalaryRecordSummary[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState('');
   const [loading, setLoading] = useState(true);
+  const [monthLoading, setMonthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* ── Inject print CSS ─────────────────────────────────────── */
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.id = '__salary-slip-print-css';
+    style.textContent = `
+      @media print {
+        @page { size: A4 portrait; margin: 12mm 14mm; }
+        body { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .MuiDrawer-root,
+        .MuiAppBar-root,
+        nav,
+        aside,
+        .salary-slip-toolbar { display: none !important; }
+        .salary-slip-doc { box-shadow: none !important; border-radius: 0 !important; }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => { document.getElementById('__salary-slip-print-css')?.remove(); };
+  }, []);
 
   useEffect(() => {
     if (!user) return;
-    
     if (isAllowedModule('staff')) {
       fetchStaffAndSalary();
     } else {
@@ -77,78 +156,98 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
     }
   }, [user, params.id, isAllowedModule]);
 
+  /* ── Data fetching ────────────────────────────────────────── */
   const fetchStaffAndSalary = async () => {
     try {
       setLoading(true);
-      
-      // Fetch staff data
       const staffDoc = await getDoc(doc(db, 'staff', params.id));
       if (!staffDoc.exists()) {
-        setError('Staff not found');
+        setError('Staff member not found');
         setLoading(false);
         return;
       }
-      
-      const staffData = { id: staffDoc.id, ...staffDoc.data() } as Staff;
-      setStaff(staffData);
-      
-      // Fetch the most recent salary for this staff
-      const salaryCollection = collection(db, 'salaries');
+      setStaff({ id: staffDoc.id, ...(staffDoc.data() as Staff) });
+
       const salaryQuery = query(
-        salaryCollection,
+        collection(db, 'salaries'),
         where('staffId', '==', params.id),
-        orderBy('month', 'desc'),
-        limit(1)
+        orderBy('month', 'desc')
       );
-      
-      const salarySnapshot = await getDocs(salaryQuery);
-      
-      if (salarySnapshot.empty) {
+      const snap = await getDocs(salaryQuery);
+
+      if (snap.empty) {
         setError('No salary records found for this staff member');
         setLoading(false);
         return;
       }
-      
-      const salaryData = { 
-        id: salarySnapshot.docs[0].id, 
-        ...salarySnapshot.docs[0].data() 
-      } as Salary;
-      
-      setSalary(salaryData);
+
+      const bestRecord = new Map<string, SalaryRecordSummary>();
+      const bestData = new Map<string, Salary>();
+      snap.docs.forEach((d) => {
+        const data = d.data() as Salary;
+        const existing = bestData.get(data.month);
+        const prefer =
+          !existing ||
+          salaryTimestampValue(data) > salaryTimestampValue(existing) ||
+          d.id === buildSalaryDocId(params.id, data.month);
+        if (prefer) {
+          bestRecord.set(data.month, { id: d.id, month: data.month, netSalary: data.netSalary || 0, isPaid: !!data.isPaid });
+          bestData.set(data.month, { id: d.id, ...data });
+        }
+      });
+
+      const history = Array.from(bestRecord.values()).sort((a, b) => b.month.localeCompare(a.month));
+      setSalaryHistory(history);
+
+      const requestedMonth = searchParams.get('month') || history[0].month;
+      const chosen = bestData.get(requestedMonth) || bestData.get(history[0].month);
+      const chosenMonth = bestData.has(requestedMonth) ? requestedMonth : history[0].month;
+      setSelectedMonth(chosenMonth);
+      setSalary(chosen || null);
       setLoading(false);
-    } catch (error) {
-      console.error('Error fetching staff and salary:', error);
+    } catch (err) {
+      console.error(err);
       setError('Failed to load data');
       setLoading(false);
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handleMonthChange = async (month: string) => {
+    if (!staff?.id) return;
+    setMonthLoading(true);
+    setSelectedMonth(month);
+    router.replace(`/staff/salary-slip/${staff.id}?month=${month}`);
+
+    const deterministicRef = doc(db, 'salaries', buildSalaryDocId(staff.id, month));
+    const deterministicDoc = await getDoc(deterministicRef);
+    if (deterministicDoc.exists()) {
+      setSalary({ id: deterministicDoc.id, ...(deterministicDoc.data() as Salary) });
+      setMonthLoading(false);
+      return;
+    }
+
+    const fallback = await getDocs(
+      query(collection(db, 'salaries'), where('staffId', '==', staff.id), where('month', '==', month))
+    );
+    if (!fallback.empty) {
+      setSalary({ id: fallback.docs[0].id, ...(fallback.docs[0].data() as Salary) });
+    }
+    setMonthLoading(false);
   };
 
-  // Format currency for display
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency',
-      currency: 'INR',
-      maximumFractionDigits: 0
-    }).format(amount);
-  };
+  /* ── Derived display values ───────────────────────────────── */
+  const employeeId = useMemo(() => {
+    if (!staff) return '—';
+    if (staff.staffNumber) return staff.staffNumber;
+    return staff.id ? `HH-${staff.id.substring(0, 6).toUpperCase()}` : '—';
+  }, [staff]);
 
-  // Format date for display
-  const formatDate = (timestamp?: Timestamp) => {
-    if (!timestamp) return 'N/A';
-    return format(new Date(timestamp.seconds * 1000), 'dd MMM yyyy');
-  };
+  const department = useMemo(() => {
+    if (!staff) return '—';
+    return staff.department || staff.jobRole || '—';
+  }, [staff]);
 
-  // Format month for display
-  const formatMonth = (monthStr: string) => {
-    const [year, month] = monthStr.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1);
-    return format(date, 'MMMM yyyy');
-  };
-
+  /* ── Loading / error states ───────────────────────────────── */
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
@@ -159,256 +258,535 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
 
   if (error || !staff || !salary) {
     return (
-      <Box textAlign="center" p={4}>
-        <Typography variant="h5" color="error" gutterBottom>
+      <Box textAlign="center" p={6}>
+        <Typography variant="h5" color="error" gutterBottom fontWeight={700}>
           {error || 'Data not available'}
         </Typography>
-        <Button 
-          variant="outlined" 
-          color="primary" 
-          href="/staff"
-          sx={{ mt: 2 }}
-        >
+        <Button variant="outlined" href="/staff" sx={{ mt: 2, borderRadius: 2 }}>
           Return to Staff List
         </Button>
       </Box>
     );
   }
 
+  /* ── Table row helper ─────────────────────────────────────── */
+  const SlipRow = ({
+    earning,
+    earningAmt,
+    deduction,
+    deductionAmt,
+    bold = false,
+  }: {
+    earning: string;
+    earningAmt: number | null;
+    deduction: string;
+    deductionAmt: number | null;
+    bold?: boolean;
+  }) => (
+    <TableRow
+      sx={{
+        bgcolor: bold ? (t) => alpha(t.palette.primary.main, 0.06) : 'transparent',
+        '&:last-child td': { borderBottom: 'none' },
+      }}
+    >
+      <TableCell sx={{ py: 1, fontWeight: bold ? 700 : 400, borderRight: '1px solid', borderRightColor: 'divider', color: bold ? 'text.primary' : 'text.secondary', fontSize: bold ? 13 : 12 }}>
+        {earning}
+      </TableCell>
+      <TableCell align="right" sx={{ py: 1, fontWeight: bold ? 700 : 500, borderRight: '1px solid', borderRightColor: 'divider', fontSize: bold ? 13 : 12, color: bold ? 'success.dark' : 'text.primary' }}>
+        {earningAmt !== null ? fmt(earningAmt) : ''}
+      </TableCell>
+      <TableCell sx={{ py: 1, fontWeight: bold ? 700 : 400, borderRight: '1px solid', borderRightColor: 'divider', color: bold ? 'text.primary' : 'text.secondary', fontSize: bold ? 13 : 12 }}>
+        {deduction}
+      </TableCell>
+      <TableCell align="right" sx={{ py: 1, fontWeight: bold ? 700 : 500, fontSize: bold ? 13 : 12, color: bold ? 'error.dark' : 'text.primary' }}>
+        {deductionAmt !== null ? fmt(deductionAmt) : ''}
+      </TableCell>
+    </TableRow>
+  );
+
+  /* ── Render ───────────────────────────────────────────────── */
   return (
-    <Box p={3} className="salary-slip-container">
-      {/* Print button - only visible on screen */}
-      <Box 
-        sx={{ 
-          display: 'flex', 
-          justifyContent: 'flex-end', 
-          mb: 2,
-          '@media print': {
-            display: 'none'
-          }
+    <Box p={{ xs: 2, sm: 3 }}>
+      {/* ── SCREEN-ONLY TOOLBAR ─── */}
+      <Box
+        className="salary-slip-toolbar"
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          flexWrap: 'wrap',
+          mb: 3,
+          pb: 2.5,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          '@media print': { display: 'none' },
         }}
       >
+        {/* Back + breadcrumb */}
+        <Box display="flex" alignItems="center" gap={1} flex={1}>
+          <Tooltip title="Back to Staff">
+            <IconButton size="small" onClick={() => router.push('/staff')} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5 }}>
+              <BackIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1 }}>
+              Staff &rsaquo; Salary Slip
+            </Typography>
+            <Typography variant="subtitle2" fontWeight={700} sx={{ lineHeight: 1.3 }}>
+              {staff.name}
+            </Typography>
+          </Box>
+        </Box>
+
+        {/* Month selector */}
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>Salary Month</InputLabel>
+          <Select
+            value={selectedMonth}
+            label="Salary Month"
+            onChange={(e) => void handleMonthChange(e.target.value)}
+            disabled={monthLoading}
+            sx={{ borderRadius: 1.5, fontWeight: 600 }}
+          >
+            {salaryHistory.map((row) => (
+              <MenuItem key={row.id} value={row.month}>
+                <Box display="flex" alignItems="center" gap={1.5} width="100%">
+                  <Typography variant="body2" flex={1}>
+                    {fmtMonth(row.month)}
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={row.isPaid ? 'Paid' : 'Unpaid'}
+                    color={row.isPaid ? 'success' : 'default'}
+                    variant="outlined"
+                    sx={{ height: 18, fontSize: 10, '& .MuiChip-label': { px: 0.75 } }}
+                  />
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+
+        {/* Print button */}
         <Button
           variant="contained"
-          color="primary"
           startIcon={<PrintIcon />}
-          onClick={handlePrint}
+          onClick={() => window.print()}
+          sx={{ borderRadius: 2, fontWeight: 700, boxShadow: 'none', '&:hover': { boxShadow: 'none' } }}
         >
-          Print Salary Slip
+          Print Slip
         </Button>
       </Box>
-      
-      {/* Salary Slip */}
-      <Paper 
-        elevation={1} 
-        sx={{ 
-          p: 3, 
-          maxWidth: '800px', 
+
+      {/* ── THE SALARY SLIP DOCUMENT ──────────────────────────── */}
+      <Paper
+        className="salary-slip-doc"
+        elevation={2}
+        sx={{
+          maxWidth: 800,
           mx: 'auto',
-          '@media print': {
-            boxShadow: 'none',
-            p: 0
-          }
+          borderRadius: 3,
+          overflow: 'hidden',
+          '@media print': { boxShadow: 'none', borderRadius: 0, maxWidth: '100%', mx: 0 },
         }}
       >
-        {/* Header */}
-        <Box 
-          sx={{ 
-            display: 'flex', 
-            flexDirection: { xs: 'column', sm: 'row' },
-            justifyContent: 'space-between', 
-            alignItems: { xs: 'flex-start', sm: 'center' },
-            mb: 3
+        {/* ── Slip Header ── */}
+        <Box
+          sx={{
+            background: (t) =>
+              `linear-gradient(135deg, ${t.palette.primary.dark} 0%, ${t.palette.primary.main} 100%)`,
+            color: 'white',
+            px: 4,
+            py: 3,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
           }}
         >
           <Box>
-            <Typography variant="h5" fontWeight="bold">
-              Hearing Hope Center
+            <Typography
+              variant="h5"
+              fontWeight={800}
+              sx={{ letterSpacing: '-0.5px', lineHeight: 1.2 }}
+            >
+              Hearing Hope
             </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Salary Slip
+            <Typography variant="caption" sx={{ opacity: 0.75, display: 'block', mt: 0.25 }}>
+              Hearing Hope Center &nbsp;·&nbsp; India
             </Typography>
           </Box>
-          
-          <Box sx={{ mt: { xs: 2, sm: 0 } }}>
-            <Typography variant="body1" fontWeight="medium">
-              For the month of {formatMonth(salary.month)}
+          <Box textAlign="right">
+            <Typography
+              variant="overline"
+              sx={{
+                display: 'block',
+                fontWeight: 800,
+                letterSpacing: 2,
+                fontSize: 11,
+                opacity: 0.85,
+                lineHeight: 1,
+              }}
+            >
+              Salary Slip
+            </Typography>
+            <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.3, mt: 0.5 }}>
+              {fmtMonth(salary.month)}
             </Typography>
             {salary.isPaid && salary.paidDate && (
-              <Typography variant="body2" color="success.main">
-                Paid on: {formatDate(salary.paidDate)}
+              <Typography variant="caption" sx={{ opacity: 0.75, display: 'block', mt: 0.25 }}>
+                Paid on {fmtDate(salary.paidDate)}
               </Typography>
             )}
           </Box>
         </Box>
-        
-        <Divider sx={{ mb: 3 }} />
-        
-        {/* Employee Details */}
-        <Box sx={{ mb: 4 }}>
-          <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-            Employee Details
+
+        {/* ── Status bar ── */}
+        <Box
+          sx={{
+            px: 4,
+            py: 1,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1.5,
+            bgcolor: salary.isPaid
+              ? (t) => alpha(t.palette.success.main, 0.08)
+              : (t) => alpha(t.palette.warning.main, 0.08),
+            borderBottom: '1px solid',
+            borderBottomColor: 'divider',
+          }}
+        >
+          {salary.isPaid ? (
+            <PaidIcon sx={{ fontSize: 15, color: 'success.main' }} />
+          ) : (
+            <UnpaidIcon sx={{ fontSize: 15, color: 'warning.main' }} />
+          )}
+          <Typography
+            variant="caption"
+            fontWeight={700}
+            color={salary.isPaid ? 'success.dark' : 'warning.dark'}
+            sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}
+          >
+            {salary.isPaid ? 'Salary Paid' : 'Payment Pending'}
           </Typography>
-          
-          <Box sx={{ 
-            display: 'grid', 
-            gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)' },
-            gap: 2
-          }}>
-            <Stack spacing={1}>
-              <Box>
-                <Typography variant="body2" color="text.secondary">Name</Typography>
-                <Typography variant="body1">{staff.name}</Typography>
+          {salary.isPaid && salary.paidDate && (
+            <Typography variant="caption" color="text.secondary">
+              &mdash; Disbursed on {fmtDate(salary.paidDate)}
+            </Typography>
+          )}
+          <Box flex={1} />
+          <Typography variant="caption" color="text.disabled">
+            Slip generated {format(new Date(), 'dd MMM yyyy')}
+          </Typography>
+        </Box>
+
+        {/* ── Employee Details ── */}
+        <Box sx={{ px: 4, py: 3 }}>
+          <Typography
+            variant="overline"
+            sx={{ fontWeight: 700, letterSpacing: 1.5, color: 'text.disabled', fontSize: 10 }}
+          >
+            Employee Information
+          </Typography>
+          <Box
+            sx={{
+              mt: 1.5,
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+              gap: 0,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 2,
+              overflow: 'hidden',
+            }}
+          >
+            {[
+              { label: 'Full Name', value: staff.name },
+              { label: 'Designation', value: staff.jobRole },
+              { label: 'Employee ID', value: employeeId },
+              { label: 'Department', value: department },
+              { label: 'Date of Joining', value: fmtDate(staff.joiningDate) },
+              { label: 'Email', value: staff.email || '—' },
+              { label: 'Phone', value: staff.phone || '—' },
+              { label: 'Status', value: staff.status === 'active' ? 'Active' : 'Inactive' },
+            ].map((item, idx) => (
+              <Box
+                key={item.label}
+                sx={{
+                  px: 2.5,
+                  py: 1.5,
+                  borderBottom: idx < 6 ? '1px solid' : 'none',
+                  borderRight: idx % 2 === 0 ? { sm: '1px solid' } : 'none',
+                  borderColor: 'divider',
+                  bgcolor: idx % 4 < 2 ? (t) => alpha(t.palette.grey[50], 0.8) : 'transparent',
+                }}
+              >
+                <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>
+                  {item.label}
+                </Typography>
+                <Typography variant="body2" fontWeight={600} color="text.primary">
+                  {item.value}
+                </Typography>
               </Box>
-              
-              <Box>
-                <Typography variant="body2" color="text.secondary">Employee ID</Typography>
-                <Typography variant="body1">{staff.staffNumber}</Typography>
-              </Box>
-              
-              <Box>
-                <Typography variant="body2" color="text.secondary">Department</Typography>
-                <Typography variant="body1">{staff.department}</Typography>
-              </Box>
-            </Stack>
-            
-            <Stack spacing={1}>
-              <Box>
-                <Typography variant="body2" color="text.secondary">Designation</Typography>
-                <Typography variant="body1">{staff.jobRole}</Typography>
-              </Box>
-              
-              <Box>
-                <Typography variant="body2" color="text.secondary">Joining Date</Typography>
-                <Typography variant="body1">{formatDate(staff.joiningDate)}</Typography>
-              </Box>
-              
-              <Box>
-                <Typography variant="body2" color="text.secondary">Email</Typography>
-                <Typography variant="body1">{staff.email || 'N/A'}</Typography>
-              </Box>
-            </Stack>
+            ))}
           </Box>
         </Box>
-        
-        {/* Salary Details */}
-        <Box sx={{ mb: 4 }}>
-          <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-            Salary Details
+
+        <Divider sx={{ mx: 4 }} />
+
+        {/* ── Salary Breakdown ── */}
+        <Box sx={{ px: 4, py: 3 }}>
+          <Typography
+            variant="overline"
+            sx={{ fontWeight: 700, letterSpacing: 1.5, color: 'text.disabled', fontSize: 10 }}
+          >
+            Salary Breakdown
           </Typography>
-          
-          <TableContainer>
-            <Table>
+          <TableContainer
+            sx={{
+              mt: 1.5,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 2,
+              overflow: 'hidden',
+            }}
+          >
+            <Table size="small">
               <TableHead>
-                <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                  <TableCell width="40%"><Typography fontWeight="bold">Earnings</Typography></TableCell>
-                  <TableCell align="right"><Typography fontWeight="bold">Amount</Typography></TableCell>
-                  <TableCell width="40%"><Typography fontWeight="bold">Deductions</Typography></TableCell>
-                  <TableCell align="right"><Typography fontWeight="bold">Amount</Typography></TableCell>
+                <TableRow sx={{ bgcolor: (t) => alpha(t.palette.grey[100], 0.8) }}>
+                  <TableCell
+                    sx={{
+                      py: 1.25,
+                      fontWeight: 700,
+                      fontSize: 11,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.8,
+                      color: 'success.dark',
+                      borderRight: '1px solid',
+                      borderRightColor: 'divider',
+                    }}
+                  >
+                    Earnings
+                  </TableCell>
+                  <TableCell
+                    align="right"
+                    sx={{
+                      py: 1.25,
+                      fontWeight: 700,
+                      fontSize: 11,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.8,
+                      color: 'success.dark',
+                      borderRight: '1px solid',
+                      borderRightColor: 'divider',
+                    }}
+                  >
+                    Amount
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      py: 1.25,
+                      fontWeight: 700,
+                      fontSize: 11,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.8,
+                      color: 'error.dark',
+                      borderRight: '1px solid',
+                      borderRightColor: 'divider',
+                    }}
+                  >
+                    Deductions
+                  </TableCell>
+                  <TableCell
+                    align="right"
+                    sx={{
+                      py: 1.25,
+                      fontWeight: 700,
+                      fontSize: 11,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.8,
+                      color: 'error.dark',
+                    }}
+                  >
+                    Amount
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                <TableRow>
-                  <TableCell>Basic Salary</TableCell>
-                  <TableCell align="right">{formatCurrency(salary.basicSalary)}</TableCell>
-                  <TableCell>Festival Advance</TableCell>
-                  <TableCell align="right">{formatCurrency(salary.festivalAdvance)}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>HRA</TableCell>
-                  <TableCell align="right">{formatCurrency(salary.hra)}</TableCell>
-                  <TableCell>General Advance</TableCell>
-                  <TableCell align="right">{formatCurrency(salary.generalAdvance)}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>Travel Allowance</TableCell>
-                  <TableCell align="right">{formatCurrency(salary.travelAllowance)}</TableCell>
-                  <TableCell>Other Deductions</TableCell>
-                  <TableCell align="right">{formatCurrency(salary.deductions)}</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>Incentives</TableCell>
-                  <TableCell align="right">{formatCurrency(salary.incentives)}</TableCell>
-                  <TableCell></TableCell>
-                  <TableCell align="right"></TableCell>
-                </TableRow>
-                <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                  <TableCell><Typography fontWeight="bold">Total Earnings</Typography></TableCell>
-                  <TableCell align="right"><Typography fontWeight="bold">{formatCurrency(salary.totalEarnings)}</Typography></TableCell>
-                  <TableCell><Typography fontWeight="bold">Total Deductions</Typography></TableCell>
-                  <TableCell align="right"><Typography fontWeight="bold">{formatCurrency(salary.totalDeductions)}</Typography></TableCell>
-                </TableRow>
+                <SlipRow earning="Basic Salary" earningAmt={salary.basicSalary} deduction="Festival Advance" deductionAmt={salary.festivalAdvance} />
+                <SlipRow earning="HRA" earningAmt={salary.hra} deduction="General Advance" deductionAmt={salary.generalAdvance} />
+                <SlipRow earning="Travel Allowance" earningAmt={salary.travelAllowance} deduction="Other Deductions" deductionAmt={salary.deductions} />
+                <SlipRow earning="Incentives / Bonus" earningAmt={salary.incentives} deduction="" deductionAmt={null} />
+                <SlipRow
+                  earning="Total Earnings"
+                  earningAmt={salary.totalEarnings}
+                  deduction="Total Deductions"
+                  deductionAmt={salary.totalDeductions}
+                  bold
+                />
               </TableBody>
             </Table>
           </TableContainer>
         </Box>
-        
-        {/* Net Salary */}
-        <Box 
-          sx={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center',
-            p: 2,
-            backgroundColor: '#f8f9fa',
-            borderRadius: 1,
-            mb: 3
-          }}
-        >
-          <Typography variant="h6" fontWeight="bold">
-            Net Salary:
-          </Typography>
-          <Typography variant="h6" fontWeight="bold" color="primary.main">
-            {formatCurrency(salary.netSalary)}
-          </Typography>
-        </Box>
-        
-        {/* Remarks */}
-        {salary.remarks && (
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              Remarks:
+
+        {/* ── Net Salary ── */}
+        <Box sx={{ px: 4, pb: 3 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              p: 2.5,
+              border: '2px solid',
+              borderColor: 'primary.main',
+              borderRadius: 2,
+              bgcolor: (t) => alpha(t.palette.primary.main, 0.05),
+            }}
+          >
+            <Box>
+              <Typography
+                variant="overline"
+                sx={{
+                  fontWeight: 700,
+                  letterSpacing: 1.5,
+                  color: 'primary.main',
+                  fontSize: 10,
+                  display: 'block',
+                  lineHeight: 1,
+                }}
+              >
+                Net Salary Payable
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                (Total Earnings &minus; Total Deductions)
+              </Typography>
+            </Box>
+            <Typography
+              variant="h4"
+              fontWeight={800}
+              color="primary.main"
+              sx={{ letterSpacing: '-1px' }}
+            >
+              {fmt(salary.netSalary)}
             </Typography>
-            <Typography variant="body2">
+          </Box>
+        </Box>
+
+        {/* ── Remarks ── */}
+        {salary.remarks && (
+          <Box
+            sx={{
+              mx: 4,
+              mb: 3,
+              p: 2,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 2,
+              bgcolor: (t) => alpha(t.palette.grey[50], 0.6),
+            }}
+          >
+            <Typography variant="caption" color="text.disabled" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
+              Remarks
+            </Typography>
+            <Typography variant="body2" color="text.secondary" mt={0.5}>
               {salary.remarks}
             </Typography>
           </Box>
         )}
-        
-        {/* Footer */}
-        <Box 
-          sx={{ 
-            display: 'flex',
-            flexDirection: { xs: 'column', sm: 'row' },
-            justifyContent: 'space-between',
-            mt: 6,
-            pt: 2
+
+        {/* ── Bank Info (if available) ── */}
+        {(staff.bankName || staff.accountNumber) && (
+          <Box sx={{ px: 4, pb: 3 }}>
+            <Typography variant="overline" sx={{ fontWeight: 700, letterSpacing: 1.5, color: 'text.disabled', fontSize: 10 }}>
+              Bank Details
+            </Typography>
+            <Box
+              sx={{
+                mt: 1,
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: 2,
+                overflow: 'hidden',
+              }}
+            >
+              {[
+                { label: 'Bank Name', value: staff.bankName || '—' },
+                { label: 'Account No.', value: staff.accountNumber || '—' },
+                { label: 'IFSC Code', value: staff.ifscCode || '—' },
+              ].map((item, idx) => (
+                <Box
+                  key={item.label}
+                  sx={{
+                    px: 2,
+                    py: 1.25,
+                    borderRight: idx < 2 ? '1px solid' : 'none',
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block' }}>
+                    {item.label}
+                  </Typography>
+                  <Typography variant="body2" fontWeight={600}>
+                    {item.value}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        )}
+
+        <Divider sx={{ mx: 4 }} />
+
+        {/* ── Signatures ── */}
+        <Box
+          sx={{
+            px: 4,
+            py: 3,
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: 4,
           }}
         >
-          <Box sx={{ textAlign: 'center', flex: 1 }}>
-            <Divider sx={{ width: '80%', mx: 'auto', mb: 1 }} />
-            <Typography variant="body2">Employee Signature</Typography>
-          </Box>
-          
-          <Box sx={{ textAlign: 'center', flex: 1, mt: { xs: 4, sm: 0 } }}>
-            <Divider sx={{ width: '80%', mx: 'auto', mb: 1 }} />
-            <Typography variant="body2">Authorized Signature</Typography>
-          </Box>
+          {['Employee Signature', 'Authorized Signatory'].map((label) => (
+            <Box key={label} textAlign="center">
+              <Box
+                sx={{
+                  height: 48,
+                  borderBottom: '1.5px solid',
+                  borderColor: 'text.secondary',
+                  mb: 0.75,
+                }}
+              />
+              <Typography variant="caption" color="text.secondary" fontWeight={500}>
+                {label}
+              </Typography>
+            </Box>
+          ))}
         </Box>
-        
-        <Typography 
-          variant="caption" 
-          color="text.secondary" 
-          align="center" 
-          sx={{ 
-            display: 'block', 
-            mt: 4,
-            '@media print': { mt: 8 }
+
+        {/* ── Footer ── */}
+        <Box
+          sx={{
+            px: 4,
+            py: 1.75,
+            bgcolor: (t) => alpha(t.palette.grey[100], 0.6),
+            borderTop: '1px solid',
+            borderColor: 'divider',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
           }}
         >
-          This is a computer-generated document. No signature is required.
-        </Typography>
+          <Typography variant="caption" color="text.disabled">
+            This is a computer-generated document and does not require a physical signature.
+          </Typography>
+          <Typography variant="caption" color="text.disabled">
+            Generated: {format(new Date(), 'dd MMM yyyy, hh:mm a')}
+          </Typography>
+        </Box>
       </Paper>
     </Box>
   );
-} 
+}
