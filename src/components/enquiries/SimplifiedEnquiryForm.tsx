@@ -1440,6 +1440,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const qtyByProductLoc: Record<string, number> = {};
         /** Pair bonds from each inbound line (same order as material-in / purchase), per product+location. */
         const inboundPairsByPlKey: Record<string, [string, string][]> = {};
+        /**
+         * Serials received via "Stock Transfer from ..." materialInward docs, keyed by
+         * makeProductLocationKey(productId, destinationLocationId).
+         * Used to detect same-center intercompany transfers: if a stock-transfer-out materialOut
+         * doc at location X tries to remove a serial that was ALSO received at location X via a
+         * stock-transfer-in, that means it's a same-center transfer and we must NOT subtract the
+         * serial (it stays available at that location).
+         */
+        const stockTransferInSerialsByLoc: Record<string, Set<string>> = {};
 
         const addSerials = (productId: string, locationId: string, serials: string[]) => {
           const k = makeProductLocationKey(productId, locationId);
@@ -1453,7 +1462,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           qtyByProductLoc[k] = (qtyByProductLoc[k] || 0) + n;
         };
 
-        const addInbound = (docs: any[]) => {
+        const addInbound = (docs: any[], checkStockTransferIn = false) => {
           docs.forEach(docSnap => {
             const data: any = docSnap.data();
             
@@ -1464,6 +1473,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             if (selectedCenter && dataLocation !== selectedCenter) {
               return; // Skip this document if it's not at the selected center
             }
+
+            // Identify stock-transfer-in materialInward docs (supplier name set by createInventoryMovements)
+            const supplierName = checkStockTransferIn
+              ? String((data.supplier as { name?: string } | undefined)?.name || '')
+              : '';
+            const isTransferIn = checkStockTransferIn && supplierName.includes('Stock Transfer from');
             
             (data.products || []).forEach((p: any) => {
               const productId = p.productId || p.id;
@@ -1473,6 +1488,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               const serialArray = serialsFromLineProduct(p);
               if (serialArray.length > 0) {
                 addSerials(productId, locId, serialArray);
+
+                // Track which serials arrived via stock-transfer-in at this destination location.
+                // This is used later to skip incorrect removals for same-center intercompany transfers.
+                if (isTransferIn) {
+                  if (!stockTransferInSerialsByLoc[plKey]) stockTransferInSerialsByLoc[plKey] = new Set<string>();
+                  serialArray.forEach((sn) => sn && stockTransferInSerialsByLoc[plKey].add(String(sn)));
+                }
+
                 const prodRef = prodMap[productId] || {};
                 const isPairProduct =
                   (prodRef.quantityType || prodRef.quantityTypeLegacy) === 'pair';
@@ -1492,8 +1515,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           });
         };
 
-        addInbound(materialInSnap.docs);
-        addInbound(purchasesSnap.docs);
+        // Pass checkStockTransferIn=true only for materialInward (purchases are never stock transfers)
+        addInbound(materialInSnap.docs, true);
+        addInbound(purchasesSnap.docs, false);
 
         // Subtract outflows from materialsOut
         materialsOutSnap.docs.forEach(d => {
@@ -1506,6 +1530,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           if (selectedCenter && dataLocation !== selectedCenter) {
             return; // Skip this document if it's not at the selected center
           }
+
+          // Detect stock-transfer-out docs (recipient name set by createInventoryMovements)
+          const recipientName = String((data.recipient as { name?: string } | undefined)?.name || '');
+          const isTransferOut = recipientName.includes('Stock Transfer to');
           
           (data.products || []).forEach((p: any) => {
             const productId = p.productId || p.id;
@@ -1516,8 +1544,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             if (serialArray.length > 0) {
               const set = serialsByProductLoc[key];
               if (set) {
+                const transferInAtSameLoc = stockTransferInSerialsByLoc[key];
                 serialArray.forEach((sn) => {
-                  if (sn && set.has(String(sn))) set.delete(String(sn));
+                  if (!sn) return;
+                  // For stock-transfer-out docs: if the serial was received at THIS SAME location
+                  // via a stock-transfer-in (same-center intercompany transfer), keep it available.
+                  if (isTransferOut && transferInAtSameLoc?.has(String(sn))) return;
+                  if (set.has(String(sn))) set.delete(String(sn));
                 });
               }
             } else {

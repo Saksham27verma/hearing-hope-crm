@@ -15,6 +15,9 @@ import {
   Select,
   MenuItem,
   Chip,
+  List,
+  ListItem,
+  ListItemText,
 } from '@mui/material';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -69,12 +72,27 @@ interface Salary {
 interface SalaryFormProps {
   staff: Staff;
   initialData?: Salary;
+  salaryHistory?: Array<{
+    id: string;
+    month: string;
+    netSalary: number;
+    isPaid: boolean;
+  }>;
+  onMonthChange?: (month: string) => Promise<void> | void;
   onSave: (data: Salary) => Promise<void> | void;
   onCancel: () => void;
   isSaving?: boolean;
 }
 
-export default function SalaryForm({ staff, initialData, onSave, onCancel, isSaving = false }: SalaryFormProps) {
+export default function SalaryForm({
+  staff,
+  initialData,
+  salaryHistory = [],
+  onMonthChange,
+  onSave,
+  onCancel,
+  isSaving = false,
+}: SalaryFormProps) {
   // Get current month in YYYY-MM format
   const getCurrentMonth = () => {
     return format(new Date(), 'yyyy-MM');
@@ -109,6 +127,31 @@ export default function SalaryForm({ staff, initialData, onSave, onCancel, isSav
   const [paymentDate, setPaymentDate] = useState<Date | null>(
     formData.paidDate ? new Date(formData.paidDate.seconds * 1000) : null
   );
+
+  useEffect(() => {
+    const nextMonth = initialData?.month || getCurrentMonth();
+    const nextPaidDate = initialData?.paidDate ? new Date(initialData.paidDate.seconds * 1000) : null;
+    setFormData({
+      id: initialData?.id,
+      staffId: staff.id || '',
+      month: nextMonth,
+      basicSalary: initialData?.basicSalary || staff.basicSalary || 0,
+      hra: initialData?.hra || 0,
+      travelAllowance: initialData?.travelAllowance || 0,
+      festivalAdvance: initialData?.festivalAdvance || 0,
+      generalAdvance: initialData?.generalAdvance || 0,
+      deductions: initialData?.deductions || 0,
+      incentives: initialData?.incentives || 0,
+      totalEarnings: initialData?.totalEarnings || 0,
+      totalDeductions: initialData?.totalDeductions || 0,
+      netSalary: initialData?.netSalary || 0,
+      isPaid: initialData?.isPaid || false,
+      paidDate: initialData?.paidDate,
+      remarks: initialData?.remarks || '',
+    });
+    setMonthDate(parse(nextMonth, 'yyyy-MM', new Date()));
+    setPaymentDate(nextPaidDate);
+  }, [initialData, staff.id, staff.basicSalary]);
 
   // Calculate totals whenever any amount changes
   useEffect(() => {
@@ -161,6 +204,7 @@ export default function SalaryForm({ staff, initialData, onSave, onCancel, isSav
       const firstOfMonth = startOfMonth(date);
       const formattedMonth = format(firstOfMonth, 'yyyy-MM');
       setFormData(prev => ({ ...prev, month: formattedMonth }));
+      void onMonthChange?.(formattedMonth);
     }
   };
 
@@ -461,6 +505,33 @@ export default function SalaryForm({ staff, initialData, onSave, onCancel, isSav
             </Box>
           </Paper>
         </Grid>
+
+        {salaryHistory.length > 0 && (
+          <Grid sx={{ gridColumn: { xs: 'span 12' } }}>
+            <Paper elevation={0} variant="outlined" sx={{ p: 3, mb: 3, borderRadius: 2 }}>
+              <Typography variant="subtitle1" fontWeight="bold" color="primary" gutterBottom>
+                Monthly Salary Records
+              </Typography>
+              <Divider sx={{ mb: 2 }} />
+              <List dense disablePadding>
+                {salaryHistory.map((salaryRow) => (
+                  <ListItem key={salaryRow.id} disableGutters divider>
+                    <ListItemText
+                      primary={format(parse(salaryRow.month, 'yyyy-MM', new Date()), 'MMMM yyyy')}
+                      secondary={formatCurrency(salaryRow.netSalary)}
+                    />
+                    <Chip
+                      size="small"
+                      label={salaryRow.isPaid ? 'Paid' : 'Unpaid'}
+                      color={salaryRow.isPaid ? 'success' : 'default'}
+                      variant="outlined"
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            </Paper>
+          </Grid>
+        )}
       </Grid>
 
       <Box display="flex" justifyContent="space-between" gap={2} mt={2}>

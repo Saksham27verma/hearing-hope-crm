@@ -52,10 +52,13 @@ import {
   updateDoc, 
   deleteDoc, 
   doc, 
+  getDoc,
+  setDoc,
   serverTimestamp, 
   query, 
   orderBy,
   Timestamp,
+  where,
   deleteField,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -110,6 +113,15 @@ interface Salary {
   updatedAt?: Timestamp;
 }
 
+interface SalaryRecordSummary {
+  id: string;
+  month: string;
+  netSalary: number;
+  isPaid: boolean;
+}
+
+const buildSalaryDocId = (staffId: string, month: string) => `${staffId}_${month}`;
+
 export default function StaffPage() {
   const { user, isAllowedModule } = useAuth();
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -122,6 +134,7 @@ export default function StaffPage() {
   const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
   const [savingStaff, setSavingStaff] = useState(false);
   const [savingSalary, setSavingSalary] = useState(false);
+  const [loadingSalaryContext, setLoadingSalaryContext] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -130,6 +143,8 @@ export default function StaffPage() {
   // Menu state
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [currentSalaryData, setCurrentSalaryData] = useState<Salary | undefined>(undefined);
+  const [salaryHistory, setSalaryHistory] = useState<SalaryRecordSummary[]>([]);
 
   // Fetch data when component mounts
   useEffect(() => {
@@ -247,8 +262,48 @@ export default function StaffPage() {
   // Handle opening the salary form
   const handleManageSalary = (staffMember: Staff) => {
     setCurrentStaff(staffMember);
+    setCurrentSalaryData(undefined);
+    setSalaryHistory([]);
     setOpenSalaryDialog(true);
     handleMenuClose();
+    void loadSalaryContext(staffMember);
+  };
+
+  const loadSalaryContext = async (staffMember: Staff) => {
+    if (!staffMember.id) return;
+    try {
+      setLoadingSalaryContext(true);
+      const salariesRef = collection(db, 'salaries');
+      const salaryQuery = query(
+        salariesRef,
+        where('staffId', '==', staffMember.id),
+        orderBy('month', 'desc')
+      );
+      const snapshot = await getDocs(salaryQuery);
+
+      const history = snapshot.docs.map((salaryDoc) => {
+        const data = salaryDoc.data() as Salary;
+        return {
+          id: salaryDoc.id,
+          month: data.month,
+          netSalary: data.netSalary || 0,
+          isPaid: !!data.isPaid,
+        };
+      });
+
+      setSalaryHistory(history);
+      if (snapshot.docs.length > 0) {
+        setCurrentSalaryData({
+          id: snapshot.docs[0].id,
+          ...(snapshot.docs[0].data() as Salary),
+        });
+      }
+    } catch (error) {
+      console.error('Error loading salary context:', error);
+      setErrorMsg('Failed to load salary history');
+    } finally {
+      setLoadingSalaryContext(false);
+    }
   };
 
   // Handle printing salary slip
@@ -273,6 +328,31 @@ export default function StaffPage() {
   const handleCloseSalaryDialog = () => {
     setOpenSalaryDialog(false);
     setCurrentStaff(null);
+    setCurrentSalaryData(undefined);
+    setSalaryHistory([]);
+  };
+
+  const handleSalaryMonthChange = async (month: string) => {
+    if (!currentStaff?.id) return;
+    try {
+      setLoadingSalaryContext(true);
+      const salaryDocId = buildSalaryDocId(currentStaff.id, month);
+      const salaryDocRef = doc(db, 'salaries', salaryDocId);
+      const salaryDoc = await getDoc(salaryDocRef);
+      if (salaryDoc.exists()) {
+        setCurrentSalaryData({
+          id: salaryDoc.id,
+          ...(salaryDoc.data() as Salary),
+        });
+      } else {
+        setCurrentSalaryData(undefined);
+      }
+    } catch (error) {
+      console.error('Error loading salary month:', error);
+      setErrorMsg('Failed to load selected salary month');
+    } finally {
+      setLoadingSalaryContext(false);
+    }
   };
 
   // Handle saving staff member
@@ -342,43 +422,25 @@ export default function StaffPage() {
     if (savingSalary) return;
     try {
       setSavingSalary(true);
-      // Check if a salary record for this month already exists
-      const salaryCollection = collection(db, 'salaries');
-      const salaryQuery = query(
-        salaryCollection,
-        orderBy('month', 'desc')
-      );
-      const snapshot = await getDocs(salaryQuery);
-      
-      const existingSalary = snapshot.docs.find(doc => {
-        const data = doc.data();
-        return data.staffId === salaryData.staffId && data.month === salaryData.month;
-      });
-      
-      if (existingSalary) {
-        // Update existing salary
-        const salaryRef = doc(db, 'salaries', existingSalary.id);
-        await updateDoc(salaryRef, {
-          ...salaryData,
-          updatedAt: serverTimestamp()
-        });
-        
-        setSuccessMsg('Salary updated successfully');
-      } else {
-        // Add new salary
-        const newSalaryData = {
-          ...salaryData,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        };
-        
-        await addDoc(collection(db, 'salaries'), newSalaryData);
-        
-        setSuccessMsg('Salary added successfully');
-      }
-      
+      const salaryDocId = buildSalaryDocId(salaryData.staffId, salaryData.month);
+      const salaryRef = doc(db, 'salaries', salaryDocId);
+      const existingDoc = await getDoc(salaryRef);
+
+      const payload = {
+        ...salaryData,
+        staffId: salaryData.staffId,
+        month: salaryData.month,
+        updatedAt: serverTimestamp(),
+        ...(existingDoc.exists() ? {} : { createdAt: serverTimestamp() }),
+      };
+
+      await setDoc(salaryRef, payload, { merge: true });
+      await loadSalaryContext(currentStaff || ({ id: salaryData.staffId } as Staff));
+      setSuccessMsg(existingDoc.exists() ? 'Salary updated successfully' : 'Salary added successfully');
       setOpenSalaryDialog(false);
       setCurrentStaff(null);
+      setCurrentSalaryData(undefined);
+      setSalaryHistory([]);
     } catch (error) {
       console.error('Error saving salary:', error);
       setErrorMsg('Failed to save salary');
@@ -624,9 +686,17 @@ export default function StaffPage() {
         }}
       >
         <DialogContent sx={{ p: 3 }}>
+          {loadingSalaryContext && (
+            <Box display="flex" justifyContent="center" alignItems="center" minHeight={120}>
+              <CircularProgress size={28} />
+            </Box>
+          )}
           {currentStaff && (
             <SalaryForm
               staff={currentStaff}
+              initialData={currentSalaryData}
+              salaryHistory={salaryHistory}
+              onMonthChange={handleSalaryMonthChange}
               onSave={handleSaveSalary}
               isSaving={savingSalary}
               onCancel={handleCloseSalaryDialog}
