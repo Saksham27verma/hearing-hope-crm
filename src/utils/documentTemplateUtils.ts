@@ -1,4 +1,4 @@
-export type ManagedDocumentType = 'invoice' | 'booking_receipt' | 'trial_receipt';
+export type ManagedDocumentType = 'invoice' | 'booking_receipt' | 'trial_receipt' | 'salary_slip';
 
 export type TemplateImage = {
   placeholder: string;
@@ -294,6 +294,63 @@ const trialReceiptSample = baseHtmlShell(
 `
 );
 
+const salarySlipSample = baseHtmlShell(
+  'Salary Slip Template',
+  '#1d4ed8',
+  `
+  <div class="header">
+    <div>
+      <img src="{{LOGO_PLACEHOLDER}}" alt="Logo" class="logo" />
+      <div class="eyebrow">Salary Slip</div>
+      <h1 class="title">{{COMPANY_NAME}}</h1>
+      <div class="muted">{{COMPANY_ADDRESS}}</div>
+      <div class="muted">Phone: {{COMPANY_PHONE}} | Email: {{COMPANY_EMAIL}}</div>
+    </div>
+    <div class="meta">
+      <div class="meta-row"><span class="meta-label">Month</span><strong>{{SALARY_MONTH}}</strong></div>
+      <div class="meta-row"><span class="meta-label">Employee ID</span>{{EMPLOYEE_ID}}</div>
+      <div class="meta-row"><span class="meta-label">Status</span>{{PAYMENT_STATUS}}</div>
+      <div class="meta-row"><span class="meta-label">Paid Date</span>{{PAID_DATE}}</div>
+    </div>
+  </div>
+  <div class="section">
+    <h2 class="section-title">Employee Details</h2>
+    <div class="card grid">
+      <div><div class="field-label">Employee Name</div><div class="field-value">{{EMPLOYEE_NAME}}</div></div>
+      <div><div class="field-label">Designation</div><div class="field-value">{{DESIGNATION}}</div></div>
+      <div><div class="field-label">Department</div><div class="field-value">{{DEPARTMENT}}</div></div>
+      <div><div class="field-label">Date of Joining</div><div class="field-value">{{DATE_OF_JOINING}}</div></div>
+      <div><div class="field-label">Phone</div><div class="field-value">{{EMPLOYEE_PHONE}}</div></div>
+      <div><div class="field-label">Email</div><div class="field-value">{{EMPLOYEE_EMAIL}}</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <h2 class="section-title">Earnings</h2>
+    <div class="card grid">
+      <div><div class="field-label">Basic Salary</div><div class="field-value">{{BASIC_SALARY}}</div></div>
+      <div><div class="field-label">HRA</div><div class="field-value">{{HRA}}</div></div>
+      <div><div class="field-label">Travel Allowance</div><div class="field-value">{{TRAVEL_ALLOWANCE}}</div></div>
+      <div><div class="field-label">Incentives</div><div class="field-value">{{INCENTIVES}}</div></div>
+      <div><div class="field-label">Total Earnings</div><div class="field-value">{{TOTAL_EARNINGS}}</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <h2 class="section-title">Deductions</h2>
+    <div class="card grid">
+      <div><div class="field-label">Festival Advance</div><div class="field-value">{{FESTIVAL_ADVANCE}}</div></div>
+      <div><div class="field-label">General Advance</div><div class="field-value">{{GENERAL_ADVANCE}}</div></div>
+      <div><div class="field-label">Other Deductions</div><div class="field-value">{{DEDUCTIONS}}</div></div>
+      <div><div class="field-label">Total Deductions</div><div class="field-value">{{TOTAL_DEDUCTIONS}}</div></div>
+    </div>
+  </div>
+  <div class="hero">
+    <div class="hero-label">Net Salary</div>
+    <div class="hero-value">{{NET_SALARY}}</div>
+  </div>
+  <div class="footer">Remarks: {{REMARKS}}</div>
+`
+);
+
 export const DOCUMENT_TEMPLATE_META: Record<ManagedDocumentType, {
   label: string;
   color: 'primary' | 'warning' | 'secondary';
@@ -346,6 +403,36 @@ export const DOCUMENT_TEMPLATE_META: Record<ManagedDocumentType, {
         ],
       },
       { title: 'Copy', tokens: ['{{TERMS_TEXT}}', '{{FOOTER_TEXT}}'] },
+      { title: 'Images', tokens: ['{{LOGO_PLACEHOLDER}}', '{{SIGNATURE_PLACEHOLDER}}'] },
+    ],
+  },
+  salary_slip: {
+    label: 'Salary Slip',
+    color: 'secondary',
+    sampleHtml: salarySlipSample,
+    placeholderSections: [
+      { title: 'Company', tokens: ['{{COMPANY_NAME}}', '{{COMPANY_ADDRESS}}', '{{COMPANY_PHONE}}', '{{COMPANY_EMAIL}}'] },
+      { title: 'Slip Header', tokens: ['{{SALARY_MONTH}}', '{{EMPLOYEE_ID}}', '{{PAYMENT_STATUS}}', '{{PAID_DATE}}'] },
+      {
+        title: 'Employee',
+        tokens: ['{{EMPLOYEE_NAME}}', '{{DESIGNATION}}', '{{DEPARTMENT}}', '{{DATE_OF_JOINING}}', '{{EMPLOYEE_PHONE}}', '{{EMPLOYEE_EMAIL}}'],
+      },
+      {
+        title: 'Earnings & Deductions',
+        tokens: [
+          '{{BASIC_SALARY}}',
+          '{{HRA}}',
+          '{{TRAVEL_ALLOWANCE}}',
+          '{{INCENTIVES}}',
+          '{{TOTAL_EARNINGS}}',
+          '{{FESTIVAL_ADVANCE}}',
+          '{{GENERAL_ADVANCE}}',
+          '{{DEDUCTIONS}}',
+          '{{TOTAL_DEDUCTIONS}}',
+          '{{NET_SALARY}}',
+          '{{REMARKS}}',
+        ],
+      },
       { title: 'Images', tokens: ['{{LOGO_PLACEHOLDER}}', '{{SIGNATURE_PLACEHOLDER}}'] },
     ],
   },
@@ -464,6 +551,35 @@ export const getTemplatePreviewHtml = (
       SECURITY_DEPOSIT_AMOUNT: 'Rs. 5,000',
       TERMS_TEXT: 'Return the device by the end date in good condition.',
       FOOTER_TEXT: 'Damage or loss may attract charges.',
+      LOGO_PLACEHOLDER: '',
+      SIGNATURE_PLACEHOLDER: '',
+    },
+    salary_slip: {
+      COMPANY_NAME: 'Hope Hearing Solutions',
+      COMPANY_ADDRESS: '123 Hearing Street<br/>New Delhi - 110001',
+      COMPANY_PHONE: '+91 98765 43210',
+      COMPANY_EMAIL: 'care@hopehearing.com',
+      SALARY_MONTH: 'March 2026',
+      EMPLOYEE_ID: 'HH-EMP-1001',
+      PAYMENT_STATUS: 'Paid',
+      PAID_DATE: '31/03/2026',
+      EMPLOYEE_NAME: 'Rohan Sharma',
+      DESIGNATION: 'Audiologist',
+      DEPARTMENT: 'Clinical',
+      DATE_OF_JOINING: '01/07/2024',
+      EMPLOYEE_PHONE: '+91 91234 56789',
+      EMPLOYEE_EMAIL: 'rohan@example.com',
+      BASIC_SALARY: 'Rs. 35,000',
+      HRA: 'Rs. 8,000',
+      TRAVEL_ALLOWANCE: 'Rs. 2,000',
+      INCENTIVES: 'Rs. 3,000',
+      TOTAL_EARNINGS: 'Rs. 48,000',
+      FESTIVAL_ADVANCE: 'Rs. 1,000',
+      GENERAL_ADVANCE: 'Rs. 2,000',
+      DEDUCTIONS: 'Rs. 1,000',
+      TOTAL_DEDUCTIONS: 'Rs. 4,000',
+      NET_SALARY: 'Rs. 44,000',
+      REMARKS: 'Keep up the excellent performance.',
       LOGO_PLACEHOLDER: '',
       SIGNATURE_PLACEHOLDER: '',
     },

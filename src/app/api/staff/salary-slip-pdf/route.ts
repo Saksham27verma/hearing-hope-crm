@@ -1,14 +1,8 @@
-/**
- * GET /api/staff/salary-slip-pdf?staffId=<id>&month=<YYYY-MM>
- *
- * Fetches staff + salary data from Firestore (Admin SDK), generates a
- * professional A4 HTML salary slip, renders it to PDF with Puppeteer,
- * and returns the binary PDF.
- */
-
 import { NextResponse } from 'next/server';
 import { adminDb } from '@/server/firebaseAdmin';
 import { renderHtmlToPdfBuffer } from '@/server/htmlToPdfBuffer';
+import { getResolvedHtmlTemplateAdmin } from '@/server/invoiceTemplatesAdmin';
+import { buildSalarySlipHtmlString } from '@/utils/salarySlipTemplateHtml';
 import { generateSalarySlipHtml } from '@/utils/salarySlipHtmlTemplate';
 import type { SalarySlipData } from '@/utils/salarySlipHtmlTemplate';
 
@@ -27,11 +21,53 @@ function buildSalaryDocId(staffId: string, month: string) {
   return `${staffId}_${month}`;
 }
 
+function fmtInr(amount: number) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Math.round(amount || 0));
+}
+
+function fmtDate(value?: unknown): string {
+  if (!value) return '—';
+  const asTs = value as { seconds?: number; toDate?: () => Date };
+  if (typeof asTs.toDate === 'function') {
+    return asTs.toDate().toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+  if (typeof asTs.seconds === 'number') {
+    return new Date(asTs.seconds * 1000).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return '—';
+  return parsed.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function fmtMonth(month: string): string {
+  const [y, m] = month.split('-');
+  const date = new Date(Number(y), Number(m) - 1, 1);
+  return date.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
     const staffId = url.searchParams.get('staffId')?.trim();
     const month = url.searchParams.get('month')?.trim();
+    const format = (url.searchParams.get('format') || 'pdf').trim().toLowerCase();
 
     if (!staffId) {
       return NextResponse.json({ ok: false, error: 'staffId is required' }, { status: 400 });
@@ -140,7 +176,56 @@ export async function GET(req: Request) {
       logoUrl,
     };
 
-    const html = generateSalarySlipHtml(slipData);
+    const template = await getResolvedHtmlTemplateAdmin('salary_slip');
+    let html = '';
+    if (template?.htmlContent) {
+      html = buildSalarySlipHtmlString(
+        template,
+        {
+          companyName,
+          companyAddress,
+          companyPhone,
+          companyEmail,
+          monthLabel: fmtMonth(month),
+          employeeId: staffData.staffNumber
+            ? String(staffData.staffNumber)
+            : `HH-${staffId.substring(0, 6).toUpperCase()}`,
+          paymentStatus: salaryData.isPaid ? 'Paid' : 'Pending',
+          paidDate: salaryData.paidDate ? fmtDate(salaryData.paidDate) : '—',
+          employeeName: String(staffData.name || ''),
+          designation: String(staffData.jobRole || '—'),
+          department: String(staffData.department || staffData.jobRole || '—'),
+          dateOfJoining: fmtDate(staffData.joiningDate),
+          employeePhone: String(staffData.phone || '—'),
+          employeeEmail: String(staffData.email || '—'),
+          basicSalary: fmtInr(toNum(salaryData.basicSalary)),
+          hra: fmtInr(toNum(salaryData.hra)),
+          travelAllowance: fmtInr(toNum(salaryData.travelAllowance)),
+          incentives: fmtInr(toNum(salaryData.incentives)),
+          totalEarnings: fmtInr(toNum(salaryData.totalEarnings)),
+          festivalAdvance: fmtInr(toNum(salaryData.festivalAdvance)),
+          generalAdvance: fmtInr(toNum(salaryData.generalAdvance)),
+          deductions: fmtInr(toNum(salaryData.deductions)),
+          totalDeductions: fmtInr(toNum(salaryData.totalDeductions)),
+          netSalary: fmtInr(toNum(salaryData.netSalary)),
+          remarks: String(salaryData.remarks || ''),
+        },
+        { logoPublicOrigin: origin }
+      );
+    } else {
+      html = generateSalarySlipHtml(slipData);
+    }
+
+    if (format === 'html') {
+      return new NextResponse(html, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+
     const buffer = await renderHtmlToPdfBuffer(html);
 
     const safeName = String(staffData.name || staffId)

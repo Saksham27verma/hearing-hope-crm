@@ -549,7 +549,7 @@ const InvoiceManagerPage = () => {
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
                   Create and manage templates. For HTML templates, use &quot;Use for staff app PDF&quot; to choose which
-                  design staff collect-payment emails use (booking, trial, or invoice).
+                  design staff PDFs use (booking, trial, salary slip, or invoice).
                 </Typography>
               </Box>
             </Box>
@@ -942,6 +942,35 @@ const InvoiceManagerPage = () => {
                     Edit the trial receipt layout used for trial documents
                   </Typography>
                   <Chip label="Auto-used when marked favorite" color="warning" size="small" />
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Card
+                sx={{
+                  cursor: 'pointer',
+                  border: 2,
+                  borderColor: 'divider',
+                  '&:hover': {
+                    borderColor: 'secondary.main',
+                    boxShadow: 3,
+                  },
+                }}
+                onClick={() => {
+                  setCreatingDocumentType('salary_slip');
+                  setTemplateTypeDialogOpen(false);
+                  setHtmlCreatorOpen(true);
+                }}
+              >
+                <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                  <TemplateIcon sx={{ fontSize: 64, color: 'secondary.main', mb: 2 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Salary Slip Template
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    Edit the salary slip layout used for staff print and PDF generation
+                  </Typography>
+                  <Chip label="Invoice Manager controlled" color="secondary" size="small" />
                 </CardContent>
               </Card>
             </Grid>

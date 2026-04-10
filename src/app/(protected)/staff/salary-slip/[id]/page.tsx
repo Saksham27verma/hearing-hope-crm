@@ -46,8 +46,6 @@ import { db } from '@/firebase/config';
 import { format } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { generateSalarySlipHtml } from '@/utils/salarySlipHtmlTemplate';
-import type { SalarySlipData } from '@/utils/salarySlipHtmlTemplate';
 
 interface Staff {
   id?: string;
@@ -151,55 +149,21 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
   const [error, setError] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<{ msg: string; severity: 'success' | 'error' } | null>(null);
 
-  /* ── Build SalarySlipData for the HTML template ────────────── */
-  const buildSlipData = useCallback((): SalarySlipData | null => {
-    if (!staff || !salary) return null;
-    return {
-      staffId: staff.id || params.id,
-      staffName: staff.name,
-      staffNumber: staff.staffNumber,
-      email: staff.email,
-      phone: staff.phone,
-      jobRole: staff.jobRole,
-      department: staff.department,
-      joiningDate: staff.joiningDate,
-      bankName: staff.bankName,
-      accountNumber: staff.accountNumber,
-      ifscCode: staff.ifscCode,
-      panNumber: staff.panNumber,
-      month: salary.month,
-      basicSalary: salary.basicSalary,
-      hra: salary.hra,
-      travelAllowance: salary.travelAllowance,
-      incentives: salary.incentives,
-      festivalAdvance: salary.festivalAdvance,
-      generalAdvance: salary.generalAdvance,
-      deductions: salary.deductions,
-      totalEarnings: salary.totalEarnings,
-      totalDeductions: salary.totalDeductions,
-      netSalary: salary.netSalary,
-      isPaid: salary.isPaid,
-      paidDate: salary.paidDate,
-      remarks: salary.remarks,
-      logoUrl: '/images/logohope.svg',
-    };
+  const renderBaseUrl = useMemo(() => {
+    if (!staff || !salary) return '';
+    return `/api/staff/salary-slip-pdf?staffId=${encodeURIComponent(staff.id || params.id)}&month=${encodeURIComponent(salary.month)}`;
   }, [staff, salary, params.id]);
 
-  /* ── Print: open HTML template in a new window and print ───── */
+  /* ── Print: open managed HTML template and print ───────────── */
   const handlePrint = useCallback(() => {
-    const slipData = buildSlipData();
-    if (!slipData) return;
+    if (!renderBaseUrl) return;
     setPrinting(true);
     try {
-      const html = generateSalarySlipHtml(slipData);
-      const win = window.open('', '_blank', 'width=900,height=700');
+      const win = window.open(`${renderBaseUrl}&format=html`, '_blank', 'width=980,height=760');
       if (!win) {
         setToastMsg({ msg: 'Popup blocked. Allow popups and try again.', severity: 'error' });
         return;
       }
-      win.document.open();
-      win.document.write(html);
-      win.document.close();
       win.onload = () => {
         win.focus();
         win.print();
@@ -207,14 +171,14 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
     } finally {
       setPrinting(false);
     }
-  }, [buildSlipData]);
+  }, [renderBaseUrl]);
 
   /* ── Download PDF: call server API ─────────────────────────── */
   const handleDownloadPdf = useCallback(async () => {
     if (!staff || !salary) return;
     setDownloading(true);
     try {
-      const url = `/api/staff/salary-slip-pdf?staffId=${encodeURIComponent(staff.id || params.id)}&month=${encodeURIComponent(salary.month)}`;
+      const url = renderBaseUrl;
       const res = await fetch(url);
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
@@ -235,18 +199,13 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
     } finally {
       setDownloading(false);
     }
-  }, [staff, salary, params.id]);
+  }, [staff, salary, renderBaseUrl]);
 
   /* ── Preview in new tab ─────────────────────────────────────── */
   const handlePreview = useCallback(() => {
-    const slipData = buildSlipData();
-    if (!slipData) return;
-    const html = generateSalarySlipHtml(slipData);
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 30000);
-  }, [buildSlipData]);
+    if (!renderBaseUrl) return;
+    window.open(`${renderBaseUrl}&format=html`, '_blank');
+  }, [renderBaseUrl]);
 
   useEffect(() => {
     if (!user) return;

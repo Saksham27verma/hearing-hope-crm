@@ -9,6 +9,7 @@ export type DocumentTemplateRoutingDoc = {
   bookingReceiptTemplateId?: string | null;
   trialReceiptTemplateId?: string | null;
   invoiceHtmlTemplateId?: string | null;
+  salarySlipTemplateId?: string | null;
   updatedAt?: unknown;
 };
 
@@ -16,9 +17,10 @@ export function routingFieldForDocumentType(
   documentType: ManagedDocumentType
 ): keyof Pick<
   DocumentTemplateRoutingDoc,
-  'bookingReceiptTemplateId' | 'trialReceiptTemplateId' | 'invoiceHtmlTemplateId'
+  'bookingReceiptTemplateId' | 'trialReceiptTemplateId' | 'invoiceHtmlTemplateId' | 'salarySlipTemplateId'
 > {
   if (documentType === 'booking_receipt') return 'bookingReceiptTemplateId';
   if (documentType === 'trial_receipt') return 'trialReceiptTemplateId';
+  if (documentType === 'salary_slip') return 'salarySlipTemplateId';
   return 'invoiceHtmlTemplateId';
 }

@@ -22,6 +22,7 @@ import {
   UsersRound,
   Sparkles,
   ScrollText,
+  TrendingUp,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -35,6 +36,8 @@ export interface CrmNavItem {
   icon: LucideIcon;
   children?: NavChild[];
   adminOnly?: boolean;
+  /** When true, visible only to users where `isSuperAdminViewer` is true */
+  superAdminOnly?: boolean;
 }
 
 export const CRM_NAV_ITEMS: CrmNavItem[] = [
@@ -65,6 +68,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { text: 'Cash Register', path: '/cash-register', icon: CreditCard },
   { text: 'Appointment Scheduler', path: '/appointments', icon: CalendarDays },
   { text: 'Reports', path: '/reports', icon: BarChart3 },
+  { text: 'Profit', path: '/profit', icon: TrendingUp, adminOnly: true, superAdminOnly: true },
   {
     text: 'Staff',
     path: '/staff',
@@ -171,7 +175,7 @@ export type UserRole = 'admin' | 'staff' | 'audiologist' | string;
  * When `allowedModules` is set on the profile (non-empty, not `*`), it overrides the default role lists.
  */
 export function filterCrmNavForUser(
-  userProfile: { role: UserRole; allowedModules?: string[] } | null,
+  userProfile: { role: UserRole; allowedModules?: string[]; isSuperAdmin?: boolean } | null,
   isAllowedModule?: (moduleKey: string) => boolean,
 ): CrmNavItem[] {
   if (!userProfile) return [];
@@ -182,8 +186,11 @@ export function filterCrmNavForUser(
     customMods.length > 0 &&
     !customMods.map((m) => m.toLowerCase()).includes('*');
 
+  const isSuperAdmin = userProfile.isSuperAdmin === true;
+
   return CRM_NAV_ITEMS.filter((item) => {
     if (item.adminOnly && userProfile.role !== 'admin') return false;
+    if (item.superAdminOnly && !isSuperAdmin) return false;
     if (userProfile.role === 'staff') {
       if (useCustomAccess) {
         return navItemAllowedByKeys(item, customMods!);
