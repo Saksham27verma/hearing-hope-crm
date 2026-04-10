@@ -120,7 +120,8 @@ const salaryTimestampValue = (salary?: Salary) =>
   salary?.updatedAt?.seconds || salary?.createdAt?.seconds || 0;
 
 export default function StaffPage() {
-  const { user, isAllowedModule } = useAuth();
+  const { user, userProfile, isAllowedModule } = useAuth();
+  const canManageSalary = userProfile?.isSuperAdmin || userProfile?.role === 'admin';
   const [staff, setStaff] = useState<Staff[]>([]);
   const [filteredStaff, setFilteredStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
@@ -448,8 +449,10 @@ export default function StaffPage() {
       const salaryRef = doc(db, 'salaries', salaryDocId);
       const existingDoc = await getDoc(salaryRef);
 
-      const payload = {
-        ...salaryData,
+      // Strip undefined fields and the local 'id' key — Firestore rejects undefined values
+      const cleanData = stripUndefinedForFirestore(salaryData as unknown as Record<string, unknown>);
+      const payload: Record<string, unknown> = {
+        ...cleanData,
         staffId: salaryData.staffId,
         month: salaryData.month,
         updatedAt: serverTimestamp(),
@@ -628,15 +631,31 @@ export default function StaffPage() {
                         />
                       </TableCell>
                       <TableCell align="right">
-                        <IconButton 
-                          size="small" 
-                          color="primary"
-                          onClick={() => handleEditStaff(staffMember)}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton 
-                          size="small" 
+                        <Tooltip title="Edit Staff">
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            onClick={() => handleEditStaff(staffMember)}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        {canManageSalary && (
+                          <Tooltip title="Manage Salary">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleManageSalary(staffMember)}
+                              sx={{
+                                color: 'success.main',
+                                '&:hover': { bgcolor: (t) => `${t.palette.success.main}14` },
+                              }}
+                            >
+                              <PaymentIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        <IconButton
+                          size="small"
                           onClick={(e) => handleMenuOpen(e, staffMember.id || '')}
                         >
                           <MoreVertIcon fontSize="small" />
@@ -739,17 +758,6 @@ export default function StaffPage() {
           horizontal: 'right',
         }}
       >
-        <MenuItem 
-          onClick={() => {
-            const staffMember = staff.find(s => s.id === selectedStaffId);
-            if (staffMember) handleManageSalary(staffMember);
-          }}
-        >
-          <ListItemIcon>
-            <PaymentIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Manage Salary</ListItemText>
-        </MenuItem>
         <MenuItem 
           onClick={() => {
             const staffMember = staff.find(s => s.id === selectedStaffId);

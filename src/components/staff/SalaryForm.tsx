@@ -131,6 +131,48 @@ const NUMERIC_FIELDS = [
   'festivalAdvance', 'generalAdvance', 'deductions', 'incentives',
 ];
 
+// Defined OUTSIDE SalaryForm so its identity is stable across renders.
+// If defined inside, React treats it as a new component every render → input loses focus after each keystroke.
+const AmountField = React.memo(function AmountField({
+  label,
+  name,
+  value,
+  onChange,
+}: {
+  label: string;
+  name: string;
+  value: number;
+  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+}) {
+  return (
+    <TextField
+      fullWidth
+      size="small"
+      label={label}
+      name={name}
+      type="number"
+      value={value}
+      onChange={onChange}
+      InputProps={{
+        startAdornment: (
+          <InputAdornment position="start">
+            <Typography variant="caption" color="text.secondary" fontWeight={600}>
+              ₹
+            </Typography>
+          </InputAdornment>
+        ),
+      }}
+      inputProps={{ min: 0, step: 100 }}
+      sx={{
+        '& .MuiOutlinedInput-root': {
+          bgcolor: 'background.paper',
+          borderRadius: 1.5,
+        },
+      }}
+    />
+  );
+});
+
 export default function SalaryForm({
   staff,
   initialData,
@@ -194,32 +236,6 @@ export default function SalaryForm({
   const lastUpdated = initialData?.updatedAt
     ? format(new Date(initialData.updatedAt.seconds * 1000), 'dd MMM yyyy, hh:mm a')
     : null;
-
-  const AmountField = ({ label, name, value }: { label: string; name: string; value: number }) => (
-    <TextField
-      fullWidth
-      size="small"
-      label={label}
-      name={name}
-      type="number"
-      value={value}
-      onChange={handleChange}
-      InputProps={{
-        startAdornment: (
-          <InputAdornment position="start">
-            <Typography variant="caption" color="text.secondary" fontWeight={600}>₹</Typography>
-          </InputAdornment>
-        ),
-      }}
-      inputProps={{ min: 0, step: 100 }}
-      sx={{
-        '& .MuiOutlinedInput-root': {
-          bgcolor: 'background.paper',
-          borderRadius: 1.5,
-        },
-      }}
-    />
-  );
 
   return (
     <Box
@@ -530,10 +546,10 @@ export default function SalaryForm({
                   </Typography>
                 </Box>
                 <Box sx={{ p: 2.5, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <AmountField label="Basic Salary" name="basicSalary" value={formData.basicSalary} />
-                  <AmountField label="HRA" name="hra" value={formData.hra} />
-                  <AmountField label="Travel Allowance" name="travelAllowance" value={formData.travelAllowance} />
-                  <AmountField label="Incentives / Bonus" name="incentives" value={formData.incentives} />
+                  <AmountField label="Basic Salary" name="basicSalary" value={formData.basicSalary} onChange={handleChange} />
+                  <AmountField label="HRA" name="hra" value={formData.hra} onChange={handleChange} />
+                  <AmountField label="Travel Allowance" name="travelAllowance" value={formData.travelAllowance} onChange={handleChange} />
+                  <AmountField label="Incentives / Bonus" name="incentives" value={formData.incentives} onChange={handleChange} />
                 </Box>
               </Box>
 
@@ -582,9 +598,9 @@ export default function SalaryForm({
                   </Typography>
                 </Box>
                 <Box sx={{ p: 2.5, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <AmountField label="Festival Advance" name="festivalAdvance" value={formData.festivalAdvance} />
-                  <AmountField label="General Advance" name="generalAdvance" value={formData.generalAdvance} />
-                  <AmountField label="Other Deductions" name="deductions" value={formData.deductions} />
+                  <AmountField label="Festival Advance" name="festivalAdvance" value={formData.festivalAdvance} onChange={handleChange} />
+                  <AmountField label="General Advance" name="generalAdvance" value={formData.generalAdvance} onChange={handleChange} />
+                  <AmountField label="Other Deductions" name="deductions" value={formData.deductions} onChange={handleChange} />
                 </Box>
               </Box>
 
@@ -786,7 +802,7 @@ export default function SalaryForm({
 
           <Box>
             <Typography variant="caption" color="text.disabled" display="block" sx={{ lineHeight: 1.2, mb: 0.25 }}>
-              Net Pay
+              Net Pay &mdash; <strong style={{ color: 'inherit' }}>{displayMonth}</strong>
             </Typography>
             <Typography
               variant="h6"
