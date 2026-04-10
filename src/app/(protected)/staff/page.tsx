@@ -85,6 +85,25 @@ function stripUndefinedForFirestore(data: Record<string, unknown>): Record<strin
   );
 }
 
+function getFirestoreErrorMessage(error: unknown, fallback: string): string {
+  const code = (error as { code?: string })?.code;
+  const message = (error as { message?: string })?.message;
+  switch (code) {
+    case 'permission-denied':
+      return `${fallback}: you do not have permission for this action.`;
+    case 'failed-precondition':
+      return `${fallback}: a Firestore index/config is missing. Please contact admin to create required index.`;
+    case 'unavailable':
+      return `${fallback}: Firestore service is temporarily unavailable. Please retry.`;
+    case 'deadline-exceeded':
+      return `${fallback}: request timed out. Please retry.`;
+    case 'network-request-failed':
+      return `${fallback}: network issue detected. Check internet and retry.`;
+    default:
+      return message ? `${fallback}: ${message}` : fallback;
+  }
+}
+
 // Define Salary interface
 interface Salary {
   id?: string;
@@ -274,8 +293,7 @@ export default function StaffPage() {
       const salariesRef = collection(db, 'salaries');
       const salaryQuery = query(
         salariesRef,
-        where('staffId', '==', staffMember.id),
-        orderBy('month', 'desc')
+        where('staffId', '==', staffMember.id)
       );
       const snapshot = await getDocs(salaryQuery);
 
@@ -313,7 +331,7 @@ export default function StaffPage() {
       }
     } catch (error) {
       console.error('Error loading salary context:', error);
-      setErrorMsg('Failed to load salary history');
+      setErrorMsg(getFirestoreErrorMessage(error, 'Failed to load salary history'));
     } finally {
       setLoadingSalaryContext(false);
     }
@@ -375,7 +393,7 @@ export default function StaffPage() {
       }
     } catch (error) {
       console.error('Error loading salary month:', error);
-      setErrorMsg('Failed to load selected salary month');
+      setErrorMsg(getFirestoreErrorMessage(error, 'Failed to load selected salary month'));
     } finally {
       setLoadingSalaryContext(false);
     }
@@ -468,7 +486,7 @@ export default function StaffPage() {
       setSalaryHistory([]);
     } catch (error) {
       console.error('Error saving salary:', error);
-      setErrorMsg('Failed to save salary');
+      setErrorMsg(getFirestoreErrorMessage(error, 'Failed to save salary'));
     } finally {
       setSavingSalary(false);
     }
