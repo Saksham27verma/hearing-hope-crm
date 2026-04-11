@@ -48,6 +48,7 @@ import {
 import { buildStaffSalaryShareByCenter } from '@/lib/profit/staffCenterAllocation';
 import type { BreakdownRow, DatePreset, ProfitSummary } from '@/lib/profit/types';
 import { exportToExcel, exportToPdf } from '@/lib/profit/export';
+import { cashRegisterExpenseAmount } from '@/lib/cash-register/expenseOutflow';
 import {
   Bar,
   BarChart,
@@ -294,7 +295,7 @@ function computeOperatingExpenses(params: {
     }
   }
 
-  // Cash outflows from daily sheets (per sheet centerId)
+  // Cash Register: only rows with category "Expenses" (not handed-over / miscellaneous)
   for (const d of cashSheetDocs) {
     const sheetDate = tsToJsDate(d.date);
     if (!inRange(sheetDate)) continue;
@@ -308,14 +309,14 @@ function computeOperatingExpenses(params: {
 
     const cashOutRows = Array.isArray(d.cashOut) ? (d.cashOut as Record<string, unknown>[]) : [];
     for (const outRow of cashOutRows) {
-      const amount = safeNum(outRow.amount ?? 0);
+      const amount = cashRegisterExpenseAmount(outRow);
       if (amount <= 0) continue;
       totalCashOutflows += amount;
       addOpexSlice(opexByKey, profitKey, 'cashOutflows', amount);
       rows.push({
         id: `cash_${d.id}_${String(outRow.id ?? '')}_${Math.random().toString(36).slice(2, 8)}`,
         date: dateStr,
-        description: String(outRow.itemDetails ?? outRow.partyName ?? 'Cash Outflow'),
+        description: `Cash expense (register) — ${String(outRow.itemDetails ?? outRow.partyName ?? '—')}`,
         category: 'Cash Outflow',
         type: 'out',
         amount,
@@ -680,7 +681,7 @@ export default function ProfitPage() {
                 <Box display="flex" flexDirection="column" gap={0.25} mt={0.5}>
                   <Typography variant="caption" color="#881337">Salaries: {formatINR(summary.totalSalaries)}</Typography>
                   <Typography variant="caption" color="#881337">Fixed Costs: {formatINR(summary.totalFixedCosts)}</Typography>
-                  <Typography variant="caption" color="#881337">Cash Outflows: {formatINR(summary.totalCashOutflows)}</Typography>
+                  <Typography variant="caption" color="#881337">Cash expenses (register): {formatINR(summary.totalCashOutflows)}</Typography>
                 </Box>
               </Paper>
             </Grid>
@@ -719,7 +720,7 @@ export default function ProfitPage() {
               { label: 'Gross Revenue', value: summary.grossRevenue, color: '#059669', bg: '#f0fdf4', hint: 'Total of all invoice grand totals' },
               { label: 'Salaries', value: summary.totalSalaries, color: '#e11d48', bg: '#fff1f2', hint: 'Paid salary disbursements' },
               { label: 'Fixed Costs', value: summary.totalFixedCosts, color: '#b45309', bg: '#fffbeb', hint: 'Rent + electricity' },
-              { label: 'Cash Outflows', value: summary.totalCashOutflows, color: '#dc2626', bg: '#fef2f2', hint: 'Cash register outflows' },
+              { label: 'Cash expenses', value: summary.totalCashOutflows, color: '#dc2626', bg: '#fef2f2', hint: 'Cash Register lines categorized as Expenses only' },
             ].map((item) => (
               <Grid item xs={6} sm={3} key={item.label}>
                 <Tooltip title={item.hint} placement="top">
@@ -741,8 +742,9 @@ export default function ProfitPage() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 900 }}>
             Salaries are charged only to centers where that person appears under{' '}
             <strong>Centers → Staff</strong>. If someone is listed on multiple centers, their salary is split
-            equally across those centers. Cash register outflows use each sheet&apos;s center; sheets without a
-            center are grouped under Unallocated.
+            equally across those centers. Only Cash Register outflows tagged <strong>Expenses</strong> (not
+            handed-over or miscellaneous) use each sheet&apos;s center; sheets without a center are grouped under
+            Unallocated.
           </Typography>
 
           {centerChartData.length > 0 && (
@@ -784,7 +786,7 @@ export default function ProfitPage() {
                     <Bar dataKey="grossProfit" name="Gross profit" fill="#059669" />
                     <Bar dataKey="salaries" stackId="exp" name="Salaries" fill="#e11d48" />
                     <Bar dataKey="fixedCosts" stackId="exp" name="Fixed costs" fill="#d97706" />
-                    <Bar dataKey="cashOutflows" stackId="exp" name="Cash outflows" fill="#b91c1c" />
+                    <Bar dataKey="cashOutflows" stackId="exp" name="Cash expenses (register)" fill="#b91c1c" />
                     <Bar dataKey="netProfit" name="Net profit">
                       {centerChartData.map((e, i) => (
                         <Cell key={`net-${e.fullName}-${i}`} fill={e.netProfit >= 0 ? '#1d4ed8' : '#be123c'} />
@@ -805,7 +807,7 @@ export default function ProfitPage() {
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Gross profit</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Salaries</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Fixed costs</TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>Cash out</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Cash exp.</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Total expenses</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Net profit</TableCell>
                 </TableRow>
@@ -849,7 +851,7 @@ export default function ProfitPage() {
               <Box>
                 <Typography variant="h6" fontWeight={700}>Transaction Breakdown</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Net Profit = Gross Profit (from Profit Analysis) − Salaries − Fixed Costs − Cash Outflows
+                  Net Profit = Gross Profit (from Profit Analysis) − Salaries − Fixed Costs − Cash Register (Expenses only)
                 </Typography>
               </Box>
               <Box display="flex" gap={1.5} alignItems="center" flexWrap="wrap">

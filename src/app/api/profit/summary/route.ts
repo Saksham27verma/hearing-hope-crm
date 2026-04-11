@@ -3,6 +3,7 @@ import type { Timestamp, QueryDocumentSnapshot } from 'firebase-admin/firestore'
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { getRequesterTenant } from '@/server/tenant/requesterTenant';
 import type { BreakdownRow, ProfitSummary } from '@/lib/profit/types';
+import { cashRegisterExpenseAmount } from '@/lib/cash-register/expenseOutflow';
 import { format, parseISO, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -445,7 +446,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // ── 4. Misc cash outflows from cashDailySheets ───────────────────────────
+    // ── 4. Cash Register: cash-out lines categorized as "expenses" only ───────
     for (const doc of cashSheetsSnap.docs) {
       const d = doc.data() as Record<string, unknown>;
       const sheetDate = toDate(d.date as Timestamp | string | null);
@@ -456,17 +457,16 @@ export async function GET(req: Request) {
       const dateStr = sheetDate ? format(sheetDate, 'yyyy-MM-dd') : fromParam;
 
       for (const outRow of cashOutRows as Record<string, unknown>[]) {
-        const amount = safeNum(outRow.amount ?? 0);
+        const amount = cashRegisterExpenseAmount(outRow);
         if (amount <= 0) continue;
 
         totalCashOutflows += amount;
         rows.push({
           id: `cash_${doc.id}_${outRow.id ?? Math.random()}`,
           date: dateStr,
-          description:
-            (outRow.itemDetails as string) ||
-            (outRow.partyName as string) ||
-            'Cash Outflow',
+          description: `Cash expense (register) — ${String(
+            outRow.itemDetails ?? outRow.partyName ?? '—',
+          )}`,
           category: 'Cash Outflow',
           type: 'out',
           amount,

@@ -46,7 +46,7 @@ export interface ProfitSummary {
   totalSalaries: number;
   /** Rent + utilities across all centers in the period */
   totalFixedCosts: number;
-  /** Sum of cashOut entries from cash daily sheets */
+  /** Sum of cash-out lines on daily sheets with Cash Register category "Expenses" only */
   totalCashOutflows: number;
   /** totalSalaries + totalFixedCosts + totalCashOutflows */
   totalOperatingExpenses: number;

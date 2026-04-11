@@ -68,6 +68,11 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { v4 as uuidv4 } from 'uuid';
+import { cashRegisterExpenseAmount } from '@/lib/cash-register/expenseOutflow';
+
+type CashInCategory = 'payment_record' | 'from_other_centers' | 'miscellaneous';
+type CashOutCategory = 'handed_over' | 'expenses' | 'miscellaneous';
+type TransactionCategory = CashInCategory | CashOutCategory;
 
 interface DailyRow {
   id: string;
@@ -76,6 +81,79 @@ interface DailyRow {
   quantity: number;
   paymentMethod: 'cash' | 'card' | 'upi' | 'bank_transfer' | 'cheque';
   amount: number;
+  transactionCategory: TransactionCategory;
+}
+
+const CASH_IN_CATEGORIES: { value: CashInCategory; label: string }[] = [
+  { value: 'payment_record', label: 'Payment Record' },
+  { value: 'from_other_centers', label: 'From other centers' },
+  { value: 'miscellaneous', label: 'Miscellaneous' },
+];
+
+const CASH_OUT_CATEGORIES: { value: CashOutCategory; label: string }[] = [
+  { value: 'handed_over', label: 'Handed over' },
+  { value: 'expenses', label: 'Expenses' },
+  { value: 'miscellaneous', label: 'Miscellaneous' },
+];
+
+const CASH_IN_CATEGORY_SET = new Set<string>(CASH_IN_CATEGORIES.map((c) => c.value));
+const CASH_OUT_CATEGORY_SET = new Set<string>(CASH_OUT_CATEGORIES.map((c) => c.value));
+
+const DEFAULT_CASH_IN_CATEGORY: CashInCategory = 'miscellaneous';
+const DEFAULT_CASH_OUT_CATEGORY: CashOutCategory = 'miscellaneous';
+
+function normalizeDailyRow(raw: Record<string, unknown>, direction: 'in' | 'out'): DailyRow {
+  const pm = raw.paymentMethod;
+  const paymentMethod: DailyRow['paymentMethod'] =
+    pm === 'cash' || pm === 'card' || pm === 'upi' || pm === 'bank_transfer' || pm === 'cheque'
+      ? pm
+      : 'cash';
+  const allowed = direction === 'in' ? CASH_IN_CATEGORY_SET : CASH_OUT_CATEGORY_SET;
+  const tc = raw.transactionCategory;
+  const transactionCategory: TransactionCategory =
+    typeof tc === 'string' && allowed.has(tc) ? (tc as TransactionCategory) : direction === 'in' ? DEFAULT_CASH_IN_CATEGORY : DEFAULT_CASH_OUT_CATEGORY;
+  return {
+    id: typeof raw.id === 'string' ? raw.id : uuidv4(),
+    partyName: String(raw.partyName ?? ''),
+    itemDetails: String(raw.itemDetails ?? ''),
+    quantity: Number(raw.quantity) || 0,
+    paymentMethod,
+    amount: Number(raw.amount) || 0,
+    transactionCategory,
+  };
+}
+
+function normalizeCashInRows(rows: unknown): DailyRow[] {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return [{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_IN_CATEGORY }];
+  }
+  return rows.map((r) => normalizeDailyRow(r as Record<string, unknown>, 'in'));
+}
+
+function normalizeCashOutRows(rows: unknown): DailyRow[] {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return [{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_OUT_CATEGORY }];
+  }
+  return rows.map((r) => normalizeDailyRow(r as Record<string, unknown>, 'out'));
+}
+
+function sumCategorizedCashOutExpenses(sheets: Array<{ doc: DailySheetDoc }>): number {
+  let sum = 0;
+  for (const s of sheets) {
+    const rows = Array.isArray(s.doc.cashOut) ? s.doc.cashOut : [];
+    for (const raw of rows) {
+      sum += cashRegisterExpenseAmount(raw as Record<string, unknown>);
+    }
+  }
+  return sum;
+}
+
+function labelForCashInCategory(c: TransactionCategory) {
+  return CASH_IN_CATEGORIES.find((x) => x.value === c)?.label ?? 'Miscellaneous';
+}
+
+function labelForCashOutCategory(c: TransactionCategory) {
+  return CASH_OUT_CATEGORIES.find((x) => x.value === c)?.label ?? 'Miscellaneous';
 }
 
 interface DailySheetDoc {
@@ -144,10 +222,10 @@ const CashRegisterPage = () => {
   // Daily form state
   const [entryDate, setEntryDate] = useState<Date>(new Date());
   const [cashInRows, setCashInRows] = useState<DailyRow[]>([
-    { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0 },
+    { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_IN_CATEGORY },
   ]);
   const [cashOutRows, setCashOutRows] = useState<DailyRow[]>([
-    { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0 },
+    { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_OUT_CATEGORY },
   ]);
   const [editingSheetId, setEditingSheetId] = useState<string | null>(null);
   const [previewSheet, setPreviewSheet] = useState<{ id: string; doc: DailySheetDoc } | null>(null);
@@ -236,9 +314,15 @@ const CashRegisterPage = () => {
 
   // --- Daily form helpers ---
   const addCashInRow = () =>
-    setCashInRows((prev) => [...prev, { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0 }]);
+    setCashInRows((prev) => [
+      ...prev,
+      { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_IN_CATEGORY },
+    ]);
   const addCashOutRow = () =>
-    setCashOutRows((prev) => [...prev, { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0 }]);
+    setCashOutRows((prev) => [
+      ...prev,
+      { id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_OUT_CATEGORY },
+    ]);
   const removeCashInRow = (id: string) => setCashInRows((prev) => prev.filter((r) => r.id !== id));
   const removeCashOutRow = (id: string) => setCashOutRows((prev) => prev.filter((r) => r.id !== id));
 
@@ -257,8 +341,8 @@ const CashRegisterPage = () => {
 
   const resetDailyForm = () => {
     setEntryDate(new Date());
-    setCashInRows([{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0 }]);
-    setCashOutRows([{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0 }]);
+    setCashInRows([{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_IN_CATEGORY }]);
+    setCashOutRows([{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_OUT_CATEGORY }]);
     setEditingSheetId(null);
   };
 
@@ -269,12 +353,14 @@ const CashRegisterPage = () => {
     }
     try {
       const totals = dailyTotals();
+      const cashInNormalized = cashInRows.map((r) => normalizeDailyRow(r as unknown as Record<string, unknown>, 'in'));
+      const cashOutNormalized = cashOutRows.map((r) => normalizeDailyRow(r as unknown as Record<string, unknown>, 'out'));
       const payload: any = {
         date: Timestamp.fromDate(entryDate),
         centerId: selectedCenter.id,
         centerName: selectedCenter.name,
-        cashIn: cashInRows,
-        cashOut: cashOutRows,
+        cashIn: cashInNormalized,
+        cashOut: cashOutNormalized,
         totals,
         createdAt: Timestamp.now(),
       };
@@ -350,34 +436,61 @@ const CashRegisterPage = () => {
     </Box>
   );
 
-  const renderSummaryCards = (totals: { netIn: number; netOut: number; balance: number; cashBalance: number }) => (
-    <Grid container spacing={3} mb={4}>
-      {[
-        { label: 'Balance', value: totals.balance, icon: <BalanceIcon color="primary" fontSize="large" />, color: undefined },
-        { label: 'Net In', value: totals.netIn, icon: <IncomeIcon color="success" fontSize="large" />, color: 'success.main' },
-        { label: 'Net Out', value: totals.netOut, icon: <ExpenseIcon color="error" fontSize="large" />, color: 'error.main' },
-        { label: 'Cash Balance', value: totals.cashBalance, icon: <MoneyIcon color="info" fontSize="large" />, color: 'info.main' },
-      ].map((card) => (
-        <Grid key={card.label} sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
-          <Card elevation={0} variant="outlined">
-            <CardContent>
-              <Stack direction="row" alignItems="center" spacing={2}>
-                {card.icon}
-                <Box sx={{ width: '100%' }}>
-                  <Typography variant="body2" color="text.secondary">{card.label}</Typography>
-                  {summaryLoading ? (
-                    <CircularProgress size={20} />
-                  ) : (
-                    <Typography variant="h5" fontWeight="bold" color={card.color}>{formatCurrency(card.value)}</Typography>
-                  )}
-                </Box>
-              </Stack>
-            </CardContent>
-          </Card>
-        </Grid>
-      ))}
-    </Grid>
-  );
+  const renderSummaryCards = (
+    totals: { netIn: number; netOut: number; balance: number; cashBalance: number },
+    options?: { adminExpenseTotal?: number }
+  ) => {
+    const mdSpan = options?.adminExpenseTotal !== undefined ? 2 : 3;
+    const cards: Array<{
+      label: string;
+      value: number;
+      icon: React.ReactNode;
+      color?: string;
+      caption?: string;
+    }> = [
+      { label: 'Balance', value: totals.balance, icon: <BalanceIcon color="primary" fontSize="large" />, color: undefined },
+      { label: 'Net In', value: totals.netIn, icon: <IncomeIcon color="success" fontSize="large" />, color: 'success.main' },
+      { label: 'Net Out', value: totals.netOut, icon: <ExpenseIcon color="error" fontSize="large" />, color: 'error.main' },
+      { label: 'Cash Balance', value: totals.cashBalance, icon: <MoneyIcon color="info" fontSize="large" />, color: 'info.main' },
+    ];
+    if (options?.adminExpenseTotal !== undefined) {
+      cards.push({
+        label: 'Expenses (categorized)',
+        value: options.adminExpenseTotal,
+        icon: <ExpenseIcon color="warning" fontSize="large" />,
+        color: 'warning.dark',
+        caption: 'Cash out lines tagged Expenses',
+      });
+    }
+    return (
+      <Grid container spacing={3} mb={4}>
+        {cards.map((card) => (
+          <Grid key={card.label} sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: `span ${mdSpan}` } }}>
+            <Card elevation={0} variant="outlined">
+              <CardContent>
+                <Stack direction="row" alignItems="center" spacing={2}>
+                  {card.icon}
+                  <Box sx={{ width: '100%' }}>
+                    <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+                    {summaryLoading ? (
+                      <CircularProgress size={20} />
+                    ) : (
+                      <Typography variant="h5" fontWeight="bold" color={card.color}>{formatCurrency(card.value)}</Typography>
+                    )}
+                    {card.caption && (
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                        {card.caption}
+                      </Typography>
+                    )}
+                  </Box>
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
+    );
+  };
 
   const renderDailyTable = (rows: DailyRow[], table: 'in' | 'out') => {
     const isIn = table === 'in';
@@ -401,6 +514,7 @@ const CashRegisterPage = () => {
                 <TableCell>Item Details</TableCell>
                 <TableCell width={110}>Qty</TableCell>
                 <TableCell width={180}>Mode of Payment</TableCell>
+                <TableCell width={200}>Category</TableCell>
                 <TableCell width={160} align="right">Amount</TableCell>
                 <TableCell width={60} align="right">&nbsp;</TableCell>
               </TableRow>
@@ -413,8 +527,22 @@ const CashRegisterPage = () => {
                   <TableCell><TextField size="small" type="number" value={r.quantity} onChange={(e) => updateRow(table, r.id, { quantity: Number(e.target.value) || 0 })} /></TableCell>
                   <TableCell>
                     <FormControl fullWidth size="small">
-                      <Select value={r.paymentMethod} onChange={(e) => updateRow(table, r.id, { paymentMethod: e.target.value as any })}>
+                      <Select value={r.paymentMethod} onChange={(e) => updateRow(table, r.id, { paymentMethod: e.target.value as DailyRow['paymentMethod'] })}>
                         {paymentMethods.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                  </TableCell>
+                  <TableCell>
+                    <FormControl fullWidth size="small">
+                      <Select
+                        value={isIn ? (CASH_IN_CATEGORY_SET.has(r.transactionCategory) ? r.transactionCategory : DEFAULT_CASH_IN_CATEGORY) : (CASH_OUT_CATEGORY_SET.has(r.transactionCategory) ? r.transactionCategory : DEFAULT_CASH_OUT_CATEGORY)}
+                        onChange={(e) =>
+                          updateRow(table, r.id, { transactionCategory: e.target.value as TransactionCategory })
+                        }
+                      >
+                        {(isIn ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES).map((c) => (
+                          <MenuItem key={c.value} value={c.value}>{c.label}</MenuItem>
+                        ))}
                       </Select>
                     </FormControl>
                   </TableCell>
@@ -422,9 +550,9 @@ const CashRegisterPage = () => {
                   <TableCell align="right"><IconButton size="small" color="error" onClick={() => removeRow(r.id)}><DeleteIcon fontSize="small" /></IconButton></TableCell>
                 </TableRow>
               ))}
-              <TableRow><TableCell colSpan={6}><Button startIcon={<AddIcon />} onClick={addRow} size="small">Add Row</Button></TableCell></TableRow>
-              <TableRow><TableCell colSpan={4} align="right" sx={{ fontWeight: 700 }}>Net Amount {isIn ? 'In' : 'Out'}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(net)}</TableCell><TableCell /></TableRow>
-              <TableRow><TableCell colSpan={4} align="right">{isIn ? 'Received' : 'Spent'} via Cash</TableCell><TableCell align="right">{formatCurrency(cashOnly)}</TableCell><TableCell /></TableRow>
+              <TableRow><TableCell colSpan={7}><Button startIcon={<AddIcon />} onClick={addRow} size="small">Add Row</Button></TableCell></TableRow>
+              <TableRow><TableCell colSpan={5} align="right" sx={{ fontWeight: 700 }}>Net Amount {isIn ? 'In' : 'Out'}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(net)}</TableCell><TableCell /></TableRow>
+              <TableRow><TableCell colSpan={5} align="right">{isIn ? 'Received' : 'Spent'} via Cash</TableCell><TableCell align="right">{formatCurrency(cashOnly)}</TableCell><TableCell /></TableRow>
             </TableBody>
           </Table>
         </TableContainer>
@@ -475,8 +603,8 @@ const CashRegisterPage = () => {
                       {activeTab === 0 && (
                         <IconButton size="small" color="success" onClick={() => {
                           setEntryDate(new Date(s.doc.date.seconds * 1000));
-                          setCashInRows(s.doc.cashIn as any);
-                          setCashOutRows(s.doc.cashOut as any);
+                          setCashInRows(normalizeCashInRows(s.doc.cashIn));
+                          setCashOutRows(normalizeCashOutRows(s.doc.cashOut));
                           setEditingSheetId(s.id);
                           window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}>
@@ -513,21 +641,41 @@ const CashRegisterPage = () => {
           <Box>
             <Typography variant="subtitle1" sx={{ mb: 1, color: 'success.main', fontWeight: 700 }}>Cash In</Typography>
             <Table size="small">
-              <TableHead><TableRow><TableCell>Receipt From</TableCell><TableCell>Item Details</TableCell><TableCell>Qty</TableCell><TableCell>Mode</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead>
+              <TableHead><TableRow><TableCell>Receipt From</TableCell><TableCell>Item Details</TableCell><TableCell>Qty</TableCell><TableCell>Mode</TableCell><TableCell>Category</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead>
               <TableBody>
-                {previewSheet.doc.cashIn.map((r, idx) => (
-                  <TableRow key={idx}><TableCell>{r.partyName}</TableCell><TableCell>{r.itemDetails}</TableCell><TableCell>{r.quantity}</TableCell><TableCell>{paymentMethods.find((m) => m.value === r.paymentMethod)?.label || r.paymentMethod}</TableCell><TableCell align="right">{formatCurrency(r.amount as any)}</TableCell></TableRow>
-                ))}
+                {previewSheet.doc.cashIn.map((r, idx) => {
+                  const n = normalizeDailyRow(r as Record<string, unknown>, 'in');
+                  return (
+                    <TableRow key={idx}>
+                      <TableCell>{n.partyName}</TableCell>
+                      <TableCell>{n.itemDetails}</TableCell>
+                      <TableCell>{n.quantity}</TableCell>
+                      <TableCell>{paymentMethods.find((m) => m.value === n.paymentMethod)?.label || n.paymentMethod}</TableCell>
+                      <TableCell>{labelForCashInCategory(n.transactionCategory)}</TableCell>
+                      <TableCell align="right">{formatCurrency(n.amount)}</TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
             <Box sx={{ my: 2 }} />
             <Typography variant="subtitle1" sx={{ mb: 1, color: 'error.main', fontWeight: 700 }}>Cash Out</Typography>
             <Table size="small">
-              <TableHead><TableRow><TableCell>Cash To</TableCell><TableCell>Item Details</TableCell><TableCell>Qty</TableCell><TableCell>Mode</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead>
+              <TableHead><TableRow><TableCell>Cash To</TableCell><TableCell>Item Details</TableCell><TableCell>Qty</TableCell><TableCell>Mode</TableCell><TableCell>Category</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead>
               <TableBody>
-                {previewSheet.doc.cashOut.map((r, idx) => (
-                  <TableRow key={idx}><TableCell>{r.partyName}</TableCell><TableCell>{r.itemDetails}</TableCell><TableCell>{r.quantity}</TableCell><TableCell>{paymentMethods.find((m) => m.value === r.paymentMethod)?.label || r.paymentMethod}</TableCell><TableCell align="right">{formatCurrency(r.amount as any)}</TableCell></TableRow>
-                ))}
+                {previewSheet.doc.cashOut.map((r, idx) => {
+                  const n = normalizeDailyRow(r as Record<string, unknown>, 'out');
+                  return (
+                    <TableRow key={idx}>
+                      <TableCell>{n.partyName}</TableCell>
+                      <TableCell>{n.itemDetails}</TableCell>
+                      <TableCell>{n.quantity}</TableCell>
+                      <TableCell>{paymentMethods.find((m) => m.value === n.paymentMethod)?.label || n.paymentMethod}</TableCell>
+                      <TableCell>{labelForCashOutCategory(n.transactionCategory)}</TableCell>
+                      <TableCell align="right">{formatCurrency(n.amount)}</TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
             <Box sx={{ mt: 2, display: 'flex', gap: 2, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
@@ -560,11 +708,13 @@ const CashRegisterPage = () => {
       .map(([cId, { centerName, sheets }]) => ({ centerId: cId, centerName, ...computeTotals(sheets), sheetCount: sheets.length }))
       .sort((a, b) => a.centerName.localeCompare(b.centerName));
 
+    const categorizedExpensesTotal = sumCategorizedCashOutExpenses(rangeFiltered);
+
     return (
       <Box>
         <Typography variant="h5" fontWeight={700} mb={3}>Overall Cash Register</Typography>
 
-        {renderSummaryCards(overall)}
+        {renderSummaryCards(overall, { adminExpenseTotal: categorizedExpensesTotal })}
 
         <Paper elevation={0} variant="outlined" sx={{ mb: 4 }}>
           <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
