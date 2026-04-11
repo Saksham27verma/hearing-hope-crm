@@ -40,8 +40,25 @@ import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import { isSuperAdminViewer } from '@/lib/tenant/centerScope';
 import { computeGrossProfit, type RawDoc } from '@/lib/profit/computeGrossProfit';
+import {
+  mergeCenterProfitRows,
+  UNALLOCATED_KEY,
+  type CenterOpexSlice,
+} from '@/lib/profit/mergeCenterProfit';
+import { buildStaffSalaryShareByCenter } from '@/lib/profit/staffCenterAllocation';
 import type { BreakdownRow, DatePreset, ProfitSummary } from '@/lib/profit/types';
 import { exportToExcel, exportToPdf } from '@/lib/profit/export';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { format } from 'date-fns';
 
 const Grid = ({ children, ...props }: React.ComponentProps<typeof MuiGrid>) => (
@@ -118,11 +135,19 @@ const CATEGORY_BG: Record<string, string> = {
 
 // ── Operating-expense helpers ─────────────────────────────────────────────────
 
+function addOpexSlice(map: Map<string, CenterOpexSlice>, key: string, field: keyof CenterOpexSlice, amount: number) {
+  if (amount <= 0) return;
+  const cur = map.get(key) ?? { salaries: 0, fixedCosts: 0, cashOutflows: 0 };
+  cur[field] += amount;
+  map.set(key, cur);
+}
+
 function computeOperatingExpenses(params: {
   salaryDocs: RawDoc[];
   centerDocs: RawDoc[];
   centerExpenseDocs: RawDoc[];
   cashSheetDocs: RawDoc[];
+  staffShares: Map<string, { centerIds: string[]; shares: number[] }>;
   dateFrom: Date;
   dateTo: Date;
   fromParam: string;
@@ -131,10 +156,17 @@ function computeOperatingExpenses(params: {
   totalFixedCosts: number;
   totalCashOutflows: number;
   rows: BreakdownRow[];
+  opexByKey: Map<string, CenterOpexSlice>;
 } {
-  const { salaryDocs, centerDocs, centerExpenseDocs, cashSheetDocs, dateFrom, dateTo, fromParam } = params;
+  const { salaryDocs, centerDocs, centerExpenseDocs, cashSheetDocs, staffShares, dateFrom, dateTo, fromParam } = params;
+
+  const centerNameById = new Map<string, string>();
+  for (const c of centerDocs) {
+    centerNameById.set(String(c.id), String(c.name ?? c.id));
+  }
 
   const rows: BreakdownRow[] = [];
+  const opexByKey = new Map<string, CenterOpexSlice>();
   let totalSalaries = 0;
   let totalFixedCosts = 0;
   let totalCashOutflows = 0;
@@ -145,7 +177,7 @@ function computeOperatingExpenses(params: {
     return t >= dateFrom.getTime() && t <= dateTo.getTime();
   }
 
-  // Salaries — filter by disbursement date (paidDate), fallback to 1st of month
+  // Salaries — disbursement date; allocated to centers via Centers → Staff assignment (equal split if multiple centers)
   for (const d of salaryDocs) {
     const month = d.month as string | undefined;
     const paidDate = tsToJsDate(d.paidDate);
@@ -161,15 +193,44 @@ function computeOperatingExpenses(params: {
     const dateStr = effectiveDate ? format(effectiveDate, 'yyyy-MM-dd') : fromParam;
     const monthLabel = month ? ` (${month})` : '';
     const note = paidDate ? '' : ' †';
-    rows.push({
-      id: `salary_${d.id}`,
-      date: dateStr,
-      description: `Salary — ${String(d.staffName ?? d.staffId ?? 'Staff')}${monthLabel}${note}`,
-      category: 'Salary',
-      type: 'out',
-      amount,
-      reference: String(d.id),
-    });
+    const staffId = String(d.staffId ?? '').trim();
+    const baseDesc = `Salary — ${String(d.staffName ?? (staffId || 'Staff'))}${monthLabel}${note}`;
+    const alloc = staffShares.get(staffId);
+
+    if (!alloc || alloc.centerIds.length === 0) {
+      addOpexSlice(opexByKey, UNALLOCATED_KEY, 'salaries', amount);
+      rows.push({
+        id: `salary_${d.id}_unallocated`,
+        date: dateStr,
+        description: `${baseDesc} (not assigned to any center in Centers → Staff)`,
+        category: 'Salary',
+        type: 'out',
+        amount,
+        reference: String(d.id),
+        centerName: 'Unallocated',
+        profitCenterKey: UNALLOCATED_KEY,
+      });
+      continue;
+    }
+
+    for (let i = 0; i < alloc.centerIds.length; i++) {
+      const cid = alloc.centerIds[i];
+      const portion = amount * (alloc.shares[i] ?? 0);
+      if (portion <= 0) continue;
+      addOpexSlice(opexByKey, cid, 'salaries', portion);
+      const cname = centerNameById.get(cid) ?? cid;
+      rows.push({
+        id: `salary_${d.id}_${cid}`,
+        date: dateStr,
+        description: `${baseDesc} → ${cname}`,
+        category: 'Salary',
+        type: 'out',
+        amount: portion,
+        reference: String(d.id),
+        centerName: cname,
+        profitCenterKey: cid,
+      });
+    }
   }
 
   // Fixed costs — rent + electricity per center per month in range
@@ -194,49 +255,78 @@ function computeOperatingExpenses(params: {
   }
 
   for (const c of centerDocs) {
+    const cid = String(c.id);
     const centerName = String(c.name ?? c.id);
     const baseRent = safeNum(c.monthlyRent ?? 0);
     const baseElec = safeNum(c.monthlyElectricity ?? 0);
     for (const month of monthsInRange) {
-      const recorded = expenseMap.get(`${c.id}_${month}`);
+      const recorded = expenseMap.get(`${cid}_${month}`);
       const rent = recorded?.rent ?? baseRent;
       const elec = recorded?.electricity ?? baseElec;
       if (rent > 0) {
         totalFixedCosts += rent;
-        rows.push({ id: `rent_${c.id}_${month}`, date: `${month}-01`, description: `Rent — ${centerName} (${month})`, category: 'Fixed Cost', type: 'out', amount: rent, centerName });
+        addOpexSlice(opexByKey, cid, 'fixedCosts', rent);
+        rows.push({
+          id: `rent_${cid}_${month}`,
+          date: `${month}-01`,
+          description: `Rent — ${centerName} (${month})`,
+          category: 'Fixed Cost',
+          type: 'out',
+          amount: rent,
+          centerName,
+          profitCenterKey: cid,
+        });
       }
       if (elec > 0) {
         totalFixedCosts += elec;
-        rows.push({ id: `elec_${c.id}_${month}`, date: `${month}-01`, description: `Electricity — ${centerName} (${month})`, category: 'Fixed Cost', type: 'out', amount: elec, centerName });
+        addOpexSlice(opexByKey, cid, 'fixedCosts', elec);
+        rows.push({
+          id: `elec_${cid}_${month}`,
+          date: `${month}-01`,
+          description: `Electricity — ${centerName} (${month})`,
+          category: 'Fixed Cost',
+          type: 'out',
+          amount: elec,
+          centerName,
+          profitCenterKey: cid,
+        });
       }
     }
   }
 
-  // Cash outflows from daily sheets
+  // Cash outflows from daily sheets (per sheet centerId)
   for (const d of cashSheetDocs) {
     const sheetDate = tsToJsDate(d.date);
     if (!inRange(sheetDate)) continue;
     const dateStr = sheetDate ? format(sheetDate, 'yyyy-MM-dd') : fromParam;
-    const centerName = d.centerName ? String(d.centerName) : undefined;
+    const cashCenterId = String(d.centerId ?? '').trim();
+    const profitKey = cashCenterId || UNALLOCATED_KEY;
+    const centerLabel =
+      (d.centerName ? String(d.centerName) : undefined) ??
+      (cashCenterId ? centerNameById.get(cashCenterId) : undefined) ??
+      (profitKey === UNALLOCATED_KEY ? 'Unallocated (cash)' : undefined);
+
     const cashOutRows = Array.isArray(d.cashOut) ? (d.cashOut as Record<string, unknown>[]) : [];
     for (const outRow of cashOutRows) {
       const amount = safeNum(outRow.amount ?? 0);
       if (amount <= 0) continue;
       totalCashOutflows += amount;
+      addOpexSlice(opexByKey, profitKey, 'cashOutflows', amount);
       rows.push({
-        id: `cash_${d.id}_${outRow.id ?? Math.random()}`,
+        id: `cash_${d.id}_${String(outRow.id ?? '')}_${Math.random().toString(36).slice(2, 8)}`,
         date: dateStr,
         description: String(outRow.itemDetails ?? outRow.partyName ?? 'Cash Outflow'),
         category: 'Cash Outflow',
         type: 'out',
         amount,
         reference: String(d.id),
-        centerName,
+        centerName: centerLabel,
+        profitCenterKey: profitKey,
       });
     }
   }
 
-  return { totalSalaries, totalFixedCosts, totalCashOutflows, rows };
+  return { totalSalaries, totalFixedCosts, totalCashOutflows, rows, opexByKey };
 }
 
 // ── Main page component ───────────────────────────────────────────────────────
@@ -317,15 +407,29 @@ export default function ProfitPage() {
       // ── Operating expenses ──
       // Filter salaries to paid records only
       const paidSalaryDocs = toRaw(salariesSnap).filter((d) => d.isPaid === true);
+      const centerDocsRaw = toRaw(centersSnap);
+      const staffShares = buildStaffSalaryShareByCenter(centerDocsRaw);
 
       const opex = computeOperatingExpenses({
         salaryDocs: paidSalaryDocs,
-        centerDocs: toRaw(centersSnap),
+        centerDocs: centerDocsRaw,
         centerExpenseDocs: toRaw(centerExpensesSnap),
         cashSheetDocs: toRaw(cashSheetsSnap),
+        staffShares,
         dateFrom,
         dateTo,
         fromParam: dateRange.from,
+      });
+
+      const centerNameById = new Map<string, string>();
+      for (const c of centerDocsRaw) {
+        centerNameById.set(String(c.id), String(c.name ?? c.id));
+      }
+
+      const centerRows = mergeCenterProfitRows({
+        grossByKey: gpResult.grossByCenterKey,
+        opexByKey: opex.opexByKey,
+        centerNameById,
       });
 
       // ── Build unified breakdown rows ──
@@ -338,6 +442,7 @@ export default function ProfitPage() {
         amount: r.grandTotal,
         reference: r.invoiceRef ?? undefined,
         centerName: r.centerName,
+        profitCenterKey: r.profitCenterKey,
       }));
 
       const allRows: BreakdownRow[] = [
@@ -366,6 +471,7 @@ export default function ProfitPage() {
         unresolvedSerialsCount: gpResult.unresolvedCount,
         unresolvedSellingValue: gpResult.unresolvedSellingValue,
         breakdownRows: allRows,
+        centerRows,
         dateFrom: dateRange.from,
         dateTo: dateRange.to,
       });
@@ -407,6 +513,19 @@ export default function ProfitPage() {
     () => filteredRows.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
     [filteredRows, page, rowsPerPage],
   );
+
+  const centerChartData = useMemo(() => {
+    if (!summary?.centerRows?.length) return [];
+    return summary.centerRows.map((r) => ({
+      name: r.centerName.length > 22 ? `${r.centerName.slice(0, 20)}…` : r.centerName,
+      fullName: r.centerName,
+      grossProfit: r.grossProfit,
+      salaries: r.salaries,
+      fixedCosts: r.fixedCosts,
+      cashOutflows: r.cashOutflows,
+      netProfit: r.netProfit,
+    }));
+  }, [summary?.centerRows]);
 
   const handlePresetChange = (_: React.MouseEvent<HTMLElement>, value: DatePreset | null) => {
     if (!value) return;
@@ -612,6 +731,115 @@ export default function ProfitPage() {
               </Grid>
             ))}
           </Grid>
+
+          <Divider sx={{ mb: 3 }} />
+
+          {/* ── Center-wise net profit ── */}
+          <Typography variant="h6" fontWeight={700} sx={{ mb: 0.5 }}>
+            Center-wise net profit
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 900 }}>
+            Salaries are charged only to centers where that person appears under{' '}
+            <strong>Centers → Staff</strong>. If someone is listed on multiple centers, their salary is split
+            equally across those centers. Cash register outflows use each sheet&apos;s center; sheets without a
+            center are grouped under Unallocated.
+          </Typography>
+
+          {centerChartData.length > 0 && (
+            <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 2 }}>
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 2 }}>
+                Gross profit, expense breakdown, and net profit by center
+              </Typography>
+              <Box sx={{ width: '100%', height: { xs: 320, sm: 400 } }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={centerChartData} margin={{ top: 8, right: 12, left: 4, bottom: 56 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 10 }}
+                      interval={0}
+                      angle={-30}
+                      textAnchor="end"
+                      height={72}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => {
+                        const n = Number(v);
+                        if (!Number.isFinite(n)) return '';
+                        if (Math.abs(n) >= 100000) return `₹${(n / 100000).toFixed(1)}L`;
+                        if (Math.abs(n) >= 1000) return `₹${(n / 1000).toFixed(0)}k`;
+                        return `₹${Math.round(n)}`;
+                      }}
+                      width={56}
+                    />
+                    <RechartsTooltip
+                      formatter={(value: number | string) =>
+                        formatINR(typeof value === 'number' ? value : Number(value))
+                      }
+                      labelFormatter={(_, payload) =>
+                        (payload?.[0]?.payload as { fullName?: string })?.fullName ?? ''
+                      }
+                    />
+                    <Legend wrapperStyle={{ paddingTop: 12 }} />
+                    <Bar dataKey="grossProfit" name="Gross profit" fill="#059669" />
+                    <Bar dataKey="salaries" stackId="exp" name="Salaries" fill="#e11d48" />
+                    <Bar dataKey="fixedCosts" stackId="exp" name="Fixed costs" fill="#d97706" />
+                    <Bar dataKey="cashOutflows" stackId="exp" name="Cash outflows" fill="#b91c1c" />
+                    <Bar dataKey="netProfit" name="Net profit">
+                      {centerChartData.map((e, i) => (
+                        <Cell key={`net-${e.fullName}-${i}`} fill={e.netProfit >= 0 ? '#1d4ed8' : '#be123c'} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </Box>
+            </Paper>
+          )}
+
+          <TableContainer component={Paper} variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 700 }}>Center</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Gross revenue</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Gross profit</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Salaries</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Fixed costs</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Cash out</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Total expenses</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Net profit</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {(summary.centerRows ?? []).map((row) => (
+                  <TableRow key={row.rowKey} hover>
+                    <TableCell>
+                      <Typography variant="body2" fontWeight={600}>{row.centerName}</Typography>
+                      {row.rowKey === UNALLOCATED_KEY && (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          Assign staff on Centers page or add center on cash sheets
+                        </Typography>
+                      )}
+                    </TableCell>
+                    <TableCell align="right">{formatINR(row.grossRevenue)}</TableCell>
+                    <TableCell align="right" sx={{ color: '#059669', fontWeight: 600 }}>
+                      {formatINR(row.grossProfit)}
+                    </TableCell>
+                    <TableCell align="right" sx={{ color: '#e11d48' }}>{formatINR(row.salaries)}</TableCell>
+                    <TableCell align="right" sx={{ color: '#b45309' }}>{formatINR(row.fixedCosts)}</TableCell>
+                    <TableCell align="right" sx={{ color: '#dc2626' }}>{formatINR(row.cashOutflows)}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>{formatINR(row.totalExpenses)}</TableCell>
+                    <TableCell
+                      align="right"
+                      sx={{ fontWeight: 700, color: row.netProfit >= 0 ? '#1d4ed8' : '#be123c' }}
+                    >
+                      {formatINR(row.netProfit)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
 
           <Divider sx={{ mb: 3 }} />
 

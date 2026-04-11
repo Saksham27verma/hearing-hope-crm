@@ -12,6 +12,27 @@ export interface BreakdownRow {
   amount: number;
   reference?: string;
   centerName?: string;
+  /**
+   * Internal grouping key for center-wise rollups: real Firestore center id when known,
+   * else the same key used in `CenterProfitRow.rowKey` (e.g. orphan / unassigned).
+   */
+  profitCenterKey?: string;
+}
+
+/** One row in the center-wise net profit table / chart. */
+export interface CenterProfitRow {
+  /** Merge key: center Firestore id when known, else synthetic (orphan / unallocated). */
+  rowKey: string;
+  /** Empty when the row is synthetic (orphan sales, unallocated salary, etc.). */
+  centerId: string;
+  centerName: string;
+  grossRevenue: number;
+  grossProfit: number;
+  salaries: number;
+  fixedCosts: number;
+  cashOutflows: number;
+  totalExpenses: number;
+  netProfit: number;
 }
 
 export interface ProfitSummary {
@@ -36,6 +57,8 @@ export interface ProfitSummary {
   /** Selling value of unresolved serials (COGS assumed 0 for them) */
   unresolvedSellingValue: number;
   breakdownRows: BreakdownRow[];
+  /** Net profitability by center (salaries from Centers → Staff assignment; split equally if staff on multiple centers). */
+  centerRows: CenterProfitRow[];
   dateFrom: string;
   dateTo: string;
 }

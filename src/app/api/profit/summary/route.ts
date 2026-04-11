@@ -498,6 +498,7 @@ export async function GET(req: Request) {
       unresolvedSerialsCount,
       unresolvedSellingValue,
       breakdownRows: rows,
+      centerRows: [],
       dateFrom: fromParam,
       dateTo: toParam,
     };

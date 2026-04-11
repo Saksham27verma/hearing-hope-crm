@@ -15,6 +15,7 @@ import {
   type Center,
 } from '@/lib/sales-invoicing/salesReportNormalize';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import type { CenterGrossSlice } from '@/lib/profit/mergeCenterProfit';
 
 // ── Serial-matching helpers (identical to ProfitReportTab internals) ─────────
 
@@ -135,6 +136,12 @@ function collapseCostLineMap(map: Map<string, CostLine[]>): Map<string, CostLine
   return out;
 }
 
+function profitRowMergeKey(centerId: string, centerKey: string): string {
+  const id = (centerId || '').trim();
+  if (id) return id;
+  return (centerKey || '').trim() || '__unassigned__';
+}
+
 // ── Public types ─────────────────────────────────────────────────────────────
 
 export type RawDoc = { id: string } & Record<string, unknown>;
@@ -151,6 +158,8 @@ export type GrossProfitResult = {
   resolvedCount: number;
   unresolvedCount: number;
   unresolvedSellingValue: number;
+  /** Gross revenue + serial-level gross profit grouped for center-wise net profit */
+  grossByCenterKey: Map<string, CenterGrossSlice>;
   /** Per-sale rows for the breakdown Revenue section */
   saleRows: Array<{
     id: string;
@@ -159,6 +168,8 @@ export type GrossProfitResult = {
     invoiceRef: string | null;
     centerName: string | undefined;
     grandTotal: number;
+    profitCenterKey: string;
+    centerId: string;
   }>;
 };
 
@@ -261,6 +272,29 @@ export function computeGrossProfit(params: {
   let grossRevenue = 0;
 
   const saleRows: GrossProfitResult['saleRows'] = [];
+  const grossByCenterKey = new Map<string, CenterGrossSlice>();
+
+  function bumpCenter(
+    rowKey: string,
+    centerId: string,
+    centerName: string,
+    revenueDelta: number,
+    profitDelta: number,
+  ) {
+    let s = grossByCenterKey.get(rowKey);
+    if (!s) {
+      s = {
+        rowKey,
+        centerId,
+        centerName: centerName === '—' ? 'Unassigned' : centerName,
+        grossRevenue: 0,
+        grossProfit: 0,
+      };
+      grossByCenterKey.set(rowKey, s);
+    }
+    s.grossRevenue += revenueDelta;
+    s.grossProfit += profitDelta;
+  }
 
   function inRange(d: Date): boolean {
     const t = d.getTime();
@@ -272,6 +306,10 @@ export function computeGrossProfit(params: {
 
     grossRevenue += rec.total;
 
+    const rowKey = profitRowMergeKey(rec.centerId, rec.centerKey);
+    const displayName = rec.centerName === '—' ? 'Unassigned' : rec.centerName;
+    bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, rec.total, 0);
+
     // Add revenue row for breakdown table
     saleRows.push({
       id: rec.rowId,
@@ -280,6 +318,8 @@ export function computeGrossProfit(params: {
       invoiceRef: rec.invoiceNumber,
       centerName: rec.centerName === '—' ? undefined : rec.centerName,
       grandTotal: rec.total,
+      profitCenterKey: rowKey,
+      centerId: (rec.centerId || '').trim(),
     });
 
     const row = unifiedByRowId.get(rec.rowId);
@@ -306,6 +346,7 @@ export function computeGrossProfit(params: {
           sellingTotal += perSerialSelling;
           dealerCostTotal += dealer;
           resolvedCount++;
+          bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, 0, profit);
           continue;
         }
 
@@ -321,10 +362,12 @@ export function computeGrossProfit(params: {
         }
 
         if (resolved) {
-          profitTotal += perSerialSelling - resolved.dealerPrice;
+          const p = perSerialSelling - resolved.dealerPrice;
+          profitTotal += p;
           sellingTotal += perSerialSelling;
           dealerCostTotal += resolved.dealerPrice;
           resolvedCount++;
+          bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, 0, p);
         } else {
           unresolvedCount++;
           unresolvedSellingValue += perSerialSelling;
@@ -341,6 +384,7 @@ export function computeGrossProfit(params: {
     resolvedCount,
     unresolvedCount,
     unresolvedSellingValue,
+    grossByCenterKey,
     saleRows,
   };
 }

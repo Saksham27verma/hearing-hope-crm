@@ -57,6 +57,37 @@ export async function exportToExcel(summary: ProfitSummary, dateLabel: string): 
   ];
   XLSX.utils.book_append_sheet(wb, wsBreakdown, 'Breakdown');
 
+  if (summary.centerRows?.length) {
+    const centerHeaders = [
+      'Center',
+      'Gross revenue',
+      'Gross profit',
+      'Salaries',
+      'Fixed costs',
+      'Cash outflows',
+      'Total expenses',
+      'Net profit',
+    ];
+    const centerData = [
+      centerHeaders,
+      ...summary.centerRows.map((r) => [
+        r.centerName,
+        r.grossRevenue,
+        r.grossProfit,
+        r.salaries,
+        r.fixedCosts,
+        r.cashOutflows,
+        r.totalExpenses,
+        r.netProfit,
+      ]),
+    ];
+    const wsCenters = XLSX.utils.aoa_to_sheet(centerData);
+    wsCenters['!cols'] = [
+      { wch: 28 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsCenters, 'By center');
+  }
+
   XLSX.writeFile(wb, `Profit_Report_${dateLabel.replace(/\s/g, '_')}.xlsx`);
 }
 
@@ -114,13 +145,68 @@ export async function exportToPdf(summary: ProfitSummary, dateLabel: string): Pr
     },
   });
 
-  const finalY = (doc as jsPDF & { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? 100;
+  let finalY = (doc as jsPDF & { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? 100;
+
+  if (summary.centerRows?.length) {
+    let y = finalY + 14;
+    if (y > 240) {
+      doc.addPage();
+      y = 20;
+    }
+    doc.setFontSize(13);
+    doc.setTextColor(17, 24, 39);
+    doc.text('Center-wise net profit', 14, y);
+    autoTable(doc, {
+      startY: y + 6,
+      head: [[
+        'Center',
+        'Gross rev.',
+        'Gross profit',
+        'Salaries',
+        'Fixed',
+        'Cash',
+        'Expenses',
+        'Net',
+      ]],
+      body: summary.centerRows.map((r) => [
+        r.centerName.length > 26 ? `${r.centerName.slice(0, 24)}…` : r.centerName,
+        formatCurrency(r.grossRevenue),
+        formatCurrency(r.grossProfit),
+        formatCurrency(r.salaries),
+        formatCurrency(r.fixedCosts),
+        formatCurrency(r.cashOutflows),
+        formatCurrency(r.totalExpenses),
+        formatCurrency(r.netProfit),
+      ]),
+      headStyles: { fillColor: [17, 24, 39], textColor: [255, 255, 255], fontStyle: 'bold' },
+      bodyStyles: { textColor: [17, 24, 39], fontSize: 7 },
+      alternateRowStyles: { fillColor: [249, 250, 251] },
+      columnStyles: {
+        0: { cellWidth: 36 },
+        1: { halign: 'right', cellWidth: 22 },
+        2: { halign: 'right', cellWidth: 22 },
+        3: { halign: 'right', cellWidth: 20 },
+        4: { halign: 'right', cellWidth: 18 },
+        5: { halign: 'right', cellWidth: 18 },
+        6: { halign: 'right', cellWidth: 20 },
+        7: { halign: 'right', cellWidth: 22 },
+      },
+      margin: { left: 14, right: 14 },
+    });
+    finalY = (doc as jsPDF & { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y;
+  }
+
   doc.setFontSize(13);
   doc.setTextColor(17, 24, 39);
-  doc.text('Transaction Breakdown', 14, finalY + 12);
+  let breakdownStartY = finalY + 14;
+  if (breakdownStartY > 250) {
+    doc.addPage();
+    breakdownStartY = 20;
+  }
+  doc.text('Transaction Breakdown', 14, breakdownStartY);
 
   autoTable(doc, {
-    startY: finalY + 18,
+    startY: breakdownStartY + 6,
     head: [['Date', 'Description', 'Category', 'Type', 'Amount']],
     body: summary.breakdownRows.map((r) => [
       r.date,
