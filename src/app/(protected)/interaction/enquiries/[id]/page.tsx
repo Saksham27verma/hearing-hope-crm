@@ -730,6 +730,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       if (visit.programming) {
         total += Number(visit.programmingAmount) || 0;
       }
+      if (visit.visitType === 'home') {
+        total += Math.max(0, Number(visit.homeVisitCharges) || 0);
+      }
     });
     return total;
   };
@@ -772,13 +775,16 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     if (visit.hearingAidSale || visit.purchaseFromTrial) {
       return visit.salesAfterTax || visit.hearingAidPrice;
     }
+    const homeCharges =
+      visit.visitType === 'home' ? Math.max(0, Number(visit.homeVisitCharges) || 0) : 0;
     return (
       visit.totalVisitAmount ||
       visit.accessoryAmount ||
       visit.programmingAmount ||
       visit.repairAmount ||
       visit.counsellingAmount ||
-      sumHearingTestEntryPrices(visit)
+      sumHearingTestEntryPrices(visit) ||
+      (homeCharges > 0 ? homeCharges : undefined)
     );
   };
 
@@ -1245,6 +1251,14 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             <Grid item xs={12} sm={6}>
                               {renderVisitField('Visit Type', activeVisit.visitType === 'center' ? 'Center Visit' : activeVisit.visitType === 'home' ? 'Home Visit' : undefined)}
                             </Grid>
+                            {activeVisit.visitType === 'home' && (
+                              <Grid item xs={12} sm={6}>
+                                {renderVisitField(
+                                  'Visit Charges',
+                                  `₹${Math.max(0, Number(activeVisit.homeVisitCharges) || 0).toLocaleString('en-IN')}`
+                                )}
+                              </Grid>
+                            )}
                             <Grid item xs={12} sm={6}>
                               {renderVisitField('Center', getCenterName(activeVisit))}
                             </Grid>

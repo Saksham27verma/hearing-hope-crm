@@ -385,6 +385,8 @@ interface Visit {
   visitDate: string;
   visitTime: string;
   visitType: 'center' | 'home';
+  /** When visitType is home: consultation / travel charges (₹). */
+  homeVisitCharges: number;
   visitNotes: string;
   hearingTest: boolean;
   hearingAidTrial: boolean;
@@ -1780,6 +1782,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           visitDate: visit.visitDate || '',
           visitTime: visit.visitTime || '',
           visitType: visit.visitType || 'center',
+          homeVisitCharges: Math.max(
+            0,
+            Number(visit.homeVisitCharges ?? savedFlat?.homeVisitCharges) || 0
+          ),
           visitNotes: visit.notes || '',
           hearingTest: visit.medicalServices?.includes('hearing_test') || false,
           hearingAidTrial: visit.medicalServices?.includes('hearing_aid_trial') || false,
@@ -2253,6 +2259,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       visitDate: '',
       visitTime: '',
       visitType: 'center',
+      homeVisitCharges: 0,
       visitNotes: '',
       hearingTest: false,
       hearingAidTrial: false,
@@ -2599,6 +2606,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
       if (visit.programming) {
         total += visit.programmingAmount || 0;
+      }
+
+      if (visit.visitType === 'home') {
+        total += Math.max(0, Number(visit.homeVisitCharges) || 0);
       }
 
       if (
@@ -3019,6 +3030,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           visitType: visit.visitType,
           visitDate: visit.visitDate,
           visitTime: visit.visitTime,
+          homeVisitCharges:
+            visit.visitType === 'home' ? Math.max(0, Number(visit.homeVisitCharges) || 0) : 0,
           notes: visit.visitNotes,
           medicalServices: [
             ...(visit.hearingTest ? ['hearing_test'] : []),
@@ -3768,7 +3781,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           <InputLabel>Visit Type</InputLabel>
                           <Select 
                             value={currentVisit.visitType}
-                            onChange={(e) => updateVisit(activeVisit, 'visitType', e.target.value)}
+                            onChange={(e) => {
+                              const v = e.target.value as 'center' | 'home';
+                              if (v === 'center') {
+                                updateVisitFields(activeVisit, {
+                                  visitType: 'center',
+                                  homeVisitCharges: 0,
+                                });
+                              } else {
+                                updateVisit(activeVisit, 'visitType', v);
+                              }
+                            }}
                             label="Visit Type"
                             disabled={isAudiologist}
                             sx={{ borderRadius: 2, minWidth: '200px' }}
@@ -3781,6 +3804,31 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           </Select>
                         </FormControl>
                       </Grid>
+                      {currentVisit.visitType === 'home' && (
+                        <Grid item xs={12} md={3}>
+                          <TextField
+                            fullWidth
+                            label="Visit Charges (₹)"
+                            type="number"
+                            value={currentVisit.homeVisitCharges || ''}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              const n =
+                                raw === '' ? 0 : Math.max(0, Number(raw));
+                              updateVisit(
+                                activeVisit,
+                                'homeVisitCharges',
+                                Number.isFinite(n) ? n : 0
+                              );
+                            }}
+                            disabled={isAudiologist}
+                            inputProps={{ min: 0, step: 1 }}
+                            InputLabelProps={{ shrink: true }}
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                            helperText="Home visit fee (travel / consultation)"
+                          />
+                        </Grid>
+                      )}
                       <Grid item xs={12} md={6}>
                         <Box sx={{ display: 'flex', gap: 2, height: '100%', alignItems: 'center', flexWrap: 'wrap' }}>
                           <FormControlLabel
