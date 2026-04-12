@@ -3,7 +3,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
 import { useRouter } from 'next/navigation';
-import { 
+import {
   Box, 
   Typography, 
   Paper, 
@@ -56,6 +56,7 @@ import {
   Collapse,
   Menu,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { 
   Add as AddIcon, 
   Search as SearchIcon, 
@@ -433,6 +434,7 @@ interface VisitSchedule {
 }
 
 export default function EnquiriesPage() {
+  const theme = useTheme();
   const router = useRouter();
   const { user, userProfile } = useAuth();
   const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
@@ -3622,7 +3624,12 @@ export default function EnquiriesPage() {
             <TableContainer component={Paper} sx={{ mb: 2 }}>
               <Table size="small">
                 <TableHead>
-                  <TableRow sx={{ bgcolor: 'grey.50' }}>
+                  <TableRow
+                    sx={{
+                      bgcolor: (t) =>
+                        t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : t.palette.grey[50],
+                    }}
+                  >
                     <TableCell sx={{ fontWeight: 'bold' }}>Call Date</TableCell>
                     <TableCell sx={{ fontWeight: 'bold' }}>Feedback</TableCell>
                     <TableCell sx={{ fontWeight: 'bold' }}>Next Follow-up</TableCell>
@@ -3847,7 +3854,8 @@ export default function EnquiriesPage() {
       height: '100%',
       display: 'flex',
       flexDirection: 'column',
-      bgcolor: '#f5f5f5'
+      bgcolor: 'background.default',
+      transition: 'background-color 0.28s ease',
     }}>
       {/* Header Section */}
       <Paper 
@@ -3855,9 +3863,10 @@ export default function EnquiriesPage() {
         sx={{ 
           p: { xs: 2, sm: 2.5, md: 3 },
           mb: { xs: 2, sm: 3 },
-          bgcolor: 'white',
+          bgcolor: 'background.paper',
           borderRadius: 0,
-          borderBottom: '1px solid #e0e0e0'
+          borderBottom: 1,
+          borderColor: 'divider',
         }}
       >
         <Stack 
@@ -3871,7 +3880,7 @@ export default function EnquiriesPage() {
             component="h1" 
             sx={{ 
               fontWeight: 700,
-              color: '#ff6b35',
+              color: 'primary.main',
               fontSize: { xs: '1.25rem', sm: '1.5rem', md: '1.75rem' },
         display: 'flex',
         alignItems: 'center',
@@ -3898,14 +3907,14 @@ export default function EnquiriesPage() {
             disabled={refreshing}
             size="small"
               sx={{ 
-                borderColor: '#ff6b35',
-                color: '#ff6b35',
+                borderColor: 'primary.main',
+                color: 'primary.main',
                 fontSize: { xs: '0.75rem', sm: '0.875rem' },
                 py: { xs: 0.75, sm: 1 },
                 px: { xs: 1.5, sm: 2 },
                 '&:hover': {
-                  borderColor: '#ff5722',
-                  bgcolor: '#fff3e0'
+                  borderColor: 'primary.dark',
+                  bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
                 },
                 whiteSpace: 'nowrap'
               }}
@@ -3918,14 +3927,14 @@ export default function EnquiriesPage() {
             onClick={() => setColumnManagementOpen(true)}
             size="small"
               sx={{ 
-                borderColor: '#ff6b35',
-                color: '#ff6b35',
+                borderColor: 'primary.main',
+                color: 'primary.main',
                 fontSize: { xs: '0.75rem', sm: '0.875rem' },
                 py: { xs: 0.75, sm: 1 },
                 px: { xs: 1.5, sm: 2 },
                 '&:hover': {
-                  borderColor: '#ff5722',
-                  bgcolor: '#fff3e0'
+                  borderColor: 'primary.dark',
+                  bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
                 },
                 whiteSpace: 'nowrap'
               }}
@@ -4001,9 +4010,9 @@ export default function EnquiriesPage() {
                   p: 2.5, 
                   display: 'flex', 
                   alignItems: 'center', 
-                  bgcolor: 'white',
+                  bgcolor: 'background.paper',
                   border: '2px solid',
-                  borderColor: '#e0e0e0',
+                  borderColor: 'divider',
                   borderRadius: 2,
                   height: '100%',
                   transition: 'all 0.3s',
@@ -4251,8 +4260,9 @@ export default function EnquiriesPage() {
          flexDirection: 'column',
            flex: 1,
            minHeight: { xs: '400px', sm: '500px' },
-           bgcolor: 'white',
-           border: '1px solid #e0e0e0',
+           bgcolor: 'background.paper',
+           border: 1,
+           borderColor: 'divider',
            borderRadius: 2
          }}
        >
@@ -4450,15 +4460,26 @@ export default function EnquiriesPage() {
                    <TableRow 
                      key={enquiry.id}
                      sx={{
-                       '&:nth-of-type(even)': { backgroundColor: '#f8f9fa' },
-                       '&:nth-of-type(odd)': { backgroundColor: '#ffffff' },
+                       /* Index-based striping — nth-of-type can desync from data rows and flash wrong surfaces */
+                       backgroundColor: (t) => {
+                         const stripeB = index % 2 === 1;
+                         if (t.palette.mode === 'dark') {
+                           return stripeB ? alpha(t.palette.common.white, 0.05) : t.palette.background.paper;
+                         }
+                         return stripeB ? '#f8f9fa' : '#ffffff';
+                       },
                        '&:hover': { 
-                         backgroundColor: '#e3f2fd !important',
+                         backgroundColor: (t) =>
+                           `${alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.12 : 0.08)} !important`,
                          transform: 'scale(1.001)',
-                         boxShadow: '0 4px 12px rgba(25, 118, 210, 0.15)',
+                         boxShadow: (t) =>
+                           t.palette.mode === 'dark'
+                             ? '0 4px 12px rgba(0,0,0,0.45)'
+                             : '0 4px 12px rgba(25, 118, 210, 0.15)',
                          transition: 'all 0.2s ease-in-out'
                        },
-                       borderBottom: '1px solid #e0e0e0'
+                       borderBottom: 1,
+                       borderColor: 'divider',
                      }}
                    >
                      <TableCell sx={{ 
@@ -4467,7 +4488,14 @@ export default function EnquiriesPage() {
                        minWidth: `${columnWidths.name}px`,
                        position: 'sticky',
                        left: 0,
-                       backgroundColor: (index % 2 === 0 ? '#ffffff' : '#f8f9fa') + ' !important',
+                       backgroundColor:
+                         (theme.palette.mode === 'dark'
+                           ? index % 2 === 0
+                             ? theme.palette.background.paper
+                             : alpha(theme.palette.common.white, 0.05)
+                           : index % 2 === 0
+                             ? '#ffffff'
+                             : '#f8f9fa') + ' !important',
                        py: 2.5,
                        borderRight: '3px solid #ff5722',
                        zIndex: 1000,
@@ -4489,11 +4517,11 @@ export default function EnquiriesPage() {
                         {getInitials(enquiry.name)}
                       </Avatar>
                         <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-                          <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', fontWeight: 600, color: '#333' }}>
+                          <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
                             {enquiry.name || '-'}
                           </Typography>
                           {enquiry.customerName && (
-                            <Typography variant="caption" noWrap sx={{ color: '#666' }}>
+                            <Typography variant="caption" noWrap sx={{ color: 'text.secondary' }}>
                               Customer: {enquiry.customerName}
                             </Typography>
                           )}
@@ -4528,16 +4556,44 @@ export default function EnquiriesPage() {
                     </Box>
                   </TableCell>
                      {userProfile?.role !== 'audiologist' && (
-                       <TableCell sx={{ width: `${columnWidths.phone}px`, maxWidth: `${columnWidths.phone}px`, minWidth: `${columnWidths.phone}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.phone || '-'}</Typography></TableCell>
+                       <TableCell sx={{ width: `${columnWidths.phone}px`, maxWidth: `${columnWidths.phone}px`, minWidth: `${columnWidths.phone}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>{enquiry.phone || '-'}</Typography></TableCell>
                      )}
-                     <TableCell sx={{ width: `${columnWidths.email}px`, maxWidth: `${columnWidths.email}px`, minWidth: `${columnWidths.email}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.email || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.email || '-'}</Typography></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.address}px`, maxWidth: `${columnWidths.address}px`, minWidth: `${columnWidths.address}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.address || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.address || '-'}</Typography></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.reference}px`, maxWidth: `${columnWidths.reference}px`, minWidth: `${columnWidths.reference}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip label={enquiry.reference || '-'} size="small" sx={{ fontSize: '0.75rem', height: '24px', backgroundColor: '#fff3e0', color: '#ff6b35', fontWeight: 500 }} /></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.assignedTo || '-'}</Typography></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.telecaller || '-'}</Typography></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip label={getCenterName(enquiry.center)} size="small" sx={{ fontSize: '0.75rem', height: '24px', backgroundColor: '#e3f2fd', color: '#1976d2', fontWeight: 500 }} /></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.email}px`, maxWidth: `${columnWidths.email}px`, minWidth: `${columnWidths.email}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.email || ''} sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>{enquiry.email || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.address}px`, maxWidth: `${columnWidths.address}px`, minWidth: `${columnWidths.address}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.address || ''} sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>{enquiry.address || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.reference}px`, maxWidth: `${columnWidths.reference}px`, minWidth: `${columnWidths.reference}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip
+                        label={enquiry.reference || '-'}
+                        size="small"
+                        sx={{
+                          fontSize: '0.75rem',
+                          height: '24px',
+                          fontWeight: 500,
+                          bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                          color: 'primary.main',
+                        }}
+                      /></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>{enquiry.assignedTo || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>{enquiry.telecaller || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden' }}><Chip
+                        label={getCenterName(enquiry.center)}
+                        size="small"
+                        sx={{
+                          fontSize: '0.75rem',
+                          height: '24px',
+                          fontWeight: 500,
+                          bgcolor: (t) => alpha(t.palette.info.main, t.palette.mode === 'dark' ? 0.25 : 0.12),
+                          color: (t) => (t.palette.mode === 'dark' ? t.palette.info.light : t.palette.info.dark),
+                        }}
+                      /></TableCell>
                     {visibleColumns.includes('status') && (
-                      <TableCell sx={{ width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                      <TableCell sx={{ width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden' }}>
                         {(() => {
                           const derivedStatus = getEnquiryStatusMeta(enquiry);
                           return (
@@ -4566,9 +4622,12 @@ export default function EnquiriesPage() {
                         })()}
                       </TableCell>
                     )}
-                     <TableCell sx={{ width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.subject || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.subject || '-'}</Typography></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.message || ''} sx={{ fontSize: '0.875rem', color: '#555' }}>{enquiry.message || '-'}</Typography></TableCell>
-                     <TableCell sx={{ width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, py: 2.5, borderRight: '1px solid #e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: '#555', fontWeight: 500 }}>{formatDate(enquiry)}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.subject || ''} sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>{enquiry.subject || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap title={enquiry.message || ''} sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>{enquiry.message || '-'}</Typography></TableCell>
+                     <TableCell sx={{ width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, py: 2.5, borderRight: 1,
+                       borderColor: 'divider', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}><Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', color: 'text.secondary', fontWeight: 500 }}>{formatDate(enquiry)}</Typography></TableCell>
                      <TableCell 
                        sx={{ 
                          width: `${columnWidths.actions}px`,
@@ -4576,7 +4635,14 @@ export default function EnquiriesPage() {
                          minWidth: `${columnWidths.actions}px`,
                          position: 'sticky', 
                          right: 0, 
-                         backgroundColor: (index % 2 === 0 ? '#ffffff' : '#f8f9fa') + ' !important',
+                         backgroundColor:
+                           (theme.palette.mode === 'dark'
+                             ? index % 2 === 0
+                               ? theme.palette.background.paper
+                               : alpha(theme.palette.common.white, 0.05)
+                             : index % 2 === 0
+                               ? '#ffffff'
+                               : '#f8f9fa') + ' !important',
                          zIndex: 1000,
                          boxShadow: '-8px 0 16px rgba(255, 107, 53, 0.2)',
                          borderLeft: '3px solid #ff5722',
@@ -4694,20 +4760,21 @@ export default function EnquiriesPage() {
         onPageChange={handleChangePage}
         onRowsPerPageChange={handleChangeRowsPerPage}
         sx={{
-          borderTop: '3px solid #ff6b35',
-          background: 'linear-gradient(to right, #fff5f0 0%, #ffffff 100%)',
+          borderTop: '3px solid',
+          borderColor: 'primary.main',
+          bgcolor: 'background.paper',
           fontWeight: 500,
           '& .MuiTablePagination-toolbar': {
             minHeight: 64
           },
           '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
             fontWeight: 500,
-            color: '#333'
+            color: 'text.primary'
           },
           '& .MuiTablePagination-actions button': {
-            color: '#ff6b35',
+            color: 'primary.main',
             '&:hover': {
-              backgroundColor: '#fff3e0'
+              bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.2 : 0.12)
             }
           }
         }}
@@ -4734,7 +4801,13 @@ export default function EnquiriesPage() {
         
         <DialogContent sx={{ p: 0 }}>
           {/* Simplified Stepper */}
-          <Box sx={{ bgcolor: 'grey.50', p: 2 }}>
+          <Box
+            sx={{
+              p: 2,
+              bgcolor: (t) =>
+                t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+            }}
+          >
             <Stepper activeStep={activeStep} orientation="horizontal">
             <Step completed={isStepComplete(0)}>
                 <StepLabel>
@@ -4951,7 +5024,12 @@ export default function EnquiriesPage() {
                   
                   <TableContainer component={Paper} sx={{ mb: 3 }}>
                     <Table>
-                      <TableHead sx={{ bgcolor: 'grey.50' }}>
+                      <TableHead
+                        sx={{
+                          bgcolor: (t) =>
+                            t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : t.palette.grey[50],
+                        }}
+                      >
                         <TableRow>
                           <TableCell sx={{ fontWeight: 'bold' }}>Call Date</TableCell>
                           <TableCell sx={{ fontWeight: 'bold' }}>Feedback</TableCell>
@@ -5431,7 +5509,17 @@ export default function EnquiriesPage() {
                 </Typography>
                 
                 {/* Chrome-style tabs */}
-                <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3, bgcolor: 'grey.50', borderRadius: '8px 8px 0 0', p: 1 }}>
+                <Box
+                  sx={{
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                    mb: 3,
+                    bgcolor: (t) =>
+                      t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+                    borderRadius: '8px 8px 0 0',
+                    p: 1,
+                  }}
+                >
                   <Stack direction="row" spacing={0} alignItems="center">
                     {(newEnquiry.visitSchedules || []).map((schedule, index) => (
                       <Box
@@ -5609,7 +5697,14 @@ export default function EnquiriesPage() {
             </Typography>
             
             {/* Basic Information Summary */}
-            <Paper sx={{ p: 3, mb: 3, bgcolor: 'grey.50' }}>
+            <Paper
+              sx={{
+                p: 3,
+                mb: 3,
+                bgcolor: (t) =>
+                  t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+              }}
+            >
               <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
                 <PersonIcon fontSize="small" />
                 Patient Information
@@ -5659,7 +5754,14 @@ export default function EnquiriesPage() {
 
             {/* Follow-ups Summary */}
             {newEnquiry.followUps && newEnquiry.followUps.length > 0 && (
-              <Paper sx={{ p: 3, mb: 3, bgcolor: 'grey.50' }}>
+              <Paper
+              sx={{
+                p: 3,
+                mb: 3,
+                bgcolor: (t) =>
+                  t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+              }}
+            >
                 <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
                   <FollowUpIcon fontSize="small" />
                   Follow-up Summary ({newEnquiry.followUps.length} records)
@@ -5695,7 +5797,14 @@ export default function EnquiriesPage() {
 
             {/* Medical Services Summary */}
             {newEnquiry.activeFormTypes && newEnquiry.activeFormTypes.length > 0 && (
-              <Paper sx={{ p: 3, mb: 3, bgcolor: 'grey.50' }}>
+              <Paper
+              sx={{
+                p: 3,
+                mb: 3,
+                bgcolor: (t) =>
+                  t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+              }}
+            >
                 <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
                   <MedicalServicesIcon fontSize="small" />
                   Medical Services Configuration
@@ -5824,7 +5933,14 @@ export default function EnquiriesPage() {
 
             {/* Visit Schedules Summary (Edit Mode) */}
             {isEditMode && newEnquiry.visitSchedules && newEnquiry.visitSchedules.length > 0 && (
-              <Paper sx={{ p: 3, mb: 3, bgcolor: 'grey.50' }}>
+              <Paper
+              sx={{
+                p: 3,
+                mb: 3,
+                bgcolor: (t) =>
+                  t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+              }}
+            >
                 <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
                   <AssignmentIcon fontSize="small" />
                   Visit Schedules ({newEnquiry.visitSchedules.length} visits)
@@ -5871,7 +5987,14 @@ export default function EnquiriesPage() {
           </Box>
         </DialogContent>
         
-        <DialogActions sx={{ p: 3, bgcolor: 'grey.50', justifyContent: 'space-between' }}>
+        <DialogActions
+          sx={{
+            p: 3,
+            justifyContent: 'space-between',
+            bgcolor: (t) =>
+              t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+          }}
+        >
           <Box>
           {activeStep > 0 ? (
               <Button 
@@ -5933,7 +6056,15 @@ export default function EnquiriesPage() {
           {enquiryToConvert && (
             <Box>
               {/* Patient Info */}
-              <Box mb={2} p={2} bgcolor="grey.50" borderRadius={1}>
+              <Box
+                mb={2}
+                p={2}
+                borderRadius={1}
+                sx={{
+                  bgcolor: (t) =>
+                    t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+                }}
+              >
                 <Typography variant="h6" gutterBottom>
                   Patient Information
                 </Typography>
@@ -6160,10 +6291,11 @@ export default function EnquiriesPage() {
                       py: 1,
                       px: 2,
                       mb: 1,
-                      bgcolor: 'grey.50',
+                      bgcolor: (t) =>
+                        t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
                       borderRadius: 1,
                       border: '1px solid',
-                      borderColor: 'grey.200'
+                      borderColor: 'divider'
                     }}
                   >
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

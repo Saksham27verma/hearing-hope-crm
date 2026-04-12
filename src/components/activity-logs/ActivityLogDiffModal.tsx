@@ -23,7 +23,7 @@ import {
 import { Timestamp } from 'firebase/firestore';
 import CloseIcon from '@mui/icons-material/Close';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
-import { CRM_ACCENT } from '@/components/Layout/crm-theme';
+import { useTheme } from '@mui/material/styles';
 import type { ActivityLogDoc } from './types';
 
 interface Props {
@@ -60,6 +60,9 @@ function fieldLabel(key: string): string {
 }
 
 export default function ActivityLogDiffModal({ log, onClose }: Props) {
+  const theme = useTheme();
+  const primaryMain = theme.palette.primary.main;
+
   if (!log) return null;
 
   const changes = log.changes ? Object.entries(log.changes) : [];
@@ -75,7 +78,7 @@ export default function ActivityLogDiffModal({ log, onClose }: Props) {
       {/* Header */}
       <DialogTitle
         sx={{
-          bgcolor: alpha(CRM_ACCENT, 0.06),
+          bgcolor: alpha(primaryMain, 0.06),
           borderBottom: '1px solid',
           borderColor: 'divider',
           py: 2,
@@ -89,13 +92,13 @@ export default function ActivityLogDiffModal({ log, onClose }: Props) {
                 width: 36,
                 height: 36,
                 borderRadius: 1.5,
-                bgcolor: alpha(CRM_ACCENT, 0.12),
+                bgcolor: alpha(primaryMain, 0.12),
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <CompareArrowsIcon sx={{ color: CRM_ACCENT, fontSize: 20 }} />
+              <CompareArrowsIcon sx={{ color: primaryMain, fontSize: 20 }} />
             </Box>
             <Box>
               <Typography variant="subtitle1" fontWeight={700}>
@@ -120,7 +123,7 @@ export default function ActivityLogDiffModal({ log, onClose }: Props) {
             py: 2,
             borderBottom: '1px solid',
             borderColor: 'divider',
-            bgcolor: '#fafafa',
+            bgcolor: theme.palette.mode === 'light' ? alpha(theme.palette.common.black, 0.02) : alpha(theme.palette.common.white, 0.04),
             display: 'flex',
             flexWrap: 'wrap',
             gap: 2,
@@ -158,7 +161,7 @@ export default function ActivityLogDiffModal({ log, onClose }: Props) {
         ) : (
           <Table size="small">
             <TableHead>
-              <TableRow sx={{ bgcolor: alpha(CRM_ACCENT, 0.04) }}>
+              <TableRow sx={{ bgcolor: alpha(primaryMain, 0.04) }}>
                 <TableCell sx={{ fontWeight: 700, width: '20%', fontSize: 12 }}>Field</TableCell>
                 <TableCell sx={{ fontWeight: 700, width: '40%', fontSize: 12 }}>
                   <Stack direction="row" alignItems="center" gap={0.5}>
@@ -192,7 +195,7 @@ export default function ActivityLogDiffModal({ log, onClose }: Props) {
               {changes.map(([key, { before, after }]) => (
                 <TableRow
                   key={key}
-                  sx={{ '&:hover': { bgcolor: alpha(CRM_ACCENT, 0.03) } }}
+                  sx={{ '&:hover': { bgcolor: alpha(primaryMain, 0.03) } }}
                 >
                   <TableCell>
                     <Typography variant="caption" fontWeight={600} color="text.primary">
@@ -264,7 +267,7 @@ export default function ActivityLogDiffModal({ log, onClose }: Props) {
         <Chip
           label={`${changes.length} field${changes.length !== 1 ? 's' : ''} changed`}
           size="small"
-          sx={{ bgcolor: alpha(CRM_ACCENT, 0.1), color: CRM_ACCENT, fontWeight: 600 }}
+          sx={{ bgcolor: alpha(primaryMain, 0.1), color: primaryMain, fontWeight: 600 }}
         />
         <Box flex={1} />
         <Button variant="outlined" size="small" onClick={onClose}>

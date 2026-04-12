@@ -15,6 +15,7 @@ import {
   Divider,
   alpha,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { Timestamp } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import { fetchActivityLogsAdmin } from '@/lib/activity-logs/adminActivityLogsApi';
@@ -24,7 +25,6 @@ import HistoryIcon from '@mui/icons-material/History';
 import TodayIcon from '@mui/icons-material/Today';
 import GroupIcon from '@mui/icons-material/Group';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import { CRM_ACCENT, CRM_PAGE_BG } from '@/components/Layout/crm-theme';
 import ActivityLogFilters, { type FilterState } from './ActivityLogFilters';
 import ActivityLogItem from './ActivityLogItem';
 import ActivityLogDiffModal from './ActivityLogDiffModal';
@@ -33,6 +33,8 @@ import type { ActivityLogDoc } from './types';
 const PAGE_SIZE = 50;
 
 export default function ActivityLogsPage() {
+  const theme = useTheme();
+  const primaryMain = theme.palette.primary.main;
   const { user, loading: authLoading } = useAuth();
 
   // ─── Data state ─────────────────────────────────────────────────────────────
@@ -279,7 +281,7 @@ export default function ActivityLogsPage() {
   if (authLoading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 240 }}>
-        <CircularProgress sx={{ color: CRM_ACCENT }} />
+        <CircularProgress sx={{ color: primaryMain }} />
       </Box>
     );
   }
@@ -293,7 +295,7 @@ export default function ActivityLogsPage() {
 
   // ─── UI ──────────────────────────────────────────────────────────────────────
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, minHeight: '100vh', bgcolor: CRM_PAGE_BG }}>
+    <Box sx={{ p: { xs: 2, md: 3 }, minHeight: '100vh', bgcolor: 'background.default' }}>
       {/* ── Page Header ── */}
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
@@ -309,13 +311,13 @@ export default function ActivityLogsPage() {
                 width: 40,
                 height: 40,
                 borderRadius: 2,
-                bgcolor: alpha(CRM_ACCENT, 0.12),
+                bgcolor: alpha(primaryMain, 0.12),
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <HistoryIcon sx={{ color: CRM_ACCENT, fontSize: 22 }} />
+              <HistoryIcon sx={{ color: primaryMain, fontSize: 22 }} />
             </Box>
             <Typography variant="h5" fontWeight={700} color="text.primary">
               Activity Logs
@@ -383,8 +385,8 @@ export default function ActivityLogsPage() {
           {
             label: "Today's Actions",
             value: stats.todayCount,
-            icon: <TodayIcon sx={{ color: CRM_ACCENT }} />,
-            color: CRM_ACCENT,
+            icon: <TodayIcon sx={{ color: primaryMain }} />,
+            color: primaryMain,
           },
           {
             label: 'Active Users Today',
@@ -471,7 +473,7 @@ export default function ActivityLogsPage() {
           sx={{
             px: 3,
             py: 1.5,
-            bgcolor: alpha(CRM_ACCENT, 0.04),
+            bgcolor: alpha(primaryMain, 0.04),
             borderBottom: '1px solid',
             borderColor: 'divider',
             display: { xs: 'none', md: 'grid' },
@@ -488,7 +490,7 @@ export default function ActivityLogsPage() {
 
         {loading ? (
           <Box display="flex" justifyContent="center" alignItems="center" py={8}>
-            <CircularProgress size={32} sx={{ color: CRM_ACCENT }} />
+            <CircularProgress size={32} sx={{ color: primaryMain }} />
           </Box>
         ) : error ? (
           <Box p={3}>
@@ -523,7 +525,7 @@ export default function ActivityLogsPage() {
                   onClick={loadMore}
                   disabled={loadingMore}
                   startIcon={loadingMore ? <CircularProgress size={14} /> : undefined}
-                  sx={{ borderColor: alpha(CRM_ACCENT, 0.4), color: CRM_ACCENT }}
+                  sx={{ borderColor: alpha(primaryMain, 0.4), color: primaryMain }}
                 >
                   {loadingMore ? 'Loading…' : `Load more (${PAGE_SIZE} per page)`}
                 </Button>

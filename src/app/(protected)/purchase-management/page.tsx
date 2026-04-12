@@ -30,6 +30,7 @@ import {
   CardContent,
   Tooltip,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
   Add as AddIcon,
@@ -597,7 +598,7 @@ export default function PurchaseManagement() {
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
-          <Typography variant="h4" component="h1">
+          <Typography variant="h4" component="h1" color="text.primary">
             Purchase Management
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -667,8 +668,15 @@ export default function PurchaseManagement() {
       
       {/* Purchases Table */}
       <Paper elevation={1} sx={{ borderRadius: 2 }}>
-        <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', bgcolor: '#f8f9fa' }}>
-          <Typography variant="h6">
+        <Box
+          sx={{
+            p: 2,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'),
+          }}
+        >
+          <Typography variant="h6" color="text.primary">
             Purchase Records 
             {filteredPurchases.length > 0 && (
               <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
@@ -681,7 +689,16 @@ export default function PurchaseManagement() {
         <TableContainer sx={{ maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
           <Table stickyHeader>
             <TableHead>
-              <TableRow sx={{ '& th': { fontWeight: 'bold', bgcolor: '#f8f9fa' } }}>
+              <TableRow
+                sx={{
+                  '& th': {
+                    fontWeight: 'bold',
+                    bgcolor: (t) =>
+                      t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : '#f8f9fa',
+                    color: 'text.primary',
+                  },
+                }}
+              >
                 <TableCell>Date</TableCell>
                 <TableCell>Invoice</TableCell>
                 <TableCell>Supplier</TableCell>
@@ -695,12 +712,18 @@ export default function PurchaseManagement() {
               {filteredPurchases.length > 0 ? (
                 filteredPurchases
                   .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                  .map((purchase) => (
+                  .map((purchase, rowIndex) => (
                     <TableRow 
                       key={purchase.id} 
                       hover
                       sx={{ 
-                        '&:nth-of-type(odd)': { bgcolor: 'background.default' },
+                        bgcolor: (t) => {
+                          const alt = rowIndex % 2 === 1;
+                          if (t.palette.mode === 'dark') {
+                            return alt ? alpha(t.palette.common.white, 0.05) : t.palette.background.paper;
+                          }
+                          return alt ? '#f8f9fa' : t.palette.background.paper;
+                        },
                         '&:hover': { bgcolor: 'action.hover' }
                       }}
                     >
@@ -820,7 +843,18 @@ export default function PurchaseManagement() {
           rowsPerPage={rowsPerPage}
           onRowsPerPageChange={handleChangeRowsPerPage}
           rowsPerPageOptions={[5, 10, 25, 50]}
-          sx={{ borderTop: '1px solid', borderColor: 'divider' }}
+          sx={{
+            borderTop: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
+            color: 'text.primary',
+            '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+              color: 'text.primary',
+            },
+            '& .MuiTablePagination-actions button': {
+              color: 'primary.main',
+            },
+          }}
         />
       </Paper>
       
@@ -1020,8 +1054,14 @@ export default function PurchaseManagement() {
               
               {/* Products Table */}
               <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', mb: 3 }}>
-                <Box p={2} bgcolor="#f5f5f5">
-                  <Typography variant="subtitle2" fontWeight="medium">
+                <Box
+                  p={2}
+                  sx={{
+                    bgcolor: (t) =>
+                      t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f5f5f5',
+                  }}
+                >
+                  <Typography variant="subtitle2" fontWeight="medium" color="text.primary">
                     Products in this Purchase
                   </Typography>
                 </Box>
@@ -1064,10 +1104,15 @@ export default function PurchaseManagement() {
                       ))}
                       
                       {/* Total row */}
-                      <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+                      <TableRow
+                        sx={{
+                          bgcolor: (t) =>
+                            t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : '#f8f9fa',
+                        }}
+                      >
                         <TableCell colSpan={4} />
                         <TableCell align="right">
-                          <Typography variant="subtitle2">Subtotal</Typography>
+                          <Typography variant="subtitle2" color="text.primary">Subtotal</Typography>
                         </TableCell>
                         <TableCell align="right">
                           <Typography variant="subtitle2">{formatCurrency(previewPurchase.totalAmount)}</Typography>

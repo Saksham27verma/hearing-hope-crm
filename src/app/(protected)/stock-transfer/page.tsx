@@ -43,6 +43,7 @@ import {
   Tooltip,
   Badge,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
@@ -1362,7 +1363,7 @@ const StockTransferPage = () => {
             <TransferIcon sx={{ fontSize: 32, color: 'primary.main' }} />
           </Box>
           <Box>
-            <Typography variant="h4" fontWeight="bold" color="primary">
+            <Typography variant="h4" fontWeight="bold" color="text.primary">
               Stock Transfer Management
             </Typography>
             <Typography variant="body2" color="text.secondary">
@@ -1539,28 +1540,44 @@ const StockTransferPage = () => {
       {/* Transfers Table */}
       <Paper elevation={0} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 2, overflow: 'hidden' }}>
         <TableContainer>
-          <Table>
-            <TableHead sx={{ bgcolor: 'grey.50' }}>
-              <TableRow>
-                <TableCell><strong>Date</strong></TableCell>
-                <TableCell><strong>Transfer #</strong></TableCell>
-                <TableCell><strong>Type</strong></TableCell>
-                <TableCell><strong>From</strong></TableCell>
-                <TableCell><strong>To</strong></TableCell>
-                <TableCell><strong>Products</strong></TableCell>
-                <TableCell><strong>Reason</strong></TableCell>
-                <TableCell align="right"><strong>Actions</strong></TableCell>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow
+                sx={{
+                  '& th': {
+                    fontWeight: 700,
+                    bgcolor: (t) =>
+                      t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : t.palette.grey[50],
+                    color: 'text.primary',
+                  },
+                }}
+              >
+                <TableCell>Date</TableCell>
+                <TableCell>Transfer #</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>From</TableCell>
+                <TableCell>To</TableCell>
+                <TableCell>Products</TableCell>
+                <TableCell>Reason</TableCell>
+                <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filteredTransfers.length > 0 ? (
                 filteredTransfers
                   .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                  .map((transfer) => (
+                  .map((transfer, rowIndex) => (
                     <TableRow 
                       key={transfer.id} 
                       hover 
                       sx={{ 
+                        bgcolor: (t) => {
+                          const alt = rowIndex % 2 === 1;
+                          if (t.palette.mode === 'dark') {
+                            return alt ? alpha(t.palette.common.white, 0.05) : t.palette.background.paper;
+                          }
+                          return alt ? t.palette.grey[50] : t.palette.background.paper;
+                        },
                         '&:hover': { 
                           bgcolor: 'action.hover' 
                         } 
@@ -1692,6 +1709,16 @@ const StockTransferPage = () => {
           page={page}
           onPageChange={handleChangePage}
           onRowsPerPageChange={handleChangeRowsPerPage}
+          sx={{
+            bgcolor: 'background.paper',
+            borderTop: 1,
+            borderColor: 'divider',
+            color: 'text.primary',
+            '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+              color: 'text.primary',
+            },
+            '& .MuiTablePagination-actions button': { color: 'primary.main' },
+          }}
         />
       </Paper>
       
@@ -1729,7 +1756,15 @@ const StockTransferPage = () => {
         <DialogContent sx={{ mt: 2 }}>
           <Stack spacing={3}>
             {/* Transfer Type Selection */}
-            <Paper elevation={0} sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2,
+                borderRadius: 2,
+                bgcolor: (t) =>
+                  t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+              }}
+            >
               <Typography variant="subtitle2" gutterBottom fontWeight="bold" color="primary">
                 Transfer Type
               </Typography>
@@ -2090,7 +2125,12 @@ const StockTransferPage = () => {
                           <DeleteIcon />
                         </IconButton>
                       }
-                      sx={{ bgcolor: 'white', mb: 1, borderRadius: 1 }}
+                      sx={{
+                        mb: 1,
+                        borderRadius: 1,
+                        bgcolor: (t) =>
+                          t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+                      }}
                     >
                       <ListItemIcon>
                         <InventoryIcon color="primary" />
@@ -2110,7 +2150,13 @@ const StockTransferPage = () => {
           </Stack>
         </DialogContent>
         
-        <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
+        <DialogActions
+          sx={{
+            p: 3,
+            bgcolor: (t) =>
+              t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+          }}
+        >
           <Button onClick={handleCloseDialog} startIcon={<CancelIcon />} disabled={savingTransfer}>
             Cancel
           </Button>
@@ -2166,7 +2212,15 @@ const StockTransferPage = () => {
           {previewTransfer && (
             <Stack spacing={3}>
               {/* Transfer Info */}
-              <Paper elevation={0} sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2,
+                  borderRadius: 2,
+                  bgcolor: (t) =>
+                    t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+                }}
+              >
                 <Grid container spacing={2}>
                   <Grid item xs={6}>
                     <Typography variant="caption" color="text.secondary">
@@ -2273,11 +2327,12 @@ const StockTransferPage = () => {
                     <ListItem 
                       key={index}
                       sx={{ 
-                        bgcolor: 'grey.50', 
                         mb: 1, 
                         borderRadius: 1,
                         border: '1px solid',
-                        borderColor: 'divider'
+                        borderColor: 'divider',
+                        bgcolor: (t) =>
+                          t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
                       }}
                     >
                       <ListItemIcon>
@@ -2322,7 +2377,13 @@ const StockTransferPage = () => {
           )}
         </DialogContent>
         
-        <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
+        <DialogActions
+          sx={{
+            p: 3,
+            bgcolor: (t) =>
+              t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+          }}
+        >
           <Button 
             onClick={() => setPreviewDialogOpen(false)} 
             variant="contained"

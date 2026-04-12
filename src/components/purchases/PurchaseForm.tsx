@@ -33,6 +33,7 @@ import {
   LinearProgress,
   TableFooter,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -818,7 +819,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   // Render different steps of the form
   const renderInvoiceDetails = () => (
     <Box>
-      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2 }}>
         <Box display="flex" alignItems="center" mb={2}>
           <ReceiptIcon color="primary" sx={{ mr: 1.5 }} />
           <Typography variant="subtitle1" fontWeight={600} color="primary">
@@ -1006,7 +1007,13 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       </Paper>
       
       {/* Quick Summary Card */}
-      <Card elevation={0} sx={{ bgcolor: '#f0f7ff', borderRadius: 2 }}>
+      <Card
+        elevation={0}
+        sx={{
+          borderRadius: 2,
+          bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.info.main, 0.15) : '#f0f7ff'),
+        }}
+      >
         <CardContent>
           <Box display="flex" alignItems="center" mb={1}>
             <InfoIcon color="primary" sx={{ mr: 1 }} />
@@ -1106,7 +1113,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
           
           {/* Step 1: Select Product - Enhanced with search */}
           <Box>
-            <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2 }}>
+            <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2 }}>
               <Typography variant="subtitle2" color="primary" gutterBottom>
                 Step 1: Select Product
               </Typography>
@@ -1199,7 +1206,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
               
               {/* Step 2: Enter Quantity and Price Details - Improved layout */}
               <Box>
-                <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2 }}>
+                <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2 }}>
                   <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                     <CalculateIcon fontSize="small" sx={{ mr: 1 }} />
                     Step 2: Enter Quantity and Pricing
@@ -1533,7 +1540,15 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       
       {/* Products table - Keep the existing implementation */}
       <Paper elevation={0} sx={{ borderRadius: 2, border: '1px solid #e0e0e0' }}>
-        <Box p={2} display="flex" justifyContent="space-between" alignItems="center" bgcolor="#f8f9fa">
+        <Box
+          p={2}
+          display="flex"
+          justifyContent="space-between"
+          alignItems="center"
+          sx={{
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'),
+          }}
+        >
           <Typography variant="h6" fontWeight={600}>
             Added Products {purchaseData.products.length > 0 && `(${purchaseData.products.length})`}
           </Typography>
@@ -1640,7 +1655,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                 ))}
                 
                 {/* Total Row */}
-                <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+                <TableRow sx={{ bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
                   <TableCell colSpan={6} align="right">
                     <Typography variant="subtitle2">Subtotal:</Typography>
                   </TableCell>
@@ -1652,7 +1667,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                 </TableRow>
                 
                 {purchaseData.gstType !== 'GST Exempted' && (
-                  <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+                  <TableRow sx={{ bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
                     <TableCell colSpan={6} align="right">
                       <Typography variant="subtitle2">
                         {purchaseData.gstType} ({purchaseData.gstPercentage}%):
@@ -1666,7 +1681,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                   </TableRow>
                 )}
                 
-                <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+                <TableRow sx={{ bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
                   <TableCell colSpan={6} align="right">
                     <Typography variant="subtitle1" fontWeight="bold">Grand Total:</Typography>
                   </TableCell>
@@ -1692,7 +1707,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   
   const renderSummary = () => (
     <Box>
-      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2 }}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
           <Box display="flex" alignItems="center">
             <ReceiptIcon color="primary" sx={{ mr: 1.5 }} />
@@ -1805,7 +1820,12 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       </Paper>
       
       <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden' }}>
-        <Box p={2} bgcolor="#f5f5f5">
+        <Box
+          p={2}
+          sx={{
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : '#f5f5f5'),
+          }}
+        >
           <Typography variant="subtitle2" fontWeight="medium">
             Products in this Purchase
           </Typography>
@@ -1846,7 +1866,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
               ))}
               
               {/* Total row */}
-              <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+              <TableRow sx={{ bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
                 <TableCell colSpan={4} />
                 <TableCell align="right">
                   <Typography variant="subtitle2">Subtotal</Typography>
@@ -1885,7 +1905,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       
       {/* Serial Numbers Section - Show if there are any serial numbers */}
       {purchaseData.products.some(p => p.serialNumbers && p.serialNumbers.length > 0) && (
-        <Paper elevation={0} sx={{ p: 3, mt: 3, borderRadius: 2, bgcolor: '#f8f9fa' }}>
+        <Paper elevation={0} sx={{ p: 3, mt: 3, borderRadius: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
           <Typography variant="subtitle1" fontWeight={600} color="primary" gutterBottom>
             Serial Numbers
           </Typography>
@@ -1965,12 +1985,12 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       </Box>
       
       <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3, mb: 4 }}>
-        <Paper elevation={0} sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, flex: 1 }}>
+        <Paper elevation={0} sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, flex: 1 }}>
           <Typography variant="subtitle2" color="text.secondary" gutterBottom>Supplier</Typography>
           <Typography variant="body1" fontWeight="medium">{purchaseData.party.name}</Typography>
           <Typography variant="body2" color="text.secondary">GST Type: {purchaseData.gstType}</Typography>
         </Paper>
-        <Paper elevation={0} sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, flex: 1 }}>
+        <Paper elevation={0} sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, flex: 1 }}>
           <Typography variant="subtitle2" color="text.secondary" gutterBottom>Billed To</Typography>
           <Typography variant="body1" fontWeight="medium">{purchaseData.company}</Typography>
           <Typography variant="body2" color="text.secondary">
@@ -1988,7 +2008,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       <TableContainer component={Paper} variant="outlined" sx={{ mb: 4, borderRadius: 2 }}>
         <Table>
           <TableHead>
-            <TableRow sx={{ bgcolor: '#f5f5f5' }}>
+            <TableRow sx={{ bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : '#f5f5f5') }}>
               <TableCell sx={{ fontWeight: 'bold' }}>Product</TableCell>
               <TableCell align="center" sx={{ fontWeight: 'bold' }}>Type</TableCell>
               <TableCell align="center" sx={{ fontWeight: 'bold' }}>Quantity</TableCell>
@@ -2052,7 +2072,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       
       {/* Serial Numbers Section */}
       {purchaseData.products.some(p => p.serialNumbers && p.serialNumbers.length > 0) && (
-        <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: '#f8f9fa', mb: 4 }}>
+        <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), mb: 4 }}>
           <Typography variant="subtitle1" fontWeight={600} color="primary" gutterBottom>
             Serial Numbers
           </Typography>

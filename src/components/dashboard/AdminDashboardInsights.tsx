@@ -38,11 +38,6 @@ import {
   YAxis,
 } from 'recharts';
 import { useRouter } from 'next/navigation';
-import { CRM_ACCENT, CRM_ORANGE_GHOST } from '@/components/Layout/crm-theme';
-
-/** Softer than sidebar outline — matches Today’s Pulse chrome. */
-const INSIGHTS_PANEL_SHADOW =
-  '0 0 0 1px rgba(241, 115, 54, 0.16), 0 0 14px rgba(241, 115, 54, 0.07), 0 4px 14px rgba(15, 23, 42, 0.05)';
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -188,6 +183,12 @@ type BookedSummary = {
 
 export default function AdminDashboardInsights({ refreshSignal }: { refreshSignal: number }) {
   const theme = useTheme();
+  const accent = theme.palette.primary.main;
+  const orangeGhost = alpha(accent, theme.palette.mode === 'light' ? 0.12 : 0.18);
+  const insightsShadow = `0 0 0 1px ${alpha(accent, 0.16)}, 0 0 14px ${alpha(accent, 0.07)}, 0 4px 14px ${alpha(
+    theme.palette.text.primary,
+    theme.palette.mode === 'light' ? 0.05 : 0.12,
+  )}`;
   const router = useRouter();
   const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const [loading, setLoading] = useState(true);
@@ -370,7 +371,7 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
           >
             Performance
           </Typography>
-          <Typography variant="h5" fontWeight={800} sx={{ letterSpacing: -0.5 }}>
+          <Typography variant="h5" fontWeight={800} sx={{ letterSpacing: -0.5, color: 'text.primary' }}>
             Sales &amp; pipeline
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -396,15 +397,15 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
               height: '100%',
               minHeight: 380,
               borderRadius: 3,
-              border: '1px solid rgba(241, 115, 54, 0.18)',
+              border: `1px solid ${alpha(accent, 0.18)}`,
               borderLeft: '3px solid',
-              borderLeftColor: CRM_ACCENT,
+              borderLeftColor: accent,
               overflow: 'hidden',
               background:
                 theme.palette.mode === 'dark'
-                  ? alpha(CRM_ACCENT, 0.07)
-                  : `linear-gradient(145deg, #ffffff 0%, ${CRM_ORANGE_GHOST} 42%, #f8fafc 100%)`,
-              boxShadow: theme.palette.mode === 'dark' ? 'none' : INSIGHTS_PANEL_SHADOW,
+                  ? alpha(accent, 0.07)
+                  : `linear-gradient(145deg, ${theme.palette.background.paper} 0%, ${orangeGhost} 42%, #f8fafc 100%)`,
+              boxShadow: theme.palette.mode === 'dark' ? 'none' : insightsShadow,
             }}
           >
             <Box
@@ -426,14 +427,14 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
                   borderRadius: 2,
                   display: 'grid',
                   placeItems: 'center',
-                  bgcolor: alpha(CRM_ACCENT, 0.14),
-                  color: CRM_ACCENT,
+                  bgcolor: alpha(accent, 0.14),
+                  color: accent,
                 }}
               >
                 <BarChartIcon fontSize="small" />
               </Box>
               <Box>
-                <Typography variant="subtitle1" fontWeight={700}>
+                <Typography variant="subtitle1" fontWeight={700} color="text.primary">
                   Center-wise sales (month)
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
@@ -566,12 +567,16 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
                         <stop offset="100%" stopColor={barFill} stopOpacity={0.55} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 6" vertical={false} stroke={alpha('#64748b', 0.25)} />
+                    <CartesianGrid
+                      strokeDasharray="3 6"
+                      vertical={false}
+                      stroke={alpha(theme.palette.text.secondary, theme.palette.mode === 'light' ? 0.35 : 0.45)}
+                    />
                     <XAxis
                       dataKey="name"
                       tick={{ fontSize: 11, fill: theme.palette.text.secondary }}
                       tickLine={false}
-                      axisLine={{ stroke: alpha('#64748b', 0.35) }}
+                      axisLine={{ stroke: alpha(theme.palette.text.secondary, 0.45) }}
                       interval={0}
                       angle={chartData.length > 5 ? -28 : 0}
                       textAnchor={chartData.length > 5 ? 'end' : 'middle'}
@@ -591,7 +596,10 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
                       orientation="right"
                       domain={[0, 'auto']}
                       tickFormatter={(v) => `${Math.round(v)}%`}
-                      tick={{ fontSize: 11, fill: '#b71c1c' }}
+                      tick={{
+                        fontSize: 11,
+                        fill: theme.palette.mode === 'dark' ? theme.palette.error.light : '#b71c1c',
+                      }}
                       tickLine={false}
                       axisLine={false}
                       width={40}
@@ -630,7 +638,13 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
                         );
                       }}
                     />
-                    <Legend wrapperStyle={{ paddingTop: 4, fontSize: 12 }} />
+                    <Legend
+                      wrapperStyle={{
+                        paddingTop: 4,
+                        fontSize: 12,
+                        color: theme.palette.text.secondary,
+                      }}
+                    />
                     <Line
                       yAxisId="right"
                       type="monotone"
@@ -668,15 +682,15 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
               height: '100%',
               minHeight: 380,
               borderRadius: 3,
-              border: '1px solid rgba(241, 115, 54, 0.18)',
+              border: `1px solid ${alpha(accent, 0.18)}`,
               borderLeft: '3px solid',
-              borderLeftColor: CRM_ACCENT,
+              borderLeftColor: accent,
               overflow: 'hidden',
               background:
                 theme.palette.mode === 'dark'
-                  ? alpha(CRM_ACCENT, 0.06)
-                  : `linear-gradient(160deg, #ffffff 0%, ${CRM_ORANGE_GHOST} 38%, #fffefb 100%)`,
-              boxShadow: theme.palette.mode === 'dark' ? 'none' : INSIGHTS_PANEL_SHADOW,
+                  ? alpha(accent, 0.06)
+                  : `linear-gradient(160deg, ${theme.palette.background.paper} 0%, ${orangeGhost} 38%, #fffefb 100%)`,
+              boxShadow: theme.palette.mode === 'dark' ? 'none' : insightsShadow,
             }}
           >
             <Box
@@ -700,14 +714,14 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
                     borderRadius: 2,
                     display: 'grid',
                     placeItems: 'center',
-                    bgcolor: alpha(CRM_ACCENT, 0.14),
-                    color: CRM_ACCENT,
+                    bgcolor: alpha(accent, 0.14),
+                    color: accent,
                   }}
                 >
                   <BookmarkAddedIcon fontSize="small" />
                 </Box>
                 <Box>
-                  <Typography variant="subtitle1" fontWeight={700}>
+                  <Typography variant="subtitle1" fontWeight={700} color="text.primary">
                     Booked pipeline
                   </Typography>
                   <Typography variant="caption" color="text.secondary" display="block">

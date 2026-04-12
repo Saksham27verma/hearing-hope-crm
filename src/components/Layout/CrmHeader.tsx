@@ -1,12 +1,15 @@
 'use client';
 
 import type { CSSProperties } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useTheme } from '@mui/material/styles';
+import { alpha } from '@mui/material/styles';
 import { Menu, PanelLeftClose, Sparkles, LogOut, Search } from 'lucide-react';
 import type { UserProfile } from '@/context/AuthContext';
+import ThemeToggle from '@/components/theme/ThemeToggle';
 import { getCrmBreadcrumbs } from './crm-breadcrumbs';
-import { CRM_ACCENT, CRM_ACCENT_DEEP, CRM_PAGE_BG, HEADER_HEIGHT, RADIUS_XL, RADIUS_2XL } from './crm-theme';
+import { getCrmShellTokens, HEADER_HEIGHT, RADIUS_XL, RADIUS_2XL } from './crm-theme';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 export type CrmHeaderProps = {
@@ -27,8 +30,6 @@ export type CrmHeaderProps = {
   onSignOut: () => void;
 };
 
-const headerShadow = '0 1px 0 rgba(15, 23, 42, 0.06)';
-
 export default function CrmHeader({
   shouldHideSidebar,
   isDesktop,
@@ -46,6 +47,8 @@ export default function CrmHeader({
   userPhotoURL,
   onSignOut,
 }: CrmHeaderProps) {
+  const muiTheme = useTheme();
+  const shell = useMemo(() => getCrmShellTokens(muiTheme), [muiTheme]);
   const [searchHint, setSearchHint] = useState('⌘K');
 
   useEffect(() => {
@@ -76,12 +79,13 @@ export default function CrmHeader({
     gap: 16,
     padding: '0 20px',
     zIndex: 1150,
-    transition: 'left 0.32s cubic-bezier(0.4, 0, 0.2, 1)',
-    backgroundColor: 'rgba(250, 250, 250, 0.72)',
+    transition:
+      'left 0.32s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.28s ease, border-color 0.28s ease, box-shadow 0.28s ease',
+    backgroundColor: shell.headerGlass,
     backdropFilter: 'blur(12px)',
     WebkitBackdropFilter: 'blur(12px)',
-    borderBottom: '1px solid rgba(15, 23, 42, 0.06)',
-    boxShadow: headerShadow,
+    borderBottom: `1px solid ${shell.headerBorderBottom}`,
+    boxShadow: shell.headerShadow,
   };
 
   const displayName = userProfile?.displayName || userProfile?.email?.split('@')[0] || 'User';
@@ -94,18 +98,32 @@ export default function CrmHeader({
     gap: 10,
     padding: '10px 16px',
     borderRadius: RADIUS_XL,
-    border: '1px solid rgba(15, 23, 42, 0.08)',
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-    boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
+    border: `1px solid ${shell.surfaceBorder}`,
+    backgroundColor: alpha(muiTheme.palette.background.paper, muiTheme.palette.mode === 'light' ? 0.85 : 0.55),
+    boxShadow: shell.surfaceShadowSm,
     cursor: 'pointer',
-    transition: 'box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease',
+    transition: 'box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease, background-color 0.28s ease',
   };
+
+  const showDesktopSearch = isDesktop && !enquiryModeTitle;
+  /** Keeps universal search from overlapping the theme toggle when the sidebar is expanded. */
+  const searchColumnMaxWidth = `min(420px, max(140px, calc(100vw - ${leftOffsetPx}px - 300px)))`;
 
   return (
     <header style={headerStyle}>
       <div
         style={{
           flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          minWidth: 0,
+          width: '100%',
+        }}
+      >
+      <div
+        style={{
+          flex: '1 1 0',
           display: 'flex',
           alignItems: 'center',
           gap: 16,
@@ -121,24 +139,28 @@ export default function CrmHeader({
               width: 40,
               height: 40,
               borderRadius: RADIUS_XL,
-              border: '1px solid rgba(15, 23, 42, 0.08)',
-              background: '#fff',
-              color: '#334155',
+              border: `1px solid ${shell.surfaceBorder}`,
+              background: muiTheme.palette.background.paper,
+              color: shell.sidebarText,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0,
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-              boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)',
+              transition:
+                'transform 0.2s ease, box-shadow 0.2s ease, background-color 0.28s ease, border-color 0.28s ease',
+              boxShadow: shell.surfaceShadowSm,
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'scale(1.04)';
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(15, 23, 42, 0.08)';
+              e.currentTarget.style.boxShadow =
+                muiTheme.palette.mode === 'light'
+                  ? '0 4px 12px rgba(15, 23, 42, 0.08)'
+                  : '0 4px 12px rgba(0, 0, 0, 0.45)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = 'scale(1)';
-              e.currentTarget.style.boxShadow = '0 1px 2px rgba(15, 23, 42, 0.05)';
+              e.currentTarget.style.boxShadow = shell.surfaceShadowSm;
             }}
           >
             {isDesktop && sidebarExpanded ? (
@@ -165,17 +187,18 @@ export default function CrmHeader({
             return (
               <span key={`${c.href}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                 {i > 0 && (
-                  <span style={{ color: 'rgba(15, 23, 42, 0.25)', fontSize: 12, fontWeight: 500 }}>/</span>
+                  <span style={{ color: shell.crumbSeparator, fontSize: 12, fontWeight: 500 }}>/</span>
                 )}
                 {isLast ? (
                   <span
                     style={{
                       fontSize: 14,
                       fontWeight: 600,
-                      color: '#0f172a',
+                      color: shell.crumbCurrent,
                       whiteSpace: 'nowrap',
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
+                      transition: 'color 0.28s ease',
                     }}
                   >
                     {c.label}
@@ -186,15 +209,15 @@ export default function CrmHeader({
                     style={{
                       fontSize: 13,
                       fontWeight: 500,
-                      color: 'rgba(15, 23, 42, 0.45)',
+                      color: shell.crumbLink,
                       whiteSpace: 'nowrap',
                       transition: 'color 0.2s ease',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.color = CRM_ACCENT;
+                      e.currentTarget.style.color = shell.crumbLinkHover;
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.color = 'rgba(15, 23, 42, 0.45)';
+                      e.currentTarget.style.color = shell.crumbLink;
                     }}
                   >
                     {c.label}
@@ -206,44 +229,43 @@ export default function CrmHeader({
         </nav>
       </div>
 
-      {isDesktop && !enquiryModeTitle && (
+      {showDesktopSearch && (
         <div
           style={{
-            position: 'absolute',
-            left: '50%',
-            top: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: 'min(420px, calc(100vw - 32px - 320px))',
-            pointerEvents: 'none',
+            flex: '0 1 420px',
+            minWidth: 120,
+            maxWidth: searchColumnMaxWidth,
           }}
         >
           <button
             type="button"
             onClick={onOpenSearch}
-            style={{ ...searchFieldStyle, pointerEvents: 'auto' }}
+            style={{ ...searchFieldStyle, width: '100%', maxWidth: '100%' }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(241, 115, 54, 0.35)';
-              e.currentTarget.style.boxShadow = '0 4px 16px rgba(241, 115, 54, 0.08)';
+              e.currentTarget.style.borderColor = alpha(shell.accent, 0.35);
+              e.currentTarget.style.boxShadow = `0 4px 16px ${alpha(shell.accent, 0.12)}`;
               e.currentTarget.style.transform = 'scale(1.01)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(15, 23, 42, 0.08)';
-              e.currentTarget.style.boxShadow = '0 1px 2px rgba(15, 23, 42, 0.04)';
+              e.currentTarget.style.borderColor = shell.surfaceBorder;
+              e.currentTarget.style.boxShadow = shell.surfaceShadowSm;
               e.currentTarget.style.transform = 'scale(1)';
             }}
           >
-            <span style={{ fontSize: 14, color: 'rgba(15, 23, 42, 0.4)', fontWeight: 500 }}>Search CRM…</span>
+            <span style={{ fontSize: 14, color: shell.crumbMuted, fontWeight: 500 }}>Search CRM…</span>
             <span
               style={{
                 marginLeft: 'auto',
                 fontSize: 11,
                 fontWeight: 600,
-                color: 'rgba(15, 23, 42, 0.35)',
+                color: shell.crumbMuted,
                 padding: '4px 8px',
                 borderRadius: 8,
-                border: '1px solid rgba(15, 23, 42, 0.08)',
-                background: CRM_PAGE_BG,
+                border: `1px solid ${shell.surfaceBorder}`,
+                background: shell.pageBg,
                 letterSpacing: '0.02em',
+                transition: 'background-color 0.28s ease, border-color 0.28s ease',
+                flexShrink: 0,
               }}
             >
               {searchHint}
@@ -254,14 +276,17 @@ export default function CrmHeader({
 
       <div
         style={{
-          marginLeft: 'auto',
+          flex: showDesktopSearch ? '1 1 0' : '0 0 auto',
+          minWidth: 0,
+          marginLeft: showDesktopSearch ? undefined : 'auto',
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'flex-end',
           gap: 12,
           flexShrink: 0,
         }}
       >
-        {!isDesktop && !enquiryModeTitle && (
+        {!isDesktop && !enquiryModeTitle ? (
           <button
             type="button"
             aria-label={`Open search (${searchHint})`}
@@ -270,14 +295,14 @@ export default function CrmHeader({
               width: 40,
               height: 40,
               borderRadius: RADIUS_XL,
-              border: '1px solid rgba(15, 23, 42, 0.08)',
-              background: '#fff',
-              color: '#334155',
+              border: `1px solid ${shell.surfaceBorder}`,
+              background: muiTheme.palette.background.paper,
+              color: shell.sidebarText,
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              transition: 'transform 0.2s ease',
+              transition: 'transform 0.2s ease, background-color 0.28s ease',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = 'scale(1.06)';
@@ -288,7 +313,9 @@ export default function CrmHeader({
           >
             <Search size={20} strokeWidth={1.75} />
           </button>
-        )}
+        ) : null}
+
+        <ThemeToggle />
 
         <NotificationBell />
 
@@ -306,17 +333,17 @@ export default function CrmHeader({
             fontSize: 14,
             fontWeight: 600,
             color: '#fff',
-            background: `linear-gradient(135deg, ${CRM_ACCENT} 0%, ${CRM_ACCENT_DEEP} 100%)`,
-            boxShadow: '0 4px 14px rgba(241, 115, 54, 0.35), 0 1px 2px rgba(0,0,0,0.06)',
+            background: `linear-gradient(135deg, ${shell.accent} 0%, ${shell.accentDeep} 100%)`,
+            boxShadow: `0 4px 14px ${alpha(shell.accent, 0.35)}, 0 1px 2px rgba(0,0,0,0.06)`,
             transition: 'transform 0.2s ease, box-shadow 0.2s ease',
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'scale(1.03)';
-            e.currentTarget.style.boxShadow = '0 8px 22px rgba(241, 115, 54, 0.4), 0 2px 4px rgba(0,0,0,0.06)';
+            e.currentTarget.style.boxShadow = `0 8px 22px ${alpha(shell.accent, 0.4)}, 0 2px 4px rgba(0,0,0,0.06)`;
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.transform = 'scale(1)';
-            e.currentTarget.style.boxShadow = '0 4px 14px rgba(241, 115, 54, 0.35), 0 1px 2px rgba(0,0,0,0.06)';
+            e.currentTarget.style.boxShadow = `0 4px 14px ${alpha(shell.accent, 0.35)}, 0 1px 2px rgba(0,0,0,0.06)`;
           }}
         >
           <Sparkles size={17} strokeWidth={1.75} />
@@ -338,19 +365,22 @@ export default function CrmHeader({
             padding: '4px 4px 4px 4px',
             paddingRight: 12,
             borderRadius: RADIUS_2XL,
-            border: '1px solid rgba(15, 23, 42, 0.08)',
-            background: '#fff',
+            border: `1px solid ${shell.surfaceBorder}`,
+            background: muiTheme.palette.background.paper,
             cursor: 'pointer',
-            boxShadow: '0 1px 3px rgba(15, 23, 42, 0.06)',
-            transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+            boxShadow: shell.surfaceShadowSm,
+            transition: 'transform 0.2s ease, box-shadow 0.2s ease, background-color 0.28s ease',
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = 'scale(1.02)';
-            e.currentTarget.style.boxShadow = '0 4px 14px rgba(15, 23, 42, 0.1)';
+            e.currentTarget.style.boxShadow =
+              muiTheme.palette.mode === 'light'
+                ? '0 4px 14px rgba(15, 23, 42, 0.1)'
+                : '0 4px 14px rgba(0, 0, 0, 0.4)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.transform = 'scale(1)';
-            e.currentTarget.style.boxShadow = '0 1px 3px rgba(15, 23, 42, 0.06)';
+            e.currentTarget.style.boxShadow = shell.surfaceShadowSm;
           }}
         >
           <span style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}>
@@ -372,7 +402,7 @@ export default function CrmHeader({
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  background: `linear-gradient(145deg, ${CRM_ACCENT}, ${CRM_ACCENT_DEEP})`,
+                  background: `linear-gradient(145deg, ${shell.accent}, ${shell.accentDeep})`,
                   color: '#fff',
                   fontSize: 15,
                   fontWeight: 700,
@@ -390,7 +420,7 @@ export default function CrmHeader({
                 height: 11,
                 borderRadius: '50%',
                 background: '#22c55e',
-                border: '2px solid #fff',
+                border: `2px solid ${muiTheme.palette.background.paper}`,
                 boxShadow: '0 0 0 1px rgba(34, 197, 94, 0.25)',
               }}
               title="Online"
@@ -401,17 +431,19 @@ export default function CrmHeader({
             style={{
               fontSize: 14,
               fontWeight: 600,
-              color: '#0f172a',
+              color: shell.crumbCurrent,
               maxWidth: 120,
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
               display: isDesktop ? 'inline' : 'none',
+              transition: 'color 0.28s ease',
             }}
           >
             {displayName}
           </span>
         </button>
+      </div>
       </div>
 
       {profileMenuOpen && (
@@ -433,16 +465,22 @@ export default function CrmHeader({
               zIndex: 1300,
               minWidth: 240,
               borderRadius: RADIUS_2XL,
-              background: '#fff',
-              border: '1px solid rgba(15, 23, 42, 0.08)',
-              boxShadow: '0 12px 40px rgba(15, 23, 42, 0.12), 0 4px 12px rgba(15, 23, 42, 0.06)',
+              background: muiTheme.palette.background.paper,
+              border: `1px solid ${shell.surfaceBorder}`,
+              boxShadow:
+                muiTheme.palette.mode === 'light'
+                  ? '0 12px 40px rgba(15, 23, 42, 0.12), 0 4px 12px rgba(15, 23, 42, 0.06)'
+                  : '0 12px 40px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35)',
               overflow: 'hidden',
+              transition: 'background-color 0.28s ease, border-color 0.28s ease',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ padding: '18px 18px 14px', borderBottom: '1px solid rgba(15, 23, 42, 0.06)' }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{userProfile?.displayName || 'User'}</div>
-              <div style={{ fontSize: 13, color: 'rgba(15, 23, 42, 0.5)', marginTop: 4 }}>{userProfile?.email}</div>
+            <div style={{ padding: '18px 18px 14px', borderBottom: `1px solid ${shell.headerBorderBottom}` }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: shell.crumbCurrent }}>
+                {userProfile?.displayName || 'User'}
+              </div>
+              <div style={{ fontSize: 13, color: shell.crumbMuted, marginTop: 4 }}>{userProfile?.email}</div>
               <div
                 style={{
                   marginTop: 10,
@@ -450,7 +488,7 @@ export default function CrmHeader({
                   fontWeight: 600,
                   textTransform: 'uppercase',
                   letterSpacing: '0.06em',
-                  color: CRM_ACCENT,
+                  color: shell.accent,
                 }}
               >
                 {userProfile?.role} access
@@ -470,11 +508,11 @@ export default function CrmHeader({
                 cursor: 'pointer',
                 fontSize: 14,
                 fontWeight: 600,
-                color: CRM_ACCENT,
+                color: shell.accent,
                 transition: 'background 0.2s ease',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(241, 115, 54, 0.08)';
+                e.currentTarget.style.background = alpha(shell.accent, 0.08);
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = 'transparent';

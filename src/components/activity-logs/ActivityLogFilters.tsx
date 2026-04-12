@@ -28,7 +28,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { collection, getDocs, query, limit } from 'firebase/firestore';
 import { db } from '@/firebase/config';
-import { CRM_ACCENT } from '@/components/Layout/crm-theme';
+import { useTheme } from '@mui/material/styles';
 import type { ActivityAction, ActivityModule } from '@/lib/activityLogger';
 
 export interface FilterState {
@@ -70,6 +70,8 @@ interface UserOption {
 }
 
 export default function ActivityLogFilters({ filters, onChange, onReset, disabled }: Props) {
+  const theme = useTheme();
+  const primaryMain = theme.palette.primary.main;
   const [expanded, setExpanded] = useState(false);
   const [users, setUsers] = useState<UserOption[]>([]);
 
@@ -162,10 +164,10 @@ export default function ActivityLogFilters({ filters, onChange, onReset, disable
               disabled={disabled}
               sx={{
                 whiteSpace: 'nowrap',
-                bgcolor: activeFilterCount > 0 ? alpha(CRM_ACCENT, 0.1) : undefined,
-                color: activeFilterCount > 0 ? CRM_ACCENT : undefined,
-                borderColor: activeFilterCount > 0 ? alpha(CRM_ACCENT, 0.4) : undefined,
-                '&:hover': { bgcolor: alpha(CRM_ACCENT, 0.15) },
+                bgcolor: activeFilterCount > 0 ? alpha(primaryMain, 0.1) : undefined,
+                color: activeFilterCount > 0 ? primaryMain : undefined,
+                borderColor: activeFilterCount > 0 ? alpha(primaryMain, 0.4) : undefined,
+                '&:hover': { bgcolor: alpha(primaryMain, 0.15) },
                 fontWeight: 600,
               }}
             >
@@ -180,8 +182,8 @@ export default function ActivityLogFilters({ filters, onChange, onReset, disable
                     minWidth: 18,
                     fontSize: 10,
                     fontWeight: 700,
-                    bgcolor: CRM_ACCENT,
-                    color: '#fff',
+                    bgcolor: primaryMain,
+                    color: theme.palette.primary.contrastText,
                     '& .MuiChip-label': { px: 0.5 },
                   }}
                 />

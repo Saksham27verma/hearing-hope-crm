@@ -29,6 +29,7 @@ import {
   Card,
   CardContent,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -872,7 +873,7 @@ export default function MaterialInPage() {
 
   return (
     <Box p={3}>
-      <Typography variant="h5" fontWeight="bold" mb={1}>
+      <Typography variant="h5" fontWeight="bold" mb={1} color="text.primary">
         Material In
       </Typography>
       <Typography variant="body1" color="text.secondary" mb={4}>
@@ -1128,9 +1129,18 @@ export default function MaterialInPage() {
       {/* Materials Table */}
       <Paper elevation={0} variant="outlined" sx={{ borderRadius: 2 }}>
         <TableContainer>
-          <Table>
+          <Table stickyHeader>
             <TableHead>
-              <TableRow>
+              <TableRow
+                sx={{
+                  '& th': {
+                    fontWeight: 700,
+                    bgcolor: (t) =>
+                      t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : t.palette.grey[100],
+                    color: 'text.primary',
+                  },
+                }}
+              >
                 <TableCell>Date</TableCell>
                 <TableCell>Challan #</TableCell>
                 <TableCell>Supplier</TableCell>
@@ -1144,15 +1154,29 @@ export default function MaterialInPage() {
               {filteredMaterials.length > 0 ? (
                 filteredMaterials
                   .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                  .map((material) => (
+                  .map((material, rowIndex) => (
                     <TableRow 
                       key={material.id} 
                       hover
                       sx={{ 
-                        backgroundColor: material.convertedToPurchase ? 'rgba(211, 47, 47, 0.1)' : 'inherit',
+                        bgcolor: (t) => {
+                          if (material.convertedToPurchase) {
+                            return alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.18 : 0.1);
+                          }
+                          const alt = rowIndex % 2 === 1;
+                          if (t.palette.mode === 'dark') {
+                            return alt ? alpha(t.palette.common.white, 0.05) : t.palette.background.paper;
+                          }
+                          return alt ? t.palette.grey[50] : t.palette.background.paper;
+                        },
                         '&:hover': {
-                          backgroundColor: material.convertedToPurchase ? 'rgba(211, 47, 47, 0.2)' : 'rgba(0, 0, 0, 0.04)'
-                        }
+                          bgcolor: (t) => {
+                            if (material.convertedToPurchase) {
+                              return alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.28 : 0.2);
+                            }
+                            return t.palette.action.hover;
+                          },
+                        },
                       }}
                     >
                       <TableCell>{formatDate(material.receivedDate)}</TableCell>
@@ -1249,7 +1273,17 @@ export default function MaterialInPage() {
           page={page}
           onPageChange={handleChangePage}
           onRowsPerPageChange={handleChangeRowsPerPage}
-          sx={{ px: 2 }}
+          sx={{
+            px: 2,
+            bgcolor: 'background.paper',
+            borderTop: 1,
+            borderColor: 'divider',
+            color: 'text.primary',
+            '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+              color: 'text.primary',
+            },
+            '& .MuiTablePagination-actions button': { color: 'primary.main' },
+          }}
         />
       </Paper>
       

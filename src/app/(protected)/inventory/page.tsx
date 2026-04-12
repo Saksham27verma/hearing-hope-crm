@@ -37,6 +37,8 @@ import {
   Switch,
   FormControlLabel,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import {
   Add as AddIcon,
   Search as SearchIcon,
@@ -210,6 +212,31 @@ const normalizeSerialNumber = (serialNumber: string) =>
     .trim()
     .replace(/^['"`\s]+|['"`\s]+$/g, '')
     .toUpperCase();
+
+/** MUI `*.lighter` stays very pale in dark mode and reads as harsh white tiles on charcoal cards. */
+function inventoryStatTileBg(theme: Theme, tone: 'success' | 'info' | 'primary' | 'warning' | 'grey') {
+  if (theme.palette.mode === 'dark') {
+    if (tone === 'grey') return alpha(theme.palette.common.white, 0.1);
+    return alpha(theme.palette[tone].main, 0.22);
+  }
+  const light: Record<'success' | 'info' | 'primary' | 'warning' | 'grey', string> = {
+    success: 'success.lighter',
+    info: 'info.lighter',
+    primary: 'primary.lighter',
+    warning: 'warning.lighter',
+    grey: theme.palette.grey[100],
+  };
+  return light[tone];
+}
+
+function inventoryMutedLabelSx(theme: Theme) {
+  return {
+    color:
+      theme.palette.mode === 'dark'
+        ? alpha(theme.palette.common.white, 0.78)
+        : theme.palette.text.secondary,
+  } as const;
+}
 
 export default function InventoryPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
@@ -2301,7 +2328,11 @@ export default function InventoryPage() {
               Total Items
             </Typography>
           </Box>
-          <Typography variant="h4" fontWeight="bold" color="text.primary">
+          <Typography
+            variant="h4"
+            fontWeight="bold"
+            sx={(t) => ({ color: t.palette.mode === 'dark' ? t.palette.common.white : t.palette.text.primary })}
+          >
             {stats.totalItems}
           </Typography>
         </Card>
@@ -2392,7 +2423,7 @@ export default function InventoryPage() {
       <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
         <Box display="flex" alignItems="center" mb={3}>
           <BusinessIcon color="primary" sx={{ mr: 2 }} />
-          <Typography variant="h6" fontWeight="600" color="text.primary">
+          <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock Position by Manufacturer
           </Typography>
         </Box>
@@ -2442,7 +2473,7 @@ export default function InventoryPage() {
                           <Typography variant="subtitle1" fontWeight="600" color="text.primary">
                             {company}
                           </Typography>
-                          <Typography variant="body2" color="text.secondary">
+                          <Typography variant="body2" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
                             {companyStats.total} items total
                           </Typography>
                         </Box>
@@ -2456,49 +2487,49 @@ export default function InventoryPage() {
                     </Box>
                     
                     <Box display="grid" gridTemplateColumns={isRestrictedUser ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)'} gap={1}>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
+                      <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'success') })}>
                         <Typography variant="h6" fontWeight="bold" color="success.main">
                           {companyStats.inStock}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                           In Stock
                         </Typography>
                       </Box>
                       {!isRestrictedUser && (
-                        <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
+                        <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'info') })}>
                           <Typography variant="h6" fontWeight="bold" color="info.main">
                             {companyStats.sold}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                             Sold
                           </Typography>
                         </Box>
                       )}
                       {!isRestrictedUser && (
-                        <Box textAlign="center" sx={{ p: 1, bgcolor: 'grey.100', borderRadius: 1 }}>
+                        <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'grey') })}>
                           <Typography variant="h6" fontWeight="bold" color="text.primary">
                             {companyStats.total}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                             Total
                           </Typography>
                         </Box>
                       )}
                       {!isRestrictedUser && (
                         <>
-                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'primary') })}>
                             <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
                               {formatCurrency(companyStats.dealerValue)}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary">
+                            <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                               Dealer
                             </Typography>
                           </Box>
-                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
+                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'warning') })}>
                             <Typography variant="body2" fontWeight="bold" color="warning.main" noWrap>
                               {formatCurrency(companyStats.mrpValue)}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary">
+                            <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                               MRP
                             </Typography>
                           </Box>
@@ -2517,7 +2548,7 @@ export default function InventoryPage() {
       <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
         <Box display="flex" alignItems="center" mb={3}>
           <BusinessIcon color="secondary" sx={{ mr: 2 }} />
-          <Typography variant="h6" fontWeight="600" color="text.primary">
+          <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock Position by Company
           </Typography>
         </Box>
@@ -2590,7 +2621,7 @@ export default function InventoryPage() {
                           <Typography variant="subtitle1" fontWeight="700" color="text.primary">
                             {company.name}
                           </Typography>
-                          <Typography variant="body2" color="text.secondary">
+                          <Typography variant="body2" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
                             {company.totalCount} items
                           </Typography>
                         </Box>
@@ -2599,26 +2630,33 @@ export default function InventoryPage() {
                     
                     {!isRestrictedUser && (
                       <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1} mt={2}>
-                        <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                        <Box textAlign="center" sx={(t) => ({ p: 1.5, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'primary') })}>
                           <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
                             {formatCurrency(company.dealerValue)}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                             Dealer Value
                           </Typography>
                         </Box>
-                        <Box textAlign="center" sx={{ p: 1.5, bgcolor: 'success.lighter', borderRadius: 1 }}>
+                        <Box textAlign="center" sx={(t) => ({ p: 1.5, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'success') })}>
                           <Typography variant="body2" fontWeight="bold" color="success.main" noWrap>
                             {formatCurrency(company.mrpValue)}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                             MRP Value
                           </Typography>
                         </Box>
                       </Box>
                     )}
                     
-                    <Box mt={2} sx={{ p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                    <Box
+                      mt={2}
+                      sx={(t) => ({
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+                      })}
+                    >
                       <Typography variant="caption" color="text.secondary" display="block" textAlign="center">
                         {((company.totalCount / inStockItems.length) * 100).toFixed(1)}% of total inventory
                       </Typography>
@@ -2655,7 +2693,7 @@ export default function InventoryPage() {
       <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
         <Box display="flex" alignItems="center" mb={3}>
           <LocationIcon color="primary" sx={{ mr: 2 }} />
-          <Typography variant="h6" fontWeight="600" color="text.primary">
+          <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock Position by Center
           </Typography>
         </Box>
@@ -2707,7 +2745,7 @@ export default function InventoryPage() {
                           <Typography variant="subtitle2" fontWeight="600" color="text.primary">
                             {centerName}
                           </Typography>
-                          <Typography variant="body2" color="text.secondary">
+                          <Typography variant="body2" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
                             {locationStats.total} items
                           </Typography>
                         </Box>
@@ -2721,39 +2759,39 @@ export default function InventoryPage() {
                     </Box>
                     
                     <Box display="grid" gridTemplateColumns={isRestrictedUser ? '1fr' : 'repeat(4, 1fr)'} gap={1} mt={2}>
-                      <Box textAlign="center" sx={{ p: 1, bgcolor: 'success.lighter', borderRadius: 1 }}>
+                      <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'success') })}>
                         <Typography variant="body1" fontWeight="bold" color="success.main">
                           {locationStats.inStock}
                         </Typography>
-                        <Typography variant="caption" color="text.secondary">
+                        <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                           In Stock
                         </Typography>
                       </Box>
                       {!isRestrictedUser && (
-                        <Box textAlign="center" sx={{ p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
+                        <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'info') })}>
                           <Typography variant="body1" fontWeight="bold" color="info.main">
                             {locationStats.sold}
                           </Typography>
-                          <Typography variant="caption" color="text.secondary">
+                          <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                             Sold
                           </Typography>
                         </Box>
                       )}
                       {!isRestrictedUser && (
                         <>
-                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'primary.lighter', borderRadius: 1 }}>
+                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'primary') })}>
                             <Typography variant="caption" fontWeight="bold" color="primary.main" noWrap>
                               {formatCurrency(locationStats.dealerValue)}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary" display="block">
+                            <Typography variant="caption" sx={(t) => ({ ...inventoryMutedLabelSx(t), display: 'block' })}>
                               Dealer
                             </Typography>
                           </Box>
-                          <Box textAlign="center" sx={{ p: 1, bgcolor: 'warning.lighter', borderRadius: 1 }}>
+                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'warning') })}>
                             <Typography variant="caption" fontWeight="bold" color="warning.main" noWrap>
                               {formatCurrency(locationStats.mrpValue)}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary" display="block">
+                            <Typography variant="caption" sx={(t) => ({ ...inventoryMutedLabelSx(t), display: 'block' })}>
                               MRP
                             </Typography>
                           </Box>
@@ -2772,7 +2810,7 @@ export default function InventoryPage() {
       <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
         <Box display="flex" alignItems="center" mb={3}>
           <CategoryIcon color="primary" sx={{ mr: 2 }} />
-          <Typography variant="h6" fontWeight="600" color="text.primary">
+          <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock by Category
           </Typography>
         </Box>
@@ -2780,7 +2818,18 @@ export default function InventoryPage() {
         <Grid container spacing={2}>
           {grouped.length === 0 ? (
             <Grid item xs={12}>
-              <Paper elevation={0} sx={{ p: 3, textAlign: 'center', color: 'text.secondary', borderRadius: 2, bgcolor: 'grey.50' }}>
+              <Paper
+                elevation={0}
+                sx={(t) => ({
+                  p: 3,
+                  textAlign: 'center',
+                  color: 'text.secondary',
+                  borderRadius: 2,
+                  bgcolor: t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50],
+                  border: 1,
+                  borderColor: 'divider',
+                })}
+              >
                 <InventoryIcon sx={{ fontSize: 48, opacity: 0.3, mb: 2 }} />
                 <Typography variant="h6" gutterBottom>No in-stock items available</Typography>
                 <Typography variant="body2">Add some inventory items to see category breakdown</Typography>
@@ -3139,7 +3188,13 @@ export default function InventoryPage() {
         <TableContainer sx={{ overflowX: 'auto' }}>
           <Table sx={{ minWidth: 1000 }}>
             <TableHead>
-              <TableRow sx={{ bgcolor: 'background.default' }}>
+              <TableRow
+                sx={(t) => ({
+                  bgcolor:
+                    t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.background.default,
+                  '& th': { color: 'text.primary' },
+                })}
+              >
                 <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
                   <Box display="flex" alignItems="center">
                     <AssignmentIcon sx={{ mr: 1, fontSize: 20 }} />
@@ -3199,16 +3254,24 @@ export default function InventoryPage() {
                     <TableRow 
                       key={item.id} 
                       hover 
-                      sx={{ 
-                        '&:hover': { bgcolor: 'background.default' },
-                        borderBottom: '1px solid', borderColor: 'divider',
-                        // Highlight sold items with subtle background
+                      sx={(t) => ({
+                        '&:hover': { bgcolor: 'action.hover' },
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
                         ...(item.status === 'Sold' && {
-                          bgcolor: 'rgba(255, 193, 7, 0.08)',
-                          borderLeft: '4px solid #ed6c02',
-                          '&:hover': { bgcolor: 'rgba(255, 193, 7, 0.12)' }
-                        })
-                      }}
+                          bgcolor:
+                            t.palette.mode === 'dark'
+                              ? alpha(t.palette.warning.main, 0.16)
+                              : 'rgba(255, 193, 7, 0.08)',
+                          borderLeft: `4px solid ${t.palette.warning.main}`,
+                          '&:hover': {
+                            bgcolor:
+                              t.palette.mode === 'dark'
+                                ? alpha(t.palette.warning.main, 0.24)
+                                : 'rgba(255, 193, 7, 0.12)',
+                          },
+                        }),
+                      })}
                     >
                       <TableCell sx={{ py: 3 }}>
                         <Box>
@@ -3236,18 +3299,23 @@ export default function InventoryPage() {
                         </Box>
                       </TableCell>
                       <TableCell sx={{ py: 3 }}>
-                        <Box sx={{ 
-                          p: 1.5, 
-                          bgcolor: 'grey.100', 
-                          borderRadius: 1, 
-                          border: '1px solid', 
-                          borderColor: 'grey.300',
-                          fontFamily: 'monospace',
-                          fontSize: '0.9rem',
-                          fontWeight: 'bold',
-                          color: 'text.primary',
-                          letterSpacing: '0.05em'
-                        }}>
+                        <Box
+                          sx={(t) => ({
+                            p: 1.5,
+                            borderRadius: 1,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            fontFamily: 'monospace',
+                            fontSize: '0.9rem',
+                            fontWeight: 'bold',
+                            color: 'text.primary',
+                            letterSpacing: '0.05em',
+                            bgcolor:
+                              t.palette.mode === 'dark'
+                                ? alpha(t.palette.common.white, 0.08)
+                                : t.palette.grey[100],
+                          })}
+                        >
                           {item.serialNumber}
                         </Box>
                       </TableCell>
@@ -3326,10 +3394,12 @@ export default function InventoryPage() {
                             <IconButton 
                               size="small" 
                               color="info"
-                              sx={{ 
-                                bgcolor: '#e3f2fd',
-                                '&:hover': { bgcolor: '#bbdefb' }
-                              }}
+                              sx={(t) => ({
+                                bgcolor: alpha(t.palette.info.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                                '&:hover': {
+                                  bgcolor: alpha(t.palette.info.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+                                },
+                              })}
                             >
                               <VisibilityIcon fontSize="small" />
                             </IconButton>
@@ -3340,10 +3410,12 @@ export default function InventoryPage() {
                                 size="small" 
                                 color="primary"
                                 onClick={() => handleOpenDialog(item)}
-                                sx={{ 
-                                  bgcolor: '#e8f5e8',
-                                  '&:hover': { bgcolor: '#c8e6c9' }
-                                }}
+                                sx={(t) => ({
+                                  bgcolor: alpha(t.palette.success.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                                  '&:hover': {
+                                    bgcolor: alpha(t.palette.success.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+                                  },
+                                })}
                               >
                                 <EditIcon fontSize="small" />
                               </IconButton>
@@ -3355,10 +3427,12 @@ export default function InventoryPage() {
                                 size="small" 
                                 color="error"
                                 onClick={() => handleDeleteItem(item.id)}
-                                sx={{ 
-                                  bgcolor: '#ffebee',
-                                  '&:hover': { bgcolor: '#ffcdd2' }
-                                }}
+                                sx={(t) => ({
+                                  bgcolor: alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                                  '&:hover': {
+                                    bgcolor: alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+                                  },
+                                })}
                               >
                                 <DeleteIcon fontSize="small" />
                               </IconButton>
@@ -3372,7 +3446,7 @@ export default function InventoryPage() {
                 <TableRow>
                   <TableCell colSpan={isRestrictedUser ? 7 : 9} sx={{ py: 8 }}>
                     <Box textAlign="center">
-                      <InventoryIcon sx={{ fontSize: 64, color: '#cbd5e1', mb: 2 }} />
+                      <InventoryIcon sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
                       <Typography variant="h6" color="text.secondary" gutterBottom>
                         {inventory.length > 0 
                           ? 'No items match your filters' 

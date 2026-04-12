@@ -12,13 +12,14 @@
  */
 
 import React from 'react';
-import { CRM_PAGE_BG } from '@/components/Layout/crm-theme';
+import { useTheme } from '@mui/material/styles';
 import styles from './loading-indicator.module.css';
 
 export type SqueezeLoaderProps = {
   /** Size of the spinning squeeze square in pixels */
   size?: number;
   color1?: string;
+  /** Second squeeze color; defaults to theme primary. */
   color2?: string;
   /** Spin period in seconds */
   spinDuration?: number;
@@ -28,7 +29,7 @@ export type SqueezeLoaderProps = {
   containerClassName?: string;
   /** Full viewport (auth / layout gates). When false, fits main column route loading. */
   fullscreen?: boolean;
-  /** Shell background (defaults to CRM page background) */
+  /** Shell background (defaults to theme `background.default`) */
   backgroundColor?: string;
   caption?: string;
   subcaption?: string;
@@ -37,22 +38,25 @@ export type SqueezeLoaderProps = {
 export function SqueezeLoader({
   size = 60,
   color1 = '#3498db',
-  color2 = '#F17336',
+  color2,
   spinDuration = 10,
   squeezeDuration = 3,
   className = '',
   containerClassName = '',
   fullscreen = true,
-  backgroundColor = CRM_PAGE_BG,
+  backgroundColor,
   caption,
   subcaption,
 }: SqueezeLoaderProps) {
+  const theme = useTheme();
+  const bg = backgroundColor ?? theme.palette.background.default;
+  const accent = color2 ?? theme.palette.primary.main;
   const containerClass = fullscreen ? styles.containerFullscreen : styles.containerInline;
 
   return (
     <div
       className={`${containerClass} ${containerClassName}`.trim()}
-      style={{ backgroundColor }}
+      style={{ backgroundColor: bg, transition: 'background-color 0.28s ease' }}
       role="status"
       aria-live="polite"
       aria-busy="true"
@@ -76,7 +80,7 @@ export function SqueezeLoader({
           <div
             className={styles.blobRound}
             style={{
-              background: color2,
+              background: accent,
               animationDuration: `${squeezeDuration}s`,
               animationDelay: '-1.25s',
             }}

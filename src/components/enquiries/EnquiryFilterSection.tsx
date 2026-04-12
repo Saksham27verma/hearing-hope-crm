@@ -24,6 +24,7 @@ import {
   Autocomplete,
   Tooltip,
 } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
   Search as SearchIcon,
   Clear as ClearIcon,
@@ -287,6 +288,8 @@ export default function EnquiryFilterSection({
   page,
   rowsPerPage,
 }: EnquiryFilterSectionProps) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
   const [addAnchor, setAddAnchor] = useState<HTMLElement | null>(null);
   const [pickerStep, setPickerStep] = useState<'fields' | 'configure'>('fields');
   const [fieldSearch, setFieldSearch] = useState('');
@@ -737,10 +740,11 @@ export default function EnquiryFilterSection({
       elevation={0}
       sx={{
         p: { xs: 2, sm: 2.5 },
-        bgcolor: '#fafbfc',
-        border: '1px solid #e8eaed',
+        bgcolor: 'background.paper',
+        border: 1,
+        borderColor: 'divider',
         borderRadius: 2,
-        boxShadow: '0 1px 2px rgba(60,64,67,0.08)',
+        boxShadow: isDark ? 'none' : '0 1px 2px rgba(60,64,67,0.08)',
       }}
     >
       <Box
@@ -807,7 +811,10 @@ export default function EnquiryFilterSection({
         onChange={e => updateFilter('searchTerm', e.target.value)}
         sx={{
           mb: 1.5,
-          '& .MuiOutlinedInput-root': { bgcolor: 'white', borderRadius: 1.5 },
+          '& .MuiOutlinedInput-root': {
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+            borderRadius: 1.5,
+          },
         }}
         InputProps={{
           startAdornment: (
@@ -826,7 +833,14 @@ export default function EnquiryFilterSection({
       />
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2, alignItems: 'center' }}>
-        <FormControl size="small" sx={{ minWidth: 200, bgcolor: 'white', borderRadius: 1 }}>
+        <FormControl
+          size="small"
+          sx={{
+            minWidth: 200,
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+            borderRadius: 1,
+          }}
+        >
           <InputLabel id="journey-status-label">Journey status</InputLabel>
           <Select
             labelId="journey-status-label"
@@ -842,7 +856,14 @@ export default function EnquiryFilterSection({
             ))}
           </Select>
         </FormControl>
-        <FormControl size="small" sx={{ minWidth: 200, bgcolor: 'white', borderRadius: 1 }}>
+        <FormControl
+          size="small"
+          sx={{
+            minWidth: 200,
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+            borderRadius: 1,
+          }}
+        >
           <InputLabel id="enquiry-type-label">Enquiry type</InputLabel>
           <Select
             labelId="enquiry-type-label"
@@ -871,7 +892,10 @@ export default function EnquiryFilterSection({
             variant="outlined"
             label={preset === 'today' ? 'Today' : preset === 'last7' ? 'Last 7 days' : 'This month'}
             onClick={() => applyCreatedDatePreset(preset, updateFilter)}
-            sx={{ borderColor: '#ffccbc', '&:hover': { bgcolor: '#fff3e0' } }}
+            sx={{
+              borderColor: alpha(theme.palette.primary.main, 0.45),
+              '&:hover': { bgcolor: alpha(theme.palette.primary.main, isDark ? 0.15 : 0.08) },
+            }}
           />
         ))}
         <TextField
@@ -881,7 +905,11 @@ export default function EnquiryFilterSection({
           value={filters.dateFrom || ''}
           onChange={e => updateFilter('dateFrom', e.target.value)}
           InputLabelProps={{ shrink: true }}
-          sx={{ width: 160, bgcolor: 'white', borderRadius: 1 }}
+          sx={{
+            width: 160,
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+            borderRadius: 1,
+          }}
         />
         <TextField
           type="date"
@@ -890,7 +918,11 @@ export default function EnquiryFilterSection({
           value={filters.dateTo || ''}
           onChange={e => updateFilter('dateTo', e.target.value)}
           InputLabelProps={{ shrink: true }}
-          sx={{ width: 160, bgcolor: 'white', borderRadius: 1 }}
+          sx={{
+            width: 160,
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+            borderRadius: 1,
+          }}
         />
       </Box>
 
@@ -1034,7 +1066,15 @@ export default function EnquiryFilterSection({
             </Box>
             <List dense sx={{ maxHeight: 360, overflow: 'auto', py: 0 }}>
               {filteredGroups.map(group => [
-                <ListSubheader key={group.category} sx={{ bgcolor: '#f5f5f5', lineHeight: '32px', fontWeight: 700 }}>
+                <ListSubheader
+                  key={group.category}
+                  sx={{
+                    bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f5f5f5'),
+                    lineHeight: '32px',
+                    fontWeight: 700,
+                    color: 'text.primary',
+                  }}
+                >
                   {group.category}
                 </ListSubheader>,
                 ...group.fields.map(f => (

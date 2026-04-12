@@ -1,19 +1,15 @@
 'use client';
 
 import type { CSSProperties } from 'react';
+import { useMemo } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useTheme } from '@mui/material/styles';
+import { alpha } from '@mui/material/styles';
 import type { CrmNavItem } from './crm-nav-config';
 import {
-  CRM_ACCENT,
-  CRM_ORANGE_GHOST,
-  CRM_ORANGE_GHOST_HOVER,
-  CRM_SIDEBAR_OUTLINE_GLOW,
-  CRM_SIDEBAR_PANEL_BG,
-  CRM_SIDEBAR_SUBNAV_BG,
-  CRM_SIDEBAR_TEXT,
-  CRM_SIDEBAR_TEXT_MUTED,
+  getCrmShellTokens,
   RADIUS_2XL,
   RADIUS_XL,
   SIDEBAR_COLLAPSED_W,
@@ -58,6 +54,8 @@ export default function CrmSidebar({
   mobileOpen,
   onMobileNavigate,
 }: CrmSidebarProps) {
+  const theme = useTheme();
+  const shell = useMemo(() => getCrmShellTokens(theme), [theme]);
   const width = expanded ? SIDEBAR_EXPANDED_W : SIDEBAR_COLLAPSED_W;
   const showLabels = expanded;
 
@@ -87,10 +85,10 @@ export default function CrmSidebar({
 
   const panelStyle: CSSProperties = {
     height: '100%',
-    backgroundColor: CRM_SIDEBAR_PANEL_BG,
+    backgroundColor: shell.sidebarPanelBg,
     borderRadius: RADIUS_2XL,
-    border: '1px solid rgba(241, 115, 54, 0.35)',
-    boxShadow: CRM_SIDEBAR_OUTLINE_GLOW,
+    border: `1px solid ${shell.sidebarBorder}`,
+    boxShadow: shell.sidebarOutlineGlow,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
@@ -105,7 +103,7 @@ export default function CrmSidebar({
     padding: '10px 14px',
     margin: '2px 10px',
     borderRadius: RADIUS_XL,
-    color: CRM_SIDEBAR_TEXT,
+    color: shell.sidebarText,
     fontSize: 14,
     fontWeight: 500,
     letterSpacing: '0.01em',
@@ -130,7 +128,7 @@ export default function CrmSidebar({
     padding: 0,
     margin: '4px 0',
     borderRadius: RADIUS_XL,
-    color: CRM_SIDEBAR_TEXT,
+    color: shell.sidebarText,
     fontSize: 14,
     fontWeight: 500,
     cursor: 'pointer',
@@ -147,18 +145,18 @@ export default function CrmSidebar({
     if (showLabels) {
       return {
         ...base,
-        color: active ? CRM_ACCENT : base.color,
+        color: active ? shell.accent : base.color,
         fontWeight: active ? 600 : 500,
-        backgroundColor: active ? CRM_ORANGE_GHOST : 'transparent',
-        boxShadow: active ? `inset 3px 0 0 0 ${CRM_ACCENT}` : 'none',
+        backgroundColor: active ? shell.orangeGhost : 'transparent',
+        boxShadow: active ? `inset 3px 0 0 0 ${shell.accent}` : 'none',
       };
     }
     return {
       ...base,
-      color: active ? CRM_ACCENT : base.color,
-      backgroundColor: active ? CRM_ORANGE_GHOST : 'transparent',
+      color: active ? shell.accent : base.color,
+      backgroundColor: active ? shell.orangeGhost : 'transparent',
       boxShadow: active
-        ? `0 0 0 2px rgba(241, 115, 54, 0.55), 0 4px 14px rgba(241, 115, 54, 0.15)`
+        ? `0 0 0 2px ${alpha(shell.accent, 0.55)}, 0 4px 14px ${alpha(shell.accent, 0.15)}`
         : 'none',
     };
   };
@@ -183,7 +181,7 @@ export default function CrmSidebar({
             alignItems: 'center',
             justifyContent: showLabels ? 'flex-start' : 'center',
             gap: showLabels ? 12 : 0,
-            borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
+            borderBottom: `1px solid ${shell.surfaceBorder}`,
             flexShrink: 0,
             boxSizing: 'border-box',
           }}
@@ -198,8 +196,8 @@ export default function CrmSidebar({
               justifyContent: 'center',
               flexShrink: 0,
               overflow: 'hidden',
-              background: '#fff',
-              boxShadow: '0 1px 4px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(241, 115, 54, 0.15)',
+              background: shell.paper,
+              boxShadow: `0 1px 4px ${alpha(shell.sidebarText, 0.08)}, 0 0 0 1px ${alpha(shell.accent, 0.15)}`,
             }}
             aria-hidden
           >
@@ -218,14 +216,14 @@ export default function CrmSidebar({
                 style={{
                   fontSize: 11,
                   fontWeight: 600,
-                  color: CRM_SIDEBAR_TEXT_MUTED,
+                  color: shell.sidebarTextMuted,
                   letterSpacing: '0.08em',
                   textTransform: 'uppercase',
                 }}
               >
                 Hearing Hope
               </div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: '#0f172a', marginTop: 2 }}>Hope CRM</div>
+              <div style={{ fontSize: 17, fontWeight: 700, color: shell.sidebarText, marginTop: 2 }}>Hope CRM</div>
             </div>
           )}
         </div>
@@ -259,19 +257,19 @@ export default function CrmSidebar({
                       }}
                       onMouseEnter={(e) => {
                         if (!parentRowActive) {
-                          e.currentTarget.style.backgroundColor = CRM_ORANGE_GHOST_HOVER;
+                          e.currentTarget.style.backgroundColor = shell.orangeGhostHover;
                           e.currentTarget.style.transform = 'scale(1.02)';
                         }
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.transform = 'scale(1)';
-                        e.currentTarget.style.backgroundColor = parentRowActive ? CRM_ORANGE_GHOST : 'transparent';
+                        e.currentTarget.style.backgroundColor = parentRowActive ? shell.orangeGhost : 'transparent';
                       }}
                     >
                       <Icon strokeWidth={1.75} size={20} style={{ flexShrink: 0, opacity: 0.92 }} />
                       {showLabels && <span style={{ flex: 1 }}>{item.text}</span>}
                       {showLabels && (
-                        <span style={{ display: 'flex', opacity: 0.55, color: CRM_SIDEBAR_TEXT_MUTED }}>
+                        <span style={{ display: 'flex', opacity: 0.55, color: shell.sidebarTextMuted }}>
                           {openMenus[item.text] ? <ChevronDown size={18} strokeWidth={1.75} /> : <ChevronRight size={18} strokeWidth={1.75} />}
                         </span>
                       )}
@@ -282,7 +280,7 @@ export default function CrmSidebar({
                           listStyle: 'none',
                           margin: '4px 0 8px',
                           padding: '6px 0',
-                          backgroundColor: CRM_SIDEBAR_SUBNAV_BG,
+                          backgroundColor: shell.sidebarSubnavBg,
                           borderRadius: RADIUS_XL,
                           marginLeft: 10,
                           marginRight: 10,
@@ -300,23 +298,23 @@ export default function CrmSidebar({
                                   padding: '9px 14px 9px 16px',
                                   fontSize: 13,
                                   fontWeight: cActive ? 600 : 500,
-                                  color: cActive ? CRM_ACCENT : CRM_SIDEBAR_TEXT,
+                                  color: cActive ? shell.accent : shell.sidebarText,
                                   borderRadius: 10,
                                   margin: '2px 8px',
                                   transition: 'background-color 0.2s ease, transform 0.2s ease',
                                   position: 'relative',
-                                  backgroundColor: cActive ? CRM_ORANGE_GHOST : 'transparent',
-                                  boxShadow: cActive ? `inset 3px 0 0 0 ${CRM_ACCENT}` : 'none',
+                                  backgroundColor: cActive ? shell.orangeGhost : 'transparent',
+                                  boxShadow: cActive ? `inset 3px 0 0 0 ${shell.accent}` : 'none',
                                 }}
                                 onMouseEnter={(e) => {
                                   if (!cActive) {
-                                    e.currentTarget.style.backgroundColor = CRM_ORANGE_GHOST_HOVER;
+                                    e.currentTarget.style.backgroundColor = shell.orangeGhostHover;
                                     e.currentTarget.style.transform = 'scale(1.01)';
                                   }
                                 }}
                                 onMouseLeave={(e) => {
                                   e.currentTarget.style.transform = 'scale(1)';
-                                  e.currentTarget.style.backgroundColor = cActive ? CRM_ORANGE_GHOST : 'transparent';
+                                  e.currentTarget.style.backgroundColor = cActive ? shell.orangeGhost : 'transparent';
                                 }}
                               >
                                 {child.text}
@@ -338,13 +336,13 @@ export default function CrmSidebar({
                     style={applyActiveRow(selfActive)}
                     onMouseEnter={(e) => {
                       if (!selfActive) {
-                        e.currentTarget.style.backgroundColor = CRM_ORANGE_GHOST_HOVER;
+                        e.currentTarget.style.backgroundColor = shell.orangeGhostHover;
                         e.currentTarget.style.transform = 'scale(1.02)';
                       }
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.transform = 'scale(1)';
-                      e.currentTarget.style.backgroundColor = selfActive ? CRM_ORANGE_GHOST : 'transparent';
+                      e.currentTarget.style.backgroundColor = selfActive ? shell.orangeGhost : 'transparent';
                     }}
                   >
                     <Icon strokeWidth={1.75} size={20} style={{ flexShrink: 0, opacity: 0.92 }} />

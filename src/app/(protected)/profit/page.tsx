@@ -61,6 +61,7 @@ import {
   YAxis,
 } from 'recharts';
 import { format } from 'date-fns';
+import { alpha, useTheme } from '@mui/material/styles';
 
 const Grid = ({ children, ...props }: React.ComponentProps<typeof MuiGrid>) => (
   <MuiGrid {...props}>{children}</MuiGrid>
@@ -333,6 +334,8 @@ function computeOperatingExpenses(params: {
 // ── Main page component ───────────────────────────────────────────────────────
 
 export default function ProfitPage() {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === 'dark';
   const { userProfile, loading: authLoading } = useAuth();
   const router = useRouter();
   const isSuperAdmin = isSuperAdminViewer(userProfile);
@@ -551,7 +554,7 @@ export default function ProfitPage() {
       {/* ── Page header ── */}
       <Box mb={3} display="flex" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={2}>
         <Box>
-          <Typography variant="h5" fontWeight={700} sx={{ letterSpacing: -0.3 }}>
+          <Typography variant="h5" fontWeight={700} sx={{ letterSpacing: -0.3, color: 'text.primary' }}>
             Profit Module
           </Typography>
           <Typography variant="body2" color="text.secondary" mt={0.5}>
@@ -584,7 +587,7 @@ export default function ProfitPage() {
             startIcon={fetchLoading ? <CircularProgress size={14} color="inherit" /> : <DownloadIcon />}
             onClick={fetchSummary}
             disabled={fetchLoading || (preset === 'custom' && (!customFrom || !customTo))}
-            sx={{ bgcolor: '#F17336', '&:hover': { bgcolor: '#B84312' } }}
+            sx={{ bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' } }}
           >Refresh</Button>
         </Box>
       </Box>
@@ -644,22 +647,33 @@ export default function ProfitPage() {
           <Grid container spacing={2.5} sx={{ mb: 2.5 }}>
             {/* Gross Profit */}
             <Grid item xs={12} sm={4}>
-              <Paper elevation={0} sx={{ p: 3, borderRadius: 2, border: '1px solid #a7f3d0', background: 'linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%)', position: 'relative', overflow: 'hidden' }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 3,
+                  borderRadius: 2,
+                  position: 'relative',
+                  overflow: 'hidden',
+                  border: isDark ? `1px solid ${alpha('#059669', 0.45)}` : '1px solid #a7f3d0',
+                  bgcolor: isDark ? alpha('#059669', 0.14) : undefined,
+                  background: isDark ? undefined : 'linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%)',
+                }}
+              >
                 <Box sx={{ position: 'absolute', top: -16, right: -16, width: 80, height: 80, borderRadius: '50%', bgcolor: 'rgba(5,150,105,0.08)' }} />
-                <Typography variant="caption" fontWeight={600} color="#065f46" sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                <Typography variant="caption" fontWeight={600} color={isDark ? 'success.light' : '#065f46'} sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
                   Gross Profit
                 </Typography>
                 <Tooltip title="Selling price minus dealer cost per resolved serial — same number shown in Reports → Profit Analysis" placement="top">
-                  <Typography variant="h4" fontWeight={800} color="#059669" sx={{ mt: 1, mb: 0.5, lineHeight: 1.1, cursor: 'help' }}>
+                  <Typography variant="h4" fontWeight={800} color={isDark ? 'success.light' : '#059669'} sx={{ mt: 1, mb: 0.5, lineHeight: 1.1, cursor: 'help' }}>
                     {formatINR(summary.grossProfit)}
                   </Typography>
                 </Tooltip>
-                <Typography variant="caption" color="#065f46" display="block">
+                <Typography variant="caption" color={isDark ? 'success.light' : '#065f46'} display="block">
                   Matches Profit Analysis Report exactly
                 </Typography>
                 <Box display="flex" alignItems="center" gap={0.5} mt={0.5}>
-                  <TrendingUp sx={{ fontSize: 15, color: '#059669' }} />
-                  <Typography variant="caption" color="#065f46">
+                  <TrendingUp sx={{ fontSize: 15, color: isDark ? 'success.light' : '#059669' }} />
+                  <Typography variant="caption" color={isDark ? 'success.light' : '#065f46'}>
                     {summary.grossRevenue > 0
                       ? `${((summary.grossProfit / summary.grossRevenue) * 100).toFixed(1)}% gross margin`
                       : 'No revenue'}
@@ -670,43 +684,74 @@ export default function ProfitPage() {
 
             {/* Operating Expenses */}
             <Grid item xs={12} sm={4}>
-              <Paper elevation={0} sx={{ p: 3, borderRadius: 2, border: '1px solid #fecdd3', background: 'linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)', position: 'relative', overflow: 'hidden' }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 3,
+                  borderRadius: 2,
+                  position: 'relative',
+                  overflow: 'hidden',
+                  border: isDark ? `1px solid ${alpha('#e11d48', 0.45)}` : '1px solid #fecdd3',
+                  bgcolor: isDark ? alpha('#e11d48', 0.12) : undefined,
+                  background: isDark ? undefined : 'linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)',
+                }}
+              >
                 <Box sx={{ position: 'absolute', top: -16, right: -16, width: 80, height: 80, borderRadius: '50%', bgcolor: 'rgba(225,29,72,0.08)' }} />
-                <Typography variant="caption" fontWeight={600} color="#881337" sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                <Typography variant="caption" fontWeight={600} color={isDark ? 'error.light' : '#881337'} sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
                   Operating Expenses
                 </Typography>
-                <Typography variant="h4" fontWeight={800} color="#e11d48" sx={{ mt: 1, mb: 0.5, lineHeight: 1.1 }}>
+                <Typography variant="h4" fontWeight={800} color={isDark ? 'error.light' : '#e11d48'} sx={{ mt: 1, mb: 0.5, lineHeight: 1.1 }}>
                   {formatINR(summary.totalOperatingExpenses)}
                 </Typography>
                 <Box display="flex" flexDirection="column" gap={0.25} mt={0.5}>
-                  <Typography variant="caption" color="#881337">Salaries: {formatINR(summary.totalSalaries)}</Typography>
-                  <Typography variant="caption" color="#881337">Fixed Costs: {formatINR(summary.totalFixedCosts)}</Typography>
-                  <Typography variant="caption" color="#881337">Cash expenses (register): {formatINR(summary.totalCashOutflows)}</Typography>
+                  <Typography variant="caption" color={isDark ? 'error.light' : '#881337'}>Salaries: {formatINR(summary.totalSalaries)}</Typography>
+                  <Typography variant="caption" color={isDark ? 'error.light' : '#881337'}>Fixed Costs: {formatINR(summary.totalFixedCosts)}</Typography>
+                  <Typography variant="caption" color={isDark ? 'error.light' : '#881337'}>Cash expenses (register): {formatINR(summary.totalCashOutflows)}</Typography>
                 </Box>
               </Paper>
             </Grid>
 
             {/* Net Profit */}
             <Grid item xs={12} sm={4}>
-              <Paper elevation={0} sx={{
-                p: 3, borderRadius: 2,
-                border: `1px solid ${netProfitPositive ? '#bfdbfe' : '#fecdd3'}`,
-                background: netProfitPositive ? 'linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%)' : 'linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)',
-                position: 'relative', overflow: 'hidden',
-              }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 3,
+                  borderRadius: 2,
+                  position: 'relative',
+                  overflow: 'hidden',
+                  border: netProfitPositive
+                    ? isDark
+                      ? `1px solid ${alpha('#3b82f6', 0.5)}`
+                      : '1px solid #bfdbfe'
+                    : isDark
+                      ? `1px solid ${alpha('#e11d48', 0.45)}`
+                      : '1px solid #fecdd3',
+                  bgcolor: isDark
+                    ? netProfitPositive
+                      ? alpha('#3b82f6', 0.14)
+                      : alpha('#e11d48', 0.12)
+                    : undefined,
+                  background: isDark
+                    ? undefined
+                    : netProfitPositive
+                      ? 'linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%)'
+                      : 'linear-gradient(135deg,#fff1f2 0%,#ffe4e6 100%)',
+                }}
+              >
                 <Box sx={{ position: 'absolute', top: -16, right: -16, width: 80, height: 80, borderRadius: '50%', bgcolor: netProfitPositive ? 'rgba(37,99,235,0.07)' : 'rgba(225,29,72,0.07)' }} />
-                <Typography variant="caption" fontWeight={600} color={netProfitPositive ? '#1e3a8a' : '#881337'} sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
+                <Typography variant="caption" fontWeight={600} color={netProfitPositive ? (isDark ? 'info.light' : '#1e3a8a') : isDark ? 'error.light' : '#881337'} sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}>
                   Net Profit
                 </Typography>
-                <Typography variant="h4" fontWeight={800} color={netProfitPositive ? '#2563eb' : '#e11d48'} sx={{ mt: 1, mb: 0.5, lineHeight: 1.1 }}>
+                <Typography variant="h4" fontWeight={800} color={netProfitPositive ? (isDark ? 'info.light' : '#2563eb') : isDark ? 'error.light' : '#e11d48'} sx={{ mt: 1, mb: 0.5, lineHeight: 1.1 }}>
                   {formatINR(summary.netProfit)}
                 </Typography>
-                <Typography variant="caption" color={netProfitPositive ? '#1e3a8a' : '#881337'} display="block">
+                <Typography variant="caption" color={netProfitPositive ? (isDark ? 'info.light' : '#1e3a8a') : isDark ? 'error.light' : '#881337'} display="block">
                   Gross Profit − Operating Expenses
                 </Typography>
                 <Box display="flex" alignItems="center" gap={0.5} mt={0.5}>
-                  {netProfitPositive ? <TrendingUp sx={{ fontSize: 15, color: '#2563eb' }} /> : summary.netProfit === 0 ? <TrendingFlat sx={{ fontSize: 15, color: '#64748b' }} /> : <TrendingDown sx={{ fontSize: 15, color: '#e11d48' }} />}
-                  <Typography variant="caption" color={netProfitPositive ? '#1e3a8a' : '#881337'}>
+                  {netProfitPositive ? <TrendingUp sx={{ fontSize: 15, color: isDark ? theme.palette.info.light : '#2563eb' }} /> : summary.netProfit === 0 ? <TrendingFlat sx={{ fontSize: 15, color: 'text.secondary' }} /> : <TrendingDown sx={{ fontSize: 15, color: isDark ? 'error.light' : '#e11d48' }} />}
+                  <Typography variant="caption" color={netProfitPositive ? (isDark ? 'info.light' : '#1e3a8a') : isDark ? 'error.light' : '#881337'}>
                     {summary.grossRevenue > 0 ? `${((summary.netProfit / summary.grossRevenue) * 100).toFixed(1)}% net margin on revenue` : 'No revenue'}
                   </Typography>
                 </Box>
@@ -724,9 +769,21 @@ export default function ProfitPage() {
             ].map((item) => (
               <Grid item xs={6} sm={3} key={item.label}>
                 <Tooltip title={item.hint} placement="top">
-                  <Paper elevation={0} variant="outlined" sx={{ p: 2, borderRadius: 2, bgcolor: item.bg, cursor: 'default' }}>
+                  <Paper
+                    elevation={0}
+                    variant="outlined"
+                    sx={{
+                      p: 2,
+                      borderRadius: 2,
+                      bgcolor: isDark ? alpha(item.color, 0.14) : item.bg,
+                      borderColor: isDark ? alpha(item.color, 0.35) : 'divider',
+                      cursor: 'default',
+                    }}
+                  >
                     <Typography variant="caption" color="text.secondary" fontWeight={600} noWrap>{item.label}</Typography>
-                    <Typography variant="h6" fontWeight={700} color={item.color} sx={{ mt: 0.5 }}>{formatINR(item.value)}</Typography>
+                    <Typography variant="h6" fontWeight={700} sx={{ mt: 0.5, color: item.color }}>
+                      {formatINR(item.value)}
+                    </Typography>
                   </Paper>
                 </Tooltip>
               </Grid>
@@ -736,7 +793,7 @@ export default function ProfitPage() {
           <Divider sx={{ mb: 3 }} />
 
           {/* ── Center-wise net profit ── */}
-          <Typography variant="h6" fontWeight={700} sx={{ mb: 0.5 }}>
+          <Typography variant="h6" fontWeight={700} sx={{ mb: 0.5, color: 'text.primary' }}>
             Center-wise net profit
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2, maxWidth: 900 }}>
@@ -749,22 +806,27 @@ export default function ProfitPage() {
 
           {centerChartData.length > 0 && (
             <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 2 }}>
-              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 2, color: 'text.primary' }}>
                 Gross profit, expense breakdown, and net profit by center
               </Typography>
               <Box sx={{ width: '100%', height: { xs: 320, sm: 400 } }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={centerChartData} margin={{ top: 8, right: 12, left: 4, bottom: 56 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke={alpha(theme.palette.text.secondary, isDark ? 0.35 : 0.25)}
+                    />
                     <XAxis
                       dataKey="name"
-                      tick={{ fontSize: 10 }}
+                      tick={{ fontSize: 10, fill: theme.palette.text.secondary }}
                       interval={0}
                       angle={-30}
                       textAnchor="end"
                       height={72}
                     />
                     <YAxis
+                      tick={{ fontSize: 10, fill: theme.palette.text.secondary }}
                       tickFormatter={(v) => {
                         const n = Number(v);
                         if (!Number.isFinite(n)) return '';
@@ -849,7 +911,7 @@ export default function ProfitPage() {
           <Paper variant="outlined" sx={{ borderRadius: 2 }}>
             <Box sx={{ px: 2.5, pt: 2, pb: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1.5 }}>
               <Box>
-                <Typography variant="h6" fontWeight={700}>Transaction Breakdown</Typography>
+                <Typography variant="h6" fontWeight={700} color="text.primary">Transaction Breakdown</Typography>
                 <Typography variant="caption" color="text.secondary">
                   Net Profit = Gross Profit (from Profit Analysis) − Salaries − Fixed Costs − Cash Register (Expenses only)
                 </Typography>
@@ -860,9 +922,22 @@ export default function ProfitPage() {
                     <Chip key={cat} label={cat} size="small"
                       onClick={() => { setCategoryFilter(cat); setPage(0); }}
                       variant={categoryFilter === cat ? 'filled' : 'outlined'}
-                      sx={categoryFilter === cat && cat !== 'All'
-                        ? { bgcolor: CATEGORY_COLORS[cat] ?? '#6366f1', color: '#fff', borderColor: CATEGORY_COLORS[cat] ?? '#6366f1', fontWeight: 600 }
-                        : categoryFilter === cat ? { bgcolor: '#1e293b', color: '#fff', fontWeight: 600 } : {}}
+                      sx={
+                        categoryFilter === cat && cat !== 'All'
+                          ? {
+                              bgcolor: CATEGORY_COLORS[cat] ?? '#6366f1',
+                              color: '#fff',
+                              borderColor: CATEGORY_COLORS[cat] ?? '#6366f1',
+                              fontWeight: 600,
+                            }
+                          : categoryFilter === cat
+                            ? {
+                                bgcolor: isDark ? alpha(theme.palette.common.white, 0.12) : '#1e293b',
+                                color: isDark ? 'text.primary' : '#fff',
+                                fontWeight: 600,
+                              }
+                            : {}
+                      }
                     />
                   ))}
                 </Box>
@@ -895,7 +970,18 @@ export default function ProfitPage() {
                       </TableCell>
                       <TableCell><Typography variant="body2" color="text.secondary" noWrap>{row.centerName ?? '—'}</Typography></TableCell>
                       <TableCell>
-                        <Chip label={row.category} size="small" sx={{ bgcolor: CATEGORY_BG[row.category] ?? '#f1f5f9', color: CATEGORY_COLORS[row.category] ?? '#334155', fontWeight: 600, fontSize: '0.7rem' }} />
+                        <Chip
+                          label={row.category}
+                          size="small"
+                          sx={{
+                            bgcolor: isDark
+                              ? alpha(CATEGORY_COLORS[row.category] ?? '#6366f1', 0.2)
+                              : CATEGORY_BG[row.category] ?? '#f1f5f9',
+                            color: isDark ? CATEGORY_COLORS[row.category] ?? theme.palette.info.light : CATEGORY_COLORS[row.category] ?? '#334155',
+                            fontWeight: 600,
+                            fontSize: '0.7rem',
+                          }}
+                        />
                       </TableCell>
                       <TableCell>
                         <Chip label={row.type === 'in' ? 'Inflow' : 'Outflow'} size="small"

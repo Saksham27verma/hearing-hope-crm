@@ -32,6 +32,7 @@ import {
   TableFooter,
   Stack,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { Grid as MuiGrid } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -814,7 +815,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   // Render the challan details
   const renderChallanDetails = () => (
     <Box>
-      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2 }}>
         <Box display="flex" alignItems="center" mb={2}>
           <ReceiptIcon color="primary" sx={{ mr: 1.5 }} />
           <Typography variant="subtitle1" fontWeight={600} color="primary">
@@ -988,7 +989,16 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       </Paper>
       
       {/* Quick Summary Card */}
-      <Paper elevation={0} sx={{ p: 3, bgcolor: '#f5f5f5', borderRadius: 2 }}>
+      <Paper
+        elevation={0}
+        sx={(t) => ({
+          p: 3,
+          borderRadius: 2,
+          bgcolor: t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f5f5f5',
+          border: 1,
+          borderColor: 'divider',
+        })}
+      >
         <Box display="flex" alignItems="center" mb={2}>
           <InfoIcon color="primary" sx={{ mr: 1.5 }} />
           <Typography variant="subtitle2" fontWeight={600} color="primary">
@@ -998,15 +1008,15 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
         <Divider sx={{ mb: 2 }} />
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr' }, gap: 2 }}>
           <Box>
-            <Typography variant="body2">
+            <Typography variant="body2" color="text.primary">
               Challan: <strong>{materialData.challanNumber || 'Not specified'}</strong>
             </Typography>
-            <Typography variant="body2">
+            <Typography variant="body2" color="text.primary">
               Supplier: <strong>{materialData.supplier.name || 'Not selected'}</strong>
             </Typography>
           </Box>
           <Box>
-            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }} color="text.primary">
               <LocationOnIcon fontSize="inherit" color="action" />
               Center:{' '}
               <strong>
@@ -1015,7 +1025,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                   : 'Not selected'}
               </strong>
             </Typography>
-            <Typography variant="body2">
+            <Typography variant="body2" color="text.primary">
               Company: <strong>{materialData.company || 'Not selected'}</strong>
             </Typography>
           </Box>
@@ -1101,7 +1111,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
           
           {/* Step 1: Select Product - Enhanced with search */}
           <Box>
-            <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2 }}>
+            <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2 }}>
               <Typography variant="subtitle2" color="primary" gutterBottom>
                 Step 1: Select Product
               </Typography>
@@ -1196,7 +1206,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
               
               {/* Step 2: Enter Quantity and Price Details - Improved layout */}
               <Box>
-                <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2 }}>
+                <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2 }}>
                   <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                     <CalculateIcon fontSize="small" sx={{ mr: 1 }} />
                     Step 2: Enter Quantity and Pricing
@@ -1324,7 +1334,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
               {/* Step 3: Serial Numbers for serial-tracked products */}
               {isSerialTrackedForCurrent && (
                 <Box>
-                  <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2, border: errors.serialNumbers ? '1px solid #d32f2f' : 'none' }}>
+                  <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2, border: errors.serialNumbers ? '1px solid #d32f2f' : 'none' }}>
                     <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                       <BarcodeIcon fontSize="small" sx={{ mr: 1 }} />
                       Step 3: Enter Serial Numbers ({requiredSerialCountForCurrent || quantity} required) {scannerMode && "(Scanner Mode Active)"}
@@ -1453,7 +1463,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       </Paper>
       
       {/* Added Products List */}
-      <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: '#f8f9fa' }}>
+      <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
         <Box display="flex" alignItems="center" mb={2}>
           <SummarizeIcon color="primary" sx={{ mr: 1.5 }} />
           <Typography variant="subtitle1" fontWeight={600} color="primary">
@@ -1545,7 +1555,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   // Render the summary screen
   const renderSummary = () => (
     <Box>
-      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2 }}>
         <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
           <Box display="flex" alignItems="center">
             <ReceiptIcon color="primary" sx={{ mr: 1.5 }} />
@@ -1683,7 +1693,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
               ))}
               
               {/* Total row */}
-              <TableRow sx={{ bgcolor: '#f8f9fa' }}>
+              <TableRow sx={{ bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
                 <TableCell colSpan={4} />
                 <TableCell align="right">
                   <Typography variant="subtitle2">Total Amount</Typography>
@@ -1699,7 +1709,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       
       {/* Serial Numbers Section - Show if there are any serial numbers */}
       {materialData.products.some(p => p.serialNumbers && p.serialNumbers.length > 0) && (
-        <Paper elevation={0} sx={{ p: 3, mt: 3, borderRadius: 2, bgcolor: '#f8f9fa' }}>
+        <Paper elevation={0} sx={{ p: 3, mt: 3, borderRadius: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
           <Typography variant="subtitle1" fontWeight={600} color="primary" gutterBottom>
             Serial Numbers
           </Typography>

@@ -2,11 +2,9 @@
 
 import { useState } from 'react';
 import { CacheProvider } from '@emotion/react';
-import { ThemeProvider } from '@mui/material/styles';
-import CssBaseline from '@mui/material/CssBaseline';
 import createCache from '@emotion/cache';
 import { useServerInsertedHTML } from 'next/navigation';
-import theme from './theme';
+import { CrmThemeProvider } from './ThemeContext';
 
 // This implementation is from MUI's Next.js v13 app directory example:
 // https://github.com/mui/material-ui/tree/master/examples/material-ui-nextjs-ts
@@ -53,10 +51,7 @@ export function ThemeRegistry({ children }: { children: React.ReactNode }) {
 
   return (
     <CacheProvider value={cache}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        {children}
-      </ThemeProvider>
+      <CrmThemeProvider>{children}</CrmThemeProvider>
     </CacheProvider>
   );
-} 
+}

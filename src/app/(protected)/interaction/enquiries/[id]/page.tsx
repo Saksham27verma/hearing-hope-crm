@@ -122,20 +122,36 @@ function isHomeTrialVisit(visit: any): boolean {
 
 const PageShell = styled(Box)(({ theme }) => ({
   minHeight: '100vh',
-  background: `
+  padding: theme.spacing(3),
+  background:
+    theme.palette.mode === 'dark'
+      ? `
+    radial-gradient(circle at top left, ${alpha(theme.palette.primary.main, 0.14)}, transparent 30%),
+    radial-gradient(circle at top right, ${alpha(theme.palette.warning.main, 0.1)}, transparent 26%),
+    linear-gradient(180deg, ${theme.palette.background.default} 0%, ${alpha(theme.palette.background.paper, 0.85)} 42%, ${theme.palette.background.default} 100%)
+  `
+      : `
     radial-gradient(circle at top left, rgba(245,124,0,0.10), transparent 28%),
     radial-gradient(circle at top right, rgba(255,193,7,0.10), transparent 24%),
     linear-gradient(180deg, #fffaf5 0%, #f7f8fb 38%, #f5f7fb 100%)
   `,
-  padding: theme.spacing(3),
 }));
 
 const InfoCard = styled(Card)(({ theme }) => ({
   marginBottom: theme.spacing(2),
   borderRadius: theme.spacing(2.25),
-  boxShadow: '0 16px 42px rgba(15, 23, 42, 0.06)',
-  border: '1px solid rgba(148, 163, 184, 0.16)',
-  background: 'rgba(255,255,255,0.92)',
+  boxShadow:
+    theme.palette.mode === 'dark'
+      ? '0 16px 42px rgba(0, 0, 0, 0.45)'
+      : '0 16px 42px rgba(15, 23, 42, 0.06)',
+  border:
+    theme.palette.mode === 'dark'
+      ? `1px solid ${alpha(theme.palette.common.white, 0.1)}`
+      : '1px solid rgba(148, 163, 184, 0.16)',
+  background:
+    theme.palette.mode === 'dark'
+      ? alpha(theme.palette.background.paper, 0.96)
+      : 'rgba(255,255,255,0.92)',
   backdropFilter: 'blur(10px)',
   overflow: 'hidden',
 }));
@@ -161,21 +177,21 @@ const SectionHeading = ({ icon, title, subtitle }: { icon: React.ReactNode; titl
   >
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
       <Box
-        sx={{
+        sx={(theme) => ({
           width: 38,
           height: 38,
           borderRadius: 2,
           display: 'grid',
           placeItems: 'center',
-          bgcolor: alpha('#f57c00', 0.1),
-          color: '#f57c00',
-          border: `1px solid ${alpha('#f57c00', 0.18)}`,
-        }}
+          bgcolor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.1),
+          color: 'primary.main',
+          border: `1px solid ${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.35 : 0.18)}`,
+        })}
       >
         {icon}
       </Box>
       <Box>
-        <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.1 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.1, color: 'text.primary' }}>
           {title}
         </Typography>
         {subtitle && (
@@ -191,13 +207,13 @@ const SectionHeading = ({ icon, title, subtitle }: { icon: React.ReactNode; titl
 const MetricCard = ({ label, value, accent = '#f57c00' }: { label: string; value: string; accent?: string }) => (
   <Paper
     variant="outlined"
-    sx={{
+    sx={(theme) => ({
       p: 2,
       borderRadius: 2.25,
-      bgcolor: alpha(accent, 0.04),
-      borderColor: alpha(accent, 0.15),
+      bgcolor: alpha(accent, theme.palette.mode === 'dark' ? 0.18 : 0.04),
+      borderColor: alpha(accent, theme.palette.mode === 'dark' ? 0.35 : 0.15),
       boxShadow: 'none',
-    }}
+    })}
   >
     <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
       {label}
@@ -214,18 +230,18 @@ const InfoRow = ({ icon, label, value, color = 'text.primary' }: any) => {
   return (
     <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, mb: 2.25 }}>
       <Box
-        sx={{
-          color: '#f57c00',
+        sx={(theme) => ({
+          color: 'primary.main',
           mt: 0.2,
           width: 34,
           height: 34,
           borderRadius: 1.75,
           display: 'grid',
           placeItems: 'center',
-          bgcolor: alpha('#f57c00', 0.08),
-          border: `1px solid ${alpha('#f57c00', 0.12)}`,
+          bgcolor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.2 : 0.08),
+          border: `1px solid ${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.3 : 0.12)}`,
           flexShrink: 0,
-        }}
+        })}
       >
         {icon}
       </Box>
@@ -242,7 +258,10 @@ const InfoRow = ({ icon, label, value, color = 'text.primary' }: any) => {
                   label={item}
                   size="small"
                   variant="outlined"
-                  sx={{ borderRadius: 1.5, bgcolor: alpha('#f57c00', 0.04) }}
+                  sx={(theme) => ({
+                    borderRadius: 1.5,
+                    bgcolor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.18 : 0.04),
+                  })}
                 />
               ))}
             </Stack>
@@ -959,13 +978,16 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           variant="outlined" 
           startIcon={<ArrowBackIcon />}
           onClick={() => router.push('/interaction/enquiries')}
-          sx={{
+          sx={(theme) => ({
             borderRadius: 99,
-            borderColor: alpha('#0f172a', 0.12),
+            borderColor: theme.palette.mode === 'dark' ? alpha(theme.palette.common.white, 0.16) : alpha('#0f172a', 0.12),
             color: 'text.primary',
-            bgcolor: 'rgba(255,255,255,0.72)',
+            bgcolor:
+              theme.palette.mode === 'dark'
+                ? alpha(theme.palette.background.paper, 0.85)
+                : 'rgba(255,255,255,0.72)',
             backdropFilter: 'blur(10px)',
-          }}
+          })}
         >
           Back to Enquiries
         </Button>
@@ -974,24 +996,30 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           <RefreshDataButton
             onClick={handleRefresh}
             loading={refreshing}
-            sx={{
+            sx={(theme) => ({
               borderRadius: 99,
-              bgcolor: 'rgba(255,255,255,0.72)',
+              bgcolor:
+                theme.palette.mode === 'dark'
+                  ? alpha(theme.palette.background.paper, 0.85)
+                  : 'rgba(255,255,255,0.72)',
               backdropFilter: 'blur(10px)',
-            }}
+            })}
           />
           {resolvedParams && (
             <Button
               variant="outlined"
               startIcon={<ShareIcon />}
               onClick={shareProfileLink}
-              sx={{
+              sx={(theme) => ({
                 borderRadius: 99,
-                borderColor: alpha('#0f172a', 0.12),
+                borderColor: theme.palette.mode === 'dark' ? alpha(theme.palette.common.white, 0.16) : alpha('#0f172a', 0.12),
                 color: 'text.primary',
-                bgcolor: 'rgba(255,255,255,0.72)',
+                bgcolor:
+                  theme.palette.mode === 'dark'
+                    ? alpha(theme.palette.background.paper, 0.85)
+                    : 'rgba(255,255,255,0.72)',
                 backdropFilter: 'blur(10px)',
-              }}
+              })}
             >
               Share profile
             </Button>
@@ -1011,27 +1039,39 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       
       {/* Patient Header */}
       <Paper
-        sx={{
+        sx={(theme) => ({
           p: { xs: 2.5, md: 3.5 },
           mb: 3,
           borderRadius: 4,
           overflow: 'hidden',
           position: 'relative',
-          background: 'linear-gradient(135deg, #fff7ed 0%, #ffffff 40%, #fffdf8 100%)',
-          border: '1px solid rgba(245,124,0,0.14)',
-          boxShadow: '0 24px 60px rgba(15, 23, 42, 0.08)',
-        }}
+          background:
+            theme.palette.mode === 'dark'
+              ? `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.16)} 0%, ${theme.palette.background.paper} 42%, ${alpha(theme.palette.warning.main, 0.08)} 100%)`
+              : 'linear-gradient(135deg, #fff7ed 0%, #ffffff 40%, #fffdf8 100%)',
+          border: `1px solid ${alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.35 : 0.14)}`,
+          boxShadow:
+            theme.palette.mode === 'dark'
+              ? '0 24px 60px rgba(0, 0, 0, 0.45)'
+              : '0 24px 60px rgba(15, 23, 42, 0.08)',
+        })}
       >
         <Box
-          sx={{
+          sx={(theme) => ({
             position: 'absolute',
             inset: 0,
-            background: `
+            background:
+              theme.palette.mode === 'dark'
+                ? `
+              radial-gradient(circle at 10% 10%, ${alpha(theme.palette.primary.main, 0.22)}, transparent 32%),
+              radial-gradient(circle at 88% 16%, ${alpha(theme.palette.warning.main, 0.14)}, transparent 26%)
+            `
+                : `
               radial-gradient(circle at 10% 10%, rgba(245,124,0,0.16), transparent 30%),
               radial-gradient(circle at 88% 16%, rgba(255,193,7,0.12), transparent 24%)
             `,
             pointerEvents: 'none',
-          }}
+          })}
         />
         <Box sx={{ position: 'relative', display: 'flex', alignItems: { xs: 'flex-start', md: 'center' }, gap: 3, flexDirection: { xs: 'column', md: 'row' } }}>
           <Avatar sx={{ bgcolor: '#f57c00', width: 76, height: 76, boxShadow: '0 16px 32px rgba(245,124,0,0.24)' }}>
@@ -1039,11 +1079,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           </Avatar>
           <Box sx={{ flex: 1 }}>
             <SectionLabel>Patient Profile</SectionLabel>
-            <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }}>
+            <Typography variant="h4" sx={{ fontWeight: 800, mb: 1, color: 'text.primary' }}>
               {enquiry.name || 'Patient Name'}
             </Typography>
             {enquiry.customerName && (
-              <Typography variant="body2" sx={{ fontWeight: 700, mb: 1, color: '#92400e' }}>
+              <Typography
+                variant="body2"
+                sx={(theme) => ({
+                  fontWeight: 700,
+                  mb: 1,
+                  color: theme.palette.mode === 'dark' ? theme.palette.warning.light : '#92400e',
+                })}
+              >
                 Customer Name: {enquiry.customerName}
               </Typography>
             )}
@@ -1058,7 +1105,13 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   label={enquiry.phone} 
                   variant="outlined" 
                   size="small"
-                  sx={{ borderRadius: 99, bgcolor: 'rgba(255,255,255,0.75)' }}
+                  sx={(theme) => ({
+                    borderRadius: 99,
+                    bgcolor:
+                      theme.palette.mode === 'dark'
+                        ? alpha(theme.palette.common.white, 0.1)
+                        : 'rgba(255,255,255,0.75)',
+                  })}
                 />
               )}
               {enquiry.email && (
@@ -1067,7 +1120,13 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   label={enquiry.email} 
                   variant="outlined" 
                   size="small"
-                  sx={{ borderRadius: 99, bgcolor: 'rgba(255,255,255,0.75)' }}
+                  sx={(theme) => ({
+                    borderRadius: 99,
+                    bgcolor:
+                      theme.palette.mode === 'dark'
+                        ? alpha(theme.palette.common.white, 0.1)
+                        : 'rgba(255,255,255,0.75)',
+                  })}
                 />
               )}
               <Tooltip
@@ -1217,12 +1276,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   <Grid item xs={12}>
                     <Paper
                       variant="outlined"
-                      sx={{
+                      sx={(theme) => ({
                         p: 2,
                         borderRadius: 2.25,
-                        bgcolor: alpha('#0f172a', 0.015),
-                        borderColor: alpha('#0f172a', 0.08),
-                      }}
+                        bgcolor:
+                          theme.palette.mode === 'dark'
+                            ? alpha(theme.palette.common.white, 0.06)
+                            : alpha('#0f172a', 0.015),
+                        borderColor:
+                          theme.palette.mode === 'dark'
+                            ? alpha(theme.palette.common.white, 0.12)
+                            : alpha('#0f172a', 0.08),
+                      })}
                     >
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, fontWeight: 600 }}>
                         Message / Notes
@@ -1248,7 +1313,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   onChange={(_, value) => setActiveVisitTab(value)}
                   variant="scrollable"
                   scrollButtons="auto"
-                  sx={{
+                  sx={(theme) => ({
                     mb: 3,
                     minHeight: 0,
                     '& .MuiTab-root': {
@@ -1260,27 +1325,40 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       px: 1.75,
                       py: 1.25,
                       border: '1px solid',
-                      borderColor: alpha('#0f172a', 0.08),
-                      bgcolor: 'rgba(255,255,255,0.78)',
+                      borderColor:
+                        theme.palette.mode === 'dark'
+                          ? alpha(theme.palette.common.white, 0.12)
+                          : alpha('#0f172a', 0.08),
+                      bgcolor:
+                        theme.palette.mode === 'dark'
+                          ? alpha(theme.palette.common.white, 0.06)
+                          : 'rgba(255,255,255,0.78)',
+                      color: 'text.primary',
                     },
                     '& .Mui-selected': {
-                      bgcolor: 'linear-gradient(135deg, #fff4e8 0%, #fff 100%)',
-                      borderColor: alpha('#f57c00', 0.35),
-                      boxShadow: '0 10px 24px rgba(245,124,0,0.10)',
+                      bgcolor:
+                        theme.palette.mode === 'dark'
+                          ? alpha(theme.palette.primary.main, 0.18)
+                          : '#fff4e8',
+                      borderColor: alpha(theme.palette.primary.main, 0.45),
+                      boxShadow:
+                        theme.palette.mode === 'dark'
+                          ? `0 10px 24px ${alpha(theme.palette.primary.main, 0.2)}`
+                          : '0 10px 24px rgba(245,124,0,0.10)',
                     },
                     '& .MuiTabs-indicator': {
                       height: 3,
                       borderRadius: 999,
-                      backgroundColor: '#f57c00',
+                      backgroundColor: theme.palette.primary.main,
                     },
-                  }}
+                  })}
                 >
                   {visits.map((visit: any, index: number) => (
                     <Tab
                       key={visit.id || index}
                       label={
                         <Box sx={{ textAlign: 'left' }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary' }}>
                             Visit {index + 1}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
@@ -1297,13 +1375,19 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   <Box>
                     <Paper
                       variant="outlined"
-                      sx={{
+                      sx={(theme) => ({
                         p: { xs: 2, md: 2.5 },
                         borderRadius: 3,
-                        bgcolor: 'rgba(255,255,255,0.8)',
-                        borderColor: alpha('#f57c00', 0.16),
-                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.7)',
-                      }}
+                        bgcolor:
+                          theme.palette.mode === 'dark'
+                            ? alpha(theme.palette.background.paper, 0.95)
+                            : 'rgba(255,255,255,0.8)',
+                        borderColor: alpha(theme.palette.primary.main, theme.palette.mode === 'dark' ? 0.35 : 0.16),
+                        boxShadow:
+                          theme.palette.mode === 'dark'
+                            ? 'none'
+                            : 'inset 0 1px 0 rgba(255,255,255,0.7)',
+                      })}
                     >
                       <Grid container spacing={2.5}>
                         <Grid item xs={12} md={8}>
@@ -1360,7 +1444,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.recommendations) ||
                         activeVisitAudiogramData ||
                         hasValue(activeVisitExternalPta?.viewUrl)) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#0ea5e9', 0.14) }}>
+                        <Paper
+                      variant="outlined"
+                      sx={(theme) => ({
+                        p: 2.5,
+                        borderRadius: 3,
+                        bgcolor:
+                          theme.palette.mode === 'dark'
+                            ? alpha(theme.palette.info.main, 0.12)
+                            : 'rgba(255,255,255,0.84)',
+                        borderColor: alpha(theme.palette.info.main, theme.palette.mode === 'dark' ? 0.28 : 0.14),
+                      })}
+                    >
                           <SectionHeading icon={<MedicalServicesIcon fontSize="small" />} title="Hearing Test" />
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Test type(s)', activeVisitHearingTestTypesLabel)}</Grid>
@@ -1545,7 +1640,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           sx={{
                             p: 2.5,
                             borderRadius: 3,
-                            bgcolor: 'rgba(255,255,255,0.84)',
+                            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)'),
                             borderColor: alpha('#7c3aed', 0.18),
                           }}
                         >
@@ -1597,7 +1692,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.trialHearingAidModel) ||
                         hasValue(activeVisit.trialSerialNumber) ||
                         getHomeTrialSecurityDepositAmount(activeVisit) > 0) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#f59e0b', 0.18) }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)'), borderColor: alpha('#f59e0b', 0.18) }}>
                           <SectionHeading icon={<HearingIcon fontSize="small" />} title="Trial Details" />
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Device Brand', activeVisit.trialHearingAidBrand || activeVisit.hearingAidBrand)}</Grid>
@@ -1693,7 +1788,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       )}
 
                       {visitShowsBookingDetails(activeVisit) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#6366f1', 0.14) }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)'), borderColor: alpha('#6366f1', 0.14) }}>
                           <SectionHeading icon={<ReceiptIcon fontSize="small" />} title="Booking Details" />
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Device Brand', activeVisit.hearingAidBrand)}</Grid>
@@ -1717,7 +1812,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           hasValue(activeVisit.grossSalesBeforeTax) ||
                           hasValue(activeVisit.taxAmount) ||
                           (Array.isArray(activeVisit.products) && activeVisit.products.length > 0))) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)', borderColor: alpha('#16a34a', 0.15) }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)'), borderColor: alpha('#16a34a', 0.15) }}>
                           <SectionHeading icon={<CurrencyRupeeIcon fontSize="small" />} title="Sale Details" />
                           <Grid container spacing={2} sx={{ mb: Array.isArray(activeVisit.products) && activeVisit.products.length > 0 ? 2 : 0 }}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Sale Date', activeVisit.purchaseDate)}</Grid>
@@ -1765,7 +1860,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.accessoryName) ||
                         hasValue(activeVisit.accessoryAmount) ||
                         hasValue(activeVisit.accessoryDetails)) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)' }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)') }}>
                           <SectionHeading icon={<NotesIcon fontSize="small" />} title="Accessory Details" />
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Accessory', activeVisit.accessoryName)}</Grid>
@@ -1780,7 +1875,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.programmingReason) ||
                         hasValue(activeVisit.programmingAmount) ||
                         hasValue(activeVisit.programmingDoneBy)) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)' }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)') }}>
                           <SectionHeading icon={<MedicalServicesIcon fontSize="small" />} title="Programming Details" />
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Hearing Aid', activeVisit.hearingAidName)}</Grid>
@@ -1797,7 +1892,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.repairType) ||
                         hasValue(activeVisit.repairAmount) ||
                         hasValue(activeVisit.repairStatus)) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)' }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)') }}>
                           <SectionHeading icon={<MedicalServicesIcon fontSize="small" />} title="Repair Details" />
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Repair Type', activeVisit.repairType)}</Grid>
@@ -1814,7 +1909,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         hasValue(activeVisit.counsellingType) ||
                         hasValue(activeVisit.counsellingAmount) ||
                         hasValue(activeVisit.counsellingDoneBy)) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)' }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)') }}>
                           <SectionHeading icon={<NotesIcon fontSize="small" />} title="Counselling Details" />
                           <Grid container spacing={2}>
                             <Grid item xs={12} sm={6}>{renderVisitField('Type', activeVisit.counsellingType)}</Grid>
@@ -1827,7 +1922,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       )}
 
                       {(hasValue(activeVisit.visitNotes) || hasValue(activeVisit.notes)) && (
-                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: 'rgba(255,255,255,0.84)' }}>
+                        <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)') }}>
                           <SectionHeading icon={<NotesIcon fontSize="small" />} title="Notes" />
                           <Grid container spacing={2}>
                             <Grid item xs={12}>{renderVisitField('Visit Notes', activeVisit.visitNotes)}</Grid>
@@ -2228,7 +2323,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         justifyContent: 'space-between',
                         alignItems: 'flex-start',
                         gap: 2,
-                        bgcolor: 'rgba(255,255,255,0.8)',
+                        bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.94) : 'rgba(255,255,255,0.8)'),
                       }}
                     >
                       <Box sx={{ minWidth: 0, flex: 1 }}>
@@ -2280,16 +2375,16 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
               <SectionHeading icon={<CalendarIcon fontSize="small" />} title="Quick Stats" subtitle="At-a-glance profile summary" />
               
               <Stack spacing={1.5}>
-                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: 'rgba(255,255,255,0.8)' }}>
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.94) : 'rgba(255,255,255,0.8)') }}>
                   <Typography variant="body2" color="text.secondary">Total Visits</Typography>
                   <Typography variant="body1" sx={{ fontWeight: 700 }}>{visits.length}</Typography>
                 </Paper>
-                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: 'rgba(255,255,255,0.8)' }}>
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.94) : 'rgba(255,255,255,0.8)') }}>
                   <Typography variant="body2" color="text.secondary">Follow-up Calls</Typography>
                   <Typography variant="body1" sx={{ fontWeight: 700 }}>{followUpsList.length}</Typography>
                 </Paper>
                 {enquiry.followUpDate && (
-                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: 'rgba(255,255,255,0.8)' }}>
+                  <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.94) : 'rgba(255,255,255,0.8)') }}>
                     <Typography variant="body2" color="text.secondary">Next Follow-up</Typography>
                     <Typography variant="body1" sx={{ fontWeight: 700 }}>
                       {new Date(enquiry.followUpDate).toLocaleDateString()}
@@ -2297,7 +2392,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                   </Paper>
                 )}
                 
-                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: 'rgba(255,255,255,0.8)' }}>
+                <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.94) : 'rgba(255,255,255,0.8)') }}>
                   <Typography variant="body2" color="text.secondary">Last Updated</Typography>
                   <Typography variant="body1" sx={{ fontWeight: 700 }}>
                     {enquiry.updatedAt ? new Date(enquiry.updatedAt.seconds * 1000).toLocaleDateString() : 'Never'}

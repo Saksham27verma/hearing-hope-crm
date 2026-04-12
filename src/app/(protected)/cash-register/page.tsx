@@ -78,7 +78,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { v4 as uuidv4 } from 'uuid';
 import { cashRegisterExpenseAmount } from '@/lib/cash-register/expenseOutflow';
-import { CRM_PAGE_BG, RADIUS_2XL } from '@/components/Layout/crm-theme';
+import { RADIUS_2XL } from '@/components/Layout/crm-theme';
 
 const dialogPaperProps = { sx: { borderRadius: 2 } } as const;
 
@@ -86,7 +86,8 @@ const listPanelPaperSx = {
   mb: 2,
   borderRadius: RADIUS_2XL,
   overflow: 'hidden',
-  border: '1px solid #e0e0e0',
+  border: 1,
+  borderColor: 'divider',
   boxShadow: 'none',
   bgcolor: 'background.paper',
 } as const;
@@ -95,7 +96,8 @@ const filterBarPaperSx = {
   mb: 2,
   p: 2,
   borderRadius: 2,
-  border: '1px solid #e0e0e0',
+  border: 1,
+  borderColor: 'divider',
   boxShadow: 'none',
   bgcolor: 'background.paper',
 } as const;
@@ -496,7 +498,24 @@ const CashRegisterPage = () => {
     }
   };
 
-  const headCellSx = { fontWeight: 600, bgcolor: 'grey.50', borderBottom: '1px solid', borderColor: 'divider', py: 1, px: 1.5, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'text.secondary' } as const;
+  const headCellSx = useMemo(
+    () => ({
+      fontWeight: 600,
+      bgcolor:
+        theme.palette.mode === 'dark'
+          ? alpha(theme.palette.common.white, 0.06)
+          : theme.palette.grey[50],
+      borderBottom: '1px solid',
+      borderColor: 'divider',
+      py: 1,
+      px: 1.5,
+      fontSize: '0.75rem',
+      textTransform: 'uppercase' as const,
+      letterSpacing: '0.05em',
+      color: theme.palette.text.secondary,
+    }),
+    [theme],
+  );
 
   // --- Render helpers ---
   const renderDateRangeControls = () => (
@@ -1346,7 +1365,7 @@ const CashRegisterPage = () => {
   // --- Main render ---
   if (authLoading || centersLoading) {
     return (
-      <Box sx={{ p: { xs: 2, md: 3 }, bgcolor: CRM_PAGE_BG, minHeight: '100%', fontFamily: 'var(--font-inter), Roboto, system-ui, sans-serif' }}>
+      <Box sx={{ p: { xs: 2, md: 3 }, bgcolor: 'background.default', minHeight: '100%', fontFamily: 'var(--font-inter), Roboto, system-ui, sans-serif' }}>
         <Skeleton variant="rounded" height={40} width={280} sx={{ mb: 2, borderRadius: 1 }} />
         <Skeleton variant="rounded" height={22} width={420} sx={{ mb: 3 }} />
         <Grid container spacing={2}>
@@ -1364,7 +1383,7 @@ const CashRegisterPage = () => {
   }
 
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, bgcolor: CRM_PAGE_BG, minHeight: '100%', fontFamily: 'var(--font-inter), Roboto, system-ui, sans-serif' }}>
+    <Box sx={{ p: { xs: 2, md: 3 }, bgcolor: 'background.default', minHeight: '100%', fontFamily: 'var(--font-inter), Roboto, system-ui, sans-serif' }}>
       <Stack spacing={0.5} mb={2}>
         <Typography variant="h4" fontWeight={800} color="text.primary" letterSpacing="-0.03em">
           Cash register

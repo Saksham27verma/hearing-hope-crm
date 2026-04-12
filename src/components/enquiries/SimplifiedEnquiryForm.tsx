@@ -50,6 +50,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox, Radio,
   List, ListItem, ListItemButton, ListItemText, ListSubheader, Badge, Link as MuiLink
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import {
   Close as CloseIcon,
   Save as SaveIcon,
@@ -3281,7 +3282,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   }
 
   return (
-    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'grey.50' }}>
+    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
       {/* Header */}
       <Paper elevation={2} sx={{ 
         bgcolor: 'primary.main', 
@@ -3832,14 +3833,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   <Box sx={{ 
                     textAlign: 'center', 
                     py: 8, 
-                    bgcolor: 'grey.50', 
+                    bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), 
                     borderRadius: 2,
                     border: 1,
-                    borderColor: 'grey.200',
+                    borderColor: 'divider',
                     borderStyle: 'dashed',
                     mb: 3
                   }}>
-                    <DateRangeIcon sx={{ fontSize: 48, color: 'grey.400', mb: 2 }} />
+                    <DateRangeIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
                     <Typography variant="h6" color="text.secondary" gutterBottom>
                       No visits scheduled yet
                     </Typography>
@@ -4610,7 +4611,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           borderRadius: 2,
                           border: 1,
                           borderColor: 'divider',
-                          bgcolor: 'grey.50',
+                          bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]),
                           boxShadow: 'none',
                         }}
                       >
@@ -4781,7 +4782,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           borderRadius: 2,
                           border: 2,
                           borderColor: 'info.main',
-                          bgcolor: 'grey.50',
+                          bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]),
                           backgroundImage: (theme) =>
                             `linear-gradient(135deg, ${theme.palette.info.light}14 0%, transparent 55%)`,
                         }}
@@ -5006,7 +5007,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           borderRadius: 2,
                           border: 2,
                           borderColor: 'warning.main',
-                          bgcolor: '#fffaf0',
+                          bgcolor: (t) =>
+                            t.palette.mode === 'dark' ? alpha(t.palette.warning.main, 0.14) : '#fffaf0',
                           boxShadow: (theme) => `0 8px 24px ${theme.palette.warning.main}22`,
                         }}
                       >
@@ -5403,7 +5405,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
                     {/* Hearing Aid Booked Section (only when booking and not sale) */}
                     {currentVisit.hearingAidBooked && !currentVisit.hearingAidSale && (
-                      <Card sx={{ mb: 4, bgcolor: '#fffbf0', borderRadius: 2 }}>
+                      <Card
+                        sx={{
+                          mb: 4,
+                          bgcolor: (t) =>
+                            t.palette.mode === 'dark' ? alpha(t.palette.warning.main, 0.12) : '#fffbf0',
+                          borderRadius: 2,
+                        }}
+                      >
                         <CardContent sx={{ p: 3 }}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
                             <MedicalIcon sx={{ color: 'warning.main' }} />
@@ -5585,7 +5594,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           })()}
 
                           {/* Sale-specific quick fields */}
-                          <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                          <Box sx={{ mb: 2, p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                             <Grid container spacing={2}>
                               <Grid item xs={12} md={3}>
                                 <FormControl fullWidth size="small">
@@ -5726,8 +5735,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           </Box>
 
                           {/* Hearing Aid Journey Tracking */}
-                          <Box sx={{ mb: 4, p: 3, bgcolor: '#f5f5f5', borderRadius: 2, border: 1, borderColor: '#e0e0e0' }}>
-                            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, color: '#666' }}>
+                          <Box
+                            sx={{
+                              mb: 4,
+                              p: 3,
+                              bgcolor: (t) =>
+                                t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f5f5f5',
+                              borderRadius: 2,
+                              border: 1,
+                              borderColor: 'divider',
+                            }}
+                          >
+                            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, color: 'text.secondary' }}>
                               Journey Tracking
                             </Typography>
                             <Grid container spacing={2}>
@@ -6071,15 +6090,37 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
                           {/* Booking Details Section (only when booking is active and NOT a sale) */}
                           {currentVisit.hearingAidBooked && !currentVisit.hearingAidSale && (
-                            <Box sx={{ mb: 4, p: 3, bgcolor: '#fffbf0', borderRadius: 2, border: 1, borderColor: '#fff3e0' }}>
-                              <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, color: '#f57c00' }}>
+                            <Box
+                              sx={{
+                                mb: 4,
+                                p: 3,
+                                bgcolor: (t) =>
+                                  t.palette.mode === 'dark' ? alpha(t.palette.warning.main, 0.12) : '#fffbf0',
+                                borderRadius: 2,
+                                border: 1,
+                                borderColor: (t) =>
+                                  t.palette.mode === 'dark'
+                                    ? alpha(t.palette.warning.main, 0.35)
+                                    : '#fff3e0',
+                              }}
+                            >
+                              <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, color: 'warning.main' }}>
                                 Booking Details
                               </Typography>
                               
                               {/* Show relationship to previous visit */}
                               {currentVisit.previousVisitId && (
-                                <Box sx={{ mb: 2, p: 1.5, bgcolor: 'rgba(245, 124, 0, 0.1)', borderRadius: 1, border: 1, borderColor: 'rgba(245, 124, 0, 0.2)' }}>
-                                  <Typography variant="body2" sx={{ fontSize: '0.85rem', color: '#f57c00' }}>
+                                <Box
+                                  sx={{
+                                    mb: 2,
+                                    p: 1.5,
+                                    bgcolor: (t) => alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.18 : 0.1),
+                                    borderRadius: 1,
+                                    border: 1,
+                                    borderColor: (t) => alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.4 : 0.2),
+                                  }}
+                                >
+                                  <Typography variant="body2" sx={{ fontSize: '0.85rem', color: 'warning.light' }}>
                                     📋 Booking following: {(() => {
                                       const prevVisit = watchedVisits.find(v => v.id === currentVisit.previousVisitId);
                                       if (prevVisit?.hearingAidStatus === 'trial_given') {
@@ -6455,7 +6496,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Grid>
 
                             {currentProduct.mrp > 0 && (
-                              <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                              <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                                   Line preview × {saleLineQtyPreview} unit{saleLineQtyPreview !== 1 ? 's' : ''}
                                 </Typography>
@@ -7866,13 +7907,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   <Box sx={{ 
                     textAlign: 'center', 
                     py: 6, 
-                    bgcolor: 'grey.50', 
+                    bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), 
                     borderRadius: 2,
                     border: 1,
-                    borderColor: 'grey.200',
+                    borderColor: 'divider',
                     borderStyle: 'dashed'
                   }}>
-                    <EventIcon sx={{ fontSize: 48, color: 'grey.400', mb: 2 }} />
+                    <EventIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
                     <Typography variant="h6" color="text.secondary" gutterBottom>
                       No follow-ups recorded yet
                     </Typography>
@@ -8296,14 +8337,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               </Typography>
               <Grid container spacing={3}>
                 <Grid item xs={12} md={6}>
-                  <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                  <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                     <Typography variant="body2" color="text.secondary">Name</Typography>
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchName}</Typography>
                   </Box>
                 </Grid>
                 {watchCustomerName && (
                   <Grid item xs={12} md={6}>
-                    <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                    <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                       <Typography variant="body2" color="text.secondary">Customer Name</Typography>
                       <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchCustomerName}</Typography>
                     </Box>
@@ -8311,20 +8352,20 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 )}
                 {!isAudiologist && (
                   <Grid item xs={12} md={6}>
-                    <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                    <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                       <Typography variant="body2" color="text.secondary">Phone</Typography>
                       <Typography variant="h6" sx={{ fontWeight: 600 }}>{watchPhone}</Typography>
                     </Box>
                   </Grid>
                 )}
                 <Grid item xs={12} md={6}>
-                  <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                  <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                     <Typography variant="body2" color="text.secondary">Email</Typography>
                     <Typography variant="body1" sx={{ fontWeight: 500 }}>{watch('email') || 'Not provided'}</Typography>
                   </Box>
                 </Grid>
                 <Grid item xs={12} md={6}>
-                  <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                  <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                     <Typography variant="body2" color="text.secondary">Reference</Typography>
                     <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                       {(watch('reference') || []).length > 0 ? (
@@ -8345,7 +8386,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   </Box>
                 </Grid>
                 <Grid item xs={12}>
-                  <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
+                  <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                     <Typography variant="body2" color="text.secondary">Address</Typography>
                     <Typography variant="body1" sx={{ fontWeight: 500 }}>{watch('address') || 'Not provided'}</Typography>
                   </Box>
@@ -8358,7 +8399,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 Visits Summary ({watchedVisits.length})
               </Typography>
               {watchedVisits.map((visit, index) => (
-                <Card key={visit.id} sx={{ p: 3, mb: 3, bgcolor: 'grey.50', borderRadius: 2 }}>
+                <Card key={visit.id} sx={{ p: 3, mb: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                   <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
                     Visit {index + 1}
                     {visit.visitDate && (
@@ -8924,7 +8965,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             minHeight: 0,
           }}
         >
-          <Box sx={{ p: 2, bgcolor: 'grey.50', borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
+          <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
             <Stack spacing={1.5}>
               <TextField
                 fullWidth
@@ -9358,7 +9399,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             </Box>
           </Box>
         </DialogContent>
-        <DialogActions sx={{ p: 3, bgcolor: 'grey.50' }}>
+        <DialogActions sx={{ p: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]) }}>
           <Button
             onClick={() => {
               const defaultRoles = { ...DEFAULT_ENQUIRY_STAFF_ROLES };
@@ -9373,7 +9414,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 { merge: true },
               ).catch((e) => console.warn('Failed to save default enquiry staff roles:', e));
             }}
-            sx={{ color: '#666' }}
+            sx={{ color: 'text.secondary' }}
           >
             Reset to Default
           </Button>

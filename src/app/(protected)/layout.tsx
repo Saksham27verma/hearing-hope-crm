@@ -8,7 +8,10 @@ import { LazyHopeAIDrawer } from '@/components/common/LazyComponents';
 import CrmSidebar from '@/components/Layout/CrmSidebar';
 import CrmHeader from '@/components/Layout/CrmHeader';
 import { filterCrmNavForUser } from '@/components/Layout/crm-nav-config';
-import { CRM_ACCENT, CRM_PAGE_BG, HEADER_HEIGHT, mainOffsetLeftPx } from '@/components/Layout/crm-theme';
+import { HEADER_HEIGHT, mainOffsetLeftPx } from '@/components/Layout/crm-theme';
+import { useTheme } from '@mui/material/styles';
+import { alpha } from '@mui/material/styles';
+import Box from '@mui/material/Box';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import CenterScopeToolbar from '@/components/Layout/CenterScopeToolbar';
 
@@ -18,6 +21,7 @@ const SCOPE_TOOLBAR_HEIGHT_COLLAPSED = 40;
 import SqueezeLoader from '@/components/ui/loading-indicator';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
+  const theme = useTheme();
   const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
   const { canOverrideScope, lockedCenterId, scopeToolbarExpanded } = useCenterScope();
   const showScopeToolbar = canOverrideScope || !!lockedCenterId;
@@ -244,13 +248,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     : 0;
 
   const errorContainer: React.CSSProperties = {
-    backgroundColor: CRM_ACCENT,
-    color: 'white',
+    backgroundColor: theme.palette.primary.main,
+    color: theme.palette.primary.contrastText,
     padding: 20,
     borderRadius: 16,
     margin: 16,
     textAlign: 'center',
-    boxShadow: '0 12px 40px rgba(241, 115, 54, 0.25)',
+    boxShadow: `0 12px 40px ${alpha(theme.palette.primary.main, 0.35)}`,
     fontFamily: 'var(--font-inter), system-ui, sans-serif',
   };
 
@@ -259,7 +263,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       <SqueezeLoader
         caption="Signing you in…"
         subcaption="Checking your account"
-        backgroundColor={CRM_PAGE_BG}
         size={64}
         spinDuration={10}
         squeezeDuration={3}
@@ -272,7 +275,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       <SqueezeLoader
         caption="Opening your workspace…"
         subcaption="This page is not available for your role."
-        backgroundColor={CRM_PAGE_BG}
         size={56}
         spinDuration={8}
         squeezeDuration={2.5}
@@ -290,8 +292,8 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           onClick={() => window.location.reload()}
           style={{
             padding: '10px 18px',
-            backgroundColor: 'white',
-            color: CRM_ACCENT,
+            backgroundColor: theme.palette.background.paper,
+            color: theme.palette.primary.main,
             border: 'none',
             borderRadius: 12,
             cursor: 'pointer',
@@ -316,16 +318,17 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     if (typeof window !== 'undefined') {
       router.push('/login');
     }
-    return <SqueezeLoader caption="Redirecting to login…" subcaption="Please wait" backgroundColor={CRM_PAGE_BG} size={56} />;
+    return <SqueezeLoader caption="Redirecting to login…" subcaption="Please wait" size={56} />;
   }
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         display: 'flex',
         minHeight: '100vh',
-        backgroundColor: CRM_PAGE_BG,
+        bgcolor: 'background.default',
         fontFamily: 'var(--font-inter), system-ui, sans-serif',
+        transition: 'background-color 0.28s ease',
       }}
     >
       {!shouldHideSidebar && !isDesktop && drawerOpen && (
@@ -335,7 +338,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           style={{
             position: 'fixed',
             inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.4)',
+            backgroundColor: alpha(theme.palette.mode === 'light' ? '#0f172a' : '#000000', 0.45),
             zIndex: 1220,
             backdropFilter: 'blur(4px)',
           }}
@@ -415,6 +418,6 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       >
         {children}
       </main>
-    </div>
+    </Box>
   );
 }

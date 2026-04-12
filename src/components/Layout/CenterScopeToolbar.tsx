@@ -2,6 +2,7 @@
 
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import Box from '@mui/material/Box';
+import { alpha } from '@mui/material/styles';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
@@ -47,10 +48,13 @@ export default function CenterScopeToolbar() {
   return (
     <Box
       sx={{
-        borderBottom: '1px solid #e8eaed',
-        bgcolor: '#f8f9fa',
+        borderBottom: 1,
+        borderColor: 'divider',
+        bgcolor: (t) =>
+          t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.92) : t.palette.grey[100],
         px: { xs: 2, md: 3 },
         py: scopeToolbarExpanded ? 1.5 : 0.75,
+        transition: 'background-color 0.28s ease, border-color 0.28s ease',
       }}
     >
       {scopeToolbarExpanded ? (

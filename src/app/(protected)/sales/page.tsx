@@ -1,13 +1,16 @@
 'use client';
 
-import React from 'react';
-import { ThemeProvider } from '@mui/material/styles';
-import { salesInvoicingTheme } from '@/lib/sales-invoicing/salesInvoicingTheme';
+import React, { useMemo } from 'react';
+import { ThemeProvider, useTheme } from '@mui/material/styles';
+import { createSalesInvoicingTheme } from '@/lib/sales-invoicing/salesInvoicingTheme';
 import SalesInvoicingPageInner from '@/components/sales-invoicing/SalesInvoicingPageInner';
 
 export default function SalesPage() {
+  const baseTheme = useTheme();
+  const salesTheme = useMemo(() => createSalesInvoicingTheme(baseTheme), [baseTheme]);
+
   return (
-    <ThemeProvider theme={salesInvoicingTheme}>
+    <ThemeProvider theme={salesTheme}>
       <SalesInvoicingPageInner />
     </ThemeProvider>
   );

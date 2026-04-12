@@ -44,7 +44,8 @@ import {
   stockTransferMatchesDataScope,
 } from '@/lib/tenant/centerScope';
 import { useRouter } from 'next/navigation';
-import { alpha } from '@mui/material/styles';
+import { alpha, useTheme } from '@mui/material/styles';
+import type { Theme } from '@mui/material/styles';
 import SvgIcon from '@mui/material/SvgIcon';
 import AdminDashboardInsights from '@/components/dashboard/AdminDashboardInsights';
 import {
@@ -52,8 +53,6 @@ import {
   getEnquiryVisitSchedules,
   isBookingVisitRow,
 } from '@/utils/bookingAdvancePaidDate';
-import { CRM_ACCENT, CRM_ORANGE_GHOST } from '@/components/Layout/crm-theme';
-
 // Format currency
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-IN', {
@@ -114,51 +113,68 @@ function formatDateKeyEnIn(key: string): string {
   });
 }
 
-/** Softer orange ring for dashboard cards (sidebar glow scaled down). */
-const PULSE_SECTION_GLOW =
-  '0 0 0 1px rgba(241, 115, 54, 0.2), 0 0 16px rgba(241, 115, 54, 0.1), 0 4px 14px rgba(15, 23, 42, 0.06)';
-
-const pulseCardSx = {
-  border: '1px solid',
-  borderColor: 'rgba(241, 115, 54, 0.22)',
-  borderRadius: 2,
-  overflow: 'hidden',
-  bgcolor: CRM_ORANGE_GHOST,
-  height: '100%',
-  boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)',
-  borderLeft: '3px solid',
-  borderLeftColor: CRM_ACCENT,
-} as const;
+function pulseCardSxFromTheme(theme: Theme) {
+  const p = theme.palette.primary.main;
+  return {
+    border: '1px solid',
+    borderColor: alpha(p, 0.22),
+    borderRadius: 2,
+    overflow: 'hidden',
+    bgcolor: alpha(p, theme.palette.mode === 'light' ? 0.12 : 0.2),
+    height: '100%',
+    boxShadow:
+      theme.palette.mode === 'light'
+        ? '0 1px 2px rgba(15, 23, 42, 0.04)'
+        : '0 1px 2px rgba(0, 0, 0, 0.35)',
+    borderLeft: '3px solid',
+    borderLeftColor: p,
+    transition: 'background-color 0.28s ease, border-color 0.28s ease',
+  } as const;
+}
 
 /** Minimal pill for dates / status (Today's Pulse tables). */
-const pulsePillSx = {
-  display: 'inline-block',
-  bgcolor: 'grey.100',
-  color: 'grey.600',
-  fontSize: '10px',
-  lineHeight: 1.35,
-  px: 0.75,
-  py: 0.125,
-  borderRadius: 1,
-  fontWeight: 600,
-} as const;
+function pulsePillSxFromTheme(theme: Theme) {
+  return {
+    display: 'inline-block',
+    bgcolor: theme.palette.mode === 'light' ? theme.palette.grey[100] : alpha(theme.palette.common.white, 0.08),
+    color: 'text.secondary',
+    fontSize: '10px',
+    lineHeight: 1.35,
+    px: 0.75,
+    py: 0.125,
+    borderRadius: 1,
+    fontWeight: 600,
+  } as const;
+}
 
-const pulseRowSx = {
-  cursor: 'pointer',
-  transition: 'background-color 0.15s ease',
-  '&:hover': { bgcolor: 'grey.50' },
-  '& td': { py: 0.75, borderColor: 'divider' },
-} as const;
+function pulseRowSxFromTheme(theme: Theme) {
+  return {
+    cursor: 'pointer',
+    transition: 'background-color 0.15s ease',
+    '&:hover': { bgcolor: 'action.hover' },
+    '& td': { py: 0.75, borderColor: 'divider', color: 'text.primary' },
+  } as const;
+}
 
-const pulseHeadCellSx = {
-  fontSize: '0.6875rem',
-  fontWeight: 600,
-  color: 'grey.600',
-  py: 0.5,
-  px: 1,
-  borderBottom: '1px solid',
-  borderColor: 'divider',
-  bgcolor: 'rgba(255,255,255,0.72)',
+function pulseHeadCellSxFromTheme(theme: Theme) {
+  return {
+    fontSize: '0.6875rem',
+    fontWeight: 600,
+    color: 'text.secondary',
+    py: 0.5,
+    px: 1,
+    borderBottom: '1px solid',
+    borderColor: 'divider',
+    bgcolor:
+      theme.palette.mode === 'light'
+        ? alpha(theme.palette.common.white, 0.72)
+        : alpha(theme.palette.common.white, 0.05),
+  } as const;
+}
+
+const pulseTableContainerSx = {
+  bgcolor: (t: Theme) =>
+    t.palette.mode === 'light' ? alpha(t.palette.common.white, 0.55) : alpha(t.palette.common.white, 0.03),
 } as const;
 
 const pulseBodyTypographySx = {
@@ -187,8 +203,9 @@ function DashboardStatStrip({ items }: { items: StatStripItem[] }) {
         borderColor: (t) =>
           t.palette.mode === 'dark' ? alpha(t.palette.divider, 0.8) : 'rgba(226, 232, 240, 0.75)',
         borderRadius: 1.5,
-        boxShadow: '0 1px 2px 0 rgba(15, 23, 42, 0.05)',
-        bgcolor: (t) => (t.palette.mode === 'dark' ? t.palette.grey[900] : '#FFFFFF'),
+        boxShadow: (t) =>
+          t.palette.mode === 'dark' ? '0 1px 2px rgba(0,0,0,0.4)' : '0 1px 2px 0 rgba(15, 23, 42, 0.05)',
+        bgcolor: (t) => (t.palette.mode === 'dark' ? t.palette.background.paper : '#FFFFFF'),
         overflow: 'hidden',
         mb: 2,
       }}
@@ -267,7 +284,7 @@ function DashboardStatStrip({ items }: { items: StatStripItem[] }) {
                     fontWeight: 600,
                     letterSpacing: '0.08em',
                     textTransform: 'uppercase',
-                    color: (t) => (t.palette.mode === 'dark' ? t.palette.grey[500] : '#6b7280'),
+                    color: 'text.secondary',
                     lineHeight: 1.1,
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
@@ -281,7 +298,7 @@ function DashboardStatStrip({ items }: { items: StatStripItem[] }) {
                 sx={{
                   fontSize: '1.125rem',
                   fontWeight: 700,
-                  color: (t) => (t.palette.mode === 'dark' ? t.palette.grey[50] : '#111827'),
+                  color: 'text.primary',
                   lineHeight: 1,
                   letterSpacing: '-0.02em',
                   mt: 0,
@@ -301,6 +318,11 @@ export default function DashboardPage() {
   const { user, userProfile } = useAuth();
   const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const router = useRouter();
+  const theme = useTheme();
+  const pulseCardSx = pulseCardSxFromTheme(theme);
+  const pulseHeadCellSx = pulseHeadCellSxFromTheme(theme);
+  const pulsePillSx = pulsePillSxFromTheme(theme);
+  const pulseRowSx = pulseRowSxFromTheme(theme);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
@@ -662,7 +684,7 @@ export default function DashboardPage() {
           </Box>
           <TableContainer>
             <Table>
-              <TableHead sx={{ bgcolor: 'grey.50' }}>
+              <TableHead sx={{ bgcolor: (t) => (t.palette.mode === 'light' ? t.palette.grey[50] : alpha(t.palette.common.white, 0.04)) }}>
                 <TableRow>
                   <TableCell><strong>Date</strong></TableCell>
                   <TableCell><strong>Patient Name</strong></TableCell>
@@ -851,7 +873,7 @@ export default function DashboardPage() {
             sx={{
               fontSize: { xs: '1.375rem', sm: '1.5rem' },
               fontWeight: 700,
-              color: 'grey.900',
+              color: 'text.primary',
               letterSpacing: '-0.02em',
               lineHeight: 1.35,
             }}
@@ -864,7 +886,7 @@ export default function DashboardPage() {
                 'there') as string,
             )}
           </Typography>
-          <Typography variant="body2" sx={{ color: 'grey.500', mt: 0.5, fontSize: '0.875rem' }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.5, fontSize: '0.875rem' }}>
             Your workspace at a glance — scoped to your current data view.
           </Typography>
         </Box>
@@ -874,9 +896,9 @@ export default function DashboardPage() {
             disabled={refreshing}
             size="small"
             sx={{
-              bgcolor: 'grey.100',
-              color: 'grey.700',
-              '&:hover': { bgcolor: 'grey.200' },
+              bgcolor: 'action.hover',
+              color: 'text.secondary',
+              '&:hover': { bgcolor: 'action.selected' },
             }}
           >
             <RefreshIcon fontSize="small" />
@@ -902,10 +924,15 @@ export default function DashboardPage() {
           borderRadius: 3,
           p: { xs: 1.5, sm: 2 },
           mb: 3,
-          boxShadow: PULSE_SECTION_GLOW,
-          border: '1px solid rgba(241, 115, 54, 0.2)',
+          boxShadow: (t) =>
+            `0 0 0 1px ${alpha(t.palette.primary.main, 0.2)}, 0 0 16px ${alpha(
+              t.palette.primary.main,
+              0.1,
+            )}, 0 4px 14px ${alpha(t.palette.text.primary, t.palette.mode === 'light' ? 0.06 : 0.12)}`,
+          border: (t) => `1px solid ${alpha(t.palette.primary.main, 0.2)}`,
           bgcolor: (t) =>
             t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.35) : 'rgba(255,255,255,0.94)',
+          transition: 'background-color 0.28s ease, border-color 0.28s ease, box-shadow 0.28s ease',
         }}
       >
         <Box sx={{ mb: 2 }}>
@@ -913,13 +940,13 @@ export default function DashboardPage() {
             sx={{
               fontSize: '1.125rem',
               fontWeight: 600,
-              color: 'grey.900',
+              color: 'text.primary',
               letterSpacing: '-0.01em',
             }}
           >
             Today&apos;s Pulse
           </Typography>
-          <Typography variant="body2" sx={{ color: 'grey.500', mt: 0.25, fontSize: '0.8125rem' }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.25, fontSize: '0.8125rem' }}>
             Sales, enquiries, transfers, booking advances collected today, and appointments scheduled for today
             (local time) — respects your data scope.
           </Typography>
@@ -951,8 +978,8 @@ export default function DashboardPage() {
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <ReceiptIcon sx={{ fontSize: 20, color: 'grey.500' }} />
-              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+              <ReceiptIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
                 Today&apos;s Sales
               </Typography>
             </Box>
@@ -960,14 +987,14 @@ export default function DashboardPage() {
               <IconButton
                 size="small"
                 onClick={() => router.push('/sales')}
-                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
                 aria-label="View all sales"
               >
                 <ArrowForwardIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Tooltip>
           </Box>
-          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+          <TableContainer sx={pulseTableContainerSx}>
             <Table size="small" sx={{ tableLayout: 'fixed' }}>
               <TableHead>
                 <TableRow>
@@ -1036,8 +1063,8 @@ export default function DashboardPage() {
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <PeopleIcon sx={{ fontSize: 20, color: 'grey.500' }} />
-              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+              <PeopleIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
                 Today&apos;s Enquiries
               </Typography>
             </Box>
@@ -1045,14 +1072,14 @@ export default function DashboardPage() {
               <IconButton
                 size="small"
                 onClick={() => router.push('/interaction/enquiries')}
-                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
                 aria-label="View all enquiries"
               >
                 <ArrowForwardIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Tooltip>
           </Box>
-          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+          <TableContainer sx={pulseTableContainerSx}>
             <Table size="small" sx={{ tableLayout: 'fixed' }}>
               <TableHead>
                 <TableRow>
@@ -1118,8 +1145,8 @@ export default function DashboardPage() {
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <TransferIcon sx={{ fontSize: 20, color: 'grey.500' }} />
-              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+              <TransferIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
                 Today&apos;s Transfers
               </Typography>
             </Box>
@@ -1127,14 +1154,14 @@ export default function DashboardPage() {
               <IconButton
                 size="small"
                 onClick={() => router.push('/stock-transfer')}
-                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
                 aria-label="View all transfers"
               >
                 <ArrowForwardIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Tooltip>
           </Box>
-          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+          <TableContainer sx={pulseTableContainerSx}>
             <Table size="small" sx={{ tableLayout: 'fixed' }}>
               <TableHead>
                 <TableRow>
@@ -1194,8 +1221,8 @@ export default function DashboardPage() {
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <BookmarkAddedIcon sx={{ fontSize: 20, color: 'grey.500' }} />
-              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+              <BookmarkAddedIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
                 Today&apos;s booking advances
               </Typography>
             </Box>
@@ -1203,14 +1230,14 @@ export default function DashboardPage() {
               <IconButton
                 size="small"
                 onClick={() => router.push('/reports')}
-                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
                 aria-label="Open reports"
               >
                 <ArrowForwardIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Tooltip>
           </Box>
-          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+          <TableContainer sx={pulseTableContainerSx}>
             <Table size="small" sx={{ tableLayout: 'fixed' }}>
               <TableHead>
                 <TableRow>
@@ -1283,8 +1310,8 @@ export default function DashboardPage() {
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <EventAvailableIcon sx={{ fontSize: 20, color: 'grey.500' }} />
-              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'grey.800' }}>
+              <EventAvailableIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
                 Today&apos;s appointments
               </Typography>
             </Box>
@@ -1292,14 +1319,14 @@ export default function DashboardPage() {
               <IconButton
                 size="small"
                 onClick={() => router.push('/appointments')}
-                sx={{ color: 'grey.400', '&:hover': { color: 'grey.700' } }}
+                sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
                 aria-label="View all appointments"
               >
                 <ArrowForwardIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Tooltip>
           </Box>
-          <TableContainer sx={{ bgcolor: 'rgba(255,255,255,0.55)' }}>
+          <TableContainer sx={pulseTableContainerSx}>
             <Table size="small" sx={{ tableLayout: 'fixed' }}>
               <TableHead>
                 <TableRow>

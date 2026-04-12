@@ -863,7 +863,7 @@ export default function MaterialOutPage() {
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
-          <Typography variant="h4" component="h1">
+          <Typography variant="h4" component="h1" color="text.primary">
             Material Out
           </Typography>
           <Typography variant="body2" color="text.secondary">

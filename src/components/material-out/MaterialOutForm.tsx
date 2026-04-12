@@ -33,6 +33,7 @@ import {
   TableFooter,
   Stack,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { Grid as MuiGrid } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
@@ -274,7 +275,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
 
   const renderChallanDetails = () => (
     <Box>
-      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+      <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2 }}>
         <Box display="flex" alignItems="center" mb={2}>
           <ReceiptIcon color="primary" sx={{ mr: 1.5 }} />
           <Typography variant="subtitle1" fontWeight={600} color="primary">Challan Information</Typography>
@@ -332,7 +333,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
             {selectedProductType && <Chip label="Clear Filter" onClick={() => handleFilterByType(null)} variant="outlined" size="small" color="secondary" sx={{ borderRadius: 1 }} />}
           </Box>
           <Box>
-            <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2 }}>
+            <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2 }}>
               <Typography variant="subtitle2" color="primary" gutterBottom>Step 1: Select Product (from Inventory)</Typography>
               <Autocomplete
                 options={Array.from(new Map(availableItems.map(i => [i.productId, { id: i.productId, name: i.name, type: i.type || '' }])).values()) as any}
@@ -375,7 +376,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                 </Box>
               </Paper>
               <Box>
-                <Box sx={{ p: 2, bgcolor: '#f8f9fa', borderRadius: 2, mb: 2 }}>
+                <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2 }}>
                   <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
                     <CalculateIcon fontSize="small" sx={{ mr: 1 }} /> Step 2: {isSerialRequiredForCurrent ? 'Serial Numbers' : 'Enter Quantity'}
                   </Typography>
@@ -463,7 +464,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
           )}
         </Box>
       </Paper>
-      <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: '#f8f9fa' }}>
+      <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
         <Box display="flex" alignItems="center" mb={2}>
           <SummarizeIcon color="primary" sx={{ mr: 1.5 }} />
           <Typography variant="subtitle1" fontWeight={600} color="primary">Added Products</Typography>
@@ -524,7 +525,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
         {activeStep === 1 && renderProductDetails()}
         {activeStep === 2 && (
           <Box>
-            <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: '#f8f9fa', borderRadius: 2 }}>
+            <Paper elevation={0} sx={{ p: 3, mb: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2 }}>
               <Typography variant="subtitle1" fontWeight={600} color="primary" gutterBottom>Challan Summary</Typography>
               <Divider sx={{ mb: 2 }} />
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
@@ -537,7 +538,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                 {((materialData as any).notes) ? (<Typography variant="body2" sx={{ gridColumn: '1 / -1' }}>Notes: <strong>{(materialData as any).notes}</strong></Typography>) : null}
               </Box>
             </Paper>
-            <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: '#f8f9fa' }}>
+            <Paper elevation={0} sx={{ p: 3, borderRadius: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa') }}>
               <Typography variant="subtitle1" fontWeight={600} color="primary" gutterBottom>Products</Typography>
               <Divider sx={{ mb: 2 }} />
               {materialData.products.length === 0 ? (

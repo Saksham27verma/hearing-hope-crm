@@ -13,18 +13,26 @@ import Skeleton from '@mui/material/Skeleton';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import { useEffect, useMemo, useState } from 'react';
 
-const BAR_PAPER_SX = {
-  elevation: 0,
-  border: '1px solid #e0e2e6',
-  boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.03)',
-  bgcolor: '#ffffff',
-  borderRadius: 2,
-  px: 2.5,
-  py: 2,
-};
+function useScopeBarPaperSx() {
+  const theme = useTheme();
+  return {
+    elevation: 0,
+    border: `1px solid ${theme.palette.divider}`,
+    boxShadow:
+      theme.palette.mode === 'dark'
+        ? '0 4px 24px rgba(0, 0, 0, 0.45)'
+        : '0px 4px 20px rgba(0, 0, 0, 0.03)',
+    bgcolor: theme.palette.background.paper,
+    borderRadius: 2,
+    px: 2.5,
+    py: 2,
+    transition: 'background-color 0.28s ease, border-color 0.28s ease, box-shadow 0.28s ease',
+  } as const;
+}
 
 const DISMISS_STORAGE_KEY = 'crm-data-scope-lock-banner-dismissed-v1';
 
@@ -33,6 +41,7 @@ const DISMISS_STORAGE_KEY = 'crm-data-scope-lock-banner-dismissed-v1';
  * switch within assigned centers; single-center users see a compact lock line (dismissible).
  */
 export default function CenterScopeSwitcher() {
+  const BAR_PAPER_SX = useScopeBarPaperSx();
   const {
     lockedCenterId,
     allowedCenterIds,
