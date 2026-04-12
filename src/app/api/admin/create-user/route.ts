@@ -111,6 +111,23 @@ export async function POST(req: Request) {
 
     await db.collection('users').doc(newUser.uid).set(userProfile, { merge: true });
 
+    try {
+      await db.collection('activityLogs').add({
+        timestamp: new Date(),
+        userId: decoded.uid,
+        userName: decoded.name || decoded.email || requester.uid,
+        userEmail: decoded.email || '',
+        userRole: requester.role || 'admin',
+        centerId: requester.centerId || null,
+        action: 'CREATE',
+        module: 'Users',
+        entityId: newUser.uid,
+        entityName: displayName || email,
+        description: `Created user ${displayName || email} with role "${role}"`,
+        metadata: { email, role, displayName },
+      });
+    } catch { /* silent */ }
+
     return NextResponse.json({ ok: true, uid: newUser.uid, email });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to create user';

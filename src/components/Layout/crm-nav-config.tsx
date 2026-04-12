@@ -23,6 +23,7 @@ import {
   Sparkles,
   ScrollText,
   TrendingUp,
+  Activity,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -81,6 +82,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   },
   { text: 'Settings', path: '/settings', icon: Settings, adminOnly: true },
   { text: 'User Management', path: '/user-management', icon: UsersRound, adminOnly: true },
+  { text: 'Activity Logs', path: '/activity-logs', icon: Activity, adminOnly: true },
   { text: 'Admin Cleanup', path: '/admin-cleanup', icon: Sparkles, adminOnly: true },
 ];
 
@@ -107,6 +109,7 @@ export const NAV_ITEM_ACCESS_KEYS: Record<string, string[]> = {
   Staff: ['staff'],
   Settings: ['settings'],
   'User Management': ['user management'],
+  'Activity Logs': ['activity logs'],
   'Admin Cleanup': ['admin cleanup'],
 };
 

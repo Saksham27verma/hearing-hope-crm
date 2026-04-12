@@ -37,7 +37,7 @@ export function normalizeCenterId(
  * Legacy admins with no center id are treated as super-admin for backward compatibility.
  */
 export function isSuperAdminViewer(profile: UserProfile | null): boolean {
-  if (!profile || profile.role !== 'admin') return false;
+  if (!profile || String(profile.role ?? '').toLowerCase().trim() !== 'admin') return false;
   if (profile.isSuperAdmin === true) return true;
   if (profile.isSuperAdmin === false) return false;
   return normalizeCenterId(profile) === null && normalizeCenterIdsFromProfile(profile).length === 0;

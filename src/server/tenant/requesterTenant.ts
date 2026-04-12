@@ -15,6 +15,9 @@ export type RequesterTenant = {
 function profileFromDoc(data: Record<string, unknown> | undefined, uid: string): RequesterTenant | null {
   if (!data) return null;
   const p = { ...data, uid } as UserProfile;
+  if (typeof p.role === 'string') {
+    p.role = p.role.toLowerCase().trim() as UserProfile['role'];
+  }
   const centerIds = normalizeCenterIdsFromProfile(p);
   return {
     uid,
@@ -34,7 +37,8 @@ export async function getRequesterTenant(uid: string): Promise<RequesterTenant |
 export function assertAdmin(requester: RequesterTenant): void {
   // "Super admin" accounts should be able to perform admin-only maintenance actions
   // even if their `role` isn't set to `admin` in the `users` profile doc.
-  if (requester.role !== 'admin' && !requester.isSuperAdmin) {
+  const role = String(requester.role ?? '').toLowerCase().trim();
+  if (role !== 'admin' && !requester.isSuperAdmin) {
     throw new Error('Forbidden');
   }
 }

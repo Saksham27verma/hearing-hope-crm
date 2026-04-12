@@ -109,6 +109,7 @@ import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
 import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
+import { logActivity } from '@/lib/activityLogger';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import { enquiryMatchesDataScope } from '@/lib/tenant/centerScope';
 import {
@@ -435,6 +436,7 @@ export default function EnquiriesPage() {
   const router = useRouter();
   const { user, userProfile } = useAuth();
   const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
+  const activityCenterId = effectiveScopeCenterId ?? userProfile?.centerId;
   const { optionsByField } = useEnquiryOptionsByField();
   const wizardReferenceOpts = optionsByField.reference ?? [];
   const wizardVisitingCenterOpts = optionsByField.visiting_center ?? [];
@@ -1537,12 +1539,28 @@ export default function EnquiriesPage() {
           ...enquiryData,
           createdAt: editingEnquiry.createdAt
         });
+        void logActivity(db, userProfile, activityCenterId, {
+          action: 'UPDATE',
+          module: 'Enquiries',
+          entityId: editingEnquiry.id,
+          entityName: enquiryData.name || enquiryData.customerName || editingEnquiry.name || 'Enquiry',
+          description: `Updated enquiry (quick form) for ${enquiryData.name || enquiryData.phone || 'patient'}`,
+          metadata: { phone: enquiryData.phone },
+        }, user);
       } else {
         // Create new enquiry
-        await addDoc(collection(db, 'enquiries'), {
+        const docRef = await addDoc(collection(db, 'enquiries'), {
           ...enquiryData,
           createdAt: serverTimestamp()
         });
+        void logActivity(db, userProfile, activityCenterId, {
+          action: 'CREATE',
+          module: 'Enquiries',
+          entityId: docRef.id,
+          entityName: enquiryData.name || enquiryData.customerName || enquiryData.phone || 'New Enquiry',
+          description: `Created enquiry (quick form) for ${enquiryData.name || enquiryData.phone || 'patient'}`,
+          metadata: { phone: enquiryData.phone },
+        }, user);
       }
       
       // Refresh the enquiries list
@@ -1831,6 +1849,18 @@ export default function EnquiriesPage() {
         followUps: arrayUnion(newFollowUp)
       });
 
+      void logActivity(db, userProfile, activityCenterId, {
+        action: 'FOLLOW_UP',
+        module: 'Enquiries',
+        entityId: selectedEnquiryForFollowUp.id,
+        entityName: selectedEnquiryForFollowUp.name || selectedEnquiryForFollowUp.phone || 'Enquiry',
+        description: `Scheduled follow-up for ${selectedEnquiryForFollowUp.name || selectedEnquiryForFollowUp.phone || 'patient'}`,
+        metadata: {
+          nextFollowUpDate: followUpData.nextFollowUpDate,
+          remarks: followUpData.remarks,
+        },
+      }, user);
+
       await fetchEnquiries(); // Refresh data
       handleCloseFollowUpDialog();
     } catch (error) {
@@ -1944,7 +1974,16 @@ export default function EnquiriesPage() {
       };
 
       // Add to visitors collection
-      await addDoc(collection(db, 'visitors'), visitorRecord);
+      const visitorRef = await addDoc(collection(db, 'visitors'), visitorRecord);
+
+      void logActivity(db, userProfile, activityCenterId, {
+        action: 'CREATE',
+        module: 'Visitors',
+        entityId: visitorRef.id,
+        entityName: visitorRecord.name || 'Visitor',
+        description: `Created visitor from enquiry ${enquiryToConvert.id || ''}`,
+        metadata: { enquiryId: enquiryToConvert.id },
+      }, user);
 
       // Update enquiry status to 'converted'
       if (enquiryToConvert.id) {
@@ -1952,6 +1991,14 @@ export default function EnquiriesPage() {
           status: 'converted',
           updatedAt: serverTimestamp(),
         });
+        void logActivity(db, userProfile, activityCenterId, {
+          action: 'STATUS_CHANGE',
+          module: 'Enquiries',
+          entityId: enquiryToConvert.id,
+          entityName: enquiryToConvert.name || enquiryToConvert.phone || 'Enquiry',
+          description: `Enquiry status set to converted (visitor created)`,
+          metadata: { visitorId: visitorRef.id },
+        }, user);
       }
 
       // Refresh enquiries
@@ -2006,6 +2053,15 @@ export default function EnquiriesPage() {
 
       setEnquiries((prevEnquiries) => prevEnquiries.filter((enquiry) => enquiry.id !== enquiryToDelete.id));
       setFilteredEnquiries((prevEnquiries) => prevEnquiries.filter((enquiry) => enquiry.id !== enquiryToDelete.id));
+
+      void logActivity(db, userProfile, activityCenterId, {
+        action: 'DELETE',
+        module: 'Enquiries',
+        entityId: enquiryToDelete.id!,
+        entityName: enquiryToDelete.name || enquiryToDelete.phone || 'Enquiry',
+        description: `Purged enquiry and linked records (inventory rollback where applicable)`,
+        metadata: { subject: enquiryToDelete.subject },
+      }, user);
 
       handleCloseDeleteDialog();
       setAlert({
@@ -2127,7 +2183,7 @@ export default function EnquiriesPage() {
     if (visitFormStep === 0) {
       // If we're on the first step (selecting types), only proceed if at least one type is selected
       if (newVisit.activeFormTypes.length === 0) {
-        alert('Please select at least one visit type');
+        window.alert('Please select at least one visit type');
         return;
       }
       setCompletedVisitSteps({...completedVisitSteps, '0': true});
@@ -2215,6 +2271,17 @@ export default function EnquiriesPage() {
         journeyStatusOverride,
         updatedAt: serverTimestamp(),
       });
+      const enqRow =
+        enquiries.find((e) => e.id === enquiryId) ||
+        (selectedEnquiry?.id === enquiryId ? selectedEnquiry : null);
+      void logActivity(db, userProfile, activityCenterId, {
+        action: 'STATUS_CHANGE',
+        module: 'Enquiries',
+        entityId: enquiryId,
+        entityName: enqRow?.name || enqRow?.phone || 'Enquiry',
+        description: `Journey tag set to ${next === 'auto' ? 'auto (follow visits)' : `"${next}"`}`,
+        metadata: { journeyStatusOverride: journeyStatusOverride ?? 'auto' },
+      }, user);
       const patch = (e: Enquiry) =>
         e.id === enquiryId ? { ...e, journeyStatusOverride } : e;
       setEnquiries((prev) => prev.map(patch));
@@ -2236,7 +2303,20 @@ export default function EnquiriesPage() {
     try {
       // Update in Firestore
       const enquiryRef = doc(db, 'enquiries', enquiryId);
+      const prevStatus = enquiries.find((e) => e.id === enquiryId)?.status;
       await updateDoc(enquiryRef, { status: newStatus });
+
+      void logActivity(db, userProfile, activityCenterId, {
+        action: 'STATUS_CHANGE',
+        module: 'Enquiries',
+        entityId: enquiryId,
+        entityName:
+          enquiries.find((e) => e.id === enquiryId)?.name ||
+          enquiries.find((e) => e.id === enquiryId)?.phone ||
+          'Enquiry',
+        description: `Status changed from "${prevStatus ?? 'unknown'}" to "${newStatus}"`,
+        metadata: { from: prevStatus ?? null, to: newStatus },
+      }, user);
       
       // Update local state
       setEnquiries(prevEnquiries =>
@@ -2577,7 +2657,7 @@ export default function EnquiriesPage() {
       
       // Basic validation for visit fields
       if (!newVisit.date) {
-        alert('Please fill out the visit date');
+        window.alert('Please fill out the visit date');
         setVisitLoading(false);
         return;
       }
@@ -2585,13 +2665,13 @@ export default function EnquiriesPage() {
       // Validate test fields if applicable
       if (newVisit.activeFormTypes.includes('test')) {
         if (!newVisit.testDetails?.testName) {
-          alert('Test Name is required for test visits');
+          window.alert('Test Name is required for test visits');
           setVisitLoading(false);
           return;
         }
         
         if (!newVisit.testDetails?.testDoneBy) {
-          alert('Test Done By is required for test visits');
+          window.alert('Test Done By is required for test visits');
           setVisitLoading(false);
           return;
         }
@@ -2710,6 +2790,15 @@ export default function EnquiriesPage() {
         visits: updatedVisits
       });
 
+      void logActivity(db, userProfile, activityCenterId, {
+        action: 'UPDATE',
+        module: 'Enquiries',
+        entityId: selectedEnquiry.id,
+        entityName: selectedEnquiry.name || selectedEnquiry.phone || 'Enquiry',
+        description: `Added visit on ${newVisit.date}`,
+        metadata: { activeFormTypes: newVisit.activeFormTypes },
+      }, user);
+
       // SYNC WITH VISITORS COLLECTION: Create/Update visitor record
       try {
         // Create visitor data that matches the visitor interface
@@ -2752,7 +2841,15 @@ export default function EnquiriesPage() {
         });
 
         // Add to visitors collection
-        await addDoc(collection(db, 'visitors'), cleanVisitorData);
+        const visitorRef = await addDoc(collection(db, 'visitors'), cleanVisitorData);
+        void logActivity(db, userProfile, activityCenterId, {
+          action: 'CREATE',
+          module: 'Visitors',
+          entityId: visitorRef.id,
+          entityName: cleanVisitorData.name || 'Visitor',
+          description: `Visitor record synced from enquiry visit (${selectedEnquiry.id})`,
+          metadata: { enquiryId: selectedEnquiry.id },
+        }, user);
         
         console.log('Visitor record created successfully');
       } catch (visitorError) {
@@ -2846,7 +2943,7 @@ export default function EnquiriesPage() {
   
   // Add follow-up to enquiry
   const handleAddFollowUp = async () => {
-    if (!selectedEnquiry) return;
+    if (!selectedEnquiry?.id) return;
     
     try {
       setLoading(true);
@@ -2865,6 +2962,18 @@ export default function EnquiriesPage() {
       await updateDoc(enquiryRef, {
         followUps: updatedFollowUps
       });
+
+      void logActivity(db, userProfile, activityCenterId, {
+        action: 'FOLLOW_UP',
+        module: 'Enquiries',
+        entityId: selectedEnquiry.id!,
+        entityName: selectedEnquiry.name || selectedEnquiry.phone || 'Enquiry',
+        description: `Added follow-up for ${selectedEnquiry.name || selectedEnquiry.phone || 'patient'}`,
+        metadata: {
+          nextFollowUpDate: followUpData.nextFollowUpDate,
+          remarks: followUpData.remarks,
+        },
+      }, user);
       
       // Update the local state
       setSelectedEnquiry({
@@ -2921,7 +3030,7 @@ export default function EnquiriesPage() {
     if (activeStep === 0) {
       // Validate basic information
       if (!newEnquiry.name || !newEnquiry.phone) {
-        alert('Please fill out required fields: Name and Phone');
+        window.alert('Please fill out required fields: Name and Phone');
         return;
       }
     } else if (activeStep === 1) {
@@ -3001,13 +3110,29 @@ export default function EnquiriesPage() {
       if (isEditMode) {
         const enquiryDocRef = doc(db, 'enquiries', newEnquiry.id!);
         await updateDoc(enquiryDocRef, enquiryData);
+        void logActivity(db, userProfile, activityCenterId, {
+          action: 'UPDATE',
+          module: 'Enquiries',
+          entityId: newEnquiry.id!,
+          entityName: newEnquiry.name || newEnquiry.phone || 'Enquiry',
+          description: `Updated enquiry (wizard) for ${newEnquiry.name || newEnquiry.phone || 'patient'}`,
+          metadata: { phone: newEnquiry.phone, status: enquiryData.status },
+        }, user);
         setAlert({
           open: true,
           message: 'Enquiry updated successfully!',
           severity: 'success'
         });
       } else {
-        await addDoc(collection(db, 'enquiries'), enquiryData);
+        const createdRef = await addDoc(collection(db, 'enquiries'), enquiryData);
+        void logActivity(db, userProfile, activityCenterId, {
+          action: 'CREATE',
+          module: 'Enquiries',
+          entityId: createdRef.id,
+          entityName: newEnquiry.name || newEnquiry.phone || 'New Enquiry',
+          description: `Created enquiry (wizard) for ${newEnquiry.name || newEnquiry.phone || 'patient'}`,
+          metadata: { phone: newEnquiry.phone, status: enquiryData.status },
+        }, user);
         setAlert({
           open: true,
           message: 'Enquiry added successfully!',

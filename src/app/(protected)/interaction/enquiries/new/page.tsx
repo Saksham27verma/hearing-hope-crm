@@ -34,10 +34,11 @@ import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm'
 import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
 import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
+import { logActivity } from '@/lib/activityLogger';
 
 export default function NewEnquiryPage() {
   const router = useRouter();
-  const { userProfile, loading: authLoading } = useAuth();
+  const { user, userProfile, loading: authLoading } = useAuth();
   const [saving, setSaving] = useState(false);
 
   // Redirect audiologists away from new enquiry page
@@ -278,8 +279,15 @@ export default function NewEnquiryPage() {
         await reduceInventoryForSales(data.visits);
       }
       
-      console.log('Enquiry saved with ID:', docRef.id);
-      
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'CREATE',
+        module: 'Enquiries',
+        entityId: docRef.id,
+        entityName: data.name || data.phone || 'New Enquiry',
+        description: `Created enquiry for ${data.name || data.phone || 'unknown patient'}`,
+        metadata: { phone: data.phone, status: 'open' },
+      }, user);
+
       // Redirect to the enquiry details page
       router.push(`/interaction/enquiries/${docRef.id}`);
       

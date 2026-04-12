@@ -79,6 +79,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/hooks/useAuth';
+import { logActivity } from '@/lib/activityLogger';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -1283,6 +1284,15 @@ const StockTransferPage = () => {
         
         // Create inventory movements (material out from source, material in to destination)
         await createInventoryMovements(newTransfer);
+        
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'CREATE',
+          module: 'Stock Transfer',
+          entityId: docRef.id,
+          entityName: (currentTransfer as any).transferNumber || docRef.id,
+          description: `Created stock transfer from ${(currentTransfer as any).fromCenter || 'source'} to ${(currentTransfer as any).toCenter || 'destination'}`,
+          metadata: { fromCenter: (currentTransfer as any).fromCenter, toCenter: (currentTransfer as any).toCenter },
+        }, user);
         
         setTransfers(prevTransfers => [newTransfer, ...prevTransfers]);
         

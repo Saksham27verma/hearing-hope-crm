@@ -100,6 +100,24 @@ export async function PATCH(req: Request) {
 
     await adminDb().collection('users').doc(uid).set(updates, { merge: true });
 
+    try {
+      const logDb = adminDb();
+      await logDb.collection('activityLogs').add({
+        timestamp: new Date(),
+        userId: decoded.uid,
+        userName: decoded.name || decoded.email || requester.uid,
+        userEmail: decoded.email || '',
+        userRole: requester.role || 'admin',
+        centerId: requester.centerId || null,
+        action: 'UPDATE',
+        module: 'Users',
+        entityId: uid,
+        entityName: displayName || email || uid,
+        description: `Updated user ${displayName || email || uid}${role ? ` — role set to "${role}"` : ''}`,
+        metadata: { uid, role, displayName, email },
+      });
+    } catch { /* silent */ }
+
     return NextResponse.json({ ok: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to update user';

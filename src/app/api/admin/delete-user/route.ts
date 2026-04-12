@@ -122,6 +122,25 @@ export async function DELETE(req: Request) {
       await db.collection('userPresence').doc(id).delete().catch(() => {});
     }
 
+    try {
+      const deletedEmail = (data as any).email || authUid;
+      const deletedName = (data as any).displayName || deletedEmail;
+      await db.collection('activityLogs').add({
+        timestamp: new Date(),
+        userId: decoded.uid,
+        userName: decoded.name || decoded.email || requester.uid,
+        userEmail: decoded.email || '',
+        userRole: requester.role || 'admin',
+        centerId: requester.centerId || null,
+        action: 'DELETE',
+        module: 'Users',
+        entityId: authUid,
+        entityName: deletedName,
+        description: `Deleted user ${deletedName} (${deletedEmail})`,
+        metadata: { email: deletedEmail, role: (data as any).role },
+      });
+    } catch { /* silent */ }
+
     return NextResponse.json({ ok: true, deletedDocIds: [...docIdsToDelete], authUid });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to delete user';

@@ -59,6 +59,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
+import { logActivity } from '@/lib/activityLogger';
 import PurchaseForm from '@/components/purchases/PurchaseForm';
 import {
   buildPurchaseInvoicePrintHtml,
@@ -382,7 +383,16 @@ export default function PurchaseManagement() {
     }
     
     try {
+      const deletedPurchase = purchases.find(p => p.id === id);
       await deleteDoc(doc(db, 'purchases', id));
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'DELETE',
+        module: 'Purchases',
+        entityId: id,
+        entityName: deletedPurchase?.invoiceNo || id,
+        description: `Deleted purchase invoice ${deletedPurchase?.invoiceNo || id}`,
+        metadata: { invoiceNo: deletedPurchase?.invoiceNo, party: deletedPurchase?.party },
+      }, user);
       setPurchases(prevPurchases => prevPurchases.filter(purchase => purchase.id !== id));
       setSnackbar({
         open: true,
@@ -418,6 +428,14 @@ export default function PurchaseManagement() {
           ...purchaseData,
           updatedAt: serverTimestamp()
         });
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'UPDATE',
+          module: 'Purchases',
+          entityId: currentPurchase.id,
+          entityName: purchaseData.invoiceNo || currentPurchase.id,
+          description: `Updated purchase invoice ${purchaseData.invoiceNo || currentPurchase.id}`,
+          metadata: { invoiceNo: purchaseData.invoiceNo, party: purchaseData.party, totalAmount: purchaseData.totalAmount },
+        }, user);
         
         // Update local state
         setPurchases(prevPurchases => 
@@ -440,6 +458,14 @@ export default function PurchaseManagement() {
         };
         
         const docRef = await addDoc(collection(db, 'purchases'), newPurchaseData);
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'CREATE',
+          module: 'Purchases',
+          entityId: docRef.id,
+          entityName: purchaseData.invoiceNo || docRef.id,
+          description: `Created purchase invoice ${purchaseData.invoiceNo || docRef.id} — ₹${purchaseData.totalAmount || 0}`,
+          metadata: { invoiceNo: purchaseData.invoiceNo, party: purchaseData.party, totalAmount: purchaseData.totalAmount },
+        }, user);
         
         // Update local state with timestamps converted to current time for UI
         const newPurchaseWithTimestamp = {

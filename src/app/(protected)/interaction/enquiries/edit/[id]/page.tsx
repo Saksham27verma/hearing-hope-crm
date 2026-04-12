@@ -31,10 +31,12 @@ import {
   addDoc,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
 import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
+import { logActivity, computeChanges } from '@/lib/activityLogger';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -42,6 +44,7 @@ interface EditEnquiryPageProps {
 
 export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
   const router = useRouter();
+  const { user, userProfile } = useAuth();
   const [enquiry, setEnquiry] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -324,13 +327,24 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
 
       // Update in Firestore
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
+
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'UPDATE',
+        module: 'Enquiries',
+        entityId: resolvedParams.id,
+        entityName: data.name || data.phone || 'Enquiry',
+        description: `Updated enquiry for ${data.name || data.phone || 'patient'}`,
+        changes: computeChanges(
+          { name: enquiry?.name, phone: enquiry?.phone, status: enquiry?.status, address: enquiry?.address },
+          { name: data.name, phone: data.phone, status: data.status, address: data.address },
+        ),
+        metadata: { phone: data.phone },
+      }, user);
       
       // Reduce inventory for new sales only
       if (newSalesProducts.length > 0) {
         await reduceInventoryForNewSales(newSalesProducts);
       }
-      
-      console.log('Enquiry updated successfully');
       
       // Redirect to the enquiry details page
       router.push(`/interaction/enquiries/${resolvedParams.id}`);

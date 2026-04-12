@@ -95,6 +95,7 @@ import {
 import { db } from '@/firebase/config';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { logActivity } from '@/lib/activityLogger';
 import PureToneAudiogram from '@/components/enquiries/PureToneAudiogram';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
@@ -356,6 +357,14 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       const ref = doc(db, 'enquiries', resolvedParams.id);
       const journeyStatusOverride = next === 'auto' ? null : next;
       await updateDoc(ref, { journeyStatusOverride, updatedAt: serverTimestamp() });
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'STATUS_CHANGE',
+        module: 'Enquiries',
+        entityId: resolvedParams.id,
+        entityName: enquiry?.name || enquiry?.phone || 'Enquiry',
+        description: `Journey status changed to "${next === 'auto' ? 'auto' : next}" for ${enquiry?.name || enquiry?.phone || 'patient'}`,
+        metadata: { journeyStatus: next },
+      }, user);
       setEnquiry({ ...enquiry, journeyStatusOverride });
       setJourneyMenuAnchor(null);
       setFollowUpFeedback({
@@ -502,6 +511,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       };
       const updated = [...followUpsList, followUpData];
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), { followUps: updated });
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'FOLLOW_UP',
+        module: 'Telecalling',
+        entityId: resolvedParams.id,
+        entityName: enquiry?.name || enquiry?.phone || 'Enquiry',
+        description: `Telecall logged for ${enquiry?.name || enquiry?.phone || 'patient'} by ${newFollowUp.callerName || 'staff'}`,
+        metadata: {
+          callerName: newFollowUp.callerName,
+          remarks: newFollowUp.remarks,
+          nextFollowUpDate: newFollowUp.nextFollowUpDate,
+        },
+      }, user);
       setEnquiry({ ...enquiry, followUps: updated });
       setAddFollowUpOpen(false);
       setFollowUpFeedback({ open: true, message: 'Call logged successfully', severity: 'success' });

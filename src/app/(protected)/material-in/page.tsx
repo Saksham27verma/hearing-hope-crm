@@ -61,6 +61,7 @@ import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 import { useAuth } from '@/context/AuthContext';
+import { logActivity } from '@/lib/activityLogger';
 import MaterialInForm from '@/components/material-in/MaterialInForm';
 import MaterialInPreviewDialog from '@/components/material-in/MaterialInPreviewDialog';
 import ConvertToPurchaseDialog from '@/components/material-in/ConvertToPurchaseDialog';
@@ -610,7 +611,16 @@ export default function MaterialInPage() {
     }
     
     try {
+      const deletedMaterial = materials.find(m => m.id === id);
       await deleteDoc(doc(db, 'materialInward', id));
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'DELETE',
+        module: 'Material In',
+        entityId: id,
+        entityName: deletedMaterial?.challanNumber || id,
+        description: `Deleted material inward entry ${deletedMaterial?.challanNumber || id}`,
+        metadata: { challanNumber: deletedMaterial?.challanNumber },
+      }, user);
       setMaterials(prevMaterials => prevMaterials.filter(material => material.id !== id));
       setSuccessMsg('Material deleted successfully');
     } catch (error) {
@@ -637,6 +647,14 @@ export default function MaterialInPage() {
           ...materialData,
           updatedAt: serverTimestamp()
         });
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'UPDATE',
+          module: 'Material In',
+          entityId: currentMaterial.id,
+          entityName: materialData.challanNumber || currentMaterial.id,
+          description: `Updated material inward entry ${materialData.challanNumber || currentMaterial.id}`,
+          metadata: { challanNumber: materialData.challanNumber, supplier: materialData.supplier },
+        }, user);
         
         // Update local state
         setMaterials(prevMaterials => 
@@ -655,6 +673,14 @@ export default function MaterialInPage() {
         };
         
         const docRef = await addDoc(collection(db, 'materialInward'), newMaterialData);
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'CREATE',
+          module: 'Material In',
+          entityId: docRef.id,
+          entityName: materialData.challanNumber || docRef.id,
+          description: `Created material inward entry ${materialData.challanNumber || docRef.id}`,
+          metadata: { challanNumber: materialData.challanNumber, supplier: materialData.supplier },
+        }, user);
         
         // Update local state with timestamps converted to current time for UI
         const newMaterialWithTimestamp = {

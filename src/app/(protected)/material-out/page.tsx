@@ -71,6 +71,7 @@ import MaterialOutForm from '@/components/material-out/MaterialOutForm';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { logActivity } from '@/lib/activityLogger';
 
 // Types
 interface Product {
@@ -696,6 +697,14 @@ export default function MaterialOutPage() {
           ...sanitized,
           updatedAt: serverTimestamp(),
         });
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'UPDATE',
+          module: 'Material Out',
+          entityId: material.id,
+          entityName: (material as any).challanNumber || (material as any).deliveryNoteNo || material.id,
+          description: `Updated material out entry ${(material as any).challanNumber || (material as any).deliveryNoteNo || material.id}`,
+          metadata: { status: (material as any).status },
+        }, user);
         
         // Update local state
         setMaterials(prevMaterials => 
@@ -712,6 +721,14 @@ export default function MaterialOutPage() {
         };
         
         const docRef = await addDoc(collection(db, 'materialsOut'), materialData);
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'CREATE',
+          module: 'Material Out',
+          entityId: docRef.id,
+          entityName: (material as any).challanNumber || (material as any).deliveryNoteNo || docRef.id,
+          description: `Created material out entry ${(material as any).challanNumber || (material as any).deliveryNoteNo || docRef.id}`,
+          metadata: { status: (material as any).status },
+        }, user);
         
         // Update local state
         setMaterials(prevMaterials => [
@@ -743,7 +760,15 @@ export default function MaterialOutPage() {
     
     if (window.confirm('Are you sure you want to delete this material?')) {
       try {
+        const deletedMaterial = materials.find(m => m.id === materialId);
         await deleteDoc(doc(db, 'materialsOut', materialId));
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'DELETE',
+          module: 'Material Out',
+          entityId: materialId,
+          entityName: (deletedMaterial as any)?.challanNumber || (deletedMaterial as any)?.deliveryNoteNo || materialId,
+          description: `Deleted material out entry ${(deletedMaterial as any)?.challanNumber || materialId}`,
+        }, user);
         
         // Update local state
         setMaterials(prevMaterials => prevMaterials.filter(material => material.id !== materialId));

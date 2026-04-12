@@ -79,6 +79,7 @@ import { db } from '@/firebase/config';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { useAuth } from '@/hooks/useAuth';
+import { logActivity } from '@/lib/activityLogger';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -500,6 +501,14 @@ export default function SalesInvoicingPageInner() {
             : s
         )
       );
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'CANCEL',
+        module: 'Sales',
+        entityId: id,
+        entityName: cancelDialogRow?.savedSale?.invoiceNumber || id,
+        description: `Cancelled invoice ${cancelDialogRow?.savedSale?.invoiceNumber || id}${reason ? ` — Reason: ${reason}` : ''}`,
+        metadata: { invoiceNumber: cancelDialogRow?.savedSale?.invoiceNumber, cancelReason: reason || null },
+      }, user);
       setSuccessMsg('Invoice cancelled');
       setCancelDialogRow(null);
       setCancelReasonInput('');
@@ -559,6 +568,14 @@ export default function SalesInvoicingPageInner() {
       setSales((prev) =>
         prev.map((s) => (s.id === saleToSave.id ? { ...saleToSave, updatedAt: Timestamp.now() } : s))
       );
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'UPDATE',
+        module: 'Sales',
+        entityId: saleToSave.id,
+        entityName: saleToSave.invoiceNumber || saleToSave.id,
+        description: `Updated invoice ${saleToSave.invoiceNumber || saleToSave.id} for ${saleToSave.patientName || 'patient'}`,
+        metadata: { invoiceNumber: saleToSave.invoiceNumber, grandTotal: saleToSave.grandTotal, patientName: saleToSave.patientName },
+      }, user);
       setSuccessMsg('Sale updated');
     } else {
       const docRef = await addDoc(collection(db, 'sales'), {
@@ -570,6 +587,14 @@ export default function SalesInvoicingPageInner() {
         { ...saleToSave, id: docRef.id, createdAt: Timestamp.now(), updatedAt: Timestamp.now() },
         ...prev,
       ]);
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'CREATE',
+        module: 'Sales',
+        entityId: docRef.id,
+        entityName: saleToSave.invoiceNumber || docRef.id,
+        description: `Created invoice ${saleToSave.invoiceNumber || docRef.id} for ${saleToSave.patientName || 'patient'} — ₹${saleToSave.grandTotal || 0}`,
+        metadata: { invoiceNumber: saleToSave.invoiceNumber, grandTotal: saleToSave.grandTotal, patientName: saleToSave.patientName },
+      }, user);
       setSuccessMsg('Sale created');
       void notifyAdminsNewSale(docRef.id);
     }

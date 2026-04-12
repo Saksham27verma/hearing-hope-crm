@@ -75,6 +75,7 @@ import {
   deleteField,
 } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
+import { logActivity } from '@/lib/activityLogger';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
@@ -128,7 +129,7 @@ export default function AppointmentSchedulerPage() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isTablet = useMediaQuery(theme.breakpoints.down('md'));
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth();
   
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
@@ -364,12 +365,28 @@ export default function AppointmentSchedulerPage() {
         const patch = { ...payload } as Record<string, unknown>;
         if (startChanged) patch.pwaReminderSentForStart = deleteField();
         await updateDoc(doc(db, 'appointments', editingAppointmentId), patch);
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'UPDATE',
+          module: 'Appointments',
+          entityId: editingAppointmentId,
+          entityName: newAppt.patientName || newAppt.title || 'Appointment',
+          description: `Updated appointment for ${newAppt.patientName || 'patient'}`,
+          metadata: { start: newAppt.start, type: newAppt.type },
+        }, user);
       } else {
         // Create new appointment
-        await addDoc(collection(db, 'appointments'), {
+        const apptRef = await addDoc(collection(db, 'appointments'), {
           ...payload,
           createdAt: serverTimestamp(),
         });
+        void logActivity(db, userProfile, userProfile?.centerId, {
+          action: 'CREATE',
+          module: 'Appointments',
+          entityId: apptRef.id,
+          entityName: newAppt.patientName || newAppt.title || 'Appointment',
+          description: `Scheduled appointment for ${newAppt.patientName || 'patient'} on ${newAppt.start ? new Date(newAppt.start).toLocaleDateString('en-IN') : 'unknown date'}`,
+          metadata: { start: newAppt.start, type: newAppt.type },
+        }, user);
         // Send push notification to assigned staff
         const staffId = newAppt.type === 'home' ? newAppt.homeVisitorStaffId : newAppt.assignedStaffId;
         if (staffId) {
@@ -432,6 +449,14 @@ export default function AppointmentSchedulerPage() {
         status: 'cancelled' as AppointmentStatus,
         updatedAt: serverTimestamp(),
       });
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'CANCEL',
+        module: 'Appointments',
+        entityId: previewAppt.id,
+        entityName: previewAppt.patientName || previewAppt.title || 'Appointment',
+        description: `Cancelled appointment for ${previewAppt.patientName || 'patient'}`,
+        metadata: { start: previewAppt.start },
+      }, user);
       await fetchAllData();
       setOpenPreview(false);
     } catch (e) {
@@ -447,6 +472,14 @@ export default function AppointmentSchedulerPage() {
         status: 'completed' as AppointmentStatus,
         updatedAt: serverTimestamp(),
       });
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'STATUS_CHANGE',
+        module: 'Appointments',
+        entityId: previewAppt.id,
+        entityName: previewAppt.patientName || previewAppt.title || 'Appointment',
+        description: `Marked appointment completed for ${previewAppt.patientName || 'patient'}`,
+        metadata: { start: previewAppt.start },
+      }, user);
       await fetchAllData();
       setOpenPreview(false);
     } catch (e) {
@@ -480,6 +513,14 @@ export default function AppointmentSchedulerPage() {
         updatedAt: serverTimestamp(),
         pwaReminderSentForStart: deleteField(),
       });
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'RESCHEDULE',
+        module: 'Appointments',
+        entityId: previewAppt.id,
+        entityName: previewAppt.patientName || previewAppt.title || 'Appointment',
+        description: `Rescheduled appointment for ${previewAppt.patientName || 'patient'} to ${newStart.toLocaleDateString('en-IN')} ${newStart.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`,
+        metadata: { originalStart: previewAppt.start, newStart: newStart.toISOString() },
+      }, user);
       await fetchAllData();
       setRescheduleDialogOpen(false);
       setOpenPreview(false);
