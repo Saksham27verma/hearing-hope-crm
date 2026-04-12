@@ -507,6 +507,10 @@ export default function SalesInvoicingPageInner() {
         entityId: id,
         entityName: cancelDialogRow?.savedSale?.invoiceNumber || id,
         description: `Cancelled invoice ${cancelDialogRow?.savedSale?.invoiceNumber || id}${reason ? ` — Reason: ${reason}` : ''}`,
+        changes: {
+          status: { before: 'active', after: 'cancelled' },
+          cancelReason: { before: null, after: reason || null },
+        },
         metadata: { invoiceNumber: cancelDialogRow?.savedSale?.invoiceNumber, cancelReason: reason || null },
       }, user);
       setSuccessMsg('Invoice cancelled');

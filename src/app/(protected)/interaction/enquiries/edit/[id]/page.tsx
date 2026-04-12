@@ -304,7 +304,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           enquiryId: resolvedParams.id,
           enquiryVisitIndex: visitIndex,
           updatedAt: serverTimestamp(),
-        } as Record<string, unknown>;
+        } as Record<string, unknown> as any;
 
         if (existingSaleDoc == null) {
           const saleRef = await addDoc(collection(db, 'sales'), {
@@ -328,16 +328,32 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       // Update in Firestore
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
 
+      const ENQUIRY_SCALAR_FIELDS = [
+        'name', 'customerName', 'phone', 'email', 'address', 'status',
+        'reference', 'enquiryType', 'assignedTo', 'telecaller', 'subject',
+        'message', 'notes', 'visitingCenter', 'visitorType', 'companyName',
+        'contactPerson', 'purposeOfVisit', 'priority', 'source',
+        'journeyStatusOverride',
+      ];
+      const beforeSnap: Record<string, unknown> = {};
+      const afterSnap: Record<string, unknown> = {};
+      for (const f of ENQUIRY_SCALAR_FIELDS) {
+        if (enquiry?.[f] !== undefined || data?.[f] !== undefined) {
+          beforeSnap[f] = enquiry?.[f] ?? null;
+          afterSnap[f] = data?.[f] ?? null;
+        }
+      }
+      const fieldChanges = computeChanges(beforeSnap, afterSnap);
+      const changedNames = fieldChanges ? Object.keys(fieldChanges).join(', ') : '';
       void logActivity(db, userProfile, userProfile?.centerId, {
         action: 'UPDATE',
         module: 'Enquiries',
         entityId: resolvedParams.id,
         entityName: data.name || data.phone || 'Enquiry',
-        description: `Updated enquiry for ${data.name || data.phone || 'patient'}`,
-        changes: computeChanges(
-          { name: enquiry?.name, phone: enquiry?.phone, status: enquiry?.status, address: enquiry?.address },
-          { name: data.name, phone: data.phone, status: data.status, address: data.address },
-        ),
+        description: changedNames
+          ? `Updated enquiry for ${data.name || data.phone || 'patient'} — changed: ${changedNames}`
+          : `Updated enquiry for ${data.name || data.phone || 'patient'}`,
+        changes: fieldChanges,
         metadata: { phone: data.phone },
       }, user);
       

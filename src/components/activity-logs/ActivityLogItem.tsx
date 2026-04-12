@@ -21,16 +21,25 @@ const ACTION_CONFIG: Record<
   ActivityAction,
   { label: string; bg: string; color: string; dot: string }
 > = {
-  CREATE: { label: 'Create', bg: '#dcfce7', color: '#15803d', dot: '#22c55e' },
-  UPDATE: { label: 'Update', bg: '#fef9c3', color: '#854d0e', dot: '#eab308' },
-  DELETE: { label: 'Delete', bg: '#fee2e2', color: '#991b1b', dot: '#ef4444' },
-  STATUS_CHANGE: { label: 'Status', bg: '#dbeafe', color: '#1d4ed8', dot: '#3b82f6' },
-  CANCEL: { label: 'Cancel', bg: '#ffedd5', color: '#9a3412', dot: '#f97316' },
-  FOLLOW_UP: { label: 'Follow-up', bg: '#ede9fe', color: '#6d28d9', dot: '#8b5cf6' },
-  RESCHEDULE: { label: 'Reschedule', bg: '#cffafe', color: '#0e7490', dot: '#06b6d4' },
-  LOGIN: { label: 'Login', bg: '#f0fdf4', color: '#166534', dot: '#4ade80' },
-  IMPORT: { label: 'Import', bg: '#f8fafc', color: '#475569', dot: '#94a3b8' },
+  CREATE:        { label: 'Create',     bg: '#dcfce7', color: '#15803d', dot: '#22c55e' },
+  UPDATE:        { label: 'Update',     bg: '#fef9c3', color: '#854d0e', dot: '#eab308' },
+  DELETE:        { label: 'Delete',     bg: '#fee2e2', color: '#991b1b', dot: '#ef4444' },
+  STATUS_CHANGE: { label: 'Status',     bg: '#dbeafe', color: '#1d4ed8', dot: '#3b82f6' },
+  CANCEL:        { label: 'Cancel',     bg: '#ffedd5', color: '#9a3412', dot: '#f97316' },
+  FOLLOW_UP:     { label: 'Follow-up',  bg: '#ede9fe', color: '#6d28d9', dot: '#8b5cf6' },
+  RESCHEDULE:    { label: 'Reschedule', bg: '#cffafe', color: '#0e7490', dot: '#06b6d4' },
+  LOGIN:         { label: 'Login',      bg: '#f0fdf4', color: '#166534', dot: '#4ade80' },
+  IMPORT:        { label: 'Import',     bg: '#f8fafc', color: '#475569', dot: '#94a3b8' },
 };
+
+/** Human-readable name for a field key (camelCase → Title Case). */
+function fieldLabel(key: string): string {
+  return key
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+    .trim();
+}
 
 const MODULE_COLORS: Record<string, string> = {
   Enquiries: '#3b82f6',
@@ -98,8 +107,12 @@ interface Props {
 export default function ActivityLogItem({ log, onViewDiff }: Props) {
   const actionCfg = ACTION_CONFIG[log.action] ?? ACTION_CONFIG.UPDATE;
   const moduleColor = MODULE_COLORS[log.module] ?? '#64748b';
-  const hasDiff = log.changes && Object.keys(log.changes).length > 0;
+  const changedKeys = log.changes ? Object.keys(log.changes) : [];
+  const hasDiff = changedKeys.length > 0;
   const roleLabel = log.userRole === 'admin' ? 'Admin' : log.userRole === 'staff' ? 'Staff' : 'Audiologist';
+  const changedFieldsSummary = hasDiff
+    ? changedKeys.slice(0, 4).map(fieldLabel).join(', ') + (changedKeys.length > 4 ? ` +${changedKeys.length - 4} more` : '')
+    : '';
 
   return (
     <Box
@@ -177,6 +190,24 @@ export default function ActivityLogItem({ log, onViewDiff }: Props) {
           >
             {log.description}
           </Typography>
+          {changedFieldsSummary && (
+            <Typography
+              variant="caption"
+              sx={{
+                display: 'block',
+                mt: 0.25,
+                fontSize: 10,
+                color: '#6366f1',
+                fontStyle: 'italic',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: { xs: '100%', md: 360 },
+              }}
+            >
+              ↳ Changed: {changedFieldsSummary}
+            </Typography>
+          )}
         </Box>
       </Stack>
 

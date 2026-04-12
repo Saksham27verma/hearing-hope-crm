@@ -109,7 +109,7 @@ import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
 import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
-import { logActivity } from '@/lib/activityLogger';
+import { logActivity, computeChanges } from '@/lib/activityLogger';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import { enquiryMatchesDataScope } from '@/lib/tenant/centerScope';
 import {
@@ -2059,8 +2059,19 @@ export default function EnquiriesPage() {
         module: 'Enquiries',
         entityId: enquiryToDelete.id!,
         entityName: enquiryToDelete.name || enquiryToDelete.phone || 'Enquiry',
-        description: `Purged enquiry and linked records (inventory rollback where applicable)`,
-        metadata: { subject: enquiryToDelete.subject },
+        description: `Deleted enquiry for ${enquiryToDelete.name || enquiryToDelete.phone || 'patient'} — all linked records and inventory rolled back`,
+        changes: {
+          name:    { before: enquiryToDelete.name    ?? null, after: null },
+          phone:   { before: enquiryToDelete.phone   ?? null, after: null },
+          email:   { before: enquiryToDelete.email   ?? null, after: null },
+          status:  { before: enquiryToDelete.status  ?? null, after: null },
+          address: { before: enquiryToDelete.address ?? null, after: null },
+        },
+        metadata: {
+          subject: enquiryToDelete.subject,
+          phone: enquiryToDelete.phone,
+          status: enquiryToDelete.status,
+        },
       }, user);
 
       handleCloseDeleteDialog();
@@ -2274,12 +2285,17 @@ export default function EnquiriesPage() {
       const enqRow =
         enquiries.find((e) => e.id === enquiryId) ||
         (selectedEnquiry?.id === enquiryId ? selectedEnquiry : null);
+      const prevJourneyTag = enqRow?.journeyStatusOverride ?? null;
       void logActivity(db, userProfile, activityCenterId, {
         action: 'STATUS_CHANGE',
         module: 'Enquiries',
         entityId: enquiryId,
         entityName: enqRow?.name || enqRow?.phone || 'Enquiry',
-        description: `Journey tag set to ${next === 'auto' ? 'auto (follow visits)' : `"${next}"`}`,
+        description: `Journey tag changed to ${next === 'auto' ? 'auto (follows visits)' : `"${next}"`} for ${enqRow?.name || enqRow?.phone || 'patient'}`,
+        changes: computeChanges(
+          { journeyStatusOverride: prevJourneyTag },
+          { journeyStatusOverride: journeyStatusOverride ?? null },
+        ),
         metadata: { journeyStatusOverride: journeyStatusOverride ?? 'auto' },
       }, user);
       const patch = (e: Enquiry) =>
@@ -2306,15 +2322,14 @@ export default function EnquiriesPage() {
       const prevStatus = enquiries.find((e) => e.id === enquiryId)?.status;
       await updateDoc(enquiryRef, { status: newStatus });
 
+      const enqForStatus = enquiries.find((e) => e.id === enquiryId);
       void logActivity(db, userProfile, activityCenterId, {
         action: 'STATUS_CHANGE',
         module: 'Enquiries',
         entityId: enquiryId,
-        entityName:
-          enquiries.find((e) => e.id === enquiryId)?.name ||
-          enquiries.find((e) => e.id === enquiryId)?.phone ||
-          'Enquiry',
-        description: `Status changed from "${prevStatus ?? 'unknown'}" to "${newStatus}"`,
+        entityName: enqForStatus?.name || enqForStatus?.phone || 'Enquiry',
+        description: `Status changed from "${prevStatus ?? 'unknown'}" → "${newStatus}" for ${enqForStatus?.name || enqForStatus?.phone || 'patient'}`,
+        changes: computeChanges({ status: prevStatus ?? null }, { status: newStatus }),
         metadata: { from: prevStatus ?? null, to: newStatus },
       }, user);
       

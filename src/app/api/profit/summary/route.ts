@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { Timestamp, QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
-import { getRequesterTenant } from '@/server/tenant/requesterTenant';
+import { assertExplicitSuperAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
 import type { BreakdownRow, ProfitSummary } from '@/lib/profit/types';
 import { cashRegisterExpenseAmount } from '@/lib/cash-register/expenseOutflow';
 import { format, parseISO, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
@@ -198,7 +198,11 @@ export async function GET(req: Request) {
 
     const requester = await getRequesterTenant(decoded.uid);
     if (!requester) return jsonError('Forbidden', 403);
-    if (!requester.isSuperAdmin) return jsonError('SuperAdmin access required', 403);
+    try {
+      assertExplicitSuperAdmin(requester);
+    } catch {
+      return jsonError('Super admin access required', 403);
+    }
 
     const url = new URL(req.url);
     const fromParam = url.searchParams.get('from');

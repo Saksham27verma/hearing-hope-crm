@@ -141,6 +141,16 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     setProfileMenuOpen(false);
   };
 
+  /** Super-admin-only routes (must match `superAdminOnly` in crm-nav-config). */
+  useEffect(() => {
+    if (loading || !userProfile || !pathname) return;
+    if (userProfile.role !== 'admin') return;
+    if (userProfile.isSuperAdmin === true) return;
+    const superAdminPaths = ['/activity-logs', '/profit'];
+    if (!superAdminPaths.some((p) => pathname === p || pathname.startsWith(p + '/'))) return;
+    router.replace('/dashboard');
+  }, [loading, userProfile, pathname, router]);
+
   useEffect(() => {
     if (loading || !userProfile || shouldHideSidebar) {
       hasRedirectedRef.current = null;

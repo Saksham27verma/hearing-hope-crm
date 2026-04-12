@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { useRouter, usePathname } from 'next/navigation';
+import { logActivity } from '@/lib/activityLogger';
 
 // Define user role type
 export type UserRole = 'admin' | 'staff' | 'audiologist';
@@ -83,6 +84,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const routerRef = useRef(router);
   routerRef.current = router;
   const profileUnsubRef = useRef<(() => void) | null>(null);
+  /** Prevent duplicate LOGIN log entries when profile snapshot fires multiple times in the same session. */
+  const loginLoggedForUidRef = useRef<string | null>(null);
 
   // Single long-lived auth listener — deps must stay empty: pathname via pathnameRef, router via routerRef.
   useEffect(() => {
@@ -138,9 +141,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   routerRef.current.push('/login');
                   return;
                 }
-                setUserProfile(snap.data() as UserProfile);
+                const profile = snap.data() as UserProfile;
+                setUserProfile(profile);
                 setLoading(false);
                 setError(null);
+
+                // Log LOGIN once per browser session per UID
+                if (loginLoggedForUidRef.current !== authUser.uid) {
+                  loginLoggedForUidRef.current = authUser.uid;
+                  const sessionKey = `login_logged_${authUser.uid}`;
+                  if (typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(sessionKey)) {
+                    sessionStorage.setItem(sessionKey, '1');
+                    void logActivity(db, profile, profile.centerId, {
+                      action: 'LOGIN',
+                      module: 'Users',
+                      entityId: authUser.uid,
+                      entityName: profile.displayName || profile.email || authUser.email || 'Unknown',
+                      description: `${profile.displayName || profile.email || 'User'} signed in (${profile.role})`,
+                      metadata: {
+                        email: profile.email || authUser.email,
+                        role: profile.role,
+                        provider: authUser.providerData?.[0]?.providerId ?? 'password',
+                      },
+                    }, authUser);
+                  }
+                }
               },
               async (err) => {
                 console.warn('Profile realtime listener error:', err);
@@ -156,6 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(null);
             setUserProfile(null);
             setLoading(false);
+            loginLoggedForUidRef.current = null;
 
             const p = pathnameRef.current;
             if (p && p !== '/login' && p !== '/') {

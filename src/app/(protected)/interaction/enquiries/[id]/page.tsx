@@ -95,7 +95,7 @@ import {
 import { db } from '@/firebase/config';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { logActivity } from '@/lib/activityLogger';
+import { logActivity, computeChanges } from '@/lib/activityLogger';
 import PureToneAudiogram from '@/components/enquiries/PureToneAudiogram';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
 import {
@@ -362,7 +362,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         module: 'Enquiries',
         entityId: resolvedParams.id,
         entityName: enquiry?.name || enquiry?.phone || 'Enquiry',
-        description: `Journey status changed to "${next === 'auto' ? 'auto' : next}" for ${enquiry?.name || enquiry?.phone || 'patient'}`,
+        description: `Journey tag changed to "${next === 'auto' ? 'auto (follows visits)' : next}" for ${enquiry?.name || enquiry?.phone || 'patient'}`,
+        changes: computeChanges(
+          { journeyStatusOverride: enquiry?.journeyStatusOverride ?? null },
+          { journeyStatusOverride: journeyStatusOverride ?? null },
+        ),
         metadata: { journeyStatus: next },
       }, user);
       setEnquiry({ ...enquiry, journeyStatusOverride });
@@ -516,7 +520,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         module: 'Telecalling',
         entityId: resolvedParams.id,
         entityName: enquiry?.name || enquiry?.phone || 'Enquiry',
-        description: `Telecall logged for ${enquiry?.name || enquiry?.phone || 'patient'} by ${newFollowUp.callerName || 'staff'}`,
+        description: `Telecall logged for ${enquiry?.name || enquiry?.phone || 'patient'} by ${newFollowUp.callerName || 'staff'}${newFollowUp.remarks ? ` — "${newFollowUp.remarks}"` : ''}`,
+        changes: {
+          followUp: {
+            before: null,
+            after: {
+              callerName: newFollowUp.callerName,
+              date: newFollowUp.date,
+              remarks: newFollowUp.remarks,
+              nextFollowUpDate: newFollowUp.nextFollowUpDate,
+            },
+          },
+        },
         metadata: {
           callerName: newFollowUp.callerName,
           remarks: newFollowUp.remarks,

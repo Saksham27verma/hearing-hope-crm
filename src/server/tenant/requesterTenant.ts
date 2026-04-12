@@ -10,6 +10,8 @@ export type RequesterTenant = {
   /** All assigned centers */
   centerIds: string[];
   isSuperAdmin: boolean;
+  /** True when `users/{uid}.isSuperAdmin === true` (not legacy “no center” viewer). */
+  explicitSuperAdmin: boolean;
 };
 
 function profileFromDoc(data: Record<string, unknown> | undefined, uid: string): RequesterTenant | null {
@@ -25,6 +27,7 @@ function profileFromDoc(data: Record<string, unknown> | undefined, uid: string):
     centerId: centerIds.length > 0 ? centerIds[0] : normalizeCenterId(p),
     centerIds,
     isSuperAdmin: isSuperAdminViewer(p),
+    explicitSuperAdmin: p.isSuperAdmin === true,
   };
 }
 
@@ -39,6 +42,14 @@ export function assertAdmin(requester: RequesterTenant): void {
   // even if their `role` isn't set to `admin` in the `users` profile doc.
   const role = String(requester.role ?? '').toLowerCase().trim();
   if (role !== 'admin' && !requester.isSuperAdmin) {
+    throw new Error('Forbidden');
+  }
+}
+
+/** Requires admin (or super-admin viewer) and `users/{uid}.isSuperAdmin === true`. */
+export function assertExplicitSuperAdmin(requester: RequesterTenant): void {
+  assertAdmin(requester);
+  if (!requester.explicitSuperAdmin) {
     throw new Error('Forbidden');
   }
 }

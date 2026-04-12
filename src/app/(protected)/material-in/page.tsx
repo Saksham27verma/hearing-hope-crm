@@ -619,6 +619,10 @@ export default function MaterialInPage() {
         entityId: id,
         entityName: deletedMaterial?.challanNumber || id,
         description: `Deleted material inward entry ${deletedMaterial?.challanNumber || id}`,
+        changes: {
+          challanNumber: { before: deletedMaterial?.challanNumber ?? null, after: null },
+          supplier:      { before: (deletedMaterial as any)?.supplier ?? null, after: null },
+        },
         metadata: { challanNumber: deletedMaterial?.challanNumber },
       }, user);
       setMaterials(prevMaterials => prevMaterials.filter(material => material.id !== id));

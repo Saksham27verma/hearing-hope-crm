@@ -768,6 +768,11 @@ export default function MaterialOutPage() {
           entityId: materialId,
           entityName: (deletedMaterial as any)?.challanNumber || (deletedMaterial as any)?.deliveryNoteNo || materialId,
           description: `Deleted material out entry ${(deletedMaterial as any)?.challanNumber || materialId}`,
+          changes: {
+            challanNumber:  { before: (deletedMaterial as any)?.challanNumber ?? null,  after: null },
+            deliveryNoteNo: { before: (deletedMaterial as any)?.deliveryNoteNo ?? null, after: null },
+            status:         { before: (deletedMaterial as any)?.status ?? null,         after: null },
+          },
         }, user);
         
         // Update local state

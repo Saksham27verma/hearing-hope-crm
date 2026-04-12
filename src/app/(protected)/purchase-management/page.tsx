@@ -391,6 +391,11 @@ export default function PurchaseManagement() {
         entityId: id,
         entityName: deletedPurchase?.invoiceNo || id,
         description: `Deleted purchase invoice ${deletedPurchase?.invoiceNo || id}`,
+        changes: {
+          invoiceNo: { before: deletedPurchase?.invoiceNo ?? null, after: null },
+          party:     { before: deletedPurchase?.party     ?? null, after: null },
+          totalAmount: { before: deletedPurchase?.totalAmount ?? null, after: null },
+        },
         metadata: { invoiceNo: deletedPurchase?.invoiceNo, party: deletedPurchase?.party },
       }, user);
       setPurchases(prevPurchases => prevPurchases.filter(purchase => purchase.id !== id));
