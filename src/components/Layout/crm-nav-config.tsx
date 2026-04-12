@@ -82,7 +82,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   },
   { text: 'Settings', path: '/settings', icon: Settings, adminOnly: true },
   { text: 'User Management', path: '/user-management', icon: UsersRound, adminOnly: true },
-  { text: 'Activity Logs', path: '/activity-logs', icon: Activity, adminOnly: true, superAdminOnly: true },
+  { text: 'Activity Logs', path: '/activity-logs', icon: Activity, adminOnly: true },
   { text: 'Admin Cleanup', path: '/admin-cleanup', icon: Sparkles, adminOnly: true },
 ];
 

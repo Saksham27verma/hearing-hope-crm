@@ -36,6 +36,8 @@ import {
 } from '@/lib/enquiryInventoryAvailability';
 import { formatPtaTestDateForDisplay, type ExternalPtaReportLink } from '@/lib/ptaIntegration';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
+import { sumEntProcedurePrices } from '@/lib/entServicePricing';
+import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import {
   TextField, Button, Typography, Box, Paper,
@@ -364,6 +366,7 @@ interface PaymentRecord {
   amount: number;
   paymentFor:
     | 'hearing_test'
+    | 'ent_service'
     | 'hearing_aid'
     | 'accessory'
     | 'booking_advance'
@@ -397,6 +400,11 @@ interface Visit {
   programming: boolean;
   repair: boolean;
   counselling: boolean;
+  entService: boolean;
+  /** Multiple ENT procedures in one visit — each row: procedure + price (₹) */
+  entProcedureEntries: { id: string; procedureType: string; price: number }[];
+  entProcedureDoneBy: string;
+  entServicePrice: number;
   /** @deprecated use hearingTestEntries; kept for save/backward compat (comma-separated) */
   testType: string;
   /** Multiple tests in one visit — each row: type + price (₹) */
@@ -488,6 +496,46 @@ interface Visit {
 
 function newHearingTestEntryId(): string {
   return `ht-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function newEntProcedureEntryId(): string {
+  return `ent-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/** Multiple procedures per visit, or legacy comma-separated line on entServiceDetails. */
+function normalizeEntProcedureEntriesFromSavedVisit(visit: any): {
+  id: string;
+  procedureType: string;
+  price: number;
+}[] {
+  const raw = visit?.entServiceDetails?.entProcedureEntries ?? visit?.entProcedureEntries;
+  const legacyTotalPrice = Math.max(
+    0,
+    Number(visit?.entServiceDetails?.totalPrice ?? visit?.entServicePrice ?? 0) || 0
+  );
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw.map((e: any, i: number) => ({
+      id: String(e?.id || `ent-${i}-${newEntProcedureEntryId()}`),
+      procedureType: String(e?.procedureType ?? e?.procedure ?? '').trim(),
+      price: Math.max(0, Number(e?.price ?? e?.procedurePrice ?? 0) || 0),
+    }));
+  }
+  const legacy = String(visit?.entServiceDetails?.procedureTypesLine ?? '').trim();
+  if (legacy) {
+    const types = legacy
+      .split(',')
+      .map((t: string) => t.trim())
+      .filter(Boolean);
+    if (types.length <= 1) {
+      return [{ id: newEntProcedureEntryId(), procedureType: legacy, price: legacyTotalPrice }];
+    }
+    return types.map((t: string, i: number) => ({
+      id: newEntProcedureEntryId(),
+      procedureType: t,
+      price: i === 0 ? legacyTotalPrice : 0,
+    }));
+  }
+  return [];
 }
 
 /** Multiple tests per visit, or legacy single `testType` string. */
@@ -1795,6 +1843,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           programming: visit.medicalServices?.includes('programming') || false,
           repair: visit.medicalServices?.includes('repair') || false,
           counselling: visit.medicalServices?.includes('counselling') || false,
+          entService: visit.medicalServices?.includes('ent_service') || false,
+          ...(() => {
+            const entProcedureEntries = normalizeEntProcedureEntriesFromSavedVisit(visit);
+            const ep = sumEntProcedurePrices({
+              entServiceDetails: {
+                entProcedureEntries,
+                totalPrice: visit.entServiceDetails?.totalPrice,
+              },
+              entServicePrice: visit.entServicePrice,
+            });
+            return {
+              entProcedureEntries,
+              entProcedureDoneBy: visit.entServiceDetails?.doneBy || '',
+              entServicePrice: ep,
+            };
+          })(),
           ...(() => {
             const hearingTestEntries = normalizeHearingTestEntriesFromSavedVisit(visit);
             const line = hearingTestEntries.map((x) => x.testType).filter(Boolean).join(', ');
@@ -2270,6 +2334,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       programming: false,
       repair: false,
       counselling: false,
+      entService: false,
+      entProcedureEntries: [],
+      entProcedureDoneBy: '',
+      entServicePrice: 0,
       testType: '',
       hearingTestEntries: [],
       testDoneBy: '',
@@ -2591,6 +2659,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         if (ht > 0) total += ht;
       }
 
+      if (visit.entService) {
+        const ent = sumEntProcedurePrices(visit);
+        if (ent > 0) total += ent;
+      }
+
       if (visit.hearingAidBooked && !visit.hearingAidSale) {
         if (!bookingVisitSupersededByLaterSale(visits, visitIndex)) {
           total +=
@@ -2638,6 +2711,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           label: 'Hearing Test',
           amount: htAmt,
           description: `Test on ${visit.visitDate || 'scheduled date'}`
+        });
+      }
+
+      const entAmt = sumEntProcedurePrices(visit);
+      if (visit.entService && entAmt > 0) {
+        options.push({
+          value: 'ent_service',
+          label: 'ENT service',
+          amount: entAmt,
+          description: `ENT procedures on ${visit.visitDate || 'scheduled date'}`
         });
       }
 
@@ -2954,6 +3037,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       id: payment.id,
       paymentType:
         payment.paymentFor === 'hearing_test' ? 'hearing_aid_test' :
+        payment.paymentFor === 'ent_service' ? 'ent_service' :
         payment.paymentFor === 'booking_advance' ? 'hearing_aid_booking' :
         payment.paymentFor === 'hearing_aid' ? 'hearing_aid_sale' :
         payment.paymentFor === 'full_payment' ? 'hearing_aid_sale' :
@@ -3020,6 +3104,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           hearingTestDetails.externalPtaReport = visit.externalPtaReport;
         }
 
+        const entFiltered = (visit.entProcedureEntries || []).filter((e) =>
+          String(e.procedureType || '').trim()
+        );
+        const entSum = entFiltered.reduce(
+          (s, e) => s + Math.max(0, Number((e as { price?: number }).price) || 0),
+          0
+        );
+        const proceduresLine = entFiltered.length
+          ? entFiltered.map((e) => String(e.procedureType).trim()).join(', ')
+          : null;
+
+        const entServiceDetails: Record<string, unknown> = {
+          procedureTypesLine: proceduresLine,
+          doneBy: visit.entProcedureDoneBy || null,
+          totalPrice: entFiltered.length > 0 ? entSum : visit.entServicePrice || null,
+        };
+        if (entFiltered.length > 0) {
+          entServiceDetails.entProcedureEntries = entFiltered.map((e) => ({
+            id: e.id,
+            procedureType: String(e.procedureType).trim(),
+            price: Math.max(0, Number((e as { price?: number }).price) || 0),
+          }));
+        }
+
         const shouldPersistBookingFields =
           (visit.hearingAidBooked && !visit.hearingAidSale) ||
           visit.bookingFromTrial ||
@@ -3042,9 +3150,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             ...(visit.accessory ? ['accessory'] : []),
             ...(visit.programming ? ['programming'] : []),
             ...(visit.repair ? ['repair'] : []),
-            ...(visit.counselling ? ['counselling'] : [])
+            ...(visit.counselling ? ['counselling'] : []),
+            ...(visit.entService ? ['ent_service'] : [])
           ],
           hearingTestDetails: removeUndefined(hearingTestDetails),
+          entServiceDetails: removeUndefined(entServiceDetails),
           hearingAidDetails: removeUndefined({
             hearingAidProductId: visit.hearingAidProductId,
           hearingAidSuggested: visit.hearingAidType,
@@ -3857,6 +3967,29 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           <FormControlLabel
                             control={
                               <Switch
+                                checked={currentVisit.entService}
+                                onChange={(e) => {
+                                  const on = e.target.checked;
+                                  if (!on) {
+                                    updateVisitFields(activeVisit, {
+                                      entService: false,
+                                      entProcedureEntries: [],
+                                      entProcedureDoneBy: '',
+                                      entServicePrice: 0,
+                                    });
+                                  } else {
+                                    updateVisit(activeVisit, 'entService', true);
+                                  }
+                                }}
+                                disabled={isAudiologist}
+                                color="secondary"
+                              />
+                            }
+                            label="ENT service"
+                          />
+                          <FormControlLabel
+                            control={
+                              <Switch
                                 checked={currentVisit.hearingAidTrial}
                                 onChange={(e) => {
                                   const checked = e.target.checked;
@@ -4276,6 +4409,195 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               !['admin', 'staff', 'audiologist'].includes(userProfile.role)
                             }
                           />
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {currentVisit.entService && (
+                      <Card sx={{ mb: 4, bgcolor: 'secondary.50', borderRadius: 2 }}>
+                        <CardContent sx={{ p: 3 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
+                            <MedicalIcon sx={{ color: 'secondary.main' }} />
+                            <Typography variant="h6" sx={{ fontWeight: 600, color: 'secondary.main' }}>
+                              ENT service (billable procedures)
+                            </Typography>
+                          </Box>
+                          <Grid container spacing={3}>
+                            <Grid item xs={12}>
+                              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
+                                Procedures (this visit)
+                              </Typography>
+                              <Stack spacing={1.25}>
+                                {(currentVisit.entProcedureEntries || []).map((entry) => (
+                                  <Box
+                                    key={entry.id}
+                                    sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}
+                                  >
+                                    <FormControl size="small" sx={{ minWidth: 200, flex: 1, maxWidth: 480 }}>
+                                      <InputLabel id={`ent-proc-${entry.id}`}>Procedure</InputLabel>
+                                      <Select
+                                        labelId={`ent-proc-${entry.id}`}
+                                        label="Procedure"
+                                        value={entry.procedureType || ''}
+                                        onChange={(e) => {
+                                          const v = String(e.target.value);
+                                          const next = (currentVisit.entProcedureEntries || []).map((x) =>
+                                            x.id === entry.id ? { ...x, procedureType: v } : x
+                                          );
+                                          const ep = sumEntProcedurePrices({
+                                            entProcedureEntries: next,
+                                            entServicePrice: currentVisit.entServicePrice,
+                                          });
+                                          updateVisitFields(activeVisit, {
+                                            entProcedureEntries: next,
+                                            entServicePrice: ep,
+                                          });
+                                        }}
+                                      >
+                                        <MenuItem value="">
+                                          <em>Select procedure</em>
+                                        </MenuItem>
+                                        {ENT_PROCEDURE_OPTIONS.map((o) => (
+                                          <MenuItem key={o.optionValue} value={o.optionValue}>
+                                            {o.optionLabel}
+                                          </MenuItem>
+                                        ))}
+                                        {entry.procedureType &&
+                                          !ENT_PROCEDURE_OPTIONS.some((o) => o.optionValue === entry.procedureType) && (
+                                            <MenuItem value={entry.procedureType}>
+                                              {entry.procedureType} (saved)
+                                            </MenuItem>
+                                          )}
+                                      </Select>
+                                    </FormControl>
+                                    <TextField
+                                      size="small"
+                                      label="Price"
+                                      type="number"
+                                      value={entry.price ?? ''}
+                                      onChange={(e) => {
+                                        const num = Math.max(0, Number(e.target.value) || 0);
+                                        const next = (currentVisit.entProcedureEntries || []).map((x) =>
+                                          x.id === entry.id ? { ...x, price: num } : x
+                                        );
+                                        const ep = sumEntProcedurePrices({
+                                          entProcedureEntries: next,
+                                          entServicePrice: currentVisit.entServicePrice,
+                                        });
+                                        updateVisitFields(activeVisit, {
+                                          entProcedureEntries: next,
+                                          entServicePrice: ep,
+                                        });
+                                      }}
+                                      sx={{ width: 120 }}
+                                      InputProps={{
+                                        startAdornment: (
+                                          <InputAdornment position="start">
+                                            <RupeeIcon sx={{ fontSize: 18 }} />
+                                          </InputAdornment>
+                                        ),
+                                      }}
+                                    />
+                                    <IconButton
+                                      aria-label="Remove procedure"
+                                      size="small"
+                                      onClick={() => {
+                                        const next = (currentVisit.entProcedureEntries || []).filter(
+                                          (x) => x.id !== entry.id
+                                        );
+                                        const ep = sumEntProcedurePrices({
+                                          entProcedureEntries: next,
+                                          entServicePrice: currentVisit.entServicePrice,
+                                        });
+                                        updateVisitFields(activeVisit, {
+                                          entProcedureEntries: next,
+                                          entServicePrice: ep,
+                                        });
+                                      }}
+                                      sx={{ mt: 0.5 }}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </Box>
+                                ))}
+                                <Button
+                                  type="button"
+                                  variant="outlined"
+                                  size="small"
+                                  startIcon={<AddIcon />}
+                                  onClick={() => {
+                                    const next = [
+                                      ...(currentVisit.entProcedureEntries || []),
+                                      { id: newEntProcedureEntryId(), procedureType: '', price: 0 },
+                                    ];
+                                    const ep = sumEntProcedurePrices({
+                                      entProcedureEntries: next,
+                                      entServicePrice: currentVisit.entServicePrice,
+                                    });
+                                    updateVisitFields(activeVisit, { entProcedureEntries: next, entServicePrice: ep });
+                                  }}
+                                >
+                                  Add procedure
+                                </Button>
+                              </Stack>
+                            </Grid>
+                            <Grid item xs={12} md={6}>
+                              <Box sx={{ position: 'relative' }}>
+                                <FormControl fullWidth>
+                                  <InputLabel>Procedure done by</InputLabel>
+                                  <Select
+                                    value={currentVisit.entProcedureDoneBy}
+                                    onChange={(e) =>
+                                      updateVisit(activeVisit, 'entProcedureDoneBy', e.target.value)
+                                    }
+                                    label="Procedure done by"
+                                    sx={{ borderRadius: 2, minWidth: '200px' }}
+                                  >
+                                    {getStaffOptionsForField('testBy').map((option) => (
+                                      <MenuItem key={option} value={option}>
+                                        {option}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                                {isAdmin && (
+                                  <IconButton
+                                    onClick={() => {
+                                      setCurrentField('testBy');
+                                      setStaffManagementOpen(true);
+                                    }}
+                                    sx={{
+                                      position: 'absolute',
+                                      top: 6,
+                                      right: 6,
+                                      bgcolor: '#ff6b35',
+                                      color: 'white',
+                                      '&:hover': { bgcolor: '#e55a2b' },
+                                      width: '20px',
+                                      height: '20px',
+                                      zIndex: 1,
+                                    }}
+                                    size="small"
+                                    title="Edit staff categories (Admin Only)"
+                                  >
+                                    <EditIcon sx={{ fontSize: '12px' }} />
+                                  </IconButton>
+                                )}
+                              </Box>
+                            </Grid>
+                            {(currentVisit.entProcedureEntries || []).filter((e) =>
+                              String(e.procedureType || '').trim()
+                            ).length > 1 && (
+                              <Grid item xs={12}>
+                                <Typography variant="body2" color="text.secondary">
+                                  Total (ENT procedures):{' '}
+                                  <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                                    {formatCurrency(sumEntProcedurePrices(currentVisit))}
+                                  </Box>
+                                </Typography>
+                              </Grid>
+                            )}
+                          </Grid>
                         </CardContent>
                       </Card>
                     )}
@@ -7861,6 +8183,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                            {payments.map((payment) => {
                               const paymentForLabels: Record<string, string> = {
                                hearing_test: 'Hearing Test',
+                               ent_service: 'ENT service',
                                hearing_aid: 'Hearing Aid',
                                accessory: 'Accessory',
                                 booking_advance: 'Booking Advance',
@@ -7872,8 +8195,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                other: 'Other'
                              };
                              
-                             const paymentForColors: Record<string, 'primary' | 'secondary' | 'success' | 'warning' | 'info' | 'default' | 'error'> = {
+                              const paymentForColors: Record<string, 'primary' | 'secondary' | 'success' | 'warning' | 'info' | 'default' | 'error'> = {
                                hearing_test: 'primary',
+                               ent_service: 'secondary',
                                hearing_aid: 'secondary',
                                accessory: 'success',
                                 booking_advance: 'warning',
@@ -8053,6 +8377,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         {visit.hearingTest && (
                           <Chip label="Hearing Test" color="primary" size="small" />
                         )}
+                        {visit.entService && (
+                          <Chip label="ENT service" color="secondary" size="small" />
+                        )}
                         {(visit.hearingAidTrial || visit.hearingAidBooked || visit.hearingAidSale) && (
                           <Chip 
                             label={`Hearing Aid${visit.trialGiven ? ' (Trial)' : ''}${visit.bookingFromTrial ? ' (Booked)' : ''}${visit.purchaseFromTrial ? ' (Purchased)' : ''}`} 
@@ -8072,7 +8399,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         {visit.counselling && (
                           <Chip label="Counselling" color="info" size="small" />
                         )}
-                        {!visit.hearingTest && !(visit.hearingAidTrial || visit.hearingAidBooked || visit.hearingAidSale) && !visit.accessory && !visit.programming && !visit.repair && !visit.counselling && (
+                        {!visit.hearingTest &&
+                          !visit.entService &&
+                          !(visit.hearingAidTrial || visit.hearingAidBooked || visit.hearingAidSale) &&
+                          !visit.accessory &&
+                          !visit.programming &&
+                          !visit.repair &&
+                          !visit.counselling && (
                           <Typography variant="body2">No services selected</Typography>
                         )}
                       </Box>

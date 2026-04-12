@@ -44,6 +44,7 @@ const visitorTypeDefaults = withOrder([
 
 const medicalServiceLabels: Record<string, string> = {
   hearing_test: 'Hearing test',
+  ent_service: 'ENT service',
   hearing_aid_trial: 'Hearing aid trial',
   hearing_aid_booked: 'Hearing aid booked',
   hearing_aid_sale: 'Hearing aid sale',

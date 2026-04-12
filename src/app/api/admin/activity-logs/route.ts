@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { Query } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
-import { assertExplicitSuperAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
+import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -23,7 +23,7 @@ function toMillis(v: unknown): number | null {
 }
 
 /**
- * Lists activity logs with server privileges (explicit super admins only).
+ * Lists activity logs with server privileges (any admin).
  * Client reads are restricted by rules; staff actions still write via logActivity.
  */
 export async function GET(req: Request) {
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
 
     const requester = await getRequesterTenant(decoded.uid);
     if (!requester) return jsonError('Forbidden', 403);
-    assertExplicitSuperAdmin(requester);
+    assertAdmin(requester);
 
     const url = new URL(req.url);
     const limitRaw = parseInt(url.searchParams.get('limit') || '50', 10);

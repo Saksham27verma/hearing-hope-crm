@@ -178,6 +178,30 @@ function mapVisitToVisitSchedule(visit: Record<string, unknown>): Record<string,
     }));
   }
 
+  const entFiltered = Array.isArray(visit.entProcedureEntries)
+    ? (visit.entProcedureEntries as { procedureType?: string; price?: number; id?: string }[]).filter((e) =>
+        String(e.procedureType || '').trim()
+      )
+    : [];
+  const entSum = entFiltered.reduce((s, e) => s + Math.max(0, Number(e.price) || 0), 0);
+  const proceduresLine = entFiltered.length
+    ? entFiltered.map((e) => String(e.procedureType).trim()).join(', ')
+    : null;
+
+  const entServiceDetails: Record<string, unknown> = removeUndefined({
+    procedureTypesLine: proceduresLine,
+    doneBy: visit.entProcedureDoneBy || null,
+    totalPrice: entFiltered.length > 0 ? entSum : visit.entServicePrice || null,
+  });
+
+  if (entFiltered.length > 0) {
+    entServiceDetails.entProcedureEntries = entFiltered.map((e) => ({
+      id: e.id,
+      procedureType: String(e.procedureType).trim(),
+      price: Math.max(0, Number(e.price) || 0),
+    }));
+  }
+
   return removeUndefined({
     id: visit.id,
     visitType: visit.visitType,
@@ -194,8 +218,10 @@ function mapVisitToVisitSchedule(visit: Record<string, unknown>): Record<string,
       ...(visit.programming ? ['programming'] : []),
       ...(visit.repair ? ['repair'] : []),
       ...(visit.counselling ? ['counselling'] : []),
+      ...(visit.entService ? ['ent_service'] : []),
     ],
     hearingTestDetails,
+    entServiceDetails: removeUndefined(entServiceDetails),
     hearingAidDetails: removeUndefined({
       hearingAidProductId: visit.hearingAidProductId,
       hearingAidSuggested: visit.hearingAidType,
@@ -260,6 +286,10 @@ function defaultVisitShell(appointment: Record<string, unknown>): Record<string,
     programming: false,
     repair: false,
     counselling: false,
+    entService: false,
+    entProcedureEntries: [],
+    entProcedureDoneBy: '',
+    entServicePrice: 0,
     testType: '',
     hearingTestEntries: [],
     testDoneBy: '',

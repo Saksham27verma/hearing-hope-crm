@@ -53,9 +53,23 @@ export const TRIAL_RESULT_OPTIONS = [
   { value: 'extended', label: 'Extended' },
 ];
 
+/** Billable ENT procedures (center visits with ENT doctors) — same row pattern as hearing tests */
+export const ENT_PROCEDURE_OPTIONS = [
+  { optionValue: 'Consultation', optionLabel: 'Consultation' },
+  {
+    optionValue: 'Ear wax removal — unilateral',
+    optionLabel: 'Ear wax removal — unilateral',
+  },
+  {
+    optionValue: 'Ear wax removal — bilateral',
+    optionLabel: 'Ear wax removal — bilateral',
+  },
+];
+
 /** medicalServices / active form slugs saved from the simplified form */
 export const MEDICAL_SERVICE_SLUGS = [
   'hearing_test',
+  'ent_service',
   'hearing_aid_trial',
   'hearing_aid_booked',
   'hearing_aid_sale',

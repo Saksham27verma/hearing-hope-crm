@@ -34,8 +34,14 @@ import {
   CardContent,
   Tab,
   Tabs,
+  Avatar,
+  Tooltip,
+  Skeleton,
+  Drawer,
+  Toolbar,
   Divider,
 } from '@mui/material';
+import { alpha, useTheme } from '@mui/material/styles';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -46,8 +52,11 @@ import {
   AccountBalance as BalanceIcon,
   Receipt as ReceiptIcon,
   Store as StoreIcon,
+  Storefront as StorefrontIcon,
   Dashboard as DashboardIcon,
   ArrowBack as ArrowBackIcon,
+  Close as CloseIcon,
+  History as HistoryIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -69,6 +78,38 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { v4 as uuidv4 } from 'uuid';
 import { cashRegisterExpenseAmount } from '@/lib/cash-register/expenseOutflow';
+import { CRM_PAGE_BG, RADIUS_2XL } from '@/components/Layout/crm-theme';
+
+const dialogPaperProps = { sx: { borderRadius: 2 } } as const;
+
+const listPanelPaperSx = {
+  mb: 2,
+  borderRadius: RADIUS_2XL,
+  overflow: 'hidden',
+  border: '1px solid #e0e0e0',
+  boxShadow: 'none',
+  bgcolor: 'background.paper',
+} as const;
+
+const filterBarPaperSx = {
+  mb: 2,
+  p: 2,
+  borderRadius: 2,
+  border: '1px solid #e0e0e0',
+  boxShadow: 'none',
+  bgcolor: 'background.paper',
+} as const;
+
+const QUICK_RANGE_OPTIONS: { value: string; label: string }[] = [
+  { value: '', label: 'All dates' },
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'prevWeek', label: 'Previous week' },
+  { value: 'last7', label: 'Last 7 days' },
+  { value: 'last30', label: 'Last 30 days' },
+  { value: 'thisMonth', label: 'This month' },
+  { value: 'lastMonth', label: 'Last month' },
+];
 
 type CashInCategory = 'payment_record' | 'from_other_centers' | 'miscellaneous';
 type CashOutCategory = 'handed_over' | 'expenses' | 'miscellaneous';
@@ -177,6 +218,9 @@ interface Center {
   id: string;
   name: string;
   isHeadOffice?: boolean;
+  /** Optional; shown as muted sub-label on center cards when present in Firestore */
+  address?: string;
+  city?: string;
 }
 
 const paymentMethods = [
@@ -191,7 +235,6 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 const addDays = (d: Date, days: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
 const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
-const endOfMonthDate = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
 const startOfWeekMonday = (d: Date) => {
   const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day;
@@ -201,7 +244,13 @@ const startOfWeekMonday = (d: Date) => {
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
 
+function centerCardSublabel(c: Center): string {
+  const parts = [c.address, c.city].filter((x) => typeof x === 'string' && x.trim().length > 0) as string[];
+  return parts.join(' · ').trim();
+}
+
 const CashRegisterPage = () => {
+  const theme = useTheme();
   const { user, userProfile, loading: authLoading } = useAuth();
   const { effectiveScopeCenterId, allowedCenterIds, lockedCenterId } = useCenterScope();
   const router = useRouter();
@@ -229,6 +278,10 @@ const CashRegisterPage = () => {
   ]);
   const [editingSheetId, setEditingSheetId] = useState<string | null>(null);
   const [previewSheet, setPreviewSheet] = useState<{ id: string; doc: DailySheetDoc } | null>(null);
+  const [sheetToDelete, setSheetToDelete] = useState<{ id: string; doc: DailySheetDoc } | null>(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const [quickRangePreset, setQuickRangePreset] = useState('');
+  const [entryDrawerOpen, setEntryDrawerOpen] = useState(false);
 
   // Date range filters
   const [rangeStart, setRangeStart] = useState<Date | null>(null);
@@ -373,6 +426,7 @@ const CashRegisterPage = () => {
         setSuccessMsg('Daily cash sheet saved');
       }
       resetDailyForm();
+      setEntryDrawerOpen(false);
       await loadAllSheets();
     } catch (e) {
       console.error(e);
@@ -383,8 +437,9 @@ const CashRegisterPage = () => {
   // --- Date range helpers ---
   const applyQuickRange = (type: string) => {
     const today = startOfDay(new Date());
-    if (type === 'clear') { setRangeStart(null); setRangeEnd(null); }
-    else if (type === 'today') { setRangeStart(today); setRangeEnd(endOfDay(today)); }
+    if (type === 'clear' || type === '') { setRangeStart(null); setRangeEnd(null); setQuickRangePreset(''); return; }
+    setQuickRangePreset(type);
+    if (type === 'today') { setRangeStart(today); setRangeEnd(endOfDay(today)); }
     else if (type === 'yesterday') { const y = addDays(today, -1); setRangeStart(startOfDay(y)); setRangeEnd(endOfDay(y)); }
     else if (type === 'last7') { setRangeStart(addDays(today, -6)); setRangeEnd(endOfDay(today)); }
     else if (type === 'last30') { setRangeStart(addDays(today, -29)); setRangeEnd(endOfDay(today)); }
@@ -421,19 +476,59 @@ const CashRegisterPage = () => {
     );
   };
 
+  const confirmDeleteDailySheet = async () => {
+    if (!sheetToDelete) return;
+    setDeleteSubmitting(true);
+    try {
+      await deleteDoc(doc(db, 'cashDailySheets', sheetToDelete.id));
+      if (editingSheetId === sheetToDelete.id) {
+        setEditingSheetId(null);
+        resetDailyForm();
+      }
+      setSheetToDelete(null);
+      setSuccessMsg('Daily sheet deleted');
+      await loadAllSheets();
+    } catch (e) {
+      console.error(e);
+      setErrorMsg('Failed to delete daily sheet');
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  };
+
+  const headCellSx = { fontWeight: 600, bgcolor: 'grey.50', borderBottom: '1px solid', borderColor: 'divider', py: 1, px: 1.5, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'text.secondary' } as const;
+
   // --- Render helpers ---
   const renderDateRangeControls = () => (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+    <Stack direction={{ xs: 'column', sm: 'row' }} alignItems={{ xs: 'stretch', sm: 'center' }} spacing={1.5} flexWrap="wrap" useFlexGap>
       <LocalizationProvider dateAdapter={AdapterDateFns}>
-        <DatePicker label="From" value={rangeStart} onChange={(d) => setRangeStart(d)} slotProps={{ textField: { size: 'small' } }} />
-        <DatePicker label="To" value={rangeEnd} onChange={(d) => setRangeEnd(d)} slotProps={{ textField: { size: 'small' } }} />
+        <DatePicker label="From" value={rangeStart} onChange={(d) => { setRangeStart(d); setQuickRangePreset(''); }} slotProps={{ textField: { size: 'small', variant: 'outlined', sx: { minWidth: 140 } } }} />
+        <DatePicker label="To" value={rangeEnd} onChange={(d) => { setRangeEnd(d); setQuickRangePreset(''); }} slotProps={{ textField: { size: 'small', variant: 'outlined', sx: { minWidth: 140 } } }} />
       </LocalizationProvider>
-      {['clear', 'today', 'yesterday', 'prevWeek', 'last7', 'last30', 'thisMonth', 'lastMonth'].map((type) => (
-        <Button key={type} variant="outlined" size="small" onClick={() => applyQuickRange(type)}>
-          {type === 'clear' ? 'Clear' : type === 'today' ? 'Today' : type === 'yesterday' ? 'Yesterday' : type === 'prevWeek' ? 'Prev Week' : type === 'last7' ? 'Last 7d' : type === 'last30' ? 'Last 30d' : type === 'thisMonth' ? 'This Month' : 'Last Month'}
-        </Button>
-      ))}
-    </Box>
+      <FormControl size="small" sx={{ minWidth: 200 }}>
+        <InputLabel id="cash-register-quick-range">Quick range</InputLabel>
+        <Select
+          variant="outlined"
+          labelId="cash-register-quick-range"
+          label="Quick range"
+          value={quickRangePreset}
+          onChange={(e) => {
+            const v = e.target.value as string;
+            applyQuickRange(v === '' ? 'clear' : v);
+          }}
+        >
+          {QUICK_RANGE_OPTIONS.map((o) => (
+            <MenuItem key={o.value || 'all'} value={o.value}>{o.label}</MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+    </Stack>
+  );
+
+  const renderFilterBar = () => (
+    <Paper elevation={0} sx={filterBarPaperSx}>
+      {renderDateRangeControls()}
+    </Paper>
   );
 
   const renderSummaryCards = (
@@ -444,41 +539,117 @@ const CashRegisterPage = () => {
     const cards: Array<{
       label: string;
       value: number;
-      icon: React.ReactNode;
-      color?: string;
+      icon: React.ReactElement;
+      accent: string;
+      iconBg: string;
+      iconColor: string;
+      valueColor: string;
       caption?: string;
     }> = [
-      { label: 'Balance', value: totals.balance, icon: <BalanceIcon color="primary" fontSize="large" />, color: undefined },
-      { label: 'Net In', value: totals.netIn, icon: <IncomeIcon color="success" fontSize="large" />, color: 'success.main' },
-      { label: 'Net Out', value: totals.netOut, icon: <ExpenseIcon color="error" fontSize="large" />, color: 'error.main' },
-      { label: 'Cash Balance', value: totals.cashBalance, icon: <MoneyIcon color="info" fontSize="large" />, color: 'info.main' },
+      {
+        label: 'Balance',
+        value: totals.balance,
+        icon: <BalanceIcon />,
+        accent: theme.palette.primary.main,
+        iconBg: alpha(theme.palette.primary.main, 0.14),
+        iconColor: theme.palette.primary.main,
+        valueColor: theme.palette.text.primary,
+      },
+      {
+        label: 'Net In',
+        value: totals.netIn,
+        icon: <IncomeIcon />,
+        accent: theme.palette.success.main,
+        iconBg: alpha(theme.palette.success.main, 0.14),
+        iconColor: theme.palette.success.dark,
+        valueColor: theme.palette.success.dark,
+      },
+      {
+        label: 'Net Out',
+        value: totals.netOut,
+        icon: <ExpenseIcon />,
+        accent: theme.palette.error.main,
+        iconBg: alpha(theme.palette.error.main, 0.12),
+        iconColor: theme.palette.error.main,
+        valueColor: theme.palette.error.main,
+      },
+      {
+        label: 'Cash Balance',
+        value: totals.cashBalance,
+        icon: <MoneyIcon />,
+        accent: theme.palette.info.main,
+        iconBg: alpha(theme.palette.info.main, 0.14),
+        iconColor: theme.palette.info.dark,
+        valueColor: theme.palette.info.dark,
+      },
     ];
     if (options?.adminExpenseTotal !== undefined) {
       cards.push({
         label: 'Expenses (categorized)',
         value: options.adminExpenseTotal,
-        icon: <ExpenseIcon color="warning" fontSize="large" />,
-        color: 'warning.dark',
+        icon: <ExpenseIcon />,
+        accent: theme.palette.warning.main,
+        iconBg: alpha(theme.palette.warning.main, 0.18),
+        iconColor: theme.palette.warning.dark,
+        valueColor: theme.palette.warning.dark,
         caption: 'Cash out lines tagged Expenses',
       });
     }
     return (
-      <Grid container spacing={3} mb={4}>
+      <Grid container spacing={2} mb={3}>
         {cards.map((card) => (
           <Grid key={card.label} sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: `span ${mdSpan}` } }}>
-            <Card elevation={0} variant="outlined">
-              <CardContent>
-                <Stack direction="row" alignItems="center" spacing={2}>
-                  {card.icon}
-                  <Box sx={{ width: '100%' }}>
-                    <Typography variant="body2" color="text.secondary">{card.label}</Typography>
+            <Card
+              elevation={2}
+              sx={{
+                borderRadius: 2,
+                overflow: 'hidden',
+                border: '1px solid',
+                borderColor: 'divider',
+                borderTop: '4px solid',
+                borderTopColor: card.accent,
+                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                '&:hover': {
+                  boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                  transform: 'translateY(-2px)',
+                },
+              }}
+            >
+              <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
+                <Stack direction="row" alignItems="flex-start" spacing={2}>
+                  <Avatar
+                    sx={{
+                      width: 44,
+                      height: 44,
+                      bgcolor: card.iconBg,
+                      color: card.iconColor,
+                    }}
+                  >
+                    {React.cloneElement(card.icon, { sx: { fontSize: 22 } })}
+                  </Avatar>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="overline" color="text.secondary" fontWeight={700} sx={{ letterSpacing: '0.08em', lineHeight: 1.2 }}>
+                      {card.label}
+                    </Typography>
                     {summaryLoading ? (
-                      <CircularProgress size={20} />
+                      <Skeleton variant="rounded" width="70%" height={40} sx={{ mt: 1 }} />
                     ) : (
-                      <Typography variant="h5" fontWeight="bold" color={card.color}>{formatCurrency(card.value)}</Typography>
+                      <Typography
+                        variant="h4"
+                        fontWeight={800}
+                        sx={{
+                          color: card.valueColor,
+                          letterSpacing: '-0.03em',
+                          lineHeight: 1.15,
+                          mt: 0.5,
+                          fontFeatureSettings: '"tnum"',
+                        }}
+                      >
+                        {formatCurrency(card.value)}
+                      </Typography>
                     )}
                     {card.caption && (
-                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                         {card.caption}
                       </Typography>
                     )}
@@ -492,104 +663,269 @@ const CashRegisterPage = () => {
     );
   };
 
+  const lineGridFields = {
+    gap: 2,
+    gridTemplateColumns: {
+      xs: '1fr',
+      sm: 'repeat(2, minmax(0, 1fr))',
+      md: 'minmax(0, 1.1fr) minmax(0, 1.1fr) 88px minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.95fr) 44px',
+    },
+    alignItems: 'start' as const,
+  };
+
   const renderDailyTable = (rows: DailyRow[], table: 'in' | 'out') => {
     const isIn = table === 'in';
-    const setRows = isIn ? setCashInRows : setCashOutRows;
     const addRow = isIn ? addCashInRow : addCashOutRow;
     const removeRow = isIn ? removeCashInRow : removeCashOutRow;
     const totals = dailyTotals();
     const net = isIn ? totals.netIn : totals.netOut;
     const cashOnly = isIn ? totals.cashIn : totals.cashOut;
+    const accent = isIn ? theme.palette.success.main : theme.palette.error.main;
+    const accentSoft = isIn ? alpha(theme.palette.success.main, 0.1) : alpha(theme.palette.error.main, 0.1);
 
     return (
-      <Box sx={{ p: 2, pt: isIn ? 2 : 0 }}>
-        <Typography variant="subtitle1" sx={{ mb: 1, color: isIn ? 'success.main' : 'error.main', fontWeight: 700 }}>
-          {isIn ? 'Cash In' : 'Cash Out'}
-        </Typography>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>{isIn ? 'Receipt From' : 'Cash To'}</TableCell>
-                <TableCell>Item Details</TableCell>
-                <TableCell width={110}>Qty</TableCell>
-                <TableCell width={180}>Mode of Payment</TableCell>
-                <TableCell width={200}>Category</TableCell>
-                <TableCell width={160} align="right">Amount</TableCell>
-                <TableCell width={60} align="right">&nbsp;</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell><TextField size="small" fullWidth placeholder={isIn ? 'From whom' : 'To whom'} value={r.partyName} onChange={(e) => updateRow(table, r.id, { partyName: e.target.value })} /></TableCell>
-                  <TableCell><TextField size="small" fullWidth placeholder="Item details" value={r.itemDetails} onChange={(e) => updateRow(table, r.id, { itemDetails: e.target.value })} /></TableCell>
-                  <TableCell><TextField size="small" type="number" value={r.quantity} onChange={(e) => updateRow(table, r.id, { quantity: Number(e.target.value) || 0 })} /></TableCell>
-                  <TableCell>
-                    <FormControl fullWidth size="small">
-                      <Select value={r.paymentMethod} onChange={(e) => updateRow(table, r.id, { paymentMethod: e.target.value as DailyRow['paymentMethod'] })}>
-                        {paymentMethods.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
-                      </Select>
-                    </FormControl>
-                  </TableCell>
-                  <TableCell>
-                    <FormControl fullWidth size="small">
-                      <Select
-                        value={isIn ? (CASH_IN_CATEGORY_SET.has(r.transactionCategory) ? r.transactionCategory : DEFAULT_CASH_IN_CATEGORY) : (CASH_OUT_CATEGORY_SET.has(r.transactionCategory) ? r.transactionCategory : DEFAULT_CASH_OUT_CATEGORY)}
-                        onChange={(e) =>
-                          updateRow(table, r.id, { transactionCategory: e.target.value as TransactionCategory })
-                        }
-                      >
-                        {(isIn ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES).map((c) => (
-                          <MenuItem key={c.value} value={c.value}>{c.label}</MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </TableCell>
-                  <TableCell align="right"><TextField size="small" type="number" value={r.amount} onChange={(e) => updateRow(table, r.id, { amount: Number(e.target.value) || 0 })} InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }} /></TableCell>
-                  <TableCell align="right"><IconButton size="small" color="error" onClick={() => removeRow(r.id)}><DeleteIcon fontSize="small" /></IconButton></TableCell>
-                </TableRow>
-              ))}
-              <TableRow><TableCell colSpan={7}><Button startIcon={<AddIcon />} onClick={addRow} size="small">Add Row</Button></TableCell></TableRow>
-              <TableRow><TableCell colSpan={5} align="right" sx={{ fontWeight: 700 }}>Net Amount {isIn ? 'In' : 'Out'}</TableCell><TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(net)}</TableCell><TableCell /></TableRow>
-              <TableRow><TableCell colSpan={5} align="right">{isIn ? 'Received' : 'Spent'} via Cash</TableCell><TableCell align="right">{formatCurrency(cashOnly)}</TableCell><TableCell /></TableRow>
-            </TableBody>
-          </Table>
-        </TableContainer>
+      <Box sx={{ mb: 3 }}>
+        <Box
+          sx={{
+            px: 2,
+            py: 1.5,
+            mb: 2,
+            borderRadius: 2,
+            bgcolor: accentSoft,
+            borderLeft: '4px solid',
+            borderLeftColor: accent,
+          }}
+        >
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, color: accent, letterSpacing: '-0.01em' }}>
+            {isIn ? 'Cash In' : 'Cash Out'}
+          </Typography>
+        </Box>
+
+        <Box
+          sx={{
+            display: { xs: 'none', md: 'grid' },
+            ...lineGridFields,
+            px: 2,
+            py: 1,
+            mb: 1,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
+          <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {isIn ? 'Receipt From' : 'Cash To'}
+          </Typography>
+          <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Item Details
+          </Typography>
+          <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Qty
+          </Typography>
+          <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Mode of Payment
+          </Typography>
+          <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Category
+          </Typography>
+          <Typography variant="caption" fontWeight={700} color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'right' }}>
+            Amount
+          </Typography>
+          <Box />
+        </Box>
+
+        <Stack spacing={1.5}>
+          {rows.map((r) => (
+            <Box
+              key={r.id}
+              sx={{
+                display: 'grid',
+                ...lineGridFields,
+                p: 2,
+                borderRadius: 2,
+                bgcolor: 'grey.50',
+                border: '1px solid',
+                borderColor: 'divider',
+                transition: 'box-shadow 0.2s ease, border-color 0.2s ease',
+                '&:hover': {
+                  borderColor: alpha(accent, 0.45),
+                  boxShadow: '0 4px 16px rgba(15, 23, 42, 0.06)',
+                },
+                '& .MuiInputBase-root': { fontSize: '0.8125rem', bgcolor: 'background.paper' },
+              }}
+            >
+              <TextField variant="outlined" size="small" fullWidth placeholder={isIn ? 'From whom' : 'To whom'} value={r.partyName} onChange={(e) => updateRow(table, r.id, { partyName: e.target.value })} />
+              <TextField variant="outlined" size="small" fullWidth placeholder="Item details" value={r.itemDetails} onChange={(e) => updateRow(table, r.id, { itemDetails: e.target.value })} />
+              <TextField variant="outlined" size="small" type="number" value={r.quantity} onChange={(e) => updateRow(table, r.id, { quantity: Number(e.target.value) || 0 })} />
+              <FormControl fullWidth size="small">
+                <Select variant="outlined" value={r.paymentMethod} onChange={(e) => updateRow(table, r.id, { paymentMethod: e.target.value as DailyRow['paymentMethod'] })}>
+                  {paymentMethods.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}
+                </Select>
+              </FormControl>
+              <FormControl fullWidth size="small">
+                <Select
+                  variant="outlined"
+                  value={isIn ? (CASH_IN_CATEGORY_SET.has(r.transactionCategory) ? r.transactionCategory : DEFAULT_CASH_IN_CATEGORY) : (CASH_OUT_CATEGORY_SET.has(r.transactionCategory) ? r.transactionCategory : DEFAULT_CASH_OUT_CATEGORY)}
+                  onChange={(e) =>
+                    updateRow(table, r.id, { transactionCategory: e.target.value as TransactionCategory })
+                  }
+                >
+                  {(isIn ? CASH_IN_CATEGORIES : CASH_OUT_CATEGORIES).map((c) => (
+                    <MenuItem key={c.value} value={c.value}>{c.label}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField variant="outlined" size="small" type="number" value={r.amount} onChange={(e) => updateRow(table, r.id, { amount: Number(e.target.value) || 0 })} InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }} />
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', pt: { xs: 0, md: 0.5 } }}>
+                <Tooltip title="Remove line">
+                  <IconButton size="small" color="error" onClick={() => removeRow(r.id)} aria-label="Remove line">
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            </Box>
+          ))}
+        </Stack>
+
+        <Box sx={{ mt: 2 }}>
+          <Button variant="outlined" startIcon={<AddIcon />} onClick={addRow} size="small" sx={{ textTransform: 'none', fontWeight: 600 }}>
+            Add Row
+          </Button>
+        </Box>
+
+        <Stack spacing={1} sx={{ mt: 2, pt: 2, borderTop: '1px dashed', borderColor: 'divider' }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Typography variant="body2" fontWeight={700}>Net Amount {isIn ? 'In' : 'Out'}</Typography>
+            <Typography variant="body2" fontWeight={800} sx={{ fontFeatureSettings: '"tnum"' }}>{formatCurrency(net)}</Typography>
+          </Stack>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Typography variant="body2" color="text.secondary">{isIn ? 'Received' : 'Spent'} via Cash</Typography>
+            <Typography variant="body2" fontWeight={600} sx={{ fontFeatureSettings: '"tnum"' }}>{formatCurrency(cashOnly)}</Typography>
+          </Stack>
+        </Stack>
       </Box>
     );
   };
 
-  const renderSavedSheetsTable = (sheets: typeof allSheets) => {
+  const renderEntryDrawer = () => (
+    <Drawer
+      anchor="right"
+      open={entryDrawerOpen}
+      onClose={() => setEntryDrawerOpen(false)}
+      PaperProps={{
+        sx: {
+          width: { xs: '100%', sm: 640, md: 880, lg: 1024 },
+          maxWidth: '100vw',
+          display: 'flex',
+          flexDirection: 'column',
+        },
+      }}
+    >
+      <Box
+        sx={{
+          px: 2.5,
+          py: 2,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          bgcolor: alpha(theme.palette.primary.main, 0.04),
+        }}
+      >
+        <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={1}>
+          <Box>
+            <Typography variant="h6" fontWeight={800} letterSpacing="-0.02em">
+              Daily cash entry
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              Record cash in and out, then save as a daily sheet
+            </Typography>
+          </Box>
+          <IconButton aria-label="Close" onClick={() => setEntryDrawerOpen(false)} edge="end" sx={{ mt: -0.5 }}>
+            <CloseIcon />
+          </IconButton>
+        </Stack>
+      </Box>
+
+      <Box sx={{ flex: 1, overflow: 'auto', px: 2.5, py: 2 }}>
+        <LocalizationProvider dateAdapter={AdapterDateFns}>
+          <DatePicker
+            label="Entry date"
+            value={entryDate}
+            onChange={(d) => d && setEntryDate(d)}
+            slotProps={{ textField: { size: 'small', variant: 'outlined', fullWidth: true } }}
+          />
+        </LocalizationProvider>
+        <Divider sx={{ my: 2 }} />
+        {renderDailyTable(cashInRows, 'in')}
+        {renderDailyTable(cashOutRows, 'out')}
+      </Box>
+
+      <Paper
+        elevation={8}
+        square
+        sx={{
+          p: 2,
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'background.paper',
+        }}
+      >
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="flex-end">
+          <Stack direction="row" flexWrap="wrap" gap={1} justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}>
+            <Chip label={`Balance: ${formatCurrency(dailyTotals().balance)}`} color={dailyTotals().balance >= 0 ? 'success' : 'error'} variant="outlined" size="small" />
+            <Chip label={`Cash balance: ${formatCurrency(dailyTotals().cashBalance)}`} color={dailyTotals().cashBalance >= 0 ? 'success' : 'error'} variant="outlined" size="small" />
+          </Stack>
+          <Button variant="contained" onClick={saveDailySheet} startIcon={<ReceiptIcon />} sx={{ textTransform: 'none', fontWeight: 700, px: 3, py: 1.25 }}>
+            {editingSheetId ? 'Update sheet' : 'Save daily sheet'}
+          </Button>
+        </Stack>
+      </Paper>
+    </Drawer>
+  );
+
+  const renderSavedSheetsTable = (
+    sheets: typeof allSheets,
+    opts?: { omitSummary?: boolean; omitFilterBar?: boolean }
+  ) => {
     const filtered = filterByRange(sheets);
     const totals = computeTotals(filtered);
 
     return (
       <>
-        {renderSummaryCards(totals)}
-        <Paper elevation={0} variant="outlined" sx={{ mb: 4 }}>
-          <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', justifyContent: 'space-between' }}>
-            <Typography variant="h6" fontWeight={700}>Saved Daily Sheets</Typography>
-            {renderDateRangeControls()}
+        {!opts?.omitSummary && renderSummaryCards(totals)}
+        {!opts?.omitFilterBar && renderFilterBar()}
+        <Paper elevation={0} sx={listPanelPaperSx}>
+          <Box sx={{ px: 2.5, py: 1.75, borderBottom: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <HistoryIcon fontSize="small" color="primary" />
+              <Typography variant="subtitle1" fontWeight={800} letterSpacing="-0.01em">
+                Saved daily sheets
+              </Typography>
+            </Stack>
           </Box>
-          <TableContainer>
-            <Table size="small">
+          <TableContainer sx={{ maxHeight: 560 }}>
+            <Table size="small" stickyHeader sx={{ '& .MuiTableCell-root': { py: 0.75, px: 1.5, fontSize: '0.8125rem' } }}>
               <TableHead>
                 <TableRow>
-                  <TableCell>Date</TableCell>
-                  {activeTab === 1 && <TableCell>Center</TableCell>}
-                  <TableCell align="right">Net In</TableCell>
-                  <TableCell align="right">Net Out</TableCell>
-                  <TableCell align="right">Balance</TableCell>
-                  <TableCell align="right">Cash In</TableCell>
-                  <TableCell align="right">Cash Out</TableCell>
-                  <TableCell align="right">Cash Balance</TableCell>
-                  <TableCell align="right">Actions</TableCell>
+                  <TableCell sx={headCellSx}>Date</TableCell>
+                  {activeTab === 1 && <TableCell sx={headCellSx}>Center</TableCell>}
+                  <TableCell sx={headCellSx} align="right">Net In</TableCell>
+                  <TableCell sx={headCellSx} align="right">Net Out</TableCell>
+                  <TableCell sx={headCellSx} align="right">Balance</TableCell>
+                  <TableCell sx={headCellSx} align="right">Cash In</TableCell>
+                  <TableCell sx={headCellSx} align="right">Cash Out</TableCell>
+                  <TableCell sx={headCellSx} align="right">Cash Balance</TableCell>
+                  <TableCell sx={headCellSx} align="right" width={140}>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {filtered.map((s) => (
-                  <TableRow key={s.id} hover>
+                  <TableRow
+                    key={s.id}
+                    hover
+                    sx={{
+                      transition: 'background-color 0.15s ease',
+                      '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.06) },
+                    }}
+                  >
                     <TableCell>{new Date(s.doc.date.seconds * 1000).toLocaleDateString('en-IN')}</TableCell>
                     {activeTab === 1 && <TableCell><Chip label={s.doc.centerName || 'Legacy'} size="small" /></TableCell>}
                     <TableCell align="right">{formatCurrency(s.doc.totals.netIn)}</TableCell>
@@ -599,22 +935,35 @@ const CashRegisterPage = () => {
                     <TableCell align="right">{formatCurrency(s.doc.totals.cashOut)}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(s.doc.totals.cashBalance)}</TableCell>
                     <TableCell align="right">
-                      <IconButton size="small" color="primary" onClick={() => setPreviewSheet(s)}><ReceiptIcon fontSize="small" /></IconButton>
-                      {activeTab === 0 && (
-                        <IconButton size="small" color="success" onClick={() => {
-                          setEntryDate(new Date(s.doc.date.seconds * 1000));
-                          setCashInRows(normalizeCashInRows(s.doc.cashIn));
-                          setCashOutRows(normalizeCashOutRows(s.doc.cashOut));
-                          setEditingSheetId(s.id);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}>
-                          <EditIcon fontSize="small" />
+                      <Tooltip title="Preview">
+                        <IconButton size="small" color="primary" onClick={() => setPreviewSheet(s)} aria-label="Preview sheet">
+                          <ReceiptIcon fontSize="small" />
                         </IconButton>
+                      </Tooltip>
+                      {activeTab === 0 && (
+                        <Tooltip title="Edit sheet">
+                          <IconButton
+                            size="small"
+                            color="success"
+                            aria-label="Edit sheet"
+                            onClick={() => {
+                              setEntryDate(new Date(s.doc.date.seconds * 1000));
+                              setCashInRows(normalizeCashInRows(s.doc.cashIn));
+                              setCashOutRows(normalizeCashOutRows(s.doc.cashOut));
+                              setEditingSheetId(s.id);
+                              setEntryDrawerOpen(true);
+                            }}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       )}
                       {isAdmin && (
-                        <IconButton size="small" color="error" onClick={async () => { await deleteDoc(doc(db, 'cashDailySheets', s.id)); await loadAllSheets(); }}>
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
+                        <Tooltip title="Delete sheet">
+                          <IconButton size="small" color="error" aria-label="Delete sheet" onClick={() => setSheetToDelete(s)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       )}
                     </TableCell>
                   </TableRow>
@@ -630,65 +979,176 @@ const CashRegisterPage = () => {
     );
   };
 
+  const renderDeleteSheetDialog = () => {
+    const d = sheetToDelete?.doc;
+    const dateStr = d ? new Date(d.date.seconds * 1000).toLocaleDateString('en-IN') : '';
+    return (
+      <Dialog
+        open={!!sheetToDelete}
+        onClose={() => !deleteSubmitting && setSheetToDelete(null)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={dialogPaperProps}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'error.main' }}>
+          <DeleteIcon /> Delete daily sheet
+        </DialogTitle>
+        <DialogContent>
+          {sheetToDelete && (
+            <>
+              <Typography variant="body1" gutterBottom>
+                Delete this saved daily sheet? This cannot be undone.
+              </Typography>
+              <Box component="ul" sx={{ m: 0, pl: 2.5, color: 'text.secondary', typography: 'body2' }}>
+                <li>Date: <Box component="span" fontWeight={600} color="text.primary">{dateStr}</Box></li>
+                {d?.centerName ? (
+                  <li>Center: <Box component="span" fontWeight={600} color="text.primary">{d.centerName}</Box></li>
+                ) : null}
+                <li>Balance: <Box component="span" fontWeight={600} color="text.primary">{formatCurrency(d?.totals?.balance ?? 0)}</Box></li>
+              </Box>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button variant="outlined" onClick={() => setSheetToDelete(null)} disabled={deleteSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={confirmDeleteDailySheet}
+            disabled={deleteSubmitting}
+            startIcon={deleteSubmitting ? <CircularProgress size={18} color="inherit" /> : <DeleteIcon />}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+    );
+  };
+
   const renderPreviewDialog = () => (
-    <Dialog open={!!previewSheet} onClose={() => setPreviewSheet(null)} maxWidth="md" fullWidth>
-      <DialogTitle>
-        Daily Sheet — {previewSheet ? new Date(previewSheet.doc.date.seconds * 1000).toLocaleDateString('en-IN') : ''}
-        {previewSheet?.doc.centerName && <Chip label={previewSheet.doc.centerName} size="small" sx={{ ml: 1 }} />}
-      </DialogTitle>
-      <DialogContent dividers>
-        {previewSheet && (
-          <Box>
-            <Typography variant="subtitle1" sx={{ mb: 1, color: 'success.main', fontWeight: 700 }}>Cash In</Typography>
-            <Table size="small">
-              <TableHead><TableRow><TableCell>Receipt From</TableCell><TableCell>Item Details</TableCell><TableCell>Qty</TableCell><TableCell>Mode</TableCell><TableCell>Category</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead>
-              <TableBody>
-                {previewSheet.doc.cashIn.map((r, idx) => {
-                  const n = normalizeDailyRow(r as Record<string, unknown>, 'in');
-                  return (
-                    <TableRow key={idx}>
-                      <TableCell>{n.partyName}</TableCell>
-                      <TableCell>{n.itemDetails}</TableCell>
-                      <TableCell>{n.quantity}</TableCell>
-                      <TableCell>{paymentMethods.find((m) => m.value === n.paymentMethod)?.label || n.paymentMethod}</TableCell>
-                      <TableCell>{labelForCashInCategory(n.transactionCategory)}</TableCell>
-                      <TableCell align="right">{formatCurrency(n.amount)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-            <Box sx={{ my: 2 }} />
-            <Typography variant="subtitle1" sx={{ mb: 1, color: 'error.main', fontWeight: 700 }}>Cash Out</Typography>
-            <Table size="small">
-              <TableHead><TableRow><TableCell>Cash To</TableCell><TableCell>Item Details</TableCell><TableCell>Qty</TableCell><TableCell>Mode</TableCell><TableCell>Category</TableCell><TableCell align="right">Amount</TableCell></TableRow></TableHead>
-              <TableBody>
-                {previewSheet.doc.cashOut.map((r, idx) => {
-                  const n = normalizeDailyRow(r as Record<string, unknown>, 'out');
-                  return (
-                    <TableRow key={idx}>
-                      <TableCell>{n.partyName}</TableCell>
-                      <TableCell>{n.itemDetails}</TableCell>
-                      <TableCell>{n.quantity}</TableCell>
-                      <TableCell>{paymentMethods.find((m) => m.value === n.paymentMethod)?.label || n.paymentMethod}</TableCell>
-                      <TableCell>{labelForCashOutCategory(n.transactionCategory)}</TableCell>
-                      <TableCell align="right">{formatCurrency(n.amount)}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-            <Box sx={{ mt: 2, display: 'flex', gap: 2, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              <Chip label={`Net In: ${formatCurrency(previewSheet.doc.totals.netIn)}`} color="success" variant="outlined" />
-              <Chip label={`Net Out: ${formatCurrency(previewSheet.doc.totals.netOut)}`} color="error" variant="outlined" />
-              <Chip label={`Balance: ${formatCurrency(previewSheet.doc.totals.balance)}`} variant="outlined" />
-              <Chip label={`Cash Balance: ${formatCurrency(previewSheet.doc.totals.cashBalance)}`} variant="outlined" />
+    <Drawer
+      anchor="right"
+      open={!!previewSheet}
+      onClose={() => setPreviewSheet(null)}
+      PaperProps={{
+        sx: {
+          width: { xs: '100%', sm: 640, md: 880, lg: 1024 },
+          maxWidth: '100vw',
+          display: 'flex',
+          flexDirection: 'column',
+        },
+      }}
+    >
+      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: 'background.paper' }}>
+        <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="h6" fontWeight={700}>Daily sheet</Typography>
+              {previewSheet && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {new Date(previewSheet.doc.date.seconds * 1000).toLocaleDateString('en-IN')}
+                </Typography>
+              )}
+              {previewSheet?.doc.centerName && (
+                <Box sx={{ mt: 1 }}>
+                  <Chip label={previewSheet.doc.centerName} size="small" />
+                </Box>
+              )}
             </Box>
-          </Box>
-        )}
-      </DialogContent>
-      <DialogActions><Button onClick={() => setPreviewSheet(null)}>Close</Button></DialogActions>
-    </Dialog>
+            <IconButton aria-label="Close" onClick={() => setPreviewSheet(null)} size="small">
+              <CloseIcon />
+            </IconButton>
+          </Stack>
+          {previewSheet && (
+            <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 2 }}>
+              <Chip label={`Net In: ${formatCurrency(previewSheet.doc.totals.netIn)}`} color="success" variant="outlined" size="small" />
+              <Chip label={`Net Out: ${formatCurrency(previewSheet.doc.totals.netOut)}`} color="error" variant="outlined" size="small" />
+              <Chip label={`Balance: ${formatCurrency(previewSheet.doc.totals.balance)}`} variant="outlined" size="small" />
+              <Chip label={`Cash Balance: ${formatCurrency(previewSheet.doc.totals.cashBalance)}`} variant="outlined" size="small" />
+            </Stack>
+          )}
+        </Box>
+        <Box sx={{ flex: 1, overflow: 'auto', overflowX: 'auto', p: 2 }}>
+          {previewSheet && (
+            <Stack spacing={2} sx={{ minWidth: 0 }}>
+              <Card elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 1 }}>
+                <CardContent>
+                  <Typography variant="subtitle2" sx={{ mb: 1.5, color: 'success.main', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cash In</Typography>
+                  <TableContainer sx={{ border: '1px solid #e0e0e0', borderRadius: 1 }}>
+                    <Table size="small" sx={{ '& .MuiTableCell-root': { py: 0.5, px: 1, fontSize: '0.8125rem' } }}>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={headCellSx}>Receipt From</TableCell>
+                          <TableCell sx={headCellSx}>Item Details</TableCell>
+                          <TableCell sx={headCellSx}>Qty</TableCell>
+                          <TableCell sx={headCellSx}>Mode</TableCell>
+                          <TableCell sx={headCellSx}>Category</TableCell>
+                          <TableCell sx={headCellSx} align="right">Amount</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {previewSheet.doc.cashIn.map((r, idx) => {
+                          const n = normalizeDailyRow(r as Record<string, unknown>, 'in');
+                          return (
+                            <TableRow key={idx}>
+                              <TableCell>{n.partyName}</TableCell>
+                              <TableCell>{n.itemDetails}</TableCell>
+                              <TableCell>{n.quantity}</TableCell>
+                              <TableCell>{paymentMethods.find((m) => m.value === n.paymentMethod)?.label || n.paymentMethod}</TableCell>
+                              <TableCell>{labelForCashInCategory(n.transactionCategory)}</TableCell>
+                              <TableCell align="right">{formatCurrency(n.amount)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+              <Card elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 1 }}>
+                <CardContent>
+                  <Typography variant="subtitle2" sx={{ mb: 1.5, color: 'error.main', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cash Out</Typography>
+                  <TableContainer sx={{ border: '1px solid #e0e0e0', borderRadius: 1 }}>
+                    <Table size="small" sx={{ '& .MuiTableCell-root': { py: 0.5, px: 1, fontSize: '0.8125rem' } }}>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={headCellSx}>Cash To</TableCell>
+                          <TableCell sx={headCellSx}>Item Details</TableCell>
+                          <TableCell sx={headCellSx}>Qty</TableCell>
+                          <TableCell sx={headCellSx}>Mode</TableCell>
+                          <TableCell sx={headCellSx}>Category</TableCell>
+                          <TableCell sx={headCellSx} align="right">Amount</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {previewSheet.doc.cashOut.map((r, idx) => {
+                          const n = normalizeDailyRow(r as Record<string, unknown>, 'out');
+                          return (
+                            <TableRow key={idx}>
+                              <TableCell>{n.partyName}</TableCell>
+                              <TableCell>{n.itemDetails}</TableCell>
+                              <TableCell>{n.quantity}</TableCell>
+                              <TableCell>{paymentMethods.find((m) => m.value === n.paymentMethod)?.label || n.paymentMethod}</TableCell>
+                              <TableCell>{labelForCashOutCategory(n.transactionCategory)}</TableCell>
+                              <TableCell align="right">{formatCurrency(n.amount)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
+            </Stack>
+          )}
+        </Box>
+        <Box sx={{ p: 2, borderTop: '1px solid', borderColor: 'divider', bgcolor: 'grey.50' }}>
+          <Button variant="text" onClick={() => setPreviewSheet(null)}>Close</Button>
+        </Box>
+      </Box>
+    </Drawer>
   );
 
   // --- Overall admin view ---
@@ -712,30 +1172,43 @@ const CashRegisterPage = () => {
 
     return (
       <Box>
-        <Typography variant="h5" fontWeight={700} mb={3}>Overall Cash Register</Typography>
+        <Typography variant="h5" fontWeight={700} mb={1} letterSpacing="-0.02em">Overall cash register</Typography>
+        <Typography variant="body2" color="text.secondary" mb={3}>
+          Aggregated totals and per-center breakdown for the selected date range
+        </Typography>
 
         {renderSummaryCards(overall, { adminExpenseTotal: categorizedExpensesTotal })}
 
-        <Paper elevation={0} variant="outlined" sx={{ mb: 4 }}>
-          <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
-            <Typography variant="h6" fontWeight={700} mb={2}>Center-wise Summary</Typography>
-            {renderDateRangeControls()}
+        {renderFilterBar()}
+
+        <Paper elevation={0} sx={listPanelPaperSx}>
+          <Box sx={{ px: 2.5, py: 1.75, borderBottom: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
+            <Typography variant="subtitle1" fontWeight={800} letterSpacing="-0.01em">
+              Center-wise summary
+            </Typography>
           </Box>
-          <TableContainer>
-            <Table size="small">
+          <TableContainer sx={{ maxHeight: 420 }}>
+            <Table size="small" stickyHeader sx={{ '& .MuiTableCell-root': { py: 0.75, px: 1.5, fontSize: '0.8125rem' } }}>
               <TableHead>
                 <TableRow>
-                  <TableCell>Center</TableCell>
-                  <TableCell align="right">Sheets</TableCell>
-                  <TableCell align="right">Net In</TableCell>
-                  <TableCell align="right">Net Out</TableCell>
-                  <TableCell align="right">Balance</TableCell>
-                  <TableCell align="right">Cash Balance</TableCell>
+                  <TableCell sx={headCellSx}>Center</TableCell>
+                  <TableCell sx={headCellSx} align="right">Sheets</TableCell>
+                  <TableCell sx={headCellSx} align="right">Net In</TableCell>
+                  <TableCell sx={headCellSx} align="right">Net Out</TableCell>
+                  <TableCell sx={headCellSx} align="right">Balance</TableCell>
+                  <TableCell sx={headCellSx} align="right">Cash Balance</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {centerSummaries.map((cs) => (
-                  <TableRow key={cs.centerId} hover>
+                  <TableRow
+                    key={cs.centerId}
+                    hover
+                    sx={{
+                      transition: 'background-color 0.15s ease',
+                      '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.06) },
+                    }}
+                  >
                     <TableCell><Chip icon={<StoreIcon />} label={cs.centerName} size="small" variant="outlined" /></TableCell>
                     <TableCell align="right">{cs.sheetCount}</TableCell>
                     <TableCell align="right" sx={{ color: 'success.main' }}>{formatCurrency(cs.netIn)}</TableCell>
@@ -762,45 +1235,45 @@ const CashRegisterPage = () => {
           </TableContainer>
         </Paper>
 
-        {renderSavedSheetsTable(scopedSheets)}
+        {renderSavedSheetsTable(scopedSheets, { omitSummary: true, omitFilterBar: true })}
       </Box>
     );
   };
 
   // --- Center Register view (entry + sheets for selected center) ---
   const renderCenterRegister = () => {
-    const filteredCenterSheets = filterByRange(centerSheets);
-    const totals = computeTotals(filteredCenterSheets);
-
     return (
       <Box>
-        <Box display="flex" alignItems="center" gap={2} mb={3}>
+        <Toolbar
+          disableGutters
+          variant="dense"
+          sx={{
+            minHeight: 48,
+            mb: 2,
+            justifyContent: 'flex-end',
+            flexWrap: 'wrap',
+            gap: 1.5,
+            bgcolor: 'transparent',
+          }}
+        >
           {!lockedCenterId && (
-            <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={() => { setSelectedCenter(null); resetDailyForm(); }}>
-              Change Center
+            <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={() => { setSelectedCenter(null); resetDailyForm(); setEntryDrawerOpen(false); }} sx={{ textTransform: 'none', fontWeight: 600 }}>
+              Change center
             </Button>
           )}
-          <Chip icon={<StoreIcon />} label={selectedCenter?.name} color="primary" variant="outlined" sx={{ fontSize: '1rem', py: 2.5, px: 1 }} />
-        </Box>
-
-        {/* Daily Cash Entry Form */}
-        <Paper elevation={0} variant="outlined" sx={{ mb: 4 }}>
-          <Box sx={{ p: 2, borderBottom: '1px solid', borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
-            <Typography variant="h6" fontWeight={700}>Daily Cash Entry</Typography>
-            <LocalizationProvider dateAdapter={AdapterDateFns}>
-              <DatePicker label="Entry Date" value={entryDate} onChange={(d) => d && setEntryDate(d)} slotProps={{ textField: { size: 'small' } }} />
-            </LocalizationProvider>
-          </Box>
-          {renderDailyTable(cashInRows, 'in')}
-          {renderDailyTable(cashOutRows, 'out')}
-          <Box sx={{ p: 2, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
-            <Chip label={`Balance: ${formatCurrency(dailyTotals().balance)}`} color={dailyTotals().balance >= 0 ? 'success' : 'error'} variant="outlined" />
-            <Chip label={`Cash Balance: ${formatCurrency(dailyTotals().cashBalance)}`} color={dailyTotals().cashBalance >= 0 ? 'success' : 'error'} variant="outlined" />
-            <Button variant="contained" onClick={saveDailySheet} startIcon={<ReceiptIcon />}>
-              {editingSheetId ? 'Update Sheet' : 'Save Daily Sheet'}
-            </Button>
-          </Box>
-        </Paper>
+          <Chip icon={<StoreIcon />} label={selectedCenter?.name} color="primary" variant="outlined" sx={{ fontWeight: 700, borderWidth: 2 }} />
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => {
+              resetDailyForm();
+              setEntryDrawerOpen(true);
+            }}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            Daily cash entry
+          </Button>
+        </Toolbar>
 
         {renderSavedSheetsTable(centerSheets)}
       </Box>
@@ -809,56 +1282,125 @@ const CashRegisterPage = () => {
 
   // --- Center selection screen ---
   const renderCenterSelector = () => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-      <StoreIcon sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
-      <Typography variant="h5" fontWeight={700} mb={1}>Select Center</Typography>
-      <Typography variant="body1" color="text.secondary" mb={4}>Choose a center to view and manage its cash register</Typography>
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center', maxWidth: 800 }}>
-        {visibleCenters.map((c) => (
-          <Card
-            key={c.id}
-            variant="outlined"
-            sx={{
-              width: 220,
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-              '&:hover': { borderColor: 'primary.main', boxShadow: 3, transform: 'translateY(-2px)' },
-            }}
-            onClick={() => { setSelectedCenter(c); setActiveTab(0); }}
-          >
-            <CardContent sx={{ textAlign: 'center', py: 3 }}>
-              <StoreIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h6" fontWeight={600}>{c.name}</Typography>
-              {c.isHeadOffice && <Chip label="Head Office" size="small" color="primary" sx={{ mt: 1 }} />}
-            </CardContent>
-          </Card>
-        ))}
+    <Box sx={{ py: 2 }}>
+      <Typography variant="h5" fontWeight={800} mb={1} letterSpacing="-0.02em">
+        Select a center
+      </Typography>
+      <Typography variant="body2" color="text.secondary" mb={3} maxWidth={520}>
+        Choose where to record and review daily cash sheets
+      </Typography>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))' },
+          gap: 2,
+          maxWidth: 1200,
+        }}
+      >
+        {visibleCenters.map((c) => {
+          const sub = centerCardSublabel(c);
+          return (
+            <Card
+              key={c.id}
+              elevation={0}
+              variant="outlined"
+              sx={{
+                cursor: 'pointer',
+                borderRadius: 2,
+                border: '1px solid',
+                borderColor: 'divider',
+                transition: 'border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+                '&:hover': {
+                  borderColor: 'primary.main',
+                  boxShadow: `0 0 0 1px ${alpha(theme.palette.primary.main, 0.35)}, 0 8px 24px rgba(15, 23, 42, 0.08)`,
+                  transform: 'translateY(-1px)',
+                },
+              }}
+              onClick={() => { setSelectedCenter(c); setActiveTab(0); }}
+            >
+              <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                <Stack direction="row" spacing={2} alignItems="flex-start">
+                  <StorefrontIcon sx={{ fontSize: 28, color: 'primary.main', mt: 0.25 }} />
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography variant="subtitle1" fontWeight={800} letterSpacing="-0.01em">
+                      {c.name}
+                    </Typography>
+                    {sub ? (
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 1.45 }}>
+                        {sub}
+                      </Typography>
+                    ) : null}
+                    {c.isHeadOffice && (
+                      <Chip label="Head office" size="small" color="primary" variant="outlined" sx={{ mt: 1, fontWeight: 600 }} />
+                    )}
+                  </Box>
+                </Stack>
+              </CardContent>
+            </Card>
+          );
+        })}
       </Box>
     </Box>
   );
 
   // --- Main render ---
   if (authLoading || centersLoading) {
-    return <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh"><CircularProgress /></Box>;
+    return (
+      <Box sx={{ p: { xs: 2, md: 3 }, bgcolor: CRM_PAGE_BG, minHeight: '100%', fontFamily: 'var(--font-inter), Roboto, system-ui, sans-serif' }}>
+        <Skeleton variant="rounded" height={40} width={280} sx={{ mb: 2, borderRadius: 1 }} />
+        <Skeleton variant="rounded" height={22} width={420} sx={{ mb: 3 }} />
+        <Grid container spacing={2}>
+          {[1, 2, 3, 4].map((k) => (
+            <Grid key={k} sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
+              <Skeleton variant="rounded" height={100} sx={{ borderRadius: 2 }} />
+            </Grid>
+          ))}
+        </Grid>
+        <Box display="flex" justifyContent="center" py={6}>
+          <CircularProgress size={36} />
+        </Box>
+      </Box>
+    );
   }
 
   return (
-    <Box p={3}>
-      <Typography variant="h4" fontWeight="bold" color="primary" mb={1}>Cash Register</Typography>
-      <Typography variant="body1" color="text.secondary" mb={2}>
-        Record daily cash in/out per center and view saved daily sheets
-      </Typography>
+    <Box sx={{ p: { xs: 2, md: 3 }, bgcolor: CRM_PAGE_BG, minHeight: '100%', fontFamily: 'var(--font-inter), Roboto, system-ui, sans-serif' }}>
+      <Stack spacing={0.5} mb={2}>
+        <Typography variant="h4" fontWeight={800} color="text.primary" letterSpacing="-0.03em">
+          Cash register
+        </Typography>
+        <Typography variant="body2" color="text.secondary" maxWidth={560}>
+          Record daily cash in and out by center, save sheets, and review history with filters
+        </Typography>
+      </Stack>
 
       {isAdmin && (
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-          <Tabs value={selectedCenter ? 0 : activeTab === 1 ? 1 : -1} onChange={(_, v) => {
-            if (v === 1) { setSelectedCenter(null); setActiveTab(1); }
-            else { setActiveTab(0); }
-          }}>
-            <Tab icon={<StoreIcon />} iconPosition="start" label="Center Register" value={0} />
-            <Tab icon={<DashboardIcon />} iconPosition="start" label="Overall (Admin)" value={1} />
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2,
+            borderRadius: RADIUS_2XL,
+            px: 1,
+            bgcolor: 'background.paper',
+            border: '1px solid #e0e0e0',
+            boxShadow: 'none',
+          }}
+        >
+          <Tabs
+            value={selectedCenter ? 0 : activeTab === 1 ? 1 : -1}
+            onChange={(_, v) => {
+              if (v === 1) { setSelectedCenter(null); setActiveTab(1); }
+              else { setActiveTab(0); }
+            }}
+            sx={{
+              minHeight: 48,
+              '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, minHeight: 48 },
+            }}
+          >
+            <Tab icon={<StoreIcon fontSize="small" />} iconPosition="start" label="Center register" value={0} />
+            <Tab icon={<DashboardIcon fontSize="small" />} iconPosition="start" label="Overall (admin)" value={1} />
           </Tabs>
-        </Box>
+        </Paper>
       )}
 
       {activeTab === 1 && isAdmin && !selectedCenter
@@ -868,7 +1410,9 @@ const CashRegisterPage = () => {
           : renderCenterSelector()
       }
 
+      {renderEntryDrawer()}
       {renderPreviewDialog()}
+      {renderDeleteSheetDialog()}
 
       <Snackbar open={!!successMsg} autoHideDuration={6000} onClose={() => setSuccessMsg('')}>
         <Alert onClose={() => setSuccessMsg('')} severity="success" variant="filled">{successMsg}</Alert>

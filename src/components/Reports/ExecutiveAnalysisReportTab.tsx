@@ -121,6 +121,8 @@ const normalizeStatus = (rawKey: string): EnquiryStatusKey | null => {
   if (rawKey === 'bought_elsewhere') return 'bought_elsewhere';
   if (rawKey === 'not_interested') return 'not_interested';
   if (rawKey === 'tests_only') return 'tests_only';
+  /** ENT journey tag rolls into in-process funnel for this summary */
+  if (rawKey === 'ent') return 'in_process';
   return null;
 };
 

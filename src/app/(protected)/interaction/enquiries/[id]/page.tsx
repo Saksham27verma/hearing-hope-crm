@@ -106,6 +106,7 @@ import {
 } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
+import { sumEntProcedurePrices } from '@/lib/entServicePricing';
 import { formatPtaTestDateForDisplay } from '@/lib/ptaIntegration';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
@@ -566,6 +567,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           label:
             payment.paymentType === 'hearing_aid_test'
               ? 'Test'
+              : payment.paymentType === 'ent_service'
+                ? 'ENT service'
               : payment.paymentType === 'staff_trial_request'
                 ? 'Trial (staff request)'
                 : payment.paymentType === 'hearing_aid_booking'
@@ -590,6 +593,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           label:
             payment.paymentFor === 'hearing_test'
               ? 'Test'
+              : payment.paymentFor === 'ent_service'
+                ? 'ENT service'
               : payment.paymentFor === 'booking_advance'
                 ? 'Booking'
                 : payment.paymentFor === 'hearing_aid'
@@ -721,6 +726,12 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const getVisitServices = (visit: any) => {
     const services: Array<{ label: string; color: 'primary' | 'secondary' | 'info' | 'warning' | 'success' | 'error' | 'default' }> = [];
     if (visit.hearingTest) services.push({ label: 'Hearing Test', color: 'info' });
+    if (
+      visit.entService ||
+      (Array.isArray(visit.medicalServices) && visit.medicalServices.includes('ent_service'))
+    ) {
+      services.push({ label: 'ENT service', color: 'secondary' });
+    }
     if (visit.hearingAidTrial || visit.trialGiven) services.push({ label: 'Trial', color: 'warning' });
     if (
       visit.hearingAidBooked ||
@@ -754,6 +765,13 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       if (visit.hearingTest) {
         const ht = sumHearingTestEntryPrices(visit);
         if (ht > 0) total += ht;
+      }
+      if (
+        visit.entService ||
+        (Array.isArray(visit.medicalServices) && visit.medicalServices.includes('ent_service'))
+      ) {
+        const entAmt = sumEntProcedurePrices(visit);
+        if (entAmt > 0) total += entAmt;
       }
       if (visit.hearingAidBooked && !visit.hearingAidSale) {
         total += getBookingTotal(visit);
@@ -820,6 +838,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       visit.repairAmount ||
       visit.counsellingAmount ||
       sumHearingTestEntryPrices(visit) ||
+      sumEntProcedurePrices(visit) ||
       (homeCharges > 0 ? homeCharges : undefined)
     );
   };
@@ -854,6 +873,32 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const ent = v.hearingTestDetails?.hearingTestEntries ?? v.hearingTestEntries;
     return Array.isArray(ent) ? ent : [];
   }, [activeVisit]);
+
+  const activeVisitEntProcedureEntries = useMemo(() => {
+    const v = activeVisit;
+    if (!v) return [] as { id?: string; procedureType?: string; price?: number; procedurePrice?: number }[];
+    const rows = v.entServiceDetails?.entProcedureEntries ?? v.entProcedureEntries;
+    return Array.isArray(rows) ? rows : [];
+  }, [activeVisit]);
+
+  const activeVisitEntTypesLabel = useMemo(() => {
+    const v = activeVisit;
+    if (!v) return '';
+    const rows = v.entServiceDetails?.entProcedureEntries ?? v.entProcedureEntries;
+    if (Array.isArray(rows) && rows.length > 0) {
+      const parts = rows.map((e: any) => e?.procedureType).filter(Boolean);
+      if (parts.length) return parts.join(', ');
+    }
+    const line = v.entServiceDetails?.procedureTypesLine;
+    return typeof line === 'string' ? line : '';
+  }, [activeVisit]);
+
+  const showEntVisitSection =
+    Boolean(activeVisit?.entService) ||
+    (Array.isArray(activeVisit?.medicalServices) && activeVisit.medicalServices.includes('ent_service')) ||
+    activeVisitEntProcedureEntries.length > 0 ||
+    hasValue(activeVisitEntTypesLabel) ||
+    hasValue(activeVisit?.entServiceDetails?.doneBy ?? activeVisit?.entProcedureDoneBy);
 
   const renderVisitField = (label: string, value: any, color: string = 'text.primary') => {
     if (!hasValue(value)) return null;
@@ -1491,6 +1536,57 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                               )}
                             </Grid>
                           )}
+                        </Paper>
+                      )}
+
+                      {showEntVisitSection && (
+                        <Paper
+                          variant="outlined"
+                          sx={{
+                            p: 2.5,
+                            borderRadius: 3,
+                            bgcolor: 'rgba(255,255,255,0.84)',
+                            borderColor: alpha('#7c3aed', 0.18),
+                          }}
+                        >
+                          <SectionHeading icon={<MedicalServicesIcon fontSize="small" />} title="ENT service" />
+                          <Grid container spacing={2}>
+                            <Grid item xs={12} sm={6}>
+                              {renderVisitField('Procedure(s)', activeVisitEntTypesLabel)}
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                              {renderVisitField(
+                                'Done by',
+                                activeVisit.entServiceDetails?.doneBy ?? activeVisit.entProcedureDoneBy
+                              )}
+                            </Grid>
+                            {activeVisitEntProcedureEntries
+                              .filter((e) => String(e?.procedureType || '').trim())
+                              .map((e, idx) => (
+                                <Grid item xs={12} sm={6} key={String(e.id ?? `${e.procedureType}-${idx}`)}>
+                                  {renderVisitField(
+                                    String(e.procedureType || 'Procedure').trim() || 'Procedure',
+                                    formatCurrency(Number(e.price ?? e.procedurePrice) || 0)
+                                  )}
+                                </Grid>
+                              ))}
+                            {activeVisitEntProcedureEntries.filter((e) => String(e?.procedureType || '').trim())
+                              .length > 1 && (
+                              <Grid item xs={12} sm={6}>
+                                {renderVisitField(
+                                  'Total (ENT)',
+                                  formatCurrency(sumEntProcedurePrices(activeVisit))
+                                )}
+                              </Grid>
+                            )}
+                            {activeVisitEntProcedureEntries.filter((e) => String(e?.procedureType || '').trim())
+                              .length === 0 &&
+                              hasValue(sumEntProcedurePrices(activeVisit)) && (
+                                <Grid item xs={12} sm={6}>
+                                  {renderVisitField('Price', formatCurrency(sumEntProcedurePrices(activeVisit)))}
+                                </Grid>
+                              )}
+                          </Grid>
                         </Paper>
                       )}
 

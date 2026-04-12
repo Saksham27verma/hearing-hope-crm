@@ -38,7 +38,12 @@ import type { EnquiryJourneyStatus } from '@/utils/enquiryStatus';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
-const IN_PROCESS_KEYS = new Set<EnquiryJourneyStatus>(['in_process', 'in_trial', 'tests_only']);
+const IN_PROCESS_KEYS = new Set<EnquiryJourneyStatus>([
+  'in_process',
+  'in_trial',
+  'tests_only',
+  'ent',
+]);
 
 const escapeCsv = (value: any) => {
   const s = (value ?? '').toString();

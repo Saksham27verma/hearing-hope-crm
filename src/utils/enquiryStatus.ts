@@ -1,5 +1,6 @@
 export type EnquiryJourneyStatus =
   | 'in_process'
+  | 'ent'
   | 'tests_only'
   | 'accessory'
   | 'repair'
@@ -24,6 +25,7 @@ export const LEAD_OUTCOME_OPTIONS = [
 
 export const ENQUIRY_STATUS_OPTIONS: Array<{ value: EnquiryJourneyStatus; label: string }> = [
   { value: 'in_process', label: 'In Process' },
+  { value: 'ent', label: 'ENT' },
   { value: 'tests_only', label: 'Tests only' },
   { value: 'accessory', label: 'Accessory' },
   { value: 'repair', label: 'Repair' },
@@ -47,6 +49,7 @@ const JOURNEY_META: Record<
   { label: string; color: EnquiryStatusChipColor }
 > = {
   in_process: { label: 'In Process', color: 'info' },
+  ent: { label: 'ENT', color: 'secondary' },
   tests_only: { label: 'Tests only', color: 'info' },
   accessory: { label: 'Accessory', color: 'secondary' },
   repair: { label: 'Repair', color: 'secondary' },
@@ -110,6 +113,7 @@ const expandVisitForJourney = (visit: any): any => {
     hearingAidBooked: Boolean(visit.hearingAidBooked) || has('hearing_aid_booked'),
     hearingAidTrial: Boolean(visit.hearingAidTrial) || has('hearing_aid_trial'),
     hearingTest: Boolean(visit.hearingTest) || has('hearing_test'),
+    entService: Boolean(visit.entService) || has('ent_service'),
     purchaseFromTrial: Boolean(visit.purchaseFromTrial) || Boolean(ha.purchaseFromTrial),
     trialGiven: Boolean(visit.trialGiven) || Boolean(ha.trialGiven),
     bookingFromTrial: Boolean(visit.bookingFromTrial) || Boolean(ha.bookingFromTrial),
@@ -164,6 +168,7 @@ const visitHasHaSignals = (visit: any): boolean => {
 /** Higher = further in funnel; max wins across visits. */
 const RANK = {
   in_process: 20,
+  ent: 26,
   tests_only: 28,
   accessory: 30,
   repair: 32,
@@ -181,7 +186,30 @@ const rankToKey = (rank: number): EnquiryJourneyStatus => {
   if (rank >= RANK.repair) return 'repair';
   if (rank >= RANK.accessory) return 'accessory';
   if (rank >= RANK.tests_only) return 'tests_only';
+  if (rank >= RANK.ent) return 'ent';
   return 'in_process';
+};
+
+/** ENT service only — no hearing test, HA, or other services on this visit. */
+const isEntOnlyVisit = (raw: any): boolean => {
+  const v = expandVisitForJourney(raw);
+  if (!v.entService) return false;
+  if (
+    v.hearingAidSale ||
+    v.purchaseFromTrial ||
+    v.hearingAidBooked ||
+    v.hearingAidTrial ||
+    v.trialGiven ||
+    v.hearingTest
+  ) {
+    return false;
+  }
+  if (raw.accessory || raw.programming || raw.repair || raw.counselling || raw.salesReturn) {
+    return false;
+  }
+  const ms = Array.isArray(raw.medicalServices) ? raw.medicalServices : [];
+  const other = ms.filter((s: string) => s !== 'ent_service');
+  return other.length === 0;
 };
 
 /** Hearing test (or PTA) only — no HA trial/booking/sale or other services on this visit. */
@@ -264,6 +292,10 @@ const deriveVisitRank = (raw: any): number => {
     trialResultMeansActive
   ) {
     return RANK.in_trial;
+  }
+
+  if (isEntOnlyVisit(raw)) {
+    return RANK.ent;
   }
 
   if (isHearingTestOnlyVisit(raw)) {
