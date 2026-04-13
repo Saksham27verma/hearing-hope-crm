@@ -38,6 +38,8 @@ import {
   Tooltip,
   Link,
   Menu,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import { 
   ArrowBack as ArrowBackIcon,
@@ -108,6 +110,7 @@ import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquir
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
 import { formatPtaTestDateForDisplay } from '@/lib/ptaIntegration';
+import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
@@ -369,6 +372,39 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
   const [journeyMenuAnchor, setJourneyMenuAnchor] = useState<null | HTMLElement>(null);
   const [journeyStatusSaving, setJourneyStatusSaving] = useState(false);
+  const [hotEnquirySaving, setHotEnquirySaving] = useState(false);
+
+  const saveHotEnquiryFlag = async (nextHot: boolean) => {
+    if (!resolvedParams?.id || !enquiry || userProfile?.role === 'audiologist') return;
+    setHotEnquirySaving(true);
+    try {
+      const ref = doc(db, 'enquiries', resolvedParams.id);
+      await updateDoc(ref, { hotEnquiry: nextHot, updatedAt: serverTimestamp() });
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'UPDATE',
+        module: 'Enquiries',
+        entityId: resolvedParams.id,
+        entityName: enquiry?.name || enquiry?.phone || 'Enquiry',
+        description: nextHot ? 'Marked enquiry as hot (priority lead)' : 'Removed hot enquiry mark',
+        metadata: { hotEnquiry: nextHot },
+      }, user);
+      setEnquiry({ ...enquiry, hotEnquiry: nextHot });
+      setFollowUpFeedback({
+        open: true,
+        message: nextHot ? 'Marked as hot enquiry' : 'Hot mark removed',
+        severity: 'success',
+      });
+    } catch (e) {
+      console.error(e);
+      setFollowUpFeedback({
+        open: true,
+        message: 'Could not update hot enquiry',
+        severity: 'error',
+      });
+    } finally {
+      setHotEnquirySaving(false);
+    }
+  };
 
   const saveJourneyStatusOverride = async (next: EnquiryJourneyStatus | 'auto') => {
     if (!resolvedParams?.id || !enquiry || userProfile?.role === 'audiologist') return;
@@ -1079,9 +1115,38 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           </Avatar>
           <Box sx={{ flex: 1 }}>
             <SectionLabel>Patient Profile</SectionLabel>
-            <Typography variant="h4" sx={{ fontWeight: 800, mb: 1, color: 'text.primary' }}>
-              {enquiry.name || 'Patient Name'}
-            </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5,
+                flexWrap: 'wrap',
+                mb: 1,
+              }}
+            >
+              <Typography variant="h4" sx={{ fontWeight: 800, color: 'text.primary', mb: 0 }}>
+                {enquiry.name || 'Patient Name'}
+              </Typography>
+              {enquiry.hotEnquiry && <HotEnquiryBadgeChip />}
+            </Box>
+            {userProfile?.role !== 'audiologist' && (
+              <FormControlLabel
+                sx={{ mb: 1.5, ml: 0, alignItems: 'center' }}
+                control={
+                  <Switch
+                    checked={!!enquiry.hotEnquiry}
+                    disabled={hotEnquirySaving}
+                    onChange={(_, c) => void saveHotEnquiryFlag(c)}
+                    color="warning"
+                  />
+                }
+                label={
+                  <Typography variant="body2" fontWeight={600} color="text.secondary">
+                    Hot enquiry (priority lead)
+                  </Typography>
+                }
+              />
+            )}
             {enquiry.customerName && (
               <Typography
                 variant="body2"

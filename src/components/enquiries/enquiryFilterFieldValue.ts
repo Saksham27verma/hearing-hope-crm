@@ -36,6 +36,11 @@ export function getEnquiryFieldRaw(enquiry: any, path: string): unknown {
     return enquiry.center ?? enquiry.visitingCenter;
   }
 
+  /** Normalized boolean for filters (missing / false → false, only explicit true is hot). */
+  if (path === 'hotEnquiry') {
+    return enquiry.hotEnquiry === true;
+  }
+
   /** Center | home from any visit or scheduled visit */
   if (path === 'visitLocationAny') {
     const out: string[] = [];

@@ -34,6 +34,7 @@ import {
   Hearing as HearingIcon,
   ContactPhone as ContactIcon,
   Assignment as AssignmentIcon,
+  LocalFireDepartment as LocalFireDepartmentIcon,
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import { 
@@ -134,6 +135,7 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
           const assignedTo = data.assignedTo ?? '';
           const telecaller = data.telecaller ?? '';
           const status = data.visitStatus || data.status || '';
+          const isHot = data.hotEnquiry === true;
           
           if (
             asLower(name).includes(searchTermLower) ||
@@ -147,10 +149,36 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
             searchResults.push({
               id: doc.id,
               title: name,
-              subtitle: `Enquiry • ${phone} ${reference ? `• Ref: ${reference}` : ''}`,
+              subtitle: `Enquiry${isHot ? ' • Hot' : ''} • ${phone} ${reference ? `• Ref: ${reference}` : ''}`,
               type: 'enquiry',
               path: `/interaction/enquiries/${doc.id}`,
-              icon: <PersonIcon />,
+              icon: isHot ? (
+                <Box
+                  sx={{
+                    position: 'relative',
+                    display: 'inline-flex',
+                    color: '#e65100',
+                  }}
+                >
+                  <PersonIcon />
+                  <LocalFireDepartmentIcon
+                    sx={{
+                      position: 'absolute',
+                      right: -6,
+                      top: -4,
+                      fontSize: 16,
+                      '@keyframes usHotFlame': {
+                        '0%, 100%': { transform: 'scale(1)' },
+                        '50%': { transform: 'scale(1.12)' },
+                      },
+                      animation: 'usHotFlame 1.1s ease-in-out infinite',
+                      filter: 'drop-shadow(0 0 4px rgba(255,109,0,0.7))',
+                    }}
+                  />
+                </Box>
+              ) : (
+                <PersonIcon />
+              ),
               color: '#ff6b35',
               description: email || address || `Status: ${status}`,
               metadata: { 

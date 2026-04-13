@@ -55,6 +55,8 @@ import {
   Snackbar,
   Collapse,
   Menu,
+  Badge,
+  Switch,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { 
@@ -101,11 +103,13 @@ import {
   DragIndicator as DragIndicatorIcon,
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
+  LocalFireDepartment as LocalFireDepartmentIcon,
 } from '@mui/icons-material';
 import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc, getDoc, where, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { v4 as uuidv4 } from 'uuid';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
+import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator';
 import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
 import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
@@ -176,6 +180,8 @@ interface Enquiry {
   status?: string;
   /** Manual journey chip override; null/omit = derive from latest visit */
   journeyStatusOverride?: string | null;
+  /** High-priority / strong lead — highlighted in lists and profile */
+  hotEnquiry?: boolean;
   notes?: string;
   assignedTo?: string;
   telecaller?: string;
@@ -486,6 +492,7 @@ export default function EnquiriesPage() {
     anchor: HTMLElement;
     enquiryId: string;
   } | null>(null);
+  const [hotEnquiryToggleId, setHotEnquiryToggleId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -703,6 +710,7 @@ export default function EnquiriesPage() {
     message: '',
     status: 'open',
     enquiryType: '',
+    hotEnquiry: false,
     activeFormTypes: [] as string[],
     visits: [] as Visit[],
     followUps: [] as FollowUp[],
@@ -1086,6 +1094,39 @@ export default function EnquiriesPage() {
       console.error('Error fetching enquiries:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleHotEnquiry = async (enquiry: Enquiry, nextHot: boolean) => {
+    const id = enquiry.id;
+    if (!id || hotEnquiryToggleId) return;
+    setHotEnquiryToggleId(id);
+    try {
+      await updateDoc(doc(db, 'enquiries', id), {
+        hotEnquiry: nextHot,
+        updatedAt: serverTimestamp(),
+      });
+      const patch = { hotEnquiry: nextHot };
+      setEnquiries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+      setFilteredEnquiries((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+      void logActivity(
+        db,
+        userProfile,
+        activityCenterId,
+        {
+          action: 'UPDATE',
+          module: 'Enquiries',
+          entityId: id,
+          entityName: enquiry.name || enquiry.phone || 'Enquiry',
+          description: nextHot ? 'Marked enquiry as hot (priority lead)' : 'Removed hot enquiry mark',
+          metadata: { hotEnquiry: nextHot },
+        },
+        user,
+      );
+    } catch (err) {
+      console.error('Failed to toggle hot enquiry:', err);
+    } finally {
+      setHotEnquiryToggleId(null);
     }
   };
 
@@ -1597,6 +1638,7 @@ export default function EnquiriesPage() {
       activeFormTypes: [],
       followUps: [],
       visits: [],
+      hotEnquiry: false,
       visitorType: 'patient',
       visitSchedules: [{
         id: crypto.randomUUID(),
@@ -3093,6 +3135,7 @@ export default function EnquiriesPage() {
         telecaller: newEnquiry.telecaller || '',
         message: newEnquiry.message || '',
         status: newEnquiry.status || 'open',
+        hotEnquiry: newEnquiry.hotEnquiry === true,
         followUps: newEnquiry.followUps || [],
         activeFormTypes: newEnquiry.activeFormTypes || [],
         createdAt: isEditMode ? newEnquiry.createdAt : serverTimestamp(),
@@ -4463,19 +4506,26 @@ export default function EnquiriesPage() {
                        /* Index-based striping — nth-of-type can desync from data rows and flash wrong surfaces */
                        backgroundColor: (t) => {
                          const stripeB = index % 2 === 1;
-                         if (t.palette.mode === 'dark') {
-                           return stripeB ? alpha(t.palette.common.white, 0.05) : t.palette.background.paper;
+                         if (!enquiry.hotEnquiry) {
+                           if (t.palette.mode === 'dark') {
+                             return stripeB ? alpha(t.palette.common.white, 0.05) : t.palette.background.paper;
+                           }
+                           return stripeB ? '#f8f9fa' : '#ffffff';
                          }
-                         return stripeB ? '#f8f9fa' : '#ffffff';
+                         if (t.palette.mode === 'dark') {
+                           return stripeB ? alpha('#ff6f00', 0.12) : alpha('#ff6f00', 0.08);
+                         }
+                         return stripeB ? alpha('#ff9800', 0.22) : alpha('#ff9800', 0.14);
                        },
+                       boxShadow: enquiry.hotEnquiry ? 'inset 4px 0 0 0 #e65100' : undefined,
                        '&:hover': { 
                          backgroundColor: (t) =>
                            `${alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.12 : 0.08)} !important`,
                          transform: 'scale(1.001)',
                          boxShadow: (t) =>
                            t.palette.mode === 'dark'
-                             ? '0 4px 12px rgba(0,0,0,0.45)'
-                             : '0 4px 12px rgba(25, 118, 210, 0.15)',
+                             ? `0 4px 12px rgba(0,0,0,0.45)${enquiry.hotEnquiry ? ', inset 4px 0 0 0 #e65100' : ''}`
+                             : `0 4px 12px rgba(25, 118, 210, 0.15)${enquiry.hotEnquiry ? ', inset 4px 0 0 0 #e65100' : ''}`,
                          transition: 'all 0.2s ease-in-out'
                        },
                        borderBottom: 1,
@@ -4488,38 +4538,89 @@ export default function EnquiriesPage() {
                        minWidth: `${columnWidths.name}px`,
                        position: 'sticky',
                        left: 0,
-                       backgroundColor:
-                         (theme.palette.mode === 'dark'
-                           ? index % 2 === 0
-                             ? theme.palette.background.paper
-                             : alpha(theme.palette.common.white, 0.05)
-                           : index % 2 === 0
-                             ? '#ffffff'
-                             : '#f8f9fa') + ' !important',
+                       backgroundColor: (() => {
+                         const stripeA = index % 2 === 0;
+                         if (enquiry.hotEnquiry) {
+                           if (theme.palette.mode === 'dark') {
+                             return (stripeA ? alpha('#ff6f00', 0.08) : alpha('#ff6f00', 0.12)) + ' !important';
+                           }
+                           return (stripeA ? alpha('#ff9800', 0.14) : alpha('#ff9800', 0.22)) + ' !important';
+                         }
+                         return (
+                           (theme.palette.mode === 'dark'
+                             ? stripeA
+                               ? theme.palette.background.paper
+                               : alpha(theme.palette.common.white, 0.05)
+                             : stripeA
+                               ? '#ffffff'
+                               : '#f8f9fa') + ' !important'
+                         );
+                       })(),
                        py: 2.5,
                        borderRight: '3px solid #ff5722',
                        zIndex: 1000,
-                       boxShadow: '6px 0 12px rgba(255, 107, 53, 0.15)',
+                       boxShadow: enquiry.hotEnquiry
+                         ? '6px 0 12px rgba(255, 107, 53, 0.15), inset 4px 0 0 0 #e65100'
+                         : '6px 0 12px rgba(255, 107, 53, 0.15)',
                        whiteSpace: 'nowrap',
                        overflow: 'hidden',
                        textOverflow: 'ellipsis'
                      }}>
                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+                         <Badge
+                           overlap="circular"
+                           anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                           invisible={!enquiry.hotEnquiry}
+                           badgeContent={
+                             <LocalFireDepartmentIcon
+                               sx={{
+                                 fontSize: 13,
+                                 color: '#fff',
+                                 animation: 'hhHotFlame 1.15s ease-in-out infinite',
+                                 '@keyframes hhHotFlame': {
+                                   '0%, 100%': { transform: 'scale(1)' },
+                                   '50%': { transform: 'scale(1.15)' },
+                                 },
+                               }}
+                             />
+                           }
+                           sx={{
+                             flexShrink: 0,
+                             '& .MuiBadge-badge': {
+                               bgcolor: '#e65100',
+                               minWidth: 22,
+                               height: 22,
+                               borderRadius: '50%',
+                               border: '2px solid',
+                               borderColor: 'background.paper',
+                               p: 0,
+                               right: 4,
+                               top: 4,
+                             },
+                           }}
+                         >
                          <Avatar sx={{ 
                            width: 36, 
                            height: 36, 
                            fontSize: '0.875rem', 
-                           background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
+                           background: enquiry.hotEnquiry
+                             ? 'linear-gradient(135deg, #e65100 0%, #ff6f00 55%, #ffb74d 100%)'
+                             : 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
                            fontWeight: 600,
-                           boxShadow: '0 2px 8px rgba(255, 107, 53, 0.3)',
-                           flexShrink: 0
+                           boxShadow: enquiry.hotEnquiry
+                             ? '0 2px 12px rgba(230, 81, 0, 0.45)'
+                             : '0 2px 8px rgba(255, 107, 53, 0.3)',
                          }}>
                         {getInitials(enquiry.name)}
                       </Avatar>
+                         </Badge>
                         <Box sx={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
                           <Typography variant="body2" noWrap sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
                             {enquiry.name || '-'}
                           </Typography>
+                          {enquiry.hotEnquiry && <HotEnquiryBadgeChip />}
+                          </Box>
                           {enquiry.customerName && (
                             <Typography variant="caption" noWrap sx={{ color: 'text.secondary' }}>
                               Customer: {enquiry.customerName}
@@ -4635,21 +4736,31 @@ export default function EnquiriesPage() {
                          minWidth: `${columnWidths.actions}px`,
                          position: 'sticky', 
                          right: 0, 
-                         backgroundColor:
-                           (theme.palette.mode === 'dark'
-                             ? index % 2 === 0
-                               ? theme.palette.background.paper
-                               : alpha(theme.palette.common.white, 0.05)
-                             : index % 2 === 0
-                               ? '#ffffff'
-                               : '#f8f9fa') + ' !important',
+                         backgroundColor: (() => {
+                           const stripeA = index % 2 === 0;
+                           if (enquiry.hotEnquiry) {
+                             if (theme.palette.mode === 'dark') {
+                               return (stripeA ? alpha('#ff6f00', 0.08) : alpha('#ff6f00', 0.12)) + ' !important';
+                             }
+                             return (stripeA ? alpha('#ff9800', 0.14) : alpha('#ff9800', 0.22)) + ' !important';
+                           }
+                           return (
+                             (theme.palette.mode === 'dark'
+                               ? stripeA
+                                 ? theme.palette.background.paper
+                                 : alpha(theme.palette.common.white, 0.05)
+                               : stripeA
+                                 ? '#ffffff'
+                                 : '#f8f9fa') + ' !important'
+                           );
+                         })(),
                          zIndex: 1000,
                          boxShadow: '-8px 0 16px rgba(255, 107, 53, 0.2)',
                          borderLeft: '3px solid #ff5722',
                          py: 2.5
                        }}
                      >
-                       <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center', alignItems: 'center' }}>
+                       <Box sx={{ display: 'flex', gap: 1, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
                     {userProfile?.role !== 'audiologist' && (
                       <Tooltip title="View Details" arrow>
                              <IconButton 
@@ -4669,6 +4780,41 @@ export default function EnquiriesPage() {
                                }}
                              >
                                <VisibilityIcon sx={{ fontSize: '1rem' }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {userProfile?.role !== 'audiologist' && (
+                      <Tooltip
+                        title={enquiry.hotEnquiry ? 'Remove hot enquiry mark' : 'Mark as hot enquiry (priority lead)'}
+                        arrow
+                      >
+                        <IconButton
+                          size="small"
+                          disabled={hotEnquiryToggleId === enquiry.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleHotEnquiry(enquiry, !enquiry.hotEnquiry);
+                          }}
+                          sx={{
+                            color: 'white',
+                            background: enquiry.hotEnquiry
+                              ? 'linear-gradient(135deg, #e65100 0%, #bf360c 100%)'
+                              : 'linear-gradient(135deg, #78909c 0%, #546e7a 100%)',
+                            '&:hover': {
+                              background: enquiry.hotEnquiry
+                                ? 'linear-gradient(135deg, #d84315 0%, #b71c1c 100%)'
+                                : 'linear-gradient(135deg, #607d8b 0%, #455a64 100%)',
+                              transform: 'scale(1.15)',
+                              boxShadow: enquiry.hotEnquiry
+                                ? '0 4px 12px rgba(230, 81, 0, 0.55)'
+                                : '0 4px 12px rgba(84, 110, 122, 0.45)',
+                            },
+                            transition: 'all 0.2s ease-in-out',
+                            width: 32,
+                            height: 32,
+                          }}
+                        >
+                          <LocalFireDepartmentIcon sx={{ fontSize: '1rem' }} />
                         </IconButton>
                       </Tooltip>
                     )}
@@ -5010,6 +5156,41 @@ export default function EnquiriesPage() {
                       rows={3}
                         variant="outlined"
                         placeholder="Additional information about the patient or enquiry..."
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <FormControlLabel
+                      sx={{
+                        ml: 0,
+                        mr: 0,
+                        p: 2,
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: newEnquiry.hotEnquiry ? 'warning.main' : 'divider',
+                        bgcolor: (t) =>
+                          newEnquiry.hotEnquiry
+                            ? alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.12 : 0.08)
+                            : alpha(t.palette.action.hover, t.palette.mode === 'dark' ? 0.06 : 0.04),
+                        alignItems: 'flex-start',
+                      }}
+                      control={
+                        <Switch
+                          checked={!!newEnquiry.hotEnquiry}
+                          onChange={(_, c) => setNewEnquiry({ ...newEnquiry, hotEnquiry: c })}
+                          color="warning"
+                          disabled={userProfile?.role === 'audiologist'}
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="subtitle2" fontWeight={700}>
+                            Hot enquiry
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Mark as a priority lead — highlighted in the enquiries table and profile.
+                          </Typography>
+                        </Box>
+                      }
                     />
                   </Grid>
                 </Grid>

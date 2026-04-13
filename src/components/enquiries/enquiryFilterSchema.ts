@@ -96,6 +96,13 @@ export const ENQUIRY_FILTER_FIELD_GROUPS: { category: string; fields: EnquiryFil
       { field: 'subject', label: 'Subject', dataType: 'text', category: 'Enquiry' },
       { field: 'message', label: 'Message', dataType: 'text', category: 'Enquiry' },
       { field: 'notes', label: 'Notes', dataType: 'text', category: 'Enquiry' },
+      {
+        field: 'hotEnquiry',
+        label: 'Hot enquiry',
+        dataType: 'boolean',
+        category: 'Enquiry',
+        description: 'Marked as a high-priority / strong lead',
+      },
       { field: 'companyName', label: 'Company name', dataType: 'text', category: 'Enquiry' },
       { field: 'purposeOfVisit', label: 'Purpose of visit', dataType: 'text', category: 'Enquiry' },
       { field: 'contactPerson', label: 'Contact person', dataType: 'text', category: 'Enquiry' },

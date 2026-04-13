@@ -48,6 +48,7 @@ import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import SvgIcon from '@mui/material/SvgIcon';
 import AdminDashboardInsights from '@/components/dashboard/AdminDashboardInsights';
+import { HotEnquiryFlameIcon } from '@/components/enquiries/HotEnquiryIndicator';
 import {
   getBookingAdvancePaidDateKey,
   getEnquiryVisitSchedules,
@@ -1103,9 +1104,16 @@ export default function DashboardPage() {
                       </TableCell>
                       <TableCell sx={{ maxWidth: 0 }}>
                         <Tooltip title={enquiry.name || '—'} placement="top-start">
-                          <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
-                            {enquiry.name || '—'}
-                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                            {enquiry.hotEnquiry && (
+                              <Box sx={{ flexShrink: 0, display: 'flex' }} aria-hidden>
+                                <HotEnquiryFlameIcon size={18} title="Hot enquiry" />
+                              </Box>
+                            )}
+                            <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
+                              {enquiry.name || '—'}
+                            </Typography>
+                          </Box>
                         </Tooltip>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 0 }}>

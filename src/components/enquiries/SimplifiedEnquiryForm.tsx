@@ -745,6 +745,8 @@ interface FormData {
   message: string;
   /** Optional: marks patient bought devices elsewhere (see LEAD_OUTCOME_OPTIONS). */
   leadOutcome: string;
+  /** High-priority / strong lead — highlighted across CRM lists and profile */
+  hotEnquiry: boolean;
 
   // Visits array
   visits: Visit[];
@@ -1050,6 +1052,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       center: '',
       message: '',
       leadOutcome: '',
+      hotEnquiry: false,
       visits: [],
       followUps: [],
       payments: []
@@ -1991,6 +1994,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           center: enquiry.center || '',
           message: enquiry.message || '',
           leadOutcome: enquiry.leadOutcome || '',
+          hotEnquiry: enquiry.hotEnquiry === true,
           visits,
           followUps: [],
           payments: enquiry.payments || []
@@ -3737,6 +3741,47 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           rows={3}
                           disabled={isAudiologist}
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Controller
+                      name="hotEnquiry"
+                      control={control}
+                      render={({ field }) => (
+                        <FormControlLabel
+                          sx={{
+                            ml: 0,
+                            mr: 0,
+                            p: 2,
+                            borderRadius: 2,
+                            border: '1px solid',
+                            borderColor: field.value ? 'warning.main' : 'divider',
+                            bgcolor: (t) =>
+                              field.value
+                                ? alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.12 : 0.08)
+                                : alpha(t.palette.action.hover, t.palette.mode === 'dark' ? 0.08 : 0.04),
+                            alignItems: 'flex-start',
+                          }}
+                          control={
+                            <Switch
+                              checked={!!field.value}
+                              onChange={(_, c) => field.onChange(c)}
+                              color="warning"
+                              disabled={isAudiologist}
+                            />
+                          }
+                          label={
+                            <Box>
+                              <Typography variant="subtitle2" fontWeight={700}>
+                                Hot enquiry
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                Mark as a priority lead — stands out in the enquiries list and patient profile.
+                              </Typography>
+                            </Box>
+                          }
                         />
                       )}
                     />
@@ -8391,6 +8436,26 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     <Typography variant="body1" sx={{ fontWeight: 500 }}>{watch('address') || 'Not provided'}</Typography>
                   </Box>
                 </Grid>
+                {watch('hotEnquiry') && (
+                  <Grid item xs={12}>
+                    <Box
+                      sx={{
+                        p: 2,
+                        borderRadius: 2,
+                        border: '1px solid',
+                        borderColor: 'warning.main',
+                        bgcolor: (t) => alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.14 : 0.1),
+                      }}
+                    >
+                      <Typography variant="body2" color="text.secondary">
+                        Lead priority
+                      </Typography>
+                      <Typography variant="body1" sx={{ fontWeight: 700, color: 'warning.dark' }}>
+                        Hot enquiry — will be highlighted in CRM
+                      </Typography>
+                    </Box>
+                  </Grid>
+                )}
               </Grid>
             </Card>
 
