@@ -114,6 +114,7 @@ import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
 import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
+import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
 import { logActivity, computeChanges } from '@/lib/activityLogger';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import { enquiryMatchesDataScope } from '@/lib/tenant/centerScope';
@@ -2287,24 +2288,6 @@ export default function EnquiriesPage() {
   // Generic input change handler
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent) => {
     const { name, value } = e.target;
-    const valueStr = value === undefined || value === null ? '' : String(value);
-
-    // Re-selecting the same option clears optional single-select fields (Assigned to, Telecaller, Reference, …).
-    if (
-      name &&
-      !String(name).includes('.') &&
-      (name === 'assignedTo' || name === 'telecaller' || name === 'reference')
-    ) {
-      const prev = newEnquiry[name as keyof Enquiry];
-      const prevStr = prev == null || prev === undefined ? '' : String(prev);
-      if (valueStr === prevStr) {
-        setNewEnquiry({
-          ...newEnquiry,
-          [name]: '' as any,
-        });
-        return;
-      }
-    }
 
     // Handle nested properties using dot notation (e.g., "testDetails.testName")
     if (name.includes('.')) {
@@ -3320,6 +3303,11 @@ export default function EnquiriesPage() {
                     label="Reference *"
                     onChange={handleInputChange}
                     required
+                    MenuProps={mergeMenuPropsForReselectClear(
+                      newEnquiry.reference,
+                      () => setNewEnquiry((prev) => ({ ...prev, reference: '' as any })),
+                      undefined
+                    )}
                   >
                     {wizardReferenceOpts.map((o) => (
                       <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -5083,6 +5071,11 @@ export default function EnquiriesPage() {
                           onChange={handleInputChange}
                           required
                           sx={{ minWidth: 200 }}
+                          MenuProps={mergeMenuPropsForReselectClear(
+                            newEnquiry.reference,
+                            () => setNewEnquiry((prev) => ({ ...prev, reference: '' as any })),
+                            undefined
+                          )}
                         >
                           {wizardReferenceOpts.map((o) => (
                             <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -5131,6 +5124,11 @@ export default function EnquiriesPage() {
                         label="Assign to"
                         onChange={handleInputChange}
                         sx={{ minWidth: 200 }}
+                        MenuProps={mergeMenuPropsForReselectClear(
+                          newEnquiry.assignedTo,
+                          () => setNewEnquiry((prev) => ({ ...prev, assignedTo: '' as any })),
+                          undefined
+                        )}
                       >
                         <MenuItem value="">-None-</MenuItem>
                         <MenuItem value="Dr. Sharma">Dr. Sharma</MenuItem>
@@ -5153,6 +5151,11 @@ export default function EnquiriesPage() {
                         label="Telecaller"
                         onChange={handleInputChange}
                         sx={{ minWidth: 200 }}
+                        MenuProps={mergeMenuPropsForReselectClear(
+                          newEnquiry.telecaller,
+                          () => setNewEnquiry((prev) => ({ ...prev, telecaller: '' as any })),
+                          undefined
+                        )}
                       >
                         <MenuItem value="">-None-</MenuItem>
                         {newEnquiryTelecallerSelectOptions.map((name) => (

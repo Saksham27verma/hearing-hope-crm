@@ -39,9 +39,10 @@ import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
 import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
+import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
 import {
   TextField, Button, Typography, Box, Paper,
-  FormControl, InputLabel, Select, MenuItem, SelectChangeEvent,
+  FormControl, InputLabel, Select, MenuItem,
   Card, CardContent, Divider, Stepper, Step, StepLabel,
   Grid as MuiGrid, IconButton, FormHelperText, Alert, Autocomplete,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -82,17 +83,6 @@ import {
 
 // Custom Grid wrapper
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
-
-/** MUI Select: choosing the already-selected option again clears the value. */
-function nextToggleableSelectValue(
-  current: unknown,
-  event: SelectChangeEvent<unknown>
-): string {
-  const raw = event.target.value;
-  const next = raw === undefined || raw === null ? '' : String(raw);
-  const cur = current === undefined || current === null || current === '' ? '' : String(current);
-  return next === cur ? '' : next;
-}
 
 // Product interface (matching the products module)
 interface Product {
@@ -3574,16 +3564,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               labelId="assigned-to-label"
                               label="Assigned To"
                               value={field.value ?? ''}
-                              onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
+                              onChange={(e) => field.onChange(e.target.value)}
                               disabled={isAudiologist}
                               sx={{ borderRadius: 2, minWidth: '200px' }}
-                              MenuProps={{
+                              MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
                                 PaperProps: {
                                   style: {
                                     maxHeight: 300
                                   }
                                 }
-                              }}
+                              })}
                             >
                               {getStaffOptionsForField('assignedTo').map(option => (
                                 <MenuItem key={option} value={option}>
@@ -3632,16 +3622,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               labelId="telecaller-label"
                               label="Telecaller"
                               value={field.value ?? ''}
-                              onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
+                              onChange={(e) => field.onChange(e.target.value)}
                               disabled={isAudiologist}
                               sx={{ borderRadius: 2, minWidth: '200px' }}
-                              MenuProps={{
+                              MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
                                 PaperProps: {
                                   style: {
                                     maxHeight: 300
                                   }
                                 }
-                              }}
+                              })}
                             >
                               {getStaffOptionsForField('telecaller').map(option => (
                                 <MenuItem key={option} value={option}>
@@ -3693,16 +3683,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             labelId="center-label"
                             label="Center"
                             value={field.value ?? ''}
-                            onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
+                            onChange={(e) => field.onChange(e.target.value)}
                             disabled={isAudiologist}
                             sx={{ borderRadius: 2, minWidth: '200px' }}
-                            MenuProps={{
+                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
                               PaperProps: {
                                 style: {
                                   maxHeight: 300
                                 }
                               }
-                            }}
+                            })}
                           >
                             {centers.map(center => (
                               <MenuItem key={center.id} value={center.id}>
@@ -3729,8 +3719,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             labelId="lead-outcome-label"
                             label="Lead outcome"
                             value={field.value ?? ''}
-                            onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
+                            onChange={(e) => field.onChange(e.target.value)}
                             sx={{ borderRadius: 2 }}
+                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), undefined)}
                           >
                             {LEAD_OUTCOME_OPTIONS.map((opt) => (
                               <MenuItem key={opt.value || 'none'} value={opt.value}>
@@ -4263,8 +4254,27 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         labelId={`ht-type-${entry.id}`}
                                         label="Test type"
                                         value={entry.testType || ''}
+                                        MenuProps={mergeMenuPropsForReselectClear(
+                                          entry.testType || '',
+                                          () => {
+                                            const next = (currentVisit.hearingTestEntries || []).map((x) =>
+                                              x.id === entry.id ? { ...x, testType: '' } : x
+                                            );
+                                            const line = next.map((x) => x.testType).filter(Boolean).join(', ');
+                                            const tp = sumHearingTestEntryPrices({
+                                              hearingTestEntries: next,
+                                              testPrice: currentVisit.testPrice,
+                                            });
+                                            updateVisitFields(activeVisit, {
+                                              hearingTestEntries: next,
+                                              testType: line,
+                                              testPrice: tp,
+                                            });
+                                          },
+                                          undefined
+                                        )}
                                         onChange={(e) => {
-                                          const v = nextToggleableSelectValue(entry.testType, e);
+                                          const v = String(e.target.value);
                                           const next = (currentVisit.hearingTestEntries || []).map((x) =>
                                             x.id === entry.id ? { ...x, testType: v } : x
                                           );
@@ -4375,14 +4385,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <InputLabel>Test Done By</InputLabel>
                                   <Select 
                                     value={currentVisit.testDoneBy}
-                                    onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'testDoneBy',
-                                        nextToggleableSelectValue(currentVisit.testDoneBy, e)
-                                      )}
+                                    onChange={(e) => updateVisit(activeVisit, 'testDoneBy', e.target.value)}
                                     label="Test Done By"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.testDoneBy,
+                                      () => updateVisit(activeVisit, 'testDoneBy', ''),
+                                      undefined
+                                    )}
                                   >
                                     {getStaffOptionsForField('testBy').map(option => (
                                       <MenuItem key={option} value={option}>
@@ -4508,8 +4518,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         labelId={`ent-proc-${entry.id}`}
                                         label="Procedure"
                                         value={entry.procedureType || ''}
+                                        MenuProps={mergeMenuPropsForReselectClear(
+                                          entry.procedureType || '',
+                                          () => {
+                                            const next = (currentVisit.entProcedureEntries || []).map((x) =>
+                                              x.id === entry.id ? { ...x, procedureType: '' } : x
+                                            );
+                                            const ep = sumEntProcedurePrices({
+                                              entProcedureEntries: next,
+                                              entServicePrice: currentVisit.entServicePrice,
+                                            });
+                                            updateVisitFields(activeVisit, {
+                                              entProcedureEntries: next,
+                                              entServicePrice: ep,
+                                            });
+                                          },
+                                          undefined
+                                        )}
                                         onChange={(e) => {
-                                          const v = nextToggleableSelectValue(entry.procedureType, e);
+                                          const v = String(e.target.value);
                                           const next = (currentVisit.entProcedureEntries || []).map((x) =>
                                             x.id === entry.id ? { ...x, procedureType: v } : x
                                           );
@@ -4617,14 +4644,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Select
                                     value={currentVisit.entProcedureDoneBy}
                                     onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'entProcedureDoneBy',
-                                        nextToggleableSelectValue(currentVisit.entProcedureDoneBy, e)
-                                      )
+                                      updateVisit(activeVisit, 'entProcedureDoneBy', e.target.value)
                                     }
                                     label="Procedure done by"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.entProcedureDoneBy,
+                                      () => updateVisit(activeVisit, 'entProcedureDoneBy', ''),
+                                      undefined
+                                    )}
                                   >
                                     {getStaffOptionsForField('testBy').map((option) => (
                                       <MenuItem key={option} value={option}>
@@ -4710,11 +4738,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <InputLabel>Continue from Previous Visit</InputLabel>
                                   <Select 
                                     value={currentVisit.previousVisitId}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.previousVisitId,
+                                      () => updateVisit(activeVisit, 'previousVisitId', ''),
+                                      undefined
+                                    )}
                                     onChange={(e) => {
-                                      const prevVisitId = nextToggleableSelectValue(
-                                        currentVisit.previousVisitId,
-                                        e
-                                      );
+                                      const prevVisitId = String(e.target.value);
                                       updateVisit(activeVisit, 'previousVisitId', prevVisitId);
                                       // Auto-populate device details from previous visit
                                       const prevVisit = getValues('visits').find(v => v.id === prevVisitId);
@@ -5044,13 +5074,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <Select
                                   value={currentVisit.whichEar}
                                   onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'whichEar',
-                                        nextToggleableSelectValue(currentVisit.whichEar, e)
-                                      )}
+                                    updateVisit(activeVisit, 'whichEar', e.target.value)}
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
+                                  MenuProps={mergeMenuPropsForReselectClear(
+                                    currentVisit.whichEar,
+                                    () => updateVisit(activeVisit, 'whichEar', ''),
+                                    undefined
+                                  )}
                                 >
                                   {earSideOpts.map((o) => (
                                     <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -5215,13 +5246,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <Select
                                   value={currentVisit.whichEar}
                                   onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'whichEar',
-                                        nextToggleableSelectValue(currentVisit.whichEar, e)
-                                      )}
+                                    updateVisit(activeVisit, 'whichEar', e.target.value)}
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
+                                  MenuProps={mergeMenuPropsForReselectClear(
+                                    currentVisit.whichEar,
+                                    () => updateVisit(activeVisit, 'whichEar', ''),
+                                    undefined
+                                  )}
                                 >
                                   {earSideOpts.map((o) => (
                                     <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -5268,11 +5300,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <InputLabel>Trial Type</InputLabel>
                                 <Select 
                                   value={currentVisit.trialHearingAidType}
+                                  MenuProps={mergeMenuPropsForReselectClear(
+                                    currentVisit.trialHearingAidType,
+                                    () => updateVisit(activeVisit, 'trialHearingAidType', ''),
+                                    undefined
+                                  )}
                                   onChange={(e) => {
-                                    const trialType = nextToggleableSelectValue(
-                                      currentVisit.trialHearingAidType,
-                                      e
-                                    );
+                                    const trialType = String(e.target.value);
                                     updateVisit(activeVisit, 'trialHearingAidType', trialType);
                                     
                                     // Clear date fields if switching to office trial
@@ -5691,12 +5725,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     value={currentVisit.whichEar}
                                     label="Which Ear"
                                     onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'whichEar',
-                                        nextToggleableSelectValue(currentVisit.whichEar, e)
-                                      )}
+                                      updateVisit(activeVisit, 'whichEar', e.target.value)}
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.whichEar,
+                                      () => updateVisit(activeVisit, 'whichEar', ''),
+                                      undefined
+                                    )}
                                   >
                                     {earSideOpts.map((o) => (
                                       <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -5713,13 +5748,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <Select
                                       value={currentVisit.hearingAidBrand}
                                       onChange={(e) =>
-                                        updateVisit(
-                                          activeVisit,
-                                          'hearingAidBrand',
-                                          nextToggleableSelectValue(currentVisit.hearingAidBrand, e)
-                                        )}
+                                        updateVisit(activeVisit, 'hearingAidBrand', e.target.value)
+                                      }
                                       label="Who Sold"
                                       sx={{ borderRadius: 2, minWidth: '200px' }}
+                                      MenuProps={mergeMenuPropsForReselectClear(
+                                        currentVisit.hearingAidBrand,
+                                        () => updateVisit(activeVisit, 'hearingAidBrand', ''),
+                                        undefined
+                                      )}
                                     >
                                       {(() => {
                                         const staffOpts = getStaffOptionsForField('sales');
@@ -5853,11 +5890,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <InputLabel>Continue from Previous Visit</InputLabel>
                                   <Select 
                                     value={currentVisit.previousVisitId}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.previousVisitId,
+                                      () => updateVisit(activeVisit, 'previousVisitId', ''),
+                                      undefined
+                                    )}
                                     onChange={(e) => {
-                                      const prevVisitId = nextToggleableSelectValue(
-                                        currentVisit.previousVisitId,
-                                        e
-                                      );
+                                      const prevVisitId = String(e.target.value);
                                       updateVisit(activeVisit, 'previousVisitId', prevVisitId);
                                       
                                       if (prevVisitId) {
@@ -5996,13 +6035,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <Select 
                                   value={currentVisit.whichEar}
                                   onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'whichEar',
-                                        nextToggleableSelectValue(currentVisit.whichEar, e)
-                                      )}
+                                    updateVisit(activeVisit, 'whichEar', e.target.value)}
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
+                                  MenuProps={mergeMenuPropsForReselectClear(
+                                    currentVisit.whichEar,
+                                    () => updateVisit(activeVisit, 'whichEar', ''),
+                                    undefined
+                                  )}
                                 >
                                   {earSideOpts.map((o) => (
                                     <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -6018,13 +6058,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                                                   <Select 
                                     value={currentVisit.hearingAidStatus}
                                     onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'hearingAidStatus',
-                                        nextToggleableSelectValue(currentVisit.hearingAidStatus, e)
-                                      )}
+                                      updateVisit(activeVisit, 'hearingAidStatus', e.target.value)}
                                     label="Status"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.hearingAidStatus,
+                                      () => updateVisit(activeVisit, 'hearingAidStatus', ''),
+                                      undefined
+                                    )}
                                   >
                                     {visitHaStatusOpts.map((o) => (
                                       <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -6049,11 +6090,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <InputLabel>Trial Type</InputLabel>
                                     <Select 
                                       value={currentVisit.trialHearingAidType}
+                                      MenuProps={mergeMenuPropsForReselectClear(
+                                        currentVisit.trialHearingAidType,
+                                        () => updateVisit(activeVisit, 'trialHearingAidType', ''),
+                                        undefined
+                                      )}
                                       onChange={(e) => {
-                                        const trialType = nextToggleableSelectValue(
-                                          currentVisit.trialHearingAidType,
-                                          e
-                                        );
+                                        const trialType = String(e.target.value);
                                         updateVisit(activeVisit, 'trialHearingAidType', trialType);
                                         
                                         // Clear date fields if switching to office trial
@@ -6583,10 +6626,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     onChange={(e) =>
                                       setCurrentProduct((prev) => ({
                                         ...prev,
-                                        warranty: nextToggleableSelectValue(prev.warranty, e),
+                                        warranty: String(e.target.value),
                                       }))
                                     }
                                     displayEmpty
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentProduct.warranty || '',
+                                      () =>
+                                        setCurrentProduct((prev) => ({
+                                          ...prev,
+                                          warranty: '',
+                                        })),
+                                      undefined
+                                    )}
                                   >
                                     <MenuItem value="">
                                       <em>None</em>
@@ -7056,12 +7108,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   value={currentVisit.returnCondition}
                                   label="Return Condition"
                                   onChange={(e) =>
-                                    updateVisit(
-                                      activeVisit,
-                                      'returnCondition',
-                                      nextToggleableSelectValue(currentVisit.returnCondition, e)
-                                    )}
+                                    updateVisit(activeVisit, 'returnCondition', e.target.value)}
                                   sx={{ borderRadius: 2 }}
+                                  MenuProps={mergeMenuPropsForReselectClear(
+                                    currentVisit.returnCondition,
+                                    () => updateVisit(activeVisit, 'returnCondition', ''),
+                                    undefined
+                                  )}
                                 >
                                   {deviceConditionOpts.map((o) => (
                                     <MenuItem key={o.optionValue} value={o.optionValue}>
@@ -7186,11 +7239,24 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     console.log('Current accessory value:', accessoryName, 'from visit:', visit?.id);
                                     return accessoryName;
                                   })()}
+                                  MenuProps={mergeMenuPropsForReselectClear(
+                                    getValues('visits')[activeVisit]?.accessoryName || '',
+                                    () => {
+                                      const currentVisits = getValues('visits');
+                                      const updatedVisits = [...currentVisits];
+                                      updatedVisits[activeVisit] = {
+                                        ...updatedVisits[activeVisit],
+                                        accessoryName: '',
+                                        accessoryAmount: 0,
+                                        accessoryFOC: false,
+                                      };
+                                      setValue('visits', updatedVisits);
+                                    },
+                                    undefined
+                                  )}
                                   onChange={(e) => {
                                     const currentVisits = getValues('visits');
-                                    const priorName =
-                                      currentVisits[activeVisit]?.accessoryName || '';
-                                    const selectedValue = nextToggleableSelectValue(priorName, e);
+                                    const selectedValue = String(e.target.value);
                                     console.log('=== ACCESSORY SELECTION START ===');
                                     console.log('Selected value:', selectedValue);
                                     console.log('Active visit index:', activeVisit);
@@ -7547,13 +7613,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Select
                                     value={currentVisit.programmingDoneBy}
                                     onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'programmingDoneBy',
-                                        nextToggleableSelectValue(currentVisit.programmingDoneBy, e)
-                                      )}
+                                      updateVisit(activeVisit, 'programmingDoneBy', e.target.value)
+                                    }
                                     label="Programming Done By"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.programmingDoneBy,
+                                      () => updateVisit(activeVisit, 'programmingDoneBy', ''),
+                                      undefined
+                                    )}
                                   >
                                     {getStaffOptionsForField('programmingBy').map(option => (
                                       <MenuItem key={option} value={option}>
@@ -7780,13 +7848,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Select
                                     value={currentVisit.testDoneBy}
                                     onChange={(e) =>
-                                      updateVisit(
-                                        activeVisit,
-                                        'testDoneBy',
-                                        nextToggleableSelectValue(currentVisit.testDoneBy, e)
-                                      )}
+                                      updateVisit(activeVisit, 'testDoneBy', e.target.value)
+                                    }
                                     label="Session By"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
+                                    MenuProps={mergeMenuPropsForReselectClear(
+                                      currentVisit.testDoneBy,
+                                      () => updateVisit(activeVisit, 'testDoneBy', ''),
+                                      undefined
+                                    )}
                                   >
                                     {getStaffOptionsForField('testBy').map(option => (
                                       <MenuItem key={option} value={option}>
@@ -7873,12 +7943,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           <Select
                             value={currentFollowUp.callerName}
                             onChange={(e) =>
-                              handleFollowUpChange(
-                                'callerName',
-                                nextToggleableSelectValue(currentFollowUp.callerName, e)
-                              )}
+                              handleFollowUpChange('callerName', e.target.value)
+                            }
                             label="Call Done By *"
                             sx={{ borderRadius: 2 }}
+                            MenuProps={mergeMenuPropsForReselectClear(
+                              currentFollowUp.callerName,
+                              () => handleFollowUpChange('callerName', ''),
+                              undefined
+                            )}
                           >
                             {getStaffOptionsForField('telecaller').map(option => (
                               <MenuItem key={option} value={option}>
@@ -9148,10 +9221,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   labelId="catalog-dialog-brand-label"
                   value={catalogDialogBrandFilter}
                   label="Brand"
-                  onChange={(e) =>
-                    setCatalogDialogBrandFilter(nextToggleableSelectValue(catalogDialogBrandFilter, e))
-                  }
+                  onChange={(e) => setCatalogDialogBrandFilter(String(e.target.value))}
                   sx={{ borderRadius: 2, bgcolor: 'background.paper' }}
+                  MenuProps={mergeMenuPropsForReselectClear(
+                    catalogDialogBrandFilter,
+                    () => setCatalogDialogBrandFilter(''),
+                    undefined
+                  )}
                 >
                   <MenuItem value="">
                     <em>All brands</em>
