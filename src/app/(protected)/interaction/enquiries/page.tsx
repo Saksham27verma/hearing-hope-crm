@@ -2287,7 +2287,25 @@ export default function EnquiriesPage() {
   // Generic input change handler
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent) => {
     const { name, value } = e.target;
-    
+    const valueStr = value === undefined || value === null ? '' : String(value);
+
+    // Re-selecting the same option clears optional single-select fields (Assigned to, Telecaller, Reference, …).
+    if (
+      name &&
+      !String(name).includes('.') &&
+      (name === 'assignedTo' || name === 'telecaller' || name === 'reference')
+    ) {
+      const prev = newEnquiry[name as keyof Enquiry];
+      const prevStr = prev == null || prev === undefined ? '' : String(prev);
+      if (valueStr === prevStr) {
+        setNewEnquiry({
+          ...newEnquiry,
+          [name]: '' as any,
+        });
+        return;
+      }
+    }
+
     // Handle nested properties using dot notation (e.g., "testDetails.testName")
     if (name.includes('.')) {
       const [parentKey, childKey] = name.split('.');

@@ -41,7 +41,7 @@ import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import {
   TextField, Button, Typography, Box, Paper,
-  FormControl, InputLabel, Select, MenuItem,
+  FormControl, InputLabel, Select, MenuItem, SelectChangeEvent,
   Card, CardContent, Divider, Stepper, Step, StepLabel,
   Grid as MuiGrid, IconButton, FormHelperText, Alert, Autocomplete,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -82,6 +82,17 @@ import {
 
 // Custom Grid wrapper
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
+
+/** MUI Select: choosing the already-selected option again clears the value. */
+function nextToggleableSelectValue(
+  current: unknown,
+  event: SelectChangeEvent<unknown>
+): string {
+  const raw = event.target.value;
+  const next = raw === undefined || raw === null ? '' : String(raw);
+  const cur = current === undefined || current === null || current === '' ? '' : String(current);
+  return next === cur ? '' : next;
+}
 
 // Product interface (matching the products module)
 interface Product {
@@ -3562,6 +3573,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               {...field}
                               labelId="assigned-to-label"
                               label="Assigned To"
+                              value={field.value ?? ''}
+                              onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
                               disabled={isAudiologist}
                               sx={{ borderRadius: 2, minWidth: '200px' }}
                               MenuProps={{
@@ -3618,6 +3631,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               {...field}
                               labelId="telecaller-label"
                               label="Telecaller"
+                              value={field.value ?? ''}
+                              onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
                               disabled={isAudiologist}
                               sx={{ borderRadius: 2, minWidth: '200px' }}
                               MenuProps={{
@@ -3677,6 +3692,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             {...field}
                             labelId="center-label"
                             label="Center"
+                            value={field.value ?? ''}
+                            onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
                             disabled={isAudiologist}
                             sx={{ borderRadius: 2, minWidth: '200px' }}
                             MenuProps={{
@@ -3712,6 +3729,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             labelId="lead-outcome-label"
                             label="Lead outcome"
                             value={field.value ?? ''}
+                            onChange={(e) => field.onChange(nextToggleableSelectValue(field.value, e))}
                             sx={{ borderRadius: 2 }}
                           >
                             {LEAD_OUTCOME_OPTIONS.map((opt) => (
@@ -4246,7 +4264,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         label="Test type"
                                         value={entry.testType || ''}
                                         onChange={(e) => {
-                                          const v = String(e.target.value);
+                                          const v = nextToggleableSelectValue(entry.testType, e);
                                           const next = (currentVisit.hearingTestEntries || []).map((x) =>
                                             x.id === entry.id ? { ...x, testType: v } : x
                                           );
@@ -4357,7 +4375,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <InputLabel>Test Done By</InputLabel>
                                   <Select 
                                     value={currentVisit.testDoneBy}
-                                    onChange={(e) => updateVisit(activeVisit, 'testDoneBy', e.target.value)}
+                                    onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'testDoneBy',
+                                        nextToggleableSelectValue(currentVisit.testDoneBy, e)
+                                      )}
                                     label="Test Done By"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
@@ -4486,7 +4509,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         label="Procedure"
                                         value={entry.procedureType || ''}
                                         onChange={(e) => {
-                                          const v = String(e.target.value);
+                                          const v = nextToggleableSelectValue(entry.procedureType, e);
                                           const next = (currentVisit.entProcedureEntries || []).map((x) =>
                                             x.id === entry.id ? { ...x, procedureType: v } : x
                                           );
@@ -4594,7 +4617,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Select
                                     value={currentVisit.entProcedureDoneBy}
                                     onChange={(e) =>
-                                      updateVisit(activeVisit, 'entProcedureDoneBy', e.target.value)
+                                      updateVisit(
+                                        activeVisit,
+                                        'entProcedureDoneBy',
+                                        nextToggleableSelectValue(currentVisit.entProcedureDoneBy, e)
+                                      )
                                     }
                                     label="Procedure done by"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
@@ -4684,7 +4711,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Select 
                                     value={currentVisit.previousVisitId}
                                     onChange={(e) => {
-                                      const prevVisitId = e.target.value;
+                                      const prevVisitId = nextToggleableSelectValue(
+                                        currentVisit.previousVisitId,
+                                        e
+                                      );
                                       updateVisit(activeVisit, 'previousVisitId', prevVisitId);
                                       // Auto-populate device details from previous visit
                                       const prevVisit = getValues('visits').find(v => v.id === prevVisitId);
@@ -5013,7 +5043,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <InputLabel>Which Ear</InputLabel>
                                 <Select
                                   value={currentVisit.whichEar}
-                                  onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
+                                  onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'whichEar',
+                                        nextToggleableSelectValue(currentVisit.whichEar, e)
+                                      )}
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
@@ -5179,7 +5214,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <InputLabel>Which Ear</InputLabel>
                                 <Select
                                   value={currentVisit.whichEar}
-                                  onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
+                                  onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'whichEar',
+                                        nextToggleableSelectValue(currentVisit.whichEar, e)
+                                      )}
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
@@ -5229,7 +5269,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <Select 
                                   value={currentVisit.trialHearingAidType}
                                   onChange={(e) => {
-                                    const trialType = e.target.value;
+                                    const trialType = nextToggleableSelectValue(
+                                      currentVisit.trialHearingAidType,
+                                      e
+                                    );
                                     updateVisit(activeVisit, 'trialHearingAidType', trialType);
                                     
                                     // Clear date fields if switching to office trial
@@ -5647,7 +5690,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Select
                                     value={currentVisit.whichEar}
                                     label="Which Ear"
-                                    onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
+                                    onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'whichEar',
+                                        nextToggleableSelectValue(currentVisit.whichEar, e)
+                                      )}
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
                                     {earSideOpts.map((o) => (
@@ -5664,7 +5712,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <InputLabel>Who Sold</InputLabel>
                                     <Select
                                       value={currentVisit.hearingAidBrand}
-                                      onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
+                                      onChange={(e) =>
+                                        updateVisit(
+                                          activeVisit,
+                                          'hearingAidBrand',
+                                          nextToggleableSelectValue(currentVisit.hearingAidBrand, e)
+                                        )}
                                       label="Who Sold"
                                       sx={{ borderRadius: 2, minWidth: '200px' }}
                                     >
@@ -5801,7 +5854,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <Select 
                                     value={currentVisit.previousVisitId}
                                     onChange={(e) => {
-                                      const prevVisitId = e.target.value;
+                                      const prevVisitId = nextToggleableSelectValue(
+                                        currentVisit.previousVisitId,
+                                        e
+                                      );
                                       updateVisit(activeVisit, 'previousVisitId', prevVisitId);
                                       
                                       if (prevVisitId) {
@@ -5939,7 +5995,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <InputLabel>Which Ear</InputLabel>
                                 <Select 
                                   value={currentVisit.whichEar}
-                                  onChange={(e) => updateVisit(activeVisit, 'whichEar', e.target.value)}
+                                  onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'whichEar',
+                                        nextToggleableSelectValue(currentVisit.whichEar, e)
+                                      )}
                                   label="Which Ear"
                                   sx={{ borderRadius: 2, minWidth: '200px' }}
                                 >
@@ -5956,7 +6017,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <InputLabel>Status</InputLabel>
                                                                   <Select 
                                     value={currentVisit.hearingAidStatus}
-                                    onChange={(e) => updateVisit(activeVisit, 'hearingAidStatus', e.target.value)}
+                                    onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'hearingAidStatus',
+                                        nextToggleableSelectValue(currentVisit.hearingAidStatus, e)
+                                      )}
                                     label="Status"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
@@ -5984,7 +6050,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <Select 
                                       value={currentVisit.trialHearingAidType}
                                       onChange={(e) => {
-                                        const trialType = e.target.value;
+                                        const trialType = nextToggleableSelectValue(
+                                          currentVisit.trialHearingAidType,
+                                          e
+                                        );
                                         updateVisit(activeVisit, 'trialHearingAidType', trialType);
                                         
                                         // Clear date fields if switching to office trial
@@ -6514,7 +6583,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     onChange={(e) =>
                                       setCurrentProduct((prev) => ({
                                         ...prev,
-                                        warranty: (e.target.value as string) || '',
+                                        warranty: nextToggleableSelectValue(prev.warranty, e),
                                       }))
                                     }
                                     displayEmpty
@@ -6986,7 +7055,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <Select
                                   value={currentVisit.returnCondition}
                                   label="Return Condition"
-                                  onChange={(e) => updateVisit(activeVisit, 'returnCondition', e.target.value)}
+                                  onChange={(e) =>
+                                    updateVisit(
+                                      activeVisit,
+                                      'returnCondition',
+                                      nextToggleableSelectValue(currentVisit.returnCondition, e)
+                                    )}
                                   sx={{ borderRadius: 2 }}
                                 >
                                   {deviceConditionOpts.map((o) => (
@@ -7113,13 +7187,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     return accessoryName;
                                   })()}
                                   onChange={(e) => {
-                                    const selectedValue = e.target.value as string;
+                                    const currentVisits = getValues('visits');
+                                    const priorName =
+                                      currentVisits[activeVisit]?.accessoryName || '';
+                                    const selectedValue = nextToggleableSelectValue(priorName, e);
                                     console.log('=== ACCESSORY SELECTION START ===');
                                     console.log('Selected value:', selectedValue);
                                     console.log('Active visit index:', activeVisit);
                                     
-                                    // Get current visits state
-                                    const currentVisits = getValues('visits');
                                     console.log('Current visits state:', currentVisits);
                                     
                                     if (!selectedValue) {
@@ -7471,7 +7546,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <InputLabel>Programming Done By</InputLabel>
                                   <Select
                                     value={currentVisit.programmingDoneBy}
-                                    onChange={(e) => updateVisit(activeVisit, 'programmingDoneBy', e.target.value)}
+                                    onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'programmingDoneBy',
+                                        nextToggleableSelectValue(currentVisit.programmingDoneBy, e)
+                                      )}
                                     label="Programming Done By"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
@@ -7699,7 +7779,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   <InputLabel>Session By</InputLabel>
                                   <Select
                                     value={currentVisit.testDoneBy}
-                                    onChange={(e) => updateVisit(activeVisit, 'testDoneBy', e.target.value)}
+                                    onChange={(e) =>
+                                      updateVisit(
+                                        activeVisit,
+                                        'testDoneBy',
+                                        nextToggleableSelectValue(currentVisit.testDoneBy, e)
+                                      )}
                                     label="Session By"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                   >
@@ -7787,7 +7872,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           <InputLabel>Call Done By *</InputLabel>
                           <Select
                             value={currentFollowUp.callerName}
-                            onChange={(e) => handleFollowUpChange('callerName', e.target.value)}
+                            onChange={(e) =>
+                              handleFollowUpChange(
+                                'callerName',
+                                nextToggleableSelectValue(currentFollowUp.callerName, e)
+                              )}
                             label="Call Done By *"
                             sx={{ borderRadius: 2 }}
                           >
@@ -9059,7 +9148,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   labelId="catalog-dialog-brand-label"
                   value={catalogDialogBrandFilter}
                   label="Brand"
-                  onChange={(e) => setCatalogDialogBrandFilter(e.target.value as string)}
+                  onChange={(e) =>
+                    setCatalogDialogBrandFilter(nextToggleableSelectValue(catalogDialogBrandFilter, e))
+                  }
                   sx={{ borderRadius: 2, bgcolor: 'background.paper' }}
                 >
                   <MenuItem value="">
