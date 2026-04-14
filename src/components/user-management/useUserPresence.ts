@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { doc, onSnapshot, serverTimestamp, setDoc, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import type { User } from 'firebase/auth';
+import { DEFAULT_FIRESTORE_POLL_MS } from '@/lib/firestore/pollingSubscribe';
 
 /** Heartbeat every 25s; consider online if lastSeen within this window */
 const ONLINE_MS = 75_000;
@@ -63,30 +64,42 @@ export function usePresenceOnlineMap(userIds: string[]): Record<string, boolean>
       setPresence({});
       return;
     }
-    const unsubs = userIds.map((uid) =>
-      onSnapshot(
-        doc(db, 'userPresence', uid),
-        { includeMetadataChanges: true },
-        (snap) => {
-          if (!snap.exists()) {
-            setPresence((m) => ({ ...m, [uid]: { lastSeen: 0, pending: false } }));
-            return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const pairs = await Promise.all(
+          userIds.map(async (uid) => {
+            const snap = await getDoc(doc(db, 'userPresence', uid));
+            return { uid, snap };
+          }),
+        );
+        if (cancelled) return;
+        setPresence((m) => {
+          const next = { ...m };
+          for (const { uid, snap } of pairs) {
+            if (!snap.exists()) {
+              next[uid] = { lastSeen: 0, pending: false };
+            } else {
+              const d = snap.data() as { lastSeen?: unknown };
+              next[uid] = { lastSeen: lastSeenMs(d.lastSeen), pending: false };
+            }
           }
-          const d = snap.data() as { lastSeen?: unknown };
-          const ms = lastSeenMs(d.lastSeen);
-          // Local pending writes (e.g. your own heartbeat) may not have lastSeen resolved yet
-          const pending = snap.metadata.hasPendingWrites;
-          setPresence((m) => ({ ...m, [uid]: { lastSeen: ms, pending } }));
-        },
-        (err) => {
-          console.warn('userPresence snapshot error', uid, err);
-          setPresence((m) => ({ ...m, [uid]: { lastSeen: 0, pending: false } }));
-        },
-      ),
-    );
-    return () => {
-      unsubs.forEach((u) => u());
+          return next;
+        });
+      } catch (err) {
+        if (!cancelled) console.warn('userPresence poll error', err);
+      }
     };
+
+    void poll();
+    const id = window.setInterval(() => void poll(), DEFAULT_FIRESTORE_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+    // idKey is a stable serialization of `userIds` (sorted join).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid re-subscribing on array identity churn
   }, [idKey]);
 
   return useMemo(() => {

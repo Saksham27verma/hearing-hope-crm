@@ -12,6 +12,7 @@ export type CenterOpexSlice = {
   salaries: number;
   fixedCosts: number;
   cashOutflows: number;
+  managedExpenses: number;
 };
 
 /** Staff not mapped to any center, or cash sheets missing centerId. */
@@ -30,13 +31,14 @@ export function mergeCenterProfitRows(params: {
   const rows: CenterProfitRow[] = [];
   for (const rowKey of keys) {
     const g = grossByKey.get(rowKey);
-    const o = opexByKey.get(rowKey) ?? { salaries: 0, fixedCosts: 0, cashOutflows: 0 };
+    const o = opexByKey.get(rowKey) ?? { salaries: 0, fixedCosts: 0, cashOutflows: 0, managedExpenses: 0 };
     const grossRevenue = g?.grossRevenue ?? 0;
     const grossProfit = g?.grossProfit ?? 0;
     const salaries = o.salaries;
     const fixedCosts = o.fixedCosts;
     const cashOutflows = o.cashOutflows;
-    const totalExpenses = salaries + fixedCosts + cashOutflows;
+    const managedExpenses = o.managedExpenses;
+    const totalExpenses = salaries + fixedCosts + cashOutflows + managedExpenses;
 
     const centerName =
       g?.centerName ||
@@ -54,6 +56,7 @@ export function mergeCenterProfitRows(params: {
       salaries,
       fixedCosts,
       cashOutflows,
+      managedExpenses,
       totalExpenses,
       netProfit: grossProfit - totalExpenses,
     });

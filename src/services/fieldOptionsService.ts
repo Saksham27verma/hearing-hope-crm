@@ -4,15 +4,16 @@ import {
   deleteDoc,
   doc,
   getDocs,
-  onSnapshot,
   query,
   serverTimestamp,
   updateDoc,
   where,
   writeBatch,
   type Firestore,
+  type QuerySnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
+import { DEFAULT_FIRESTORE_POLL_MS } from '@/lib/firestore/pollingSubscribe';
 import type { FieldOptionDoc, FieldOptionResolved } from '@/lib/field-options/types';
 import { getDefaultOptionsForField } from '@/lib/field-options/registry';
 import { ENQUIRY_FIELD_KEYS } from '@/lib/field-options/enquiriesCatalog';
@@ -72,6 +73,37 @@ export async function getFieldOptions(
   return sortBySortOrder(rows.filter((r) => r.isActive));
 }
 
+/** Pooled polling — avoids Firestore 11.x onSnapshot WatchChangeAggregator crashes under load. */
+type FieldOptionsSinglePoolEntry = {
+  refCount: number;
+  timer: ReturnType<typeof setInterval> | null;
+  callbacks: Set<(options: FieldOptionResolved[]) => void>;
+  errorCallbacks: Set<(e: Error) => void>;
+  latest: FieldOptionResolved[] | null;
+};
+
+const fieldOptionsSinglePool = new Map<string, FieldOptionsSinglePoolEntry>();
+
+function fieldOptionsSinglePoolKey(moduleKey: string, fieldKey: string) {
+  return `${moduleKey}\u0000${fieldKey}`;
+}
+
+async function runFieldOptionsSingleFetch(
+  db: Firestore,
+  moduleKey: string,
+  fieldKey: string,
+  entry: FieldOptionsSinglePoolEntry,
+) {
+  try {
+    const opts = await getFieldOptions(db, moduleKey, fieldKey);
+    entry.latest = opts;
+    entry.callbacks.forEach((cb) => cb(opts));
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    entry.errorCallbacks.forEach((cb) => cb(e));
+  }
+}
+
 export function subscribeFieldOptions(
   db: Firestore,
   moduleKey: string,
@@ -79,18 +111,43 @@ export function subscribeFieldOptions(
   onData: (options: FieldOptionResolved[]) => void,
   onError?: (e: Error) => void
 ): Unsubscribe {
-  return onSnapshot(
-    fieldOptionsQuery(db, moduleKey, fieldKey),
-    (snap) => {
-      if (snap.empty) {
-        onData(defaultsToResolved(moduleKey, fieldKey));
-        return;
-      }
-      const rows = snap.docs.map((d) => docToResolved(d.id, d.data() as FieldOptionDoc));
-      onData(sortBySortOrder(rows.filter((r) => r.isActive)));
-    },
-    (err) => onError?.(err as Error)
-  );
+  const key = fieldOptionsSinglePoolKey(moduleKey, fieldKey);
+  let entry = fieldOptionsSinglePool.get(key);
+  if (!entry) {
+    entry = {
+      refCount: 0,
+      timer: null,
+      callbacks: new Set(),
+      errorCallbacks: new Set(),
+      latest: null,
+    };
+    fieldOptionsSinglePool.set(key, entry);
+  }
+  entry.refCount += 1;
+  entry.callbacks.add(onData);
+  if (onError) entry.errorCallbacks.add(onError);
+
+  if (entry.refCount === 1) {
+    void runFieldOptionsSingleFetch(db, moduleKey, fieldKey, entry);
+    entry.timer = setInterval(
+      () => void runFieldOptionsSingleFetch(db, moduleKey, fieldKey, entry!),
+      DEFAULT_FIRESTORE_POLL_MS,
+    );
+  } else if (entry.latest) {
+    queueMicrotask(() => onData(entry!.latest!));
+  }
+
+  return () => {
+    const e = fieldOptionsSinglePool.get(key);
+    if (!e) return;
+    e.refCount -= 1;
+    e.callbacks.delete(onData);
+    if (onError) e.errorCallbacks.delete(onError);
+    if (e.refCount <= 0) {
+      if (e.timer) clearInterval(e.timer);
+      fieldOptionsSinglePool.delete(key);
+    }
+  };
 }
 
 /** One listener for all enquiry dropdowns — grouped by `fieldKey`. */
@@ -111,6 +168,71 @@ export function buildEnquiryFieldDefaultsMap(): Record<string, FieldOptionResolv
   return out;
 }
 
+function buildModuleFieldOptionsFromSnap(
+  snap: QuerySnapshot,
+  moduleKey: string,
+  fieldKeys: string[],
+): Record<string, FieldOptionResolved[]> {
+  const grouped = new Map<string, FieldOptionResolved[]>();
+  snap.docs.forEach((d) => {
+    const data = d.data() as FieldOptionDoc;
+    const fk = data.fieldKey;
+    if (!fieldKeys.includes(fk)) return;
+    if (!grouped.has(fk)) grouped.set(fk, []);
+    grouped.get(fk)!.push(docToResolved(d.id, data));
+  });
+  const out: Record<string, FieldOptionResolved[]> = {};
+  for (const fk of fieldKeys) {
+    const raw = grouped.get(fk) || [];
+    if (raw.length === 0) {
+      out[fk] = defaultsToResolved(moduleKey, fk);
+    } else {
+      out[fk] = raw
+        .filter((r) => r.isActive)
+        .sort((a, b) => a.sortOrder - b.sortOrder || a.optionLabel.localeCompare(b.optionLabel));
+    }
+  }
+  return out;
+}
+
+type ModuleFieldOptionsPoolEntry = {
+  refCount: number;
+  timer: ReturnType<typeof setInterval> | null;
+  callbacks: Set<(byField: Record<string, FieldOptionResolved[]>) => void>;
+  errorCallbacks: Set<(e: Error) => void>;
+  latest: Record<string, FieldOptionResolved[]> | null;
+  moduleKey: string;
+  fieldKeys: string[];
+};
+
+const moduleFieldOptionsPool = new Map<string, ModuleFieldOptionsPoolEntry>();
+
+function moduleFieldOptionsPoolKey(moduleKey: string, fieldKeys: string[]) {
+  return `${moduleKey}::${[...fieldKeys].sort().join('|')}`;
+}
+
+async function runModuleFieldOptionsFetch(
+  db: Firestore,
+  entry: ModuleFieldOptionsPoolEntry,
+  onEnquiryErrorDefaults: boolean,
+) {
+  try {
+    const q = query(collection(db, FIELD_OPTIONS_COLLECTION), where('moduleKey', '==', entry.moduleKey));
+    const snap = await getDocs(q);
+    const out = buildModuleFieldOptionsFromSnap(snap, entry.moduleKey, entry.fieldKeys);
+    entry.latest = out;
+    entry.callbacks.forEach((cb) => cb(out));
+  } catch (err) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    if (onEnquiryErrorDefaults && entry.moduleKey === 'enquiries') {
+      const fallback = buildEnquiryFieldDefaultsMap();
+      entry.latest = fallback;
+      entry.callbacks.forEach((cb) => cb(fallback));
+    }
+    entry.errorCallbacks.forEach((cb) => cb(e));
+  }
+}
+
 export function subscribeModuleFieldOptionsByKeys(
   db: Firestore,
   moduleKey: string,
@@ -118,38 +240,45 @@ export function subscribeModuleFieldOptionsByKeys(
   onData: (byField: Record<string, FieldOptionResolved[]>) => void,
   onError?: (e: Error) => void
 ): Unsubscribe {
-  const q = query(collection(db, FIELD_OPTIONS_COLLECTION), where('moduleKey', '==', moduleKey));
-  return onSnapshot(
-    q,
-    (snap) => {
-      const grouped = new Map<string, FieldOptionResolved[]>();
-      snap.docs.forEach((d) => {
-        const data = d.data() as FieldOptionDoc;
-        const fk = data.fieldKey;
-        if (!fieldKeys.includes(fk)) return;
-        if (!grouped.has(fk)) grouped.set(fk, []);
-        grouped.get(fk)!.push(docToResolved(d.id, data));
-      });
-      const out: Record<string, FieldOptionResolved[]> = {};
-      for (const fk of fieldKeys) {
-        const raw = grouped.get(fk) || [];
-        if (raw.length === 0) {
-          out[fk] = defaultsToResolved(moduleKey, fk);
-        } else {
-          out[fk] = raw
-            .filter((r) => r.isActive)
-            .sort((a, b) => a.sortOrder - b.sortOrder || a.optionLabel.localeCompare(b.optionLabel));
-        }
-      }
-      onData(out);
-    },
-    (err) => {
-      if (moduleKey === 'enquiries') {
-        onData(buildEnquiryFieldDefaultsMap());
-      }
-      onError?.(err as Error);
+  const key = moduleFieldOptionsPoolKey(moduleKey, fieldKeys);
+  let entry = moduleFieldOptionsPool.get(key);
+  if (!entry) {
+    entry = {
+      refCount: 0,
+      timer: null,
+      callbacks: new Set(),
+      errorCallbacks: new Set(),
+      latest: null,
+      moduleKey,
+      fieldKeys: [...fieldKeys],
+    };
+    moduleFieldOptionsPool.set(key, entry);
+  }
+  entry.refCount += 1;
+  entry.callbacks.add(onData);
+  if (onError) entry.errorCallbacks.add(onError);
+
+  if (entry.refCount === 1) {
+    void runModuleFieldOptionsFetch(db, entry, true);
+    entry.timer = setInterval(
+      () => void runModuleFieldOptionsFetch(db, entry!, true),
+      DEFAULT_FIRESTORE_POLL_MS,
+    );
+  } else if (entry.latest) {
+    queueMicrotask(() => onData(entry!.latest!));
+  }
+
+  return () => {
+    const e = moduleFieldOptionsPool.get(key);
+    if (!e) return;
+    e.refCount -= 1;
+    e.callbacks.delete(onData);
+    if (onError) e.errorCallbacks.delete(onError);
+    if (e.refCount <= 0) {
+      if (e.timer) clearInterval(e.timer);
+      moduleFieldOptionsPool.delete(key);
     }
-  );
+  };
 }
 
 /** All rows for settings (active + inactive), sorted. Empty until you seed or add options. */

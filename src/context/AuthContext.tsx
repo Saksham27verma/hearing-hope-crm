@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { DEFAULT_FIRESTORE_POLL_MS } from '@/lib/firestore/pollingSubscribe';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { useRouter, usePathname } from 'next/navigation';
 import { logActivity } from '@/lib/activityLogger';
@@ -98,7 +99,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const firebaseModule = await import('../firebase/config');
         const { auth, db } = firebaseModule;
         const { onAuthStateChanged, signOut: firebaseSignOut } = await import('firebase/auth');
-        const { doc, onSnapshot } = await import('firebase/firestore');
+        const { doc, getDoc } = await import('firebase/firestore');
 
         if (!auth) {
           console.error('Firebase Auth not initialized');
@@ -129,9 +130,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
 
             const userRef = doc(db, 'users', authUser.uid);
-            profileUnsubRef.current = onSnapshot(
-              userRef,
-              async (snap) => {
+            let profilePollCancelled = false;
+            const loadUserProfile = async () => {
+              if (profilePollCancelled) return;
+              try {
+                const snap = await getDoc(userRef);
+                if (profilePollCancelled) return;
                 if (!snap.exists()) {
                   await firebaseSignOut(auth);
                   setUser(null);
@@ -146,7 +150,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setLoading(false);
                 setError(null);
 
-                // Log LOGIN once per browser session per UID
                 if (loginLoggedForUidRef.current !== authUser.uid) {
                   loginLoggedForUidRef.current = authUser.uid;
                   const sessionKey = `login_logged_${authUser.uid}`;
@@ -166,17 +169,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     }, authUser);
                   }
                 }
-              },
-              async (err) => {
-                console.warn('Profile realtime listener error:', err);
+              } catch (err) {
+                if (profilePollCancelled) return;
+                console.warn('Profile load error:', err);
                 await firebaseSignOut(auth);
                 setUser(null);
                 setUserProfile(null);
                 setError('Failed to load your access profile. Please try again.');
                 setLoading(false);
                 routerRef.current.push('/login');
-              },
+              }
+            };
+
+            void loadUserProfile();
+            const profilePollId = window.setInterval(
+              () => void loadUserProfile(),
+              DEFAULT_FIRESTORE_POLL_MS,
             );
+            profileUnsubRef.current = () => {
+              profilePollCancelled = true;
+              window.clearInterval(profilePollId);
+            };
           } else {
             setUser(null);
             setUserProfile(null);

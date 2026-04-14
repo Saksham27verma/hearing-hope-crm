@@ -24,6 +24,7 @@ import {
   ScrollText,
   TrendingUp,
   Activity,
+  Wallet,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -70,6 +71,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { text: 'Appointment Scheduler', path: '/appointments', icon: CalendarDays },
   { text: 'Reports', path: '/reports', icon: BarChart3 },
   { text: 'Profit', path: '/profit', icon: TrendingUp, adminOnly: true, superAdminOnly: true },
+  { text: 'Expenses', path: '/expenses', icon: Wallet, adminOnly: true, superAdminOnly: true },
   {
     text: 'Staff',
     path: '/staff',
@@ -106,6 +108,7 @@ export const NAV_ITEM_ACCESS_KEYS: Record<string, string[]> = {
   'Cash Register': ['cash register', 'cash'],
   'Appointment Scheduler': ['appointment scheduler', 'appointments'],
   Reports: ['reports'],
+  Expenses: ['expenses'],
   Staff: ['staff'],
   Settings: ['settings'],
   'User Management': ['user management'],
@@ -134,6 +137,7 @@ export const CRM_MODULE_ACCESS_OPTIONS: { key: string; label: string }[] = [
   { key: 'appointment scheduler', label: 'Appointment Scheduler' },
   { key: 'appointments', label: 'Appointments' },
   { key: 'reports', label: 'Reports' },
+  { key: 'expenses', label: 'Expenses' },
   { key: 'staff', label: 'Staff' },
   { key: 'settings', label: 'Settings' },
 ];

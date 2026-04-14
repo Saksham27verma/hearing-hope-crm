@@ -1,6 +1,12 @@
 export type DatePreset = 'this-month' | 'last-quarter' | 'custom';
 
-export type BreakdownCategory = 'Revenue' | 'Product Cost' | 'Salary' | 'Fixed Cost' | 'Cash Outflow';
+export type BreakdownCategory =
+  | 'Revenue'
+  | 'Product Cost'
+  | 'Salary'
+  | 'Fixed Cost'
+  | 'Cash Outflow'
+  | 'Managed Expense';
 export type BreakdownType = 'in' | 'out';
 
 export interface BreakdownRow {
@@ -31,6 +37,7 @@ export interface CenterProfitRow {
   salaries: number;
   fixedCosts: number;
   cashOutflows: number;
+  managedExpenses: number;
   totalExpenses: number;
   netProfit: number;
 }
@@ -48,7 +55,13 @@ export interface ProfitSummary {
   totalFixedCosts: number;
   /** Sum of cash-out lines on daily sheets with Cash Register category "Expenses" only */
   totalCashOutflows: number;
-  /** totalSalaries + totalFixedCosts + totalCashOutflows */
+  /** Managed expenses from dedicated `expenses` collection */
+  totalManagedExpenses: number;
+  /** Managed expenses marked scopeType=center */
+  centerManagedExpenses: number;
+  /** Managed expenses marked scopeType=global */
+  globalManagedExpenses: number;
+  /** totalSalaries + totalFixedCosts + totalCashOutflows + totalManagedExpenses */
   totalOperatingExpenses: number;
   /** grossProfit − totalOperatingExpenses */
   netProfit: number;

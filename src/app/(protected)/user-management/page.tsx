@@ -33,8 +33,9 @@ import {
 } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { useAuth } from '@/context/AuthContext';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { DEFAULT_FIRESTORE_POLL_MS } from '@/lib/firestore/pollingSubscribe';
 import { CRM_MODULE_ACCESS_OPTIONS } from '@/components/Layout/crm-nav-config';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import {
@@ -167,20 +168,29 @@ export default function UserManagementPage() {
     }
     setUsersLoading(true);
     const usersQuery = query(collection(db, 'users'), orderBy('email', 'asc'));
-    const unsub = onSnapshot(
-      usersQuery,
-      (snapshot) => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const snapshot = await getDocs(usersQuery);
+        if (cancelled) return;
         const rows = snapshot.docs.map((docSnap) => mapUserSnapshot(docSnap));
         setAllUsers(rows);
         setUsersLoading(false);
-      },
-      (error) => {
-        console.error('users snapshot error:', error);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('users poll error:', error);
         enqueueSnackbar('Failed to load users', { variant: 'error' });
         setUsersLoading(false);
-      },
-    );
-    return () => unsub();
+      }
+    };
+
+    void load();
+    const id = window.setInterval(() => void load(), DEFAULT_FIRESTORE_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [userProfile?.role, enqueueSnackbar]);
 
   useEffect(() => {

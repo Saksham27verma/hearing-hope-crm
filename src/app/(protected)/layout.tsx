@@ -150,7 +150,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     if (loading || !userProfile || !pathname) return;
     if (userProfile.role !== 'admin') return;
     if (userProfile.isSuperAdmin === true) return;
-    const superAdminPaths = ['/profit'];
+    const superAdminPaths = ['/profit', '/expenses'];
     if (!superAdminPaths.some((p) => pathname === p || pathname.startsWith(p + '/'))) return;
     router.replace('/dashboard');
   }, [loading, userProfile, pathname, router]);
