@@ -5,6 +5,8 @@ export type CenterGrossSlice = {
   centerId: string;
   centerName: string;
   grossRevenue: number;
+  /** Pre-GST invoice subtotal — same as Sales Report "selling". */
+  sellingSubtotal: number;
   grossProfit: number;
 };
 
@@ -33,6 +35,7 @@ export function mergeCenterProfitRows(params: {
     const g = grossByKey.get(rowKey);
     const o = opexByKey.get(rowKey) ?? { salaries: 0, fixedCosts: 0, cashOutflows: 0, managedExpenses: 0 };
     const grossRevenue = g?.grossRevenue ?? 0;
+    const sellingSubtotal = g?.sellingSubtotal ?? 0;
     const grossProfit = g?.grossProfit ?? 0;
     const salaries = o.salaries;
     const fixedCosts = o.fixedCosts;
@@ -52,6 +55,7 @@ export function mergeCenterProfitRows(params: {
       centerId: g?.centerId ?? (/^__/.test(rowKey) ? '' : rowKey),
       centerName,
       grossRevenue,
+      sellingSubtotal,
       grossProfit,
       salaries,
       fixedCosts,

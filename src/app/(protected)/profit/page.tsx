@@ -212,6 +212,7 @@ export default function ProfitPage() {
     return summary.centerRows.map((r) => ({
       name: r.centerName.length > 22 ? `${r.centerName.slice(0, 20)}…` : r.centerName,
       fullName: r.centerName,
+      sellingSubtotal: r.sellingSubtotal,
       grossProfit: r.grossProfit,
       salaries: r.salaries,
       fixedCosts: r.fixedCosts,
@@ -453,7 +454,14 @@ export default function ProfitPage() {
           {/* Sub-cards */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
             {[
-              { label: 'Gross Revenue', value: summary.grossRevenue, color: '#059669', bg: '#f0fdf4', hint: 'Total of all invoice grand totals' },
+              {
+                label: 'Selling (pre-GST)',
+                value: summary.sellingSubtotal,
+                color: '#0891b2',
+                bg: '#ecfeff',
+                hint: 'Sum of invoice subtotals — same basis as Sales Report center-wise "selling"',
+              },
+              { label: 'Gross Revenue', value: summary.grossRevenue, color: '#059669', bg: '#f0fdf4', hint: 'Total of all invoice grand totals (incl. GST)' },
               { label: 'Salaries', value: summary.totalSalaries, color: '#e11d48', bg: '#fff1f2', hint: 'Paid salary disbursements' },
               { label: 'Fixed Costs', value: summary.totalFixedCosts, color: '#b45309', bg: '#fffbeb', hint: 'Rent + electricity' },
               { label: 'Cash expenses', value: summary.totalCashOutflows, color: '#dc2626', bg: '#fef2f2', hint: 'Cash Register lines categorized as Expenses only' },
@@ -499,7 +507,7 @@ export default function ProfitPage() {
           {centerChartData.length > 0 && (
             <Paper variant="outlined" sx={{ p: 2, mb: 3, borderRadius: 2 }}>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 2, color: 'text.primary' }}>
-                Gross profit, expense breakdown, and net profit by center
+                Selling (pre-GST, same as Sales Report), gross profit, expenses, and net profit by center
               </Typography>
               <Box sx={{ width: '100%', height: { xs: 320, sm: 400 } }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -537,6 +545,7 @@ export default function ProfitPage() {
                       }
                     />
                     <Legend wrapperStyle={{ paddingTop: 12 }} />
+                    <Bar dataKey="sellingSubtotal" name="Selling (pre-GST)" fill="#0891b2" />
                     <Bar dataKey="grossProfit" name="Gross profit" fill="#059669" />
                     <Bar dataKey="salaries" stackId="exp" name="Salaries" fill="#e11d48" />
                     <Bar dataKey="fixedCosts" stackId="exp" name="Fixed costs" fill="#d97706" />
@@ -558,6 +567,7 @@ export default function ProfitPage() {
               <TableHead>
                 <TableRow>
                   <TableCell sx={{ fontWeight: 700 }}>Center</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Selling (pre-GST)</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Gross revenue</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Gross profit</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Salaries</TableCell>
@@ -578,6 +588,9 @@ export default function ProfitPage() {
                           Assign staff on Centers page or add center on cash sheets
                         </Typography>
                       )}
+                    </TableCell>
+                    <TableCell align="right" sx={{ color: '#0891b2', fontWeight: 600 }}>
+                      {formatINR(row.sellingSubtotal)}
                     </TableCell>
                     <TableCell align="right">{formatINR(row.grossRevenue)}</TableCell>
                     <TableCell align="right" sx={{ color: '#059669', fontWeight: 600 }}>
@@ -608,7 +621,7 @@ export default function ProfitPage() {
               <Box>
                 <Typography variant="h6" fontWeight={700} color="text.primary">Transaction Breakdown</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Net Profit = Gross Profit (from Profit Analysis) − Salaries − Fixed Costs − Cash Register (Expenses only) − Managed Expenses
+                  Revenue rows: Selling (pre-GST) matches Sales Report; Amount is invoice grand total. Net Profit = Gross Profit − operating expenses.
                 </Typography>
               </Box>
               <Box display="flex" gap={1.5} alignItems="center" flexWrap="wrap">
@@ -652,6 +665,7 @@ export default function ProfitPage() {
                     <TableCell sx={{ fontWeight: 700 }}>Center</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
                     <TableCell sx={{ fontWeight: 700 }}>Type</TableCell>
+                    <TableCell sx={{ fontWeight: 700 }} align="right">Selling (pre-GST)</TableCell>
                     <TableCell sx={{ fontWeight: 700 }} align="right">Amount</TableCell>
                   </TableRow>
                 </TableHead>
@@ -683,6 +697,15 @@ export default function ProfitPage() {
                           sx={{ bgcolor: row.type === 'in' ? '#d1fae5' : '#ffe4e6', color: row.type === 'in' ? '#065f46' : '#9f1239', fontWeight: 700, fontSize: '0.7rem' }} />
                       </TableCell>
                       <TableCell align="right">
+                        {row.invoiceSubtotal != null ? (
+                          <Typography variant="body2" fontWeight={600} color="#0891b2">
+                            {formatINR(row.invoiceSubtotal)}
+                          </Typography>
+                        ) : (
+                          <Typography variant="body2" color="text.disabled">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
                         <Typography variant="body2" fontWeight={700} color={row.type === 'in' ? '#059669' : '#e11d48'}>
                           {row.type === 'in' ? '+' : '−'} {formatINR(row.amount)}
                         </Typography>
@@ -690,7 +713,7 @@ export default function ProfitPage() {
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={6} align="center" sx={{ py: 5, color: 'text.secondary' }}>
+                      <TableCell colSpan={7} align="center" sx={{ py: 5, color: 'text.secondary' }}>
                         {search || categoryFilter !== 'All' ? 'No transactions match the current filter.' : 'No transactions found for this date range.'}
                       </TableCell>
                     </TableRow>

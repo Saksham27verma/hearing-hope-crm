@@ -15,6 +15,7 @@ export async function exportToExcel(summary: ProfitSummary, dateLabel: string): 
     [],
     ['Metric', 'Amount (₹)'],
     ['Gross Revenue (Invoice Grand Totals)', summary.grossRevenue],
+    ['Selling (Pre-GST, same as Sales Report)', summary.sellingSubtotal],
     ['Dealer Costs / COGS (matched serials)', summary.totalCogs],
     ['Gross Profit (= Profit Analysis Report figure)', summary.grossProfit],
     [],
@@ -32,7 +33,16 @@ export async function exportToExcel(summary: ProfitSummary, dateLabel: string): 
   ];
 
   // Breakdown sheet
-  const breakdownHeaders = ['Date', 'Description', 'Category', 'Type', 'Amount (₹)', 'Reference', 'Center'];
+  const breakdownHeaders = [
+    'Date',
+    'Description',
+    'Category',
+    'Type',
+    'Selling pre-GST (₹)',
+    'Amount grand total (₹)',
+    'Reference',
+    'Center',
+  ];
   const breakdownData = [
     breakdownHeaders,
     ...summary.breakdownRows.map((r) => [
@@ -40,6 +50,7 @@ export async function exportToExcel(summary: ProfitSummary, dateLabel: string): 
       r.description,
       r.category,
       r.type === 'in' ? 'Inflow' : 'Outflow',
+      r.invoiceSubtotal ?? '',
       r.amount,
       r.reference || '',
       r.centerName || '',
@@ -54,13 +65,14 @@ export async function exportToExcel(summary: ProfitSummary, dateLabel: string): 
 
   const wsBreakdown = XLSX.utils.aoa_to_sheet(breakdownData);
   wsBreakdown['!cols'] = [
-    { wch: 14 }, { wch: 40 }, { wch: 16 }, { wch: 10 }, { wch: 16 }, { wch: 22 }, { wch: 20 },
+    { wch: 14 }, { wch: 40 }, { wch: 16 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 20 },
   ];
   XLSX.utils.book_append_sheet(wb, wsBreakdown, 'Breakdown');
 
   if (summary.centerRows?.length) {
     const centerHeaders = [
       'Center',
+      'Selling (pre-GST)',
       'Gross revenue',
       'Gross profit',
       'Salaries',
@@ -74,6 +86,7 @@ export async function exportToExcel(summary: ProfitSummary, dateLabel: string): 
       centerHeaders,
       ...summary.centerRows.map((r) => [
         r.centerName,
+        r.sellingSubtotal,
         r.grossRevenue,
         r.grossProfit,
         r.salaries,
@@ -86,7 +99,7 @@ export async function exportToExcel(summary: ProfitSummary, dateLabel: string): 
     ];
     const wsCenters = XLSX.utils.aoa_to_sheet(centerData);
     wsCenters['!cols'] = [
-      { wch: 28 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+      { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
     ];
     XLSX.utils.book_append_sheet(wb, wsCenters, 'By center');
   }
@@ -118,6 +131,7 @@ export async function exportToPdf(summary: ProfitSummary, dateLabel: string): Pr
     head: [['Metric', 'Amount']],
     body: [
       ['Gross Revenue (Invoice Grand Totals)', formatCurrency(summary.grossRevenue)],
+      ['Selling (pre-GST, Sales Report basis)', formatCurrency(summary.sellingSubtotal)],
       ['Dealer Costs / COGS (matched serials)', formatCurrency(summary.totalCogs)],
       ['Gross Profit (= Profit Analysis Report figure)', formatCurrency(summary.grossProfit)],
       ['', ''],
@@ -134,13 +148,13 @@ export async function exportToPdf(summary: ProfitSummary, dateLabel: string): Pr
     alternateRowStyles: { fillColor: [249, 250, 251] },
     columnStyles: { 1: { halign: 'right' } },
     didParseCell: (data) => {
-      // Gross Profit row (index 2) — green
-      if (data.row.index === 2 && data.section === 'body') {
+      // Gross Profit row — green
+      if (data.row.index === 3 && data.section === 'body') {
         data.cell.styles.textColor = [5, 150, 105];
         data.cell.styles.fontStyle = 'bold';
       }
-      // Net Profit row (index 9) — blue/red
-      if (data.row.index === 9 && data.section === 'body') {
+      // Net Profit row — blue/red
+      if (data.row.index === 11 && data.section === 'body') {
         const color: [number, number, number] =
           summary.netProfit >= 0 ? [37, 99, 235] : [225, 29, 72];
         data.cell.styles.textColor = color;
@@ -164,6 +178,7 @@ export async function exportToPdf(summary: ProfitSummary, dateLabel: string): Pr
       startY: y + 6,
       head: [[
         'Center',
+        'Selling',
         'Gross rev.',
         'Gross profit',
         'Salaries',
@@ -175,6 +190,7 @@ export async function exportToPdf(summary: ProfitSummary, dateLabel: string): Pr
       ]],
       body: summary.centerRows.map((r) => [
         r.centerName.length > 26 ? `${r.centerName.slice(0, 24)}…` : r.centerName,
+        formatCurrency(r.sellingSubtotal),
         formatCurrency(r.grossRevenue),
         formatCurrency(r.grossProfit),
         formatCurrency(r.salaries),
@@ -188,15 +204,16 @@ export async function exportToPdf(summary: ProfitSummary, dateLabel: string): Pr
       bodyStyles: { textColor: [17, 24, 39], fontSize: 7 },
       alternateRowStyles: { fillColor: [249, 250, 251] },
       columnStyles: {
-        0: { cellWidth: 36 },
-        1: { halign: 'right', cellWidth: 22 },
-        2: { halign: 'right', cellWidth: 22 },
+        0: { cellWidth: 32 },
+        1: { halign: 'right', cellWidth: 20 },
+        2: { halign: 'right', cellWidth: 20 },
         3: { halign: 'right', cellWidth: 20 },
         4: { halign: 'right', cellWidth: 18 },
-        5: { halign: 'right', cellWidth: 18 },
-        6: { halign: 'right', cellWidth: 18 },
-        7: { halign: 'right', cellWidth: 20 },
-        8: { halign: 'right', cellWidth: 20 },
+        5: { halign: 'right', cellWidth: 16 },
+        6: { halign: 'right', cellWidth: 16 },
+        7: { halign: 'right', cellWidth: 16 },
+        8: { halign: 'right', cellWidth: 18 },
+        9: { halign: 'right', cellWidth: 18 },
       },
       margin: { left: 14, right: 14 },
     });
@@ -214,12 +231,13 @@ export async function exportToPdf(summary: ProfitSummary, dateLabel: string): Pr
 
   autoTable(doc, {
     startY: breakdownStartY + 6,
-    head: [['Date', 'Description', 'Category', 'Type', 'Amount']],
+    head: [['Date', 'Description', 'Category', 'Type', 'Selling pre-GST', 'Grand total']],
     body: summary.breakdownRows.map((r) => [
       r.date,
       r.description.length > 40 ? r.description.substring(0, 38) + '…' : r.description,
       r.category,
       r.type === 'in' ? 'Inflow' : 'Outflow',
+      r.invoiceSubtotal != null ? formatCurrency(r.invoiceSubtotal) : '—',
       formatCurrency(r.amount),
     ]),
     headStyles: { fillColor: [17, 24, 39], textColor: [255, 255, 255], fontStyle: 'bold' },

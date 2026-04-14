@@ -18,6 +18,8 @@ export interface BreakdownRow {
   amount: number;
   reference?: string;
   centerName?: string;
+  /** Revenue rows: pre-GST invoice subtotal (same as Sales Report "selling") */
+  invoiceSubtotal?: number;
   /**
    * Internal grouping key for center-wise rollups: real Firestore center id when known,
    * else the same key used in `CenterProfitRow.rowKey` (e.g. orphan / unassigned).
@@ -33,6 +35,8 @@ export interface CenterProfitRow {
   centerId: string;
   centerName: string;
   grossRevenue: number;
+  /** Sum of invoice subtotals (pre-GST); matches Sales Report center-wise "selling". */
+  sellingSubtotal: number;
   grossProfit: number;
   salaries: number;
   fixedCosts: number;
@@ -45,6 +49,8 @@ export interface CenterProfitRow {
 export interface ProfitSummary {
   /** Top-line total of all invoiced sales in the period */
   grossRevenue: number;
+  /** Sum of pre-GST / taxable amounts (invoice subtotal) — same basis as Sales Report "selling" */
+  sellingSubtotal: number;
   /** Matched dealer/purchase costs for resolved serials */
   totalCogs: number;
   /** grossRevenue − totalCogs  (mirrors Profit Analysis report logic) */

@@ -295,6 +295,7 @@ export async function GET(req: Request) {
       category: 'Revenue',
       type: 'in',
       amount: r.grandTotal,
+      invoiceSubtotal: r.subtotal,
       reference: r.invoiceRef ?? undefined,
       centerName: r.centerName,
       profitCenterKey: r.profitCenterKey,
@@ -312,6 +313,7 @@ export async function GET(req: Request) {
 
     const summary: ProfitSummary = {
       grossRevenue: gp.grossRevenue,
+      sellingSubtotal: gp.sellingSubtotal,
       totalCogs: gp.dealerCostTotal,
       grossProfit: gp.profitTotal,
       totalSalaries: opex.totalSalaries,

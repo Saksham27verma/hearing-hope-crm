@@ -155,6 +155,8 @@ export type GrossProfitResult = {
   dealerCostTotal: number;
   /** Sum of invoice grand totals (informational, includes GST) */
   grossRevenue: number;
+  /** Sum of invoice subtotals (pre-GST) — Sales Report "selling" basis */
+  sellingSubtotal: number;
   resolvedCount: number;
   unresolvedCount: number;
   unresolvedSellingValue: number;
@@ -168,6 +170,8 @@ export type GrossProfitResult = {
     invoiceRef: string | null;
     centerName: string | undefined;
     grandTotal: number;
+    /** Pre-GST subtotal (Sales Report selling basis) */
+    subtotal: number;
     profitCenterKey: string;
     centerId: string;
   }>;
@@ -270,6 +274,7 @@ export function computeGrossProfit(params: {
   let unresolvedCount = 0;
   let unresolvedSellingValue = 0;
   let grossRevenue = 0;
+  let sellingSubtotal = 0;
 
   const saleRows: GrossProfitResult['saleRows'] = [];
   const grossByCenterKey = new Map<string, CenterGrossSlice>();
@@ -279,6 +284,7 @@ export function computeGrossProfit(params: {
     centerId: string,
     centerName: string,
     revenueDelta: number,
+    subtotalDelta: number,
     profitDelta: number,
   ) {
     let s = grossByCenterKey.get(rowKey);
@@ -288,11 +294,13 @@ export function computeGrossProfit(params: {
         centerId,
         centerName: centerName === '—' ? 'Unassigned' : centerName,
         grossRevenue: 0,
+        sellingSubtotal: 0,
         grossProfit: 0,
       };
       grossByCenterKey.set(rowKey, s);
     }
     s.grossRevenue += revenueDelta;
+    s.sellingSubtotal += subtotalDelta;
     s.grossProfit += profitDelta;
   }
 
@@ -305,10 +313,11 @@ export function computeGrossProfit(params: {
     if (!inRange(rec.date)) continue;
 
     grossRevenue += rec.total;
+    sellingSubtotal += rec.subtotal;
 
     const rowKey = profitRowMergeKey(rec.centerId, rec.centerKey);
     const displayName = rec.centerName === '—' ? 'Unassigned' : rec.centerName;
-    bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, rec.total, 0);
+    bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, rec.total, rec.subtotal, 0);
 
     // Add revenue row for breakdown table
     saleRows.push({
@@ -318,6 +327,7 @@ export function computeGrossProfit(params: {
       invoiceRef: rec.invoiceNumber,
       centerName: rec.centerName === '—' ? undefined : rec.centerName,
       grandTotal: rec.total,
+      subtotal: rec.subtotal,
       profitCenterKey: rowKey,
       centerId: (rec.centerId || '').trim(),
     });
@@ -346,7 +356,7 @@ export function computeGrossProfit(params: {
           sellingTotal += perSerialSelling;
           dealerCostTotal += dealer;
           resolvedCount++;
-          bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, 0, profit);
+          bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, 0, 0, profit);
           continue;
         }
 
@@ -367,7 +377,7 @@ export function computeGrossProfit(params: {
           sellingTotal += perSerialSelling;
           dealerCostTotal += resolved.dealerPrice;
           resolvedCount++;
-          bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, 0, p);
+          bumpCenter(rowKey, (rec.centerId || '').trim(), displayName, 0, 0, p);
         } else {
           unresolvedCount++;
           unresolvedSellingValue += perSerialSelling;
@@ -381,6 +391,7 @@ export function computeGrossProfit(params: {
     sellingTotal,
     dealerCostTotal,
     grossRevenue,
+    sellingSubtotal,
     resolvedCount,
     unresolvedCount,
     unresolvedSellingValue,
