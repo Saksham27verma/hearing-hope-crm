@@ -31,6 +31,8 @@ export interface UserProfile {
   centerIds?: string[] | null;
   /** Explicit super-admin flag; see `isSuperAdminViewer` in `@/lib/tenant/centerScope`. */
   isSuperAdmin?: boolean;
+  /** Optional user-specific ordering for top-level CRM sidebar modules. */
+  sidebarOrder?: string[];
 }
 
 // Auth context interface
@@ -75,7 +77,8 @@ function areUserProfilesEqual(a: UserProfile | null, b: UserProfile | null) {
     a.centerId === b.centerId &&
     a.isSuperAdmin === b.isSuperAdmin &&
     areStringArraysEqual(a.allowedModules, b.allowedModules) &&
-    areStringArraysEqual(a.centerIds, b.centerIds)
+    areStringArraysEqual(a.centerIds, b.centerIds) &&
+    areStringArraysEqual(a.sidebarOrder, b.sidebarOrder)
   );
 }
 

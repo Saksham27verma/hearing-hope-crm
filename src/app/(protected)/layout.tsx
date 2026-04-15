@@ -38,6 +38,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const redirectFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isDesktop, setIsDesktop] = useState(false);
   const [sidebarOrder, setSidebarOrder] = useState<string[]>([]);
+  const lastSyncedSidebarOrderRef = useRef<string>('');
 
   const shouldHideSidebar = pathname?.includes('/enquiries/new') || pathname?.includes('/enquiries/edit');
 
@@ -53,6 +54,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }, [userProfile?.role, user?.uid]);
 
   useEffect(() => {
+    const profileOrder = userProfile?.sidebarOrder;
+    if (Array.isArray(profileOrder) && profileOrder.length > 0) {
+      setSidebarOrder(profileOrder.filter((item): item is string => typeof item === 'string'));
+      return;
+    }
     if (typeof window === 'undefined') return;
     try {
       const raw = window.localStorage.getItem(sidebarOrderStorageKey);
@@ -69,7 +75,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     } catch {
       setSidebarOrder([]);
     }
-  }, [sidebarOrderStorageKey]);
+  }, [sidebarOrderStorageKey, userProfile?.sidebarOrder]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -85,6 +91,40 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     }
     window.localStorage.setItem(sidebarOrderStorageKey, JSON.stringify(merged));
   }, [baseVisibleNav, sidebarOrder, sidebarOrderStorageKey]);
+
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) return;
+    if (sidebarOrder.length === 0) return;
+
+    const profileOrder = Array.isArray(userProfile?.sidebarOrder) ? userProfile.sidebarOrder : [];
+    const profileSignature = profileOrder.join('|');
+    const nextSignature = sidebarOrder.join('|');
+    if (nextSignature === profileSignature) {
+      lastSyncedSidebarOrderRef.current = nextSignature;
+      return;
+    }
+    if (lastSyncedSidebarOrderRef.current === nextSignature) return;
+
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const { db } = await import('@/firebase/config');
+          if (!db) return;
+          const { doc, updateDoc } = await import('firebase/firestore');
+          await updateDoc(doc(db, 'users', uid), {
+            sidebarOrder,
+            updatedAt: Date.now(),
+          });
+          lastSyncedSidebarOrderRef.current = nextSignature;
+        } catch (syncError) {
+          console.warn('Failed to save sidebar order for user:', syncError);
+        }
+      })();
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [sidebarOrder, user?.uid, userProfile?.sidebarOrder]);
 
   const visibleNav = useMemo(() => {
     if (sidebarOrder.length === 0) return baseVisibleNav;
