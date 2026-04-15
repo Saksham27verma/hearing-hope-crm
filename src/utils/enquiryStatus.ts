@@ -3,6 +3,7 @@ export type EnquiryJourneyStatus =
   | 'ent'
   | 'tests_only'
   | 'accessory'
+  | 'programming'
   | 'repair'
   | 'in_trial'
   | 'booked'
@@ -28,6 +29,7 @@ export const ENQUIRY_STATUS_OPTIONS: Array<{ value: EnquiryJourneyStatus; label:
   { value: 'ent', label: 'ENT' },
   { value: 'tests_only', label: 'Tests only' },
   { value: 'accessory', label: 'Accessory' },
+  { value: 'programming', label: 'Programming' },
   { value: 'repair', label: 'Repair' },
   { value: 'in_trial', label: 'In Trial' },
   { value: 'booked', label: 'Booked' },
@@ -52,6 +54,7 @@ const JOURNEY_META: Record<
   ent: { label: 'ENT', color: 'secondary' },
   tests_only: { label: 'Tests only', color: 'info' },
   accessory: { label: 'Accessory', color: 'secondary' },
+  programming: { label: 'Programming', color: 'secondary' },
   repair: { label: 'Repair', color: 'secondary' },
   in_trial: { label: 'In Trial', color: 'warning' },
   booked: { label: 'Booked', color: 'primary' },
@@ -171,6 +174,7 @@ const RANK = {
   ent: 26,
   tests_only: 28,
   accessory: 30,
+  programming: 31,
   repair: 32,
   in_trial: 35,
   booked: 45,
@@ -184,6 +188,7 @@ const rankToKey = (rank: number): EnquiryJourneyStatus => {
   if (rank >= RANK.booked) return 'booked';
   if (rank >= RANK.in_trial) return 'in_trial';
   if (rank >= RANK.repair) return 'repair';
+  if (rank >= RANK.programming) return 'programming';
   if (rank >= RANK.accessory) return 'accessory';
   if (rank >= RANK.tests_only) return 'tests_only';
   if (rank >= RANK.ent) return 'ent';
@@ -256,6 +261,28 @@ const isAccessoryOnlyVisit = (raw: any): boolean => {
   return other.length === 0;
 };
 
+/** Programming-only visit — no HA/test/accessory/repair/counselling/sales-return signals. */
+const isProgrammingOnlyVisit = (raw: any): boolean => {
+  const v = expandVisitForJourney(raw);
+  if (!Boolean(raw?.programming)) return false;
+  if (
+    v.hearingAidSale ||
+    v.purchaseFromTrial ||
+    v.hearingAidBooked ||
+    v.hearingAidTrial ||
+    v.trialGiven ||
+    v.hearingTest
+  ) {
+    return false;
+  }
+  if (raw.accessory || raw.repair || raw.counselling || raw.salesReturn) {
+    return false;
+  }
+  const ms = Array.isArray(raw.medicalServices) ? raw.medicalServices : [];
+  const other = ms.filter((s: string) => s !== 'programming');
+  return other.length === 0;
+};
+
 const deriveVisitRank = (raw: any): number => {
   const v = expandVisitForJourney(raw);
 
@@ -304,6 +331,10 @@ const deriveVisitRank = (raw: any): number => {
 
   if (isAccessoryOnlyVisit(raw)) {
     return RANK.accessory;
+  }
+
+  if (isProgrammingOnlyVisit(raw)) {
+    return RANK.programming;
   }
 
   const ms = Array.isArray(raw?.medicalServices) ? raw.medicalServices : [];

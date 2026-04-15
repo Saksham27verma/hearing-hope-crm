@@ -90,14 +90,42 @@ function getSchedules(enquiry: any): any[] {
   return [];
 }
 
+function toTime(value: unknown): number {
+  if (value == null) return Number.NaN;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : Number.NaN;
+  const s = String(value).trim();
+  if (!s) return Number.NaN;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : Number.NaN;
+}
+
+function formatDateDisplay(value: string | null): string {
+  if (!value) return '—';
+  const t = toTime(value);
+  if (Number.isFinite(t)) {
+    return new Date(t).toLocaleDateString();
+  }
+  return value;
+}
+
 function getLastVisitDate(enquiry: any): string | null {
   const schedules = getSchedules(enquiry);
-  let max = '';
+  let maxRaw = '';
+  let maxTime = Number.NEGATIVE_INFINITY;
   for (const v of schedules) {
     const d = String(v?.visitDate || v?.date || '').trim();
-    if (d && d > max) max = d;
+    if (!d) continue;
+    const t = toTime(d);
+    if (Number.isFinite(t)) {
+      if (t > maxTime) {
+        maxTime = t;
+        maxRaw = d;
+      }
+      continue;
+    }
+    if (!maxRaw || d > maxRaw) maxRaw = d;
   }
-  return max || null;
+  return maxRaw || null;
 }
 
 /** Notes from the most recent visit (by visit date string). */
@@ -790,8 +818,12 @@ export default function InProcessEnquiriesReportTab() {
                         </Typography>
                       </Box>
                     </TableCell>
-                    <TableCell sx={{ verticalAlign: 'top' }}>{r.nextFollowUp || '—'}</TableCell>
-                    <TableCell sx={{ verticalAlign: 'top' }}>{r.lastVisit || '—'}</TableCell>
+                    <TableCell sx={{ verticalAlign: 'top' }}>
+                      {formatDateDisplay(r.nextFollowUp)}
+                    </TableCell>
+                    <TableCell sx={{ verticalAlign: 'top' }}>
+                      {formatDateDisplay(r.lastVisit)}
+                    </TableCell>
                     <TableCell sx={{ verticalAlign: 'top' }}>{r.assignedTo || '—'}</TableCell>
                     <TableCell sx={{ wordBreak: 'break-word', verticalAlign: 'top' }}>
                       {r.center || '—'}
