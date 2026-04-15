@@ -89,7 +89,11 @@ export function groupActiveStaffByJobRole(staffList: StaffRecord[]): Record<stri
 
 /** Names already on the enquiry so dropdowns stay correct even if staff query is empty. */
 export function collectTelecallerExtrasFromEnquiry(
-  enquiry: { telecaller?: string; followUps?: { callerName?: string }[] } | null | undefined
+  enquiry: {
+    telecaller?: string;
+    assignedTo?: string;
+    followUps?: { callerName?: string }[];
+  } | null | undefined
 ): string[] {
   if (!enquiry) return [];
   const out: string[] = [];
@@ -98,7 +102,31 @@ export function collectTelecallerExtrasFromEnquiry(
     if (t && !out.includes(t)) out.push(t);
   };
   add(enquiry.telecaller);
+  add(enquiry.assignedTo);
   (enquiry.followUps || []).forEach((f) => add(f?.callerName));
+  return out;
+}
+
+/**
+ * All unique active staff names (sorted), plus any extra names (e.g. enquiry telecaller not in staff).
+ * Use for Telecalling Records "log call" so every Manager, Telecaller, and other active staff appear.
+ */
+export function getAllActiveStaffDisplayNames(
+  staffList: StaffRecord[],
+  extraNames: (string | null | undefined)[] = []
+): string[] {
+  const active = staffList.filter((s) => (s.status || 'active') === 'active');
+  const fromStaff = active
+    .map((s) => String(s.name || '').trim())
+    .filter((n) => n && !isGenericLoginDisplayName(n));
+  const uniqueStaff = [...new Set(fromStaff)].sort((a, b) => a.localeCompare(b));
+  const extras = extraNames
+    .map((n) => String(n || '').trim())
+    .filter((n) => n && !isGenericLoginDisplayName(n));
+  const out = [...uniqueStaff];
+  extras.forEach((n) => {
+    if (!out.includes(n)) out.unshift(n);
+  });
   return out;
 }
 

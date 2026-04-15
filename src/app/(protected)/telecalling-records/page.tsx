@@ -32,27 +32,48 @@ import {
   TablePagination,
   CircularProgress,
   Alert,
-  Tooltip
+  Tooltip,
+  Drawer,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Snackbar,
 } from '@mui/material';
+import type { ChipProps } from '@mui/material/Chip';
+import MuiLink from '@mui/material/Link';
+import { alpha } from '@mui/material/styles';
+import Link from 'next/link';
 import {
   Search as SearchIcon,
-  FilterList as FilterIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   Phone as PhoneIcon,
   Person as PersonIcon,
   CalendarToday as CalendarIcon,
   Schedule as ScheduleIcon,
-  Notes as NotesIcon,
   Refresh as RefreshIcon,
-  GetApp as ExportIcon
+  GetApp as ExportIcon,
+  Visibility as PreviewIcon,
+  Add as AddIcon,
+  OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, getDoc, query, orderBy, updateDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { format, parseISO, isWithinInterval } from 'date-fns';
+import { useAuth } from '@/context/AuthContext';
+import { logActivity } from '@/lib/activityLogger';
+import { getEnquiryStatusMeta, type EnquiryStatusChipColor } from '@/utils/enquiryStatus';
+import {
+  getAllActiveStaffDisplayNames,
+  collectTelecallerExtrasFromEnquiry,
+  pickDefaultTelecallerName,
+  type StaffRecord,
+} from '@/utils/enquiryTelecallerOptions';
+import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 
 interface FollowUp {
   id: string;
@@ -69,13 +90,31 @@ interface FollowUp {
 interface Enquiry {
   id?: string;
   name?: string;
+  customerName?: string;
   phone?: string;
   email?: string;
   address?: string;
   subject?: string;
+  message?: string;
+  notes?: string;
   status?: string;
   assignedTo?: string;
   telecaller?: string;
+  center?: string;
+  visitingCenter?: string;
+  reference?: string | string[];
+  journeyStatusOverride?: string | null;
+  enquiryType?: string;
+  source?: string;
+  priority?: string;
+  visitorType?: string;
+  companyName?: string;
+  contactPerson?: string;
+  purposeOfVisit?: string;
+  visits?: unknown[];
+  visitSchedules?: unknown[];
+  financialSummary?: { paymentStatus?: string; totalDue?: number };
+  leadOutcome?: string;
   /** Patient information section — optional scheduled follow-up (YYYY-MM-DD). */
   followUpDate?: string;
   followUps?: FollowUp[];
@@ -91,6 +130,15 @@ interface TelecallingRecord {
   enquiryEmail?: string;
   enquirySubject?: string;
   assignedTo?: string;
+  /** Reference(s) from enquiry — shown on row and in preview */
+  referenceList: string[];
+  /** Journey status label (CRM parity with enquiries list) */
+  journeyLabel: string;
+  journeyChipColor: EnquiryStatusChipColor;
+  journeySource: 'manual' | 'auto';
+  centerLabel?: string;
+  /** Total follow-up rows on this enquiry (for context) */
+  totalFollowUpsOnEnquiry: number;
   followUpId: string;
   followUpDate: string;
   telecaller: string;
@@ -99,6 +147,60 @@ interface TelecallingRecord {
   createdAt: Date;
   /** Logged call vs date-only from enquiry patient section */
   recordSource?: 'followup_log' | 'patient_info';
+}
+
+function refList(ref: Enquiry['reference']): string[] {
+  if (Array.isArray(ref)) return ref.filter(Boolean).map(String);
+  if (ref) return [String(ref)];
+  return [];
+}
+
+function chipColor(color: EnquiryStatusChipColor): ChipProps['color'] {
+  return color;
+}
+
+function resolveCenterDisplay(centerId: string | undefined, map: Record<string, string>): string | undefined {
+  const id = (centerId || '').trim();
+  if (!id) return undefined;
+  return map[id] || id;
+}
+
+function formatFirestoreTimestamp(value: unknown): string {
+  if (value == null) return '—';
+  if (typeof value === 'object' && value !== null && 'toDate' in value && typeof (value as { toDate: () => Date }).toDate === 'function') {
+    try {
+      return (value as { toDate: () => Date }).toDate().toLocaleString();
+    } catch {
+      return '—';
+    }
+  }
+  const sec = (value as { seconds?: number })?.seconds;
+  if (typeof sec === 'number') return new Date(sec * 1000).toLocaleString();
+  return '—';
+}
+
+function previewString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') {
+    const t = value.trim();
+    return t || undefined;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return undefined;
+}
+
+function PreviewDetailRow({ label, value }: { label: string; value: string | undefined }) {
+  if (!value) return null;
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary" fontWeight={700}>
+        {label}
+      </Typography>
+      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        {value}
+      </Typography>
+    </Box>
+  );
 }
 
 function normalizeYmd(raw: string | undefined): string {
@@ -120,10 +222,30 @@ function firestoreTimeToDate(data: Enquiry): Date {
 
 export default function TelecallingRecordsPage() {
   const searchParams = useSearchParams();
+  const { user, userProfile } = useAuth();
   const [records, setRecords] = useState<TelecallingRecord[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<TelecallingRecord[]>([]);
+  const [enquiryById, setEnquiryById] = useState<Record<string, Record<string, unknown>>>({});
+  const [staffList, setStaffList] = useState<StaffRecord[]>([]);
+  const [centerIdToName, setCenterIdToName] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [previewEnquiryId, setPreviewEnquiryId] = useState<string | null>(null);
+  const [logEnquiryId, setLogEnquiryId] = useState<string | null>(null);
+  const [addFollowUpSaving, setAddFollowUpSaving] = useState(false);
+  const [telecallerDialogOptions, setTelecallerDialogOptions] = useState<string[]>([]);
+  const [newFollowUp, setNewFollowUp] = useState({
+    date: '',
+    remarks: '',
+    nextFollowUpDate: '',
+    callerName: '',
+  });
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
@@ -166,6 +288,42 @@ export default function TelecallingRecordsPage() {
     }
   }, [searchParams]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await fetchStaffRecordsWithServerFallback();
+        if (!cancelled) setStaffList(list);
+      } catch (e) {
+        console.error('Error fetching staff for telecalling log dialog:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!logEnquiryId) return;
+    const snap = enquiryById[logEnquiryId] as Enquiry | undefined;
+    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const options = getAllActiveStaffDisplayNames(staffList, [
+      ...collectTelecallerExtrasFromEnquiry(snap ?? null),
+      userProfile?.displayName,
+    ]);
+    setTelecallerDialogOptions(options);
+    const callerName = pickDefaultTelecallerName(options, {
+      displayName: userProfile?.displayName,
+      enquiryTelecaller: snap?.telecaller,
+    });
+    setNewFollowUp({
+      date: new Date().toISOString().split('T')[0],
+      remarks: '',
+      nextFollowUpDate: nextWeek,
+      callerName,
+    });
+  }, [logEnquiryId, staffList, enquiryById, userProfile?.displayName]);
+
   // Fetch data
   const fetchTelecallingRecords = async () => {
     try {
@@ -173,6 +331,18 @@ export default function TelecallingRecordsPage() {
       setError(null);
 
       // console.log('Fetching telecalling records...');
+
+      const centerMap: Record<string, string> = {};
+      try {
+        const centersSnap = await getDocs(query(collection(db, 'centers'), orderBy('name')));
+        centersSnap.forEach((cDoc) => {
+          const nm = (cDoc.data() as { name?: string }).name?.trim();
+          centerMap[cDoc.id] = nm || cDoc.id;
+        });
+      } catch (centersErr) {
+        console.warn('Could not load centers for name resolution:', centersErr);
+      }
+      setCenterIdToName(centerMap);
 
       const enquiriesRef = collection(db, 'enquiries');
       let enquiriesSnapshot;
@@ -190,16 +360,33 @@ export default function TelecallingRecordsPage() {
       // console.log(`Found ${enquiriesSnapshot.docs.length} enquiries`);
 
       const allRecords: TelecallingRecord[] = [];
+      const nextSnapshots: Record<string, Record<string, unknown>> = {};
 
-      enquiriesSnapshot.forEach((doc) => {
+      enquiriesSnapshot.forEach((docSnap) => {
         try {
-          const enquiryData = doc.data() as Enquiry;
-          const enquiryId = doc.id;
+          const enquiryData = docSnap.data() as Enquiry;
+          const enquiryId = docSnap.id;
+          const rawForStatus = { ...enquiryData, id: enquiryId } as Record<string, unknown>;
+          nextSnapshots[enquiryId] = rawForStatus;
 
-          // console.log(`Processing enquiry ${enquiryId}:`, {
-          //   name: enquiryData.name,
-          //   followUpsCount: enquiryData.followUps?.length || 0
-          // });
+          const statusMeta = getEnquiryStatusMeta(rawForStatus);
+          const referenceList = refList(enquiryData.reference);
+          const totalFu = Array.isArray(enquiryData.followUps) ? enquiryData.followUps.length : 0;
+          const centerId = (enquiryData.visitingCenter || enquiryData.center || '').trim();
+          const centerLabel = centerId ? resolveCenterDisplay(centerId, centerMap) : undefined;
+          const subjectLine =
+            (enquiryData.subject && String(enquiryData.subject).trim()) ||
+            (enquiryData.message && String(enquiryData.message).trim()) ||
+            '';
+
+          const rowContext = {
+            referenceList,
+            journeyLabel: statusMeta.label,
+            journeyChipColor: statusMeta.color,
+            journeySource: statusMeta.source,
+            centerLabel,
+            totalFollowUpsOnEnquiry: totalFu,
+          };
 
           if (enquiryData.followUps && Array.isArray(enquiryData.followUps) && enquiryData.followUps.length > 0) {
             enquiryData.followUps.forEach((followUp, index) => {
@@ -210,8 +397,7 @@ export default function TelecallingRecordsPage() {
                   if (typeof followUp.createdAt === 'object' && 'seconds' in followUp.createdAt) {
                     createdAtDate = new Date(followUp.createdAt.seconds * 1000);
                   } else {
-                    // Handle other timestamp formats
-                    createdAtDate = new Date(followUp.createdAt as any);
+                    createdAtDate = new Date(followUp.createdAt as string | number | Date);
                   }
                 }
 
@@ -221,11 +407,14 @@ export default function TelecallingRecordsPage() {
                   enquiryName: enquiryData.name || 'Unknown',
                   enquiryPhone: enquiryData.phone || '',
                   enquiryEmail: enquiryData.email || '',
-                  enquirySubject: enquiryData.subject || '',
+                  enquirySubject: subjectLine,
                   assignedTo: enquiryData.assignedTo || '',
+                  ...rowContext,
                   followUpId: followUp.id || `followup_${index}`,
                   followUpDate: followUp.date || '',
-                  telecaller: followUp.callerName || 'Unknown',
+                  telecaller:
+                    (followUp.callerName || enquiryData.telecaller || enquiryData.assignedTo || 'Unknown').trim() ||
+                    'Unknown',
                   remarks: followUp.remarks || '',
                   nextFollowUpDate: followUp.nextFollowUpDate || '',
                   createdAt: createdAtDate,
@@ -233,7 +422,6 @@ export default function TelecallingRecordsPage() {
                 };
 
                 allRecords.push(record);
-                // console.log(`Added follow-up record:`, record);
               } catch (followUpError) {
                 console.error(`Error processing follow-up ${index} for enquiry ${enquiryId}:`, followUpError);
               }
@@ -253,8 +441,10 @@ export default function TelecallingRecordsPage() {
                 enquiryName: enquiryData.name || 'Unknown',
                 enquiryPhone: enquiryData.phone || '',
                 enquiryEmail: enquiryData.email || '',
-                enquirySubject: enquiryData.subject || '',
+                enquirySubject: subjectLine,
                 assignedTo: enquiryData.assignedTo || '',
+                ...rowContext,
+                totalFollowUpsOnEnquiry: totalFu,
                 followUpId: 'patient_followup_info',
                 followUpDate: '',
                 telecaller: (enquiryData.telecaller || enquiryData.assignedTo || 'Unassigned').trim() || 'Unassigned',
@@ -266,15 +456,14 @@ export default function TelecallingRecordsPage() {
             }
           }
         } catch (docError) {
-          console.error(`Error processing enquiry document ${doc.id}:`, docError);
+          console.error(`Error processing enquiry document ${docSnap.id}:`, docError);
         }
       });
-
-      // console.log(`Total records processed: ${allRecords.length}`);
 
       // Sort by created date (most recent first)
       allRecords.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
+      setEnquiryById(nextSnapshots);
       setRecords(allRecords);
     } catch (err) {
       console.error('Error fetching telecalling records:', err);
@@ -356,14 +545,21 @@ export default function TelecallingRecordsPage() {
     // Search filter
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(record =>
-        record.enquiryName.toLowerCase().includes(term) ||
-        record.enquiryPhone.includes(term) ||
-        record.telecaller.toLowerCase().includes(term) ||
-        record.remarks.toLowerCase().includes(term) ||
-        record.enquirySubject?.toLowerCase().includes(term) ||
-        record.enquiryEmail?.toLowerCase().includes(term)
-      );
+      filtered = filtered.filter((record) => {
+        const refHay = record.referenceList.join(' ').toLowerCase();
+        return (
+          record.enquiryName.toLowerCase().includes(term) ||
+          record.enquiryPhone.includes(term) ||
+          record.telecaller.toLowerCase().includes(term) ||
+          record.remarks.toLowerCase().includes(term) ||
+          record.enquirySubject?.toLowerCase().includes(term) ||
+          record.enquiryEmail?.toLowerCase().includes(term) ||
+          (record.assignedTo || '').toLowerCase().includes(term) ||
+          record.journeyLabel.toLowerCase().includes(term) ||
+          refHay.includes(term) ||
+          (record.centerLabel || '').toLowerCase().includes(term)
+        );
+      });
     }
 
     // Telecaller filter
@@ -424,6 +620,97 @@ export default function TelecallingRecordsPage() {
     setNextFollowUpDateTo(null);
   };
 
+  const openLogCallDialog = (enquiryId: string) => {
+    setLogEnquiryId(enquiryId);
+  };
+
+  const handleSaveFollowUpFromTelecalling = async () => {
+    if (!logEnquiryId) return;
+    if (!newFollowUp.callerName.trim()) {
+      setSnackbar({
+        open: true,
+        message: 'Select who made the call (telecaller).',
+        severity: 'error',
+      });
+      return;
+    }
+    setAddFollowUpSaving(true);
+    try {
+      const ref = doc(db, 'enquiries', logEnquiryId);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        throw new Error('Enquiry not found');
+      }
+      const data = snap.data() as Enquiry;
+      const prev = Array.isArray(data.followUps) ? data.followUps : [];
+      const followUpData = {
+        ...newFollowUp,
+        id:
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `fu-${Date.now()}`,
+        createdAt: Timestamp.now(),
+      };
+      const updated = [...prev, followUpData];
+      await updateDoc(ref, { followUps: updated });
+      const entityName = data.name || data.phone || 'Enquiry';
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'FOLLOW_UP',
+        module: 'Telecalling',
+        entityId: logEnquiryId,
+        entityName,
+        description: `Telecall logged from Telecalling Records by ${newFollowUp.callerName || 'staff'}${newFollowUp.remarks ? ` — "${newFollowUp.remarks}"` : ''}`,
+        changes: {
+          followUp: {
+            before: null,
+            after: {
+              callerName: newFollowUp.callerName,
+              date: newFollowUp.date,
+              remarks: newFollowUp.remarks,
+              nextFollowUpDate: newFollowUp.nextFollowUpDate,
+            },
+          },
+        },
+        metadata: {
+          callerName: newFollowUp.callerName,
+          remarks: newFollowUp.remarks,
+          nextFollowUpDate: newFollowUp.nextFollowUpDate,
+        },
+      }, user);
+      setSnackbar({ open: true, message: 'Call logged successfully', severity: 'success' });
+      setLogEnquiryId(null);
+      await fetchTelecallingRecords();
+    } catch (err) {
+      console.error(err);
+      setSnackbar({
+        open: true,
+        message: err instanceof Error ? err.message : 'Could not save call',
+        severity: 'error',
+      });
+    } finally {
+      setAddFollowUpSaving(false);
+    }
+  };
+
+  const previewSnapshot = previewEnquiryId ? enquiryById[previewEnquiryId] : null;
+  const previewEnquiryTyped = previewSnapshot as Enquiry | undefined;
+  const previewStatus = previewSnapshot ? getEnquiryStatusMeta(previewSnapshot) : null;
+  const previewFollowUpsSorted = useMemo(() => {
+    const list = Array.isArray(previewEnquiryTyped?.followUps) ? [...previewEnquiryTyped.followUps] : [];
+    list.sort((a, b) => {
+      const ta = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : new Date(a.date || 0).getTime();
+      const tb = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : new Date(b.date || 0).getTime();
+      return tb - ta;
+    });
+    return list;
+  }, [previewEnquiryTyped]);
+
+  const formatFollowUpDateCell = (value: string | undefined) => {
+    if (!value) return '—';
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+  };
+
   // Quick filter options
   const quickFilterOptions = [
     { label: 'All Calls', value: '', color: 'default' },
@@ -465,17 +752,31 @@ export default function TelecallingRecordsPage() {
     );
   }
 
+  const logSnap = logEnquiryId ? (enquiryById[logEnquiryId] as Enquiry | undefined) : undefined;
+  const logMeta =
+    logSnap && logEnquiryId ? getEnquiryStatusMeta({ ...logSnap, id: logEnquiryId } as Record<string, unknown>) : null;
+
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+      <Box
+        sx={{
+          minHeight: '100vh',
+          background: (theme) =>
+            `linear-gradient(165deg, ${theme.palette.grey[50]} 0%, ${alpha(theme.palette.primary.main, 0.06)} 40%, ${theme.palette.background.default} 100%)`,
+        }}
+      >
+      <Container maxWidth="xl" sx={{ pt: 4, pb: 4 }}>
         {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3, flexWrap: 'wrap', gap: 2 }}>
           <Box>
-            <Typography variant="h4" component="h1" gutterBottom>
+            <Typography variant="overline" sx={{ color: 'primary.main', fontWeight: 700, letterSpacing: 1.2 }}>
+              Operations
+            </Typography>
+            <Typography variant="h4" component="h1" fontWeight={800} sx={{ letterSpacing: -0.5 }}>
               Telecalling Records
             </Typography>
-            <Typography variant="body1" color="text.secondary">
-              Follow-up calls from enquiry logs and scheduled follow-up dates from patient information
+            <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 560, mt: 0.5 }}>
+              Follow-up history with patient context, references, journey status, quick profile preview, and inline call logging
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', gap: 2 }}>
@@ -515,7 +816,7 @@ export default function TelecallingRecordsPage() {
             No telecalling records found. This could mean:
             <ul style={{ margin: '8px 0', paddingLeft: '20px' }}>
               <li>No enquiries have follow-ups yet</li>
-              <li>Follow-ups exist but don't have the expected data structure</li>
+              <li>Follow-ups exist but do not have the expected data structure</li>
               <li>Database connection issues</li>
             </ul>
           </Alert>
@@ -524,7 +825,7 @@ export default function TelecallingRecordsPage() {
         {/* Summary Cards */}
         <Grid container spacing={3} sx={{ mb: 3 }}>
           <Grid item xs={12} sm={6} md={3}>
-            <Card>
+            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
               <CardContent>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'primary.main' }}>
@@ -543,7 +844,7 @@ export default function TelecallingRecordsPage() {
             </Card>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Card>
+            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
               <CardContent>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'secondary.main' }}>
@@ -562,7 +863,7 @@ export default function TelecallingRecordsPage() {
             </Card>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Card>
+            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
               <CardContent>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'success.main' }}>
@@ -587,7 +888,7 @@ export default function TelecallingRecordsPage() {
             </Card>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Card>
+            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
               <CardContent>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'warning.main' }}>
@@ -614,8 +915,8 @@ export default function TelecallingRecordsPage() {
         </Grid>
 
         {/* Quick Filters */}
-        <Paper sx={{ p: 2, mb: 2 }}>
-          <Typography variant="h6" sx={{ mb: 2 }}>
+        <Paper sx={{ p: 2, mb: 2, borderRadius: 3, border: 1, borderColor: 'divider' }}>
+          <Typography variant="h6" sx={{ mb: 2 }} fontWeight={700}>
             Quick Filters
           </Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
@@ -623,7 +924,7 @@ export default function TelecallingRecordsPage() {
               <Chip
                 key={option.value}
                 label={option.label}
-                color={quickFilter === option.value ? option.color as any : 'default'}
+                color={quickFilter === option.value ? (option.color as ChipProps['color']) : 'default'}
                 variant={quickFilter === option.value ? 'filled' : 'outlined'}
                 onClick={() => {
                   setQuickFilter(option.value);
@@ -651,9 +952,9 @@ export default function TelecallingRecordsPage() {
         </Paper>
 
         {/* Advanced Filters */}
-        <Paper sx={{ p: 2, mb: 3 }}>
+        <Paper sx={{ p: 2, mb: 3, borderRadius: 3, border: 1, borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">
+            <Typography variant="h6" fontWeight={700}>
               Advanced Filters
             </Typography>
             <Box sx={{ display: 'flex', gap: 1 }}>
@@ -673,7 +974,7 @@ export default function TelecallingRecordsPage() {
           <TextField
             fullWidth
             variant="outlined"
-            placeholder="Search by name, phone, telecaller, remarks, or subject..."
+            placeholder="Search patient, phone, reference, journey status, telecaller, remarks, center…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             InputProps={{
@@ -748,17 +1049,20 @@ export default function TelecallingRecordsPage() {
         </Paper>
 
         {/* Results Table */}
-        <Paper sx={{ width: '100%', overflow: 'hidden' }}>
+        <Paper sx={{ width: '100%', overflow: 'hidden', borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
           <TableContainer sx={{ maxHeight: '70vh' }}>
-            <Table stickyHeader>
+            <Table stickyHeader size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Enquiry Details</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Follow-up Date</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Telecaller</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Remarks</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Next Follow-up</TableCell>
-                  <TableCell sx={{ fontWeight: 'bold' }}>Created At</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Patient</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Reference</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Journey</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Follow-up Date</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Telecaller</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Remarks</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Next Follow-up</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Created At</TableCell>
+                  <TableCell align="right" sx={{ fontWeight: 700 }}>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -767,12 +1071,17 @@ export default function TelecallingRecordsPage() {
                     <TableCell>
                       <Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
                             {record.enquiryName}
                           </Typography>
                           {record.recordSource === 'patient_info' ? (
                             <Chip size="small" label="Patient info follow-up" color="info" variant="outlined" />
                           ) : null}
+                          <Chip
+                            size="small"
+                            label={`${record.totalFollowUpsOnEnquiry} calls`}
+                            variant="outlined"
+                          />
                         </Box>
                         <Typography variant="body2" color="text.secondary">
                           {record.enquiryPhone}
@@ -782,12 +1091,33 @@ export default function TelecallingRecordsPage() {
                             {record.enquiryEmail}
                           </Typography>
                         )}
+                        {record.centerLabel ? (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Center: {record.centerLabel}
+                          </Typography>
+                        ) : null}
                         {record.enquirySubject && (
-                          <Typography variant="caption" color="text.secondary">
-                            Subject: {record.enquirySubject}
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {record.enquirySubject}
                           </Typography>
                         )}
                       </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ maxWidth: 220 }}>
+                        {record.referenceList.length === 0 ? (
+                          <Typography variant="caption" color="text.secondary">—</Typography>
+                        ) : (
+                          record.referenceList.map((ref) => (
+                            <Chip key={ref} size="small" label={ref} color="secondary" variant="outlined" />
+                          ))
+                        )}
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip title={record.journeySource === 'manual' ? 'Manual status from CRM' : 'Derived from enquiry journey'}>
+                        <Chip size="small" label={record.journeyLabel} color={chipColor(record.journeyChipColor)} />
+                      </Tooltip>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -846,6 +1176,42 @@ export default function TelecallingRecordsPage() {
                         {formatDateTime(record.createdAt)}
                       </Typography>
                     </TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap">
+                        <Tooltip title="Quick profile preview">
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            onClick={() => setPreviewEnquiryId(record.enquiryId)}
+                            aria-label="Preview patient"
+                          >
+                            <PreviewIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Log call">
+                          <IconButton
+                            size="small"
+                            color="secondary"
+                            onClick={() => openLogCallDialog(record.enquiryId)}
+                            aria-label="Log call"
+                          >
+                            <AddIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Open full enquiry">
+                          <IconButton
+                            size="small"
+                            component={Link}
+                            href={`/interaction/enquiries/${record.enquiryId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label="Open enquiry"
+                          >
+                            <OpenInNewIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -888,6 +1254,313 @@ export default function TelecallingRecordsPage() {
           </Box>
         )}
       </Container>
+
+      <Drawer
+        anchor="right"
+        open={Boolean(previewEnquiryId)}
+        onClose={() => setPreviewEnquiryId(null)}
+        PaperProps={{
+          sx: {
+            width: { xs: '100%', sm: 560 },
+            p: 0,
+            borderLeft: 1,
+            borderColor: 'divider',
+            background: (theme) => theme.palette.background.paper,
+          },
+        }}
+      >
+        {previewEnquiryId && previewSnapshot ? (
+          <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            <Box
+              sx={{
+                p: 2.5,
+                background: (theme) =>
+                  `linear-gradient(135deg, ${theme.palette.primary.main}14 0%, ${theme.palette.secondary.main}10 100%)`,
+                borderBottom: 1,
+                borderColor: 'divider',
+              }}
+            >
+              <Typography variant="overline" color="primary" fontWeight={700}>
+                Patient profile
+              </Typography>
+              <Typography variant="h6" fontWeight={800} sx={{ mt: 0.5 }}>
+                {(previewEnquiryTyped?.name as string) || 'Patient'}
+              </Typography>
+              {previewEnquiryTyped?.customerName &&
+              previewString(previewEnquiryTyped.customerName) !== previewString(previewEnquiryTyped.name) ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                  Customer: {previewEnquiryTyped.customerName}
+                </Typography>
+              ) : null}
+              <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5 }}>
+                {previewStatus ? (
+                  <Chip
+                    size="small"
+                    label={previewStatus.label}
+                    color={chipColor(previewStatus.color)}
+                    title={previewStatus.source === 'manual' ? 'Manual status' : 'Derived status'}
+                  />
+                ) : null}
+                {refList(previewEnquiryTyped?.reference).map((ref) => (
+                  <Chip key={ref} size="small" label={ref} variant="outlined" color="secondary" />
+                ))}
+              </Stack>
+            </Box>
+            <Box sx={{ p: 2.5, flex: 1, overflow: 'auto' }}>
+              <Stack spacing={2}>
+                <PreviewDetailRow label="Enquiry ID" value={previewEnquiryId} />
+                {previewEnquiryTyped?.phone ? (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={700}>
+                      Phone
+                    </Typography>
+                    <Typography variant="body2">
+                      <MuiLink
+                        href={`tel:${String(previewEnquiryTyped.phone).replace(/\D/g, '')}`}
+                        underline="hover"
+                      >
+                        {previewEnquiryTyped.phone}
+                      </MuiLink>
+                    </Typography>
+                  </Box>
+                ) : null}
+                <PreviewDetailRow label="Email" value={previewString(previewEnquiryTyped?.email)} />
+                <PreviewDetailRow label="Address" value={previewString(previewEnquiryTyped?.address)} />
+                {(() => {
+                  const cid = (previewEnquiryTyped?.visitingCenter || previewEnquiryTyped?.center || '').trim();
+                  if (!cid) return null;
+                  const display = resolveCenterDisplay(cid, centerIdToName) || cid;
+                  return (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" fontWeight={700}>
+                        Center
+                      </Typography>
+                      <Typography variant="body2">{display}</Typography>
+                      {display !== cid ? (
+                        <Typography variant="caption" color="text.secondary">
+                          ID: {cid}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  );
+                })()}
+                <PreviewDetailRow label="Assigned to" value={previewString(previewEnquiryTyped?.assignedTo)} />
+                <PreviewDetailRow label="Telecaller" value={previewString(previewEnquiryTyped?.telecaller)} />
+                <PreviewDetailRow label="Subject" value={previewString(previewEnquiryTyped?.subject)} />
+                <PreviewDetailRow label="Message" value={previewString(previewEnquiryTyped?.message)} />
+                <PreviewDetailRow label="Notes" value={previewString(previewEnquiryTyped?.notes)} />
+                <PreviewDetailRow label="Enquiry type" value={previewString(previewEnquiryTyped?.enquiryType)} />
+                <PreviewDetailRow label="Source" value={previewString(previewEnquiryTyped?.source)} />
+                <PreviewDetailRow label="Priority" value={previewString(previewEnquiryTyped?.priority)} />
+                <PreviewDetailRow label="Status (legacy)" value={previewString(previewEnquiryTyped?.status)} />
+                <PreviewDetailRow label="Visitor type" value={previewString(previewEnquiryTyped?.visitorType)} />
+                <PreviewDetailRow label="Company" value={previewString(previewEnquiryTyped?.companyName)} />
+                <PreviewDetailRow label="Contact person" value={previewString(previewEnquiryTyped?.contactPerson)} />
+                <PreviewDetailRow label="Purpose of visit" value={previewString(previewEnquiryTyped?.purposeOfVisit)} />
+                <PreviewDetailRow
+                  label="Patient follow-up date"
+                  value={previewString(previewEnquiryTyped?.followUpDate)}
+                />
+                <PreviewDetailRow label="Lead outcome" value={previewString(previewEnquiryTyped?.leadOutcome)} />
+                {previewEnquiryTyped?.financialSummary ? (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={700}>
+                      Financial summary
+                    </Typography>
+                    <Typography variant="body2">
+                      {[
+                        previewEnquiryTyped.financialSummary.paymentStatus
+                          ? `Payment: ${previewEnquiryTyped.financialSummary.paymentStatus}`
+                          : null,
+                        previewEnquiryTyped.financialSummary.totalDue != null
+                          ? `Total due: ${previewEnquiryTyped.financialSummary.totalDue}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || '—'}
+                    </Typography>
+                  </Box>
+                ) : null}
+                <PreviewDetailRow
+                  label="Visits"
+                  value={
+                    Array.isArray(previewEnquiryTyped?.visits) && previewEnquiryTyped.visits.length > 0
+                      ? `${previewEnquiryTyped.visits.length} visit(s)`
+                      : Array.isArray(previewEnquiryTyped?.visitSchedules) &&
+                          previewEnquiryTyped.visitSchedules.length > 0
+                        ? `${previewEnquiryTyped.visitSchedules.length} schedule row(s)`
+                        : undefined
+                  }
+                />
+                <PreviewDetailRow
+                  label="Created"
+                  value={formatFirestoreTimestamp(previewEnquiryTyped?.createdAt as unknown)}
+                />
+                <PreviewDetailRow
+                  label="Updated"
+                  value={formatFirestoreTimestamp(previewEnquiryTyped?.updatedAt as unknown)}
+                />
+                <Divider />
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Recent calls ({previewFollowUpsSorted.length})
+                </Typography>
+                {previewFollowUpsSorted.slice(0, 5).map((fu, idx) => (
+                  <Paper key={fu.id || idx} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {formatFollowUpDateCell(fu.date)} · {fu.callerName || '—'}
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 0.5 }}>
+                      {fu.remarks || '—'}
+                    </Typography>
+                    {fu.nextFollowUpDate ? (
+                      <Typography variant="caption" color="primary">
+                        Next: {formatFollowUpDateCell(fu.nextFollowUpDate)}
+                      </Typography>
+                    ) : null}
+                  </Paper>
+                ))}
+                {previewFollowUpsSorted.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    No calls logged yet for this enquiry.
+                  </Typography>
+                ) : null}
+              </Stack>
+            </Box>
+            <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider', display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => openLogCallDialog(previewEnquiryId)}
+                fullWidth
+                sx={{ flex: '1 1 140px' }}
+              >
+                Log call
+              </Button>
+              <Button
+                variant="outlined"
+                component={Link}
+                href={`/interaction/enquiries/${previewEnquiryId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                startIcon={<OpenInNewIcon />}
+                fullWidth
+                sx={{ flex: '1 1 140px' }}
+              >
+                Full profile
+              </Button>
+              <Button onClick={() => setPreviewEnquiryId(null)} fullWidth sx={{ flex: '1 1 100%' }}>
+                Close
+              </Button>
+            </Box>
+          </Box>
+        ) : null}
+      </Drawer>
+
+      <Dialog
+        open={Boolean(logEnquiryId)}
+        onClose={() => !addFollowUpSaving && setLogEnquiryId(null)}
+        fullWidth
+        maxWidth="sm"
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800 }}>
+          Log telecalling
+          {logSnap?.name ? (
+            <Typography component="span" variant="body2" color="text.secondary" display="block" fontWeight={400}>
+              {logSnap.name} · {logSnap.phone || 'No phone'}
+            </Typography>
+          ) : null}
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            {logSnap ? (
+              <Stack direction="row" flexWrap="wrap" gap={1}>
+                {refList(logSnap.reference).map((ref) => (
+                  <Chip key={ref} size="small" label={ref} variant="outlined" color="secondary" />
+                ))}
+                {logMeta ? (
+                  <Chip size="small" label={logMeta.label} color={chipColor(logMeta.color)} />
+                ) : null}
+              </Stack>
+            ) : null}
+            <TextField
+              label="Call date"
+              type="date"
+              value={newFollowUp.date}
+              onChange={(e) => setNewFollowUp((s) => ({ ...s, date: e.target.value }))}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+              disabled={addFollowUpSaving}
+            />
+            <TextField
+              label="Next follow-up"
+              type="date"
+              value={newFollowUp.nextFollowUpDate}
+              onChange={(e) => setNewFollowUp((s) => ({ ...s, nextFollowUpDate: e.target.value }))}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+              disabled={addFollowUpSaving}
+            />
+            {telecallerDialogOptions.length > 0 ? (
+              <FormControl fullWidth disabled={addFollowUpSaving}>
+                <InputLabel>Caller</InputLabel>
+                <Select
+                  label="Caller"
+                  value={telecallerDialogOptions.includes(newFollowUp.callerName) ? newFollowUp.callerName : ''}
+                  onChange={(e) => setNewFollowUp((s) => ({ ...s, callerName: String(e.target.value) }))}
+                >
+                  {telecallerDialogOptions.map((name) => (
+                    <MenuItem key={name} value={name}>
+                      {name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            ) : (
+              <TextField
+                label="Caller name"
+                value={newFollowUp.callerName}
+                onChange={(e) => setNewFollowUp((s) => ({ ...s, callerName: e.target.value }))}
+                fullWidth
+                disabled={addFollowUpSaving}
+              />
+            )}
+            <TextField
+              label="Remarks"
+              value={newFollowUp.remarks}
+              onChange={(e) => setNewFollowUp((s) => ({ ...s, remarks: e.target.value }))}
+              fullWidth
+              multiline
+              minRows={3}
+              disabled={addFollowUpSaving}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setLogEnquiryId(null)} disabled={addFollowUpSaving}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleSaveFollowUpFromTelecalling()}
+            disabled={addFollowUpSaving || !newFollowUp.callerName.trim() || !newFollowUp.date}
+          >
+            {addFollowUpSaving ? 'Saving…' : 'Save call'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={5000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={snackbar.severity} onClose={() => setSnackbar((s) => ({ ...s, open: false }))} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+      </Box>
     </LocalizationProvider>
   );
 }
