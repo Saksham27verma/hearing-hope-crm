@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import NextLink from 'next/link';
 import MuiLink from '@mui/material/Link';
 
 type Props = {
@@ -15,10 +14,12 @@ export default function EnquiryProfileLink({ enquiryId, children }: Props) {
   if (!id) return <>{children}</>;
   return (
     <MuiLink
-      component={NextLink}
       href={`/interaction/enquiries/${id}`}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={(event) => {
+        event.stopPropagation();
+      }}
       underline="hover"
       fontWeight={600}
       color="primary"

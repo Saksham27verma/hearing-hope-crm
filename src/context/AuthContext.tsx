@@ -6,6 +6,10 @@ import type { User as FirebaseUser } from 'firebase/auth';
 import { useRouter, usePathname } from 'next/navigation';
 import { logActivity } from '@/lib/activityLogger';
 
+const SIGNOUT_INTENT_KEY = 'crm_signout_intent_ts';
+const SIGNOUT_INTENT_TTL_MS = 15_000;
+const CROSS_TAB_NULL_GUARD_MS = 2_000;
+
 // Define user role type
 export type UserRole = 'admin' | 'staff' | 'audiologist';
 
@@ -87,8 +91,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const profileUnsubRef = useRef<(() => void) | null>(null);
   /** Avoid re-running auth bootstrap for duplicate same-user emissions across tabs. */
   const activeAuthUidRef = useRef<string | null>(null);
+  /** Guards against transient null auth emissions across tabs before forcing /login. */
+  const nullAuthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Marks explicit sign-out initiated in this tab (skip null-state guard). */
+  const signOutInFlightRef = useRef(false);
   /** Prevent duplicate LOGIN log entries when profile snapshot fires multiple times in the same session. */
   const loginLoggedForUidRef = useRef<string | null>(null);
+
+  const markSignOutIntent = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(SIGNOUT_INTENT_KEY, String(Date.now()));
+    } catch {
+      // Ignore storage quota / privacy mode failures.
+    }
+  };
+
+  const clearSignOutIntent = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.removeItem(SIGNOUT_INTENT_KEY);
+    } catch {
+      // Ignore storage quota / privacy mode failures.
+    }
+  };
+
+  const hasRecentSignOutIntent = () => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const raw = localStorage.getItem(SIGNOUT_INTENT_KEY);
+      if (!raw) return false;
+      const ts = Number(raw);
+      return Number.isFinite(ts) && Date.now() - ts < SIGNOUT_INTENT_TTL_MS;
+    } catch {
+      return false;
+    }
+  };
 
   // Single long-lived auth listener — deps must stay empty: pathname via pathnameRef, router via routerRef.
   useEffect(() => {
@@ -111,6 +149,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         unsubscribe = onAuthStateChanged(auth, (authUser) => {
+          if (nullAuthTimerRef.current) {
+            clearTimeout(nullAuthTimerRef.current);
+            nullAuthTimerRef.current = null;
+          }
+
           const nextUid = authUser?.uid ?? null;
           if (activeAuthUidRef.current === nextUid) {
             return;
@@ -157,6 +200,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setUserProfile(profile);
                 setLoading(false);
                 setError(null);
+                signOutInFlightRef.current = false;
+                clearSignOutIntent();
 
                 if (loginLoggedForUidRef.current !== authUser.uid) {
                   loginLoggedForUidRef.current = authUser.uid;
@@ -199,16 +244,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               window.clearInterval(profilePollId);
             };
           } else {
-            setUser(null);
-            setUserProfile(null);
-            setLoading(false);
-            loginLoggedForUidRef.current = null;
-            activeAuthUidRef.current = null;
+            const finalizeSignedOutState = () => {
+              setUser(null);
+              setUserProfile(null);
+              setLoading(false);
+              loginLoggedForUidRef.current = null;
+              activeAuthUidRef.current = null;
+              signOutInFlightRef.current = false;
+            };
 
-            const p = pathnameRef.current;
-            if (p && p !== '/login' && p !== '/') {
-              routerRef.current.push('/login');
+            const shouldSkipNullGuard = signOutInFlightRef.current || hasRecentSignOutIntent();
+            if (shouldSkipNullGuard) {
+              finalizeSignedOutState();
+              const p = pathnameRef.current;
+              if (p && p !== '/login' && p !== '/') {
+                routerRef.current.push('/login');
+              }
+              return;
             }
+
+            nullAuthTimerRef.current = setTimeout(() => {
+              nullAuthTimerRef.current = null;
+              if (auth.currentUser) {
+                activeAuthUidRef.current = auth.currentUser.uid;
+                return;
+              }
+
+              finalizeSignedOutState();
+
+              const p = pathnameRef.current;
+              if (p && p !== '/login' && p !== '/') {
+                routerRef.current.push('/login');
+              }
+            }, CROSS_TAB_NULL_GUARD_MS);
           }
         });
       } catch (err) {
@@ -224,6 +292,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (profileUnsubRef.current) {
         profileUnsubRef.current();
         profileUnsubRef.current = null;
+      }
+      if (nullAuthTimerRef.current) {
+        clearTimeout(nullAuthTimerRef.current);
+        nullAuthTimerRef.current = null;
       }
       if (unsubscribe) unsubscribe();
     };
@@ -340,9 +412,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { auth } = await import('../firebase/config');
       const { signOut: firebaseSignOut } = await import('firebase/auth');
+      signOutInFlightRef.current = true;
+      markSignOutIntent();
       await firebaseSignOut(auth);
       router.push('/login');
     } catch (err: any) {
+      signOutInFlightRef.current = false;
       console.error('Sign out error:', err);
       setError(err.message || 'Failed to sign out');
     }
