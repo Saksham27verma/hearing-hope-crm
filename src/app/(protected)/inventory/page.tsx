@@ -1677,22 +1677,6 @@ export default function InventoryPage() {
     setSuccessMessage('Inventory data refreshed successfully');
   };
 
-  // Auto-refresh on window focus
-  useEffect(() => {
-    const handleFocus = () => {
-      // Only refresh if it's been more than 30 seconds since last update
-      const lastUpdate = localStorage.getItem('inventory-last-update');
-      const now = Date.now();
-      if (!lastUpdate || now - parseInt(lastUpdate) > 30000) {
-        setRefreshKey(prev => prev + 1);
-        localStorage.setItem('inventory-last-update', now.toString());
-      }
-    };
-
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, []);
-
   // Get color for status chip
   const getStatusColor = (status: string) => {
     switch (status) {

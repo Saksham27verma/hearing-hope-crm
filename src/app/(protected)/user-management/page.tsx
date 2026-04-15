@@ -35,7 +35,6 @@ import { useSnackbar } from 'notistack';
 import { useAuth } from '@/context/AuthContext';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db } from '@/firebase/config';
-import { DEFAULT_FIRESTORE_POLL_MS } from '@/lib/firestore/pollingSubscribe';
 import { CRM_MODULE_ACCESS_OPTIONS } from '@/components/Layout/crm-nav-config';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import {
@@ -186,10 +185,8 @@ export default function UserManagementPage() {
     };
 
     void load();
-    const id = window.setInterval(() => void load(), DEFAULT_FIRESTORE_POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
     };
   }, [userProfile?.role, enqueueSnackbar]);
 
