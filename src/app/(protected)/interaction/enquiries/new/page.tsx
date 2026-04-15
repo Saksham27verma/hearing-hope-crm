@@ -184,17 +184,78 @@ export default function NewEnquiryPage() {
       
       const phone = await assertUniquePhone(data?.phone);
 
-      // Add timestamp and status
+      const actor = {
+        uid: user?.uid || null,
+        name: userProfile?.displayName || user?.displayName || userProfile?.email || user?.email || 'Unknown user',
+        email: userProfile?.email || user?.email || null,
+        role: userProfile?.role || null,
+      };
+
+      // Add timestamp, status, and actor details
       const enquiryData = {
         ...data,
         phone,
         status: 'open',
+        createdByUid: actor.uid,
+        createdByName: actor.name,
+        createdByEmail: actor.email,
+        createdByRole: actor.role,
+        updatedByUid: actor.uid,
+        updatedByName: actor.name,
+        updatedByEmail: actor.email,
+        updatedByRole: actor.role,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
 
+      const withVisitActors = Array.isArray(enquiryData.visits)
+        ? enquiryData.visits.map((visit: Record<string, unknown>) => ({
+            ...visit,
+            createdByUid: visit.createdByUid ?? actor.uid,
+            createdByName: visit.createdByName ?? actor.name,
+            createdByEmail: visit.createdByEmail ?? actor.email,
+            createdByRole: visit.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
+      const withPaymentActors = Array.isArray(enquiryData.paymentRecords)
+        ? enquiryData.paymentRecords.map((payment: Record<string, unknown>) => ({
+            ...payment,
+            createdByUid: payment.createdByUid ?? actor.uid,
+            createdByName: payment.createdByName ?? actor.name,
+            createdByEmail: payment.createdByEmail ?? actor.email,
+            createdByRole: payment.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
+      const withLegacyPaymentActors = Array.isArray(enquiryData.payments)
+        ? enquiryData.payments.map((payment: Record<string, unknown>) => ({
+            ...payment,
+            createdByUid: payment.createdByUid ?? actor.uid,
+            createdByName: payment.createdByName ?? actor.name,
+            createdByEmail: payment.createdByEmail ?? actor.email,
+            createdByRole: payment.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
+
       // Save to Firestore
-      const docRef = await addDoc(collection(db, 'enquiries'), enquiryData);
+      const docRef = await addDoc(collection(db, 'enquiries'), {
+        ...enquiryData,
+        visits: withVisitActors,
+        visitSchedules: withVisitActors,
+        paymentRecords: withPaymentActors,
+        payments: withLegacyPaymentActors,
+      });
 
       // Mirror sale visits into `sales` collection (so Sales & Invoicing/inventory sold tracking are consistent).
       const visits = Array.isArray(data.visits) ? [...data.visits] : [];
@@ -257,6 +318,14 @@ export default function NewEnquiryPage() {
           source: 'enquiry',
           enquiryId: docRef.id,
           enquiryVisitIndex: visitIndex,
+          createdByUid: actor.uid,
+          createdByName: actor.name,
+          createdByEmail: actor.email,
+          createdByRole: actor.role,
+          updatedByUid: actor.uid,
+          updatedByName: actor.name,
+          updatedByEmail: actor.email,
+          updatedByRole: actor.role,
           updatedAt: serverTimestamp(),
         } as Record<string, unknown>;
 

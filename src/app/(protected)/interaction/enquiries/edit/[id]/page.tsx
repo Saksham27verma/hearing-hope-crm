@@ -230,13 +230,57 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       setSaving(true);
       
       if (!resolvedParams?.id) return;
+      const actor = {
+        uid: user?.uid || null,
+        name: userProfile?.displayName || user?.displayName || userProfile?.email || user?.email || 'Unknown user',
+        email: userProfile?.email || user?.email || null,
+        role: userProfile?.role || null,
+      };
       const phone = await assertUniquePhoneForEdit(data?.phone, resolvedParams.id);
 
       // Find new sales that need inventory reduction
       const oldVisits = enquiry?.visits || [];
       const newSalesProducts = findNewSales(oldVisits, data.visits || []);
       
-      const visits = Array.isArray(data.visits) ? [...data.visits] : [];
+      const visits = Array.isArray(data.visits)
+        ? data.visits.map((visit: Record<string, unknown>) => ({
+            ...visit,
+            createdByUid: visit.createdByUid ?? actor.uid,
+            createdByName: visit.createdByName ?? actor.name,
+            createdByEmail: visit.createdByEmail ?? actor.email,
+            createdByRole: visit.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
+      const paymentRecords = Array.isArray(data.paymentRecords)
+        ? data.paymentRecords.map((payment: Record<string, unknown>) => ({
+            ...payment,
+            createdByUid: payment.createdByUid ?? actor.uid,
+            createdByName: payment.createdByName ?? actor.name,
+            createdByEmail: payment.createdByEmail ?? actor.email,
+            createdByRole: payment.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
+      const payments = Array.isArray(data.payments)
+        ? data.payments.map((payment: Record<string, unknown>) => ({
+            ...payment,
+            createdByUid: payment.createdByUid ?? actor.uid,
+            createdByName: payment.createdByName ?? actor.name,
+            createdByEmail: payment.createdByEmail ?? actor.email,
+            createdByRole: payment.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
       // Upsert sale visits into `sales` collection and ensure invoice numbers.
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
@@ -303,6 +347,14 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           source: 'enquiry',
           enquiryId: resolvedParams.id,
           enquiryVisitIndex: visitIndex,
+          createdByUid: existingSaleDoc?.data()?.createdByUid ?? actor.uid,
+          createdByName: existingSaleDoc?.data()?.createdByName ?? actor.name,
+          createdByEmail: existingSaleDoc?.data()?.createdByEmail ?? actor.email,
+          createdByRole: existingSaleDoc?.data()?.createdByRole ?? actor.role,
+          updatedByUid: actor.uid,
+          updatedByName: actor.name,
+          updatedByEmail: actor.email,
+          updatedByRole: actor.role,
           updatedAt: serverTimestamp(),
         } as Record<string, unknown> as any;
 
@@ -322,6 +374,13 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         ...data,
         phone,
         visits,
+        visitSchedules: visits,
+        paymentRecords,
+        payments,
+        updatedByUid: actor.uid,
+        updatedByName: actor.name,
+        updatedByEmail: actor.email,
+        updatedByRole: actor.role,
         updatedAt: serverTimestamp()
       };
 

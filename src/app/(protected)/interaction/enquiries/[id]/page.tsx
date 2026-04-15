@@ -521,6 +521,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const visits = enquiry?.visits || enquiry?.visitSchedules || [];
   const hasVisits = visits.length > 0;
   const followUpsList = Array.isArray(enquiry?.followUps) ? enquiry.followUps : [];
+  const enquiryCreatedByLabel =
+    enquiry?.createdByName || enquiry?.createdByEmail || enquiry?.createdByUid || null;
 
   const formatFollowUpDateCell = (value: string | undefined) => {
     if (!value) return '—';
@@ -634,6 +636,14 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           amount: Number(payment.amount || 0),
           date: payment.paymentDate,
           mode: payment.paymentMethod,
+          actorName:
+            payment.createdByName ||
+            payment.updatedByName ||
+            payment.createdByEmail ||
+            payment.updatedByEmail ||
+            payment.createdByUid ||
+            payment.updatedByUid ||
+            '',
           ...(referenceNumber ? { referenceNumber } : {}),
           ...(remarks ? { remarks } : {}),
         };
@@ -668,6 +678,14 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           amount: Number(payment.amount || 0),
           date: payment.paymentDate,
           mode: payment.paymentMode,
+          actorName:
+            payment.createdByName ||
+            payment.updatedByName ||
+            payment.createdByEmail ||
+            payment.updatedByEmail ||
+            payment.createdByUid ||
+            payment.updatedByUid ||
+            '',
           ...(referenceNumber ? { referenceNumber } : {}),
           ...(remarks ? { remarks } : {}),
         };
@@ -1302,6 +1320,15 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                     value={Array.isArray(enquiry.reference) ? enquiry.reference : enquiry.reference ? [enquiry.reference] : null} 
                   />
                 </Grid>
+                {enquiryCreatedByLabel && (
+                  <Grid item xs={12} sm={6}>
+                    <InfoRow
+                      icon={<PersonIcon fontSize="small" />}
+                      label="Enquiry Created By"
+                      value={enquiryCreatedByLabel}
+                    />
+                  </Grid>
+                )}
                 {(enquiry.assignedTo || enquiry.telecaller) && (
                   <>
                     <Grid item xs={12} sm={6}>
@@ -1491,6 +1518,17 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             )}
                             <Grid item xs={12} sm={6}>
                               {renderVisitField('Center', getCenterName(activeVisit))}
+                            </Grid>
+                            <Grid item xs={12} sm={6}>
+                              {renderVisitField(
+                                'Recorded By',
+                                activeVisit.createdByName ||
+                                  activeVisit.createdByEmail ||
+                                  activeVisit.createdByUid ||
+                                  activeVisit.updatedByName ||
+                                  activeVisit.updatedByEmail ||
+                                  activeVisit.updatedByUid
+                              )}
                             </Grid>
                           </Grid>
                         </Grid>
@@ -2399,6 +2437,14 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           {payment.date || '—'}
                           {payment.mode ? ` · ${String(payment.mode).toUpperCase()}` : ''}
                         </Typography>
+                        {payment.actorName ? (
+                          <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.35 }}>
+                            <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                              Recorded by:{' '}
+                            </Box>
+                            {payment.actorName}
+                          </Typography>
+                        ) : null}
                         {payment.referenceNumber ? (
                           <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
                             <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>

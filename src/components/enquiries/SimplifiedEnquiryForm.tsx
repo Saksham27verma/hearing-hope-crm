@@ -383,6 +383,14 @@ interface PaymentRecord {
   remarks: string;
   /** When paymentFor is trial_home_security_deposit, identifies which visit the deposit is for */
   relatedVisitId?: string;
+  createdByUid?: string | null;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
+  updatedByUid?: string | null;
+  updatedByName?: string | null;
+  updatedByEmail?: string | null;
+  updatedByRole?: string | null;
 }
 
 interface Visit {
@@ -494,6 +502,14 @@ interface Visit {
   taxAmount: number;
   salesAfterTax: number;
   totalDiscountPercent: number;
+  createdByUid?: string | null;
+  createdByName?: string | null;
+  createdByEmail?: string | null;
+  createdByRole?: string | null;
+  updatedByUid?: string | null;
+  updatedByName?: string | null;
+  updatedByEmail?: string | null;
+  updatedByRole?: string | null;
 }
 
 function newHearingTestEntryId(): string {
@@ -2324,6 +2340,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
   // Add new visit
   const addVisit = () => {
+    const actorName =
+      userProfile?.displayName || user?.displayName || userProfile?.email || user?.email || 'Unknown user';
     const newVisit: Visit = {
       id: (watchedVisits.length + 1).toString(),
       visitDate: '',
@@ -2417,7 +2435,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       grossSalesBeforeTax: 0,
       taxAmount: 0,
       salesAfterTax: 0,
-      totalDiscountPercent: 0
+      totalDiscountPercent: 0,
+      createdByUid: user?.uid || null,
+      createdByName: actorName,
+      createdByEmail: userProfile?.email || user?.email || null,
+      createdByRole: userProfile?.role || null,
+      updatedByUid: user?.uid || null,
+      updatedByName: actorName,
+      updatedByEmail: userProfile?.email || user?.email || null,
+      updatedByRole: userProfile?.role || null,
     };
     setValue('visits', [...watchedVisits, newVisit]);
     setActiveVisit(watchedVisits.length);
@@ -2968,6 +2994,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       }
 
       const payments = getValues('payments');
+      const actorName =
+        userProfile?.displayName || user?.displayName || userProfile?.email || user?.email || 'Unknown user';
       const newPayment: PaymentRecord = {
         id: Date.now().toString(),
         paymentDate: currentPayment.paymentDate,
@@ -2979,6 +3007,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         ...(currentPayment.relatedVisitId
           ? { relatedVisitId: currentPayment.relatedVisitId }
           : {}),
+        createdByUid: user?.uid || null,
+        createdByName: actorName,
+        createdByEmail: userProfile?.email || user?.email || null,
+        createdByRole: userProfile?.role || null,
+        updatedByUid: user?.uid || null,
+        updatedByName: actorName,
+        updatedByEmail: userProfile?.email || user?.email || null,
+        updatedByRole: userProfile?.role || null,
       };
       
       setValue('payments', [...payments, newPayment]);
@@ -3061,6 +3097,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       referenceNumber: payment.referenceNumber || '',
       remarks: payment.remarks || '',
       relatedVisitId: payment.relatedVisitId ?? null,
+      createdByUid: payment.createdByUid ?? null,
+      createdByName: payment.createdByName ?? null,
+      createdByEmail: payment.createdByEmail ?? null,
+      createdByRole: payment.createdByRole ?? null,
+      updatedByUid: payment.updatedByUid ?? payment.createdByUid ?? null,
+      updatedByName: payment.updatedByName ?? payment.createdByName ?? null,
+      updatedByEmail: payment.updatedByEmail ?? payment.createdByEmail ?? null,
+      updatedByRole: payment.updatedByRole ?? payment.createdByRole ?? null,
     }));
 
     const formattedData = {
