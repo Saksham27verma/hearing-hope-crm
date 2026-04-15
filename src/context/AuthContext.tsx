@@ -85,6 +85,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const routerRef = useRef(router);
   routerRef.current = router;
   const profileUnsubRef = useRef<(() => void) | null>(null);
+  /** Avoid re-running auth bootstrap for duplicate same-user emissions across tabs. */
+  const activeAuthUidRef = useRef<string | null>(null);
   /** Prevent duplicate LOGIN log entries when profile snapshot fires multiple times in the same session. */
   const loginLoggedForUidRef = useRef<string | null>(null);
 
@@ -109,6 +111,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         unsubscribe = onAuthStateChanged(auth, (authUser) => {
+          const nextUid = authUser?.uid ?? null;
+          if (activeAuthUidRef.current === nextUid) {
+            return;
+          }
+          activeAuthUidRef.current = nextUid;
+
           if (profileUnsubRef.current) {
             profileUnsubRef.current();
             profileUnsubRef.current = null;
@@ -195,6 +203,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUserProfile(null);
             setLoading(false);
             loginLoggedForUidRef.current = null;
+            activeAuthUidRef.current = null;
 
             const p = pathnameRef.current;
             if (p && p !== '/login' && p !== '/') {
