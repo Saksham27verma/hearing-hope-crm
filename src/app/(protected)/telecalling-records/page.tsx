@@ -39,6 +39,7 @@ import {
   DialogContent,
   DialogActions,
   Snackbar,
+  OutlinedInput,
 } from '@mui/material';
 import type { ChipProps } from '@mui/material/Chip';
 import MuiLink from '@mui/material/Link';
@@ -250,6 +251,8 @@ export default function TelecallingRecordsPage() {
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTelecaller, setSelectedTelecaller] = useState('');
+  const [selectedReferences, setSelectedReferences] = useState<string[]>([]);
+  const [selectedJourneys, setSelectedJourneys] = useState<string[]>([]);
   const [followUpDateFrom, setFollowUpDateFrom] = useState<Date | null>(null);
   const [followUpDateTo, setFollowUpDateTo] = useState<Date | null>(null);
   const [nextFollowUpDateFrom, setNextFollowUpDateFrom] = useState<Date | null>(null);
@@ -482,6 +485,24 @@ export default function TelecallingRecordsPage() {
     const telecallers = [...new Set(records.map(record => record.telecaller).filter(Boolean))];
     return telecallers.sort();
   }, [records]);
+  const uniqueReferences = useMemo(() => {
+    const refs = new Set<string>();
+    records.forEach((record) => {
+      record.referenceList.forEach((r) => {
+        const t = String(r || '').trim();
+        if (t) refs.add(t);
+      });
+    });
+    return [...refs].sort((a, b) => a.localeCompare(b));
+  }, [records]);
+  const uniqueJourneys = useMemo(() => {
+    const journeys = new Set<string>();
+    records.forEach((record) => {
+      const t = String(record.journeyLabel || '').trim();
+      if (t) journeys.add(t);
+    });
+    return [...journeys].sort((a, b) => a.localeCompare(b));
+  }, [records]);
 
   // Quick filter functions
   const getDateRange = (filterType: string) => {
@@ -566,6 +587,16 @@ export default function TelecallingRecordsPage() {
     if (selectedTelecaller) {
       filtered = filtered.filter(record => record.telecaller === selectedTelecaller);
     }
+    if (selectedReferences.length > 0) {
+      const selected = new Set(selectedReferences.map((r) => r.toLowerCase()));
+      filtered = filtered.filter((record) =>
+        record.referenceList.some((r) => selected.has(String(r || '').toLowerCase()))
+      );
+    }
+    if (selectedJourneys.length > 0) {
+      const selected = new Set(selectedJourneys.map((j) => j.toLowerCase()));
+      filtered = filtered.filter((record) => selected.has(String(record.journeyLabel || '').toLowerCase()));
+    }
 
     // Follow-up date range filter (only if not using quick filter)
     if (!quickFilter && (followUpDateFrom || followUpDateTo)) {
@@ -607,12 +638,14 @@ export default function TelecallingRecordsPage() {
 
     setFilteredRecords(filtered);
     setPage(0); // Reset to first page when filters change
-  }, [records, searchTerm, selectedTelecaller, quickFilter, followUpDateFrom, followUpDateTo, nextFollowUpDateFrom, nextFollowUpDateTo]);
+  }, [records, searchTerm, selectedTelecaller, selectedReferences, selectedJourneys, quickFilter, followUpDateFrom, followUpDateTo, nextFollowUpDateFrom, nextFollowUpDateTo]);
 
   // Clear all filters
   const clearFilters = () => {
     setSearchTerm('');
     setSelectedTelecaller('');
+    setSelectedReferences([]);
+    setSelectedJourneys([]);
     setQuickFilter('');
     setFollowUpDateFrom(null);
     setFollowUpDateTo(null);
@@ -1009,7 +1042,17 @@ export default function TelecallingRecordsPage() {
               <Button
                 size="small"
                 onClick={clearFilters}
-                disabled={!searchTerm && !selectedTelecaller && !quickFilter && !followUpDateFrom && !followUpDateTo && !nextFollowUpDateFrom && !nextFollowUpDateTo}
+                disabled={
+                  !searchTerm &&
+                  !selectedTelecaller &&
+                  selectedReferences.length === 0 &&
+                  selectedJourneys.length === 0 &&
+                  !quickFilter &&
+                  !followUpDateFrom &&
+                  !followUpDateTo &&
+                  !nextFollowUpDateFrom &&
+                  !nextFollowUpDateTo
+                }
               >
                 Clear All
               </Button>
@@ -1049,6 +1092,64 @@ export default function TelecallingRecordsPage() {
                     {uniqueTelecallers.map((telecaller) => (
                       <MenuItem key={telecaller} value={telecaller}>
                         {telecaller}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={3}>
+                <FormControl fullWidth>
+                  <InputLabel>Reference</InputLabel>
+                  <Select
+                    multiple
+                    value={selectedReferences}
+                    onChange={(e) => setSelectedReferences(typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value)}
+                    input={<OutlinedInput label="Reference" />}
+                    renderValue={(selected) =>
+                      selected.length === 0 ? (
+                        'All References'
+                      ) : (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                          {selected.map((value) => (
+                            <Chip key={value} label={value} size="small" />
+                          ))}
+                        </Box>
+                      )
+                    }
+                  >
+                    {uniqueReferences.map((reference) => (
+                      <MenuItem key={reference} value={reference}>
+                        {reference}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={3}>
+                <FormControl fullWidth>
+                  <InputLabel>Journey</InputLabel>
+                  <Select
+                    multiple
+                    value={selectedJourneys}
+                    onChange={(e) => setSelectedJourneys(typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value)}
+                    input={<OutlinedInput label="Journey" />}
+                    renderValue={(selected) =>
+                      selected.length === 0 ? (
+                        'All Journeys'
+                      ) : (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                          {selected.map((value) => (
+                            <Chip key={value} label={value} size="small" />
+                          ))}
+                        </Box>
+                      )
+                    }
+                  >
+                    {uniqueJourneys.map((journey) => (
+                      <MenuItem key={journey} value={journey}>
+                        {journey}
                       </MenuItem>
                     ))}
                   </Select>
