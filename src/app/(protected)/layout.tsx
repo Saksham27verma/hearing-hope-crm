@@ -37,13 +37,81 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const hasRedirectedRef = useRef<string | null>(null);
   const redirectFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [sidebarOrder, setSidebarOrder] = useState<string[]>([]);
 
   const shouldHideSidebar = pathname?.includes('/enquiries/new') || pathname?.includes('/enquiries/edit');
 
-  const visibleNav = useMemo(
+  const baseVisibleNav = useMemo(
     () => filterCrmNavForUser(userProfile, isAllowedModule),
     [userProfile, isAllowedModule],
   );
+
+  const sidebarOrderStorageKey = useMemo(() => {
+    const role = userProfile?.role ?? 'guest';
+    const uid = user?.uid ?? 'anonymous';
+    return `crm_sidebar_order_v1_${role}_${uid}`;
+  }, [userProfile?.role, user?.uid]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(sidebarOrderStorageKey);
+      if (!raw) {
+        setSidebarOrder([]);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSidebarOrder(parsed.filter((item): item is string => typeof item === 'string'));
+      } else {
+        setSidebarOrder([]);
+      }
+    } catch {
+      setSidebarOrder([]);
+    }
+  }, [sidebarOrderStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const baseKeys = baseVisibleNav.map((item) => item.text);
+    const normalized = sidebarOrder.filter((key) => baseKeys.includes(key));
+    const missing = baseKeys.filter((key) => !normalized.includes(key));
+    const merged = [...normalized, ...missing];
+    const current = sidebarOrder.join('|');
+    const next = merged.join('|');
+    if (current !== next) {
+      setSidebarOrder(merged);
+      return;
+    }
+    window.localStorage.setItem(sidebarOrderStorageKey, JSON.stringify(merged));
+  }, [baseVisibleNav, sidebarOrder, sidebarOrderStorageKey]);
+
+  const visibleNav = useMemo(() => {
+    if (sidebarOrder.length === 0) return baseVisibleNav;
+    const navByText = new Map(baseVisibleNav.map((item) => [item.text, item]));
+    const ordered = sidebarOrder.map((key) => navByText.get(key)).filter((item): item is NonNullable<typeof item> => !!item);
+    const seen = new Set(ordered.map((item) => item.text));
+    const remaining = baseVisibleNav.filter((item) => !seen.has(item.text));
+    return [...ordered, ...remaining];
+  }, [baseVisibleNav, sidebarOrder]);
+
+  const handleReorderItems = (fromIndex: number, toIndex: number) => {
+    setSidebarOrder((prev) => {
+      if (
+        fromIndex < 0 ||
+        toIndex < 0 ||
+        fromIndex >= prev.length ||
+        toIndex >= prev.length ||
+        fromIndex === toIndex
+      ) {
+        return prev;
+      }
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!pathname) return;
@@ -359,6 +427,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
           onMobileNavigate={() => {
             if (!isDesktop) setDrawerOpen(false);
           }}
+          onReorderItems={handleReorderItems}
         />
       )}
 

@@ -56,6 +56,8 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { text: 'Parties', path: '/parties', icon: Handshake },
   { text: 'Centers', path: '/centers', icon: Building2 },
   { text: 'Companies', path: '/companies', icon: Factory, adminOnly: true },
+  { text: 'Stock Transfer', path: '/stock-transfer', icon: RefreshCw },
+  { text: 'Cash Register', path: '/cash-register', icon: CreditCard },
   {
     text: 'Interaction',
     path: '/interaction',
@@ -66,8 +68,6 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
       { text: 'Telecalling Records', path: '/telecalling-records' },
     ],
   },
-  { text: 'Stock Transfer', path: '/stock-transfer', icon: RefreshCw },
-  { text: 'Cash Register', path: '/cash-register', icon: CreditCard },
   { text: 'Appointment Scheduler', path: '/appointments', icon: CalendarDays },
   { text: 'Reports', path: '/reports', icon: BarChart3 },
   { text: 'Profit', path: '/profit', icon: TrendingUp, adminOnly: true, superAdminOnly: true },

@@ -1,7 +1,7 @@
 'use client';
 
-import type { CSSProperties } from 'react';
-import { useMemo } from 'react';
+import type { CSSProperties, DragEvent } from 'react';
+import { useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -40,6 +40,7 @@ export type CrmSidebarProps = {
   onMouseLeave?: () => void;
   mobileOpen: boolean;
   onMobileNavigate?: () => void;
+  onReorderItems?: (fromIndex: number, toIndex: number) => void;
 };
 
 export default function CrmSidebar({
@@ -53,11 +54,15 @@ export default function CrmSidebar({
   onMouseLeave,
   mobileOpen,
   onMobileNavigate,
+  onReorderItems,
 }: CrmSidebarProps) {
   const theme = useTheme();
   const shell = useMemo(() => getCrmShellTokens(theme), [theme]);
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
   const width = expanded ? SIDEBAR_EXPANDED_W : SIDEBAR_COLLAPSED_W;
   const showLabels = expanded;
+  const canReorder = isDesktop && showLabels && typeof onReorderItems === 'function';
 
   const outerStyle: CSSProperties = isDesktop
     ? {
@@ -230,16 +235,56 @@ export default function CrmSidebar({
 
         <nav style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px 0 16px' }}>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {items.map((item) => {
+            {items.map((item, itemIndex) => {
               const Icon = item.icon;
               const hasChildren = Boolean(item.children?.length);
               const childMatch = hasChildren && item.children!.some((c) => isChildActive(pathname, c.path));
               const selfActive = !hasChildren && isPathActive(pathname, item.path);
               const parentRowActive = hasChildren && (childMatch || isPathActive(pathname, item.path));
+              const isDraggingRow = draggingIndex === itemIndex;
+              const isDropTarget = dropIndex === itemIndex && draggingIndex !== null && draggingIndex !== itemIndex;
+              const draggableRowStyle: CSSProperties = {
+                ...(isDropTarget ? { boxShadow: `inset 0 2px 0 ${shell.accent}` } : null),
+                ...(isDraggingRow ? { opacity: 0.6 } : null),
+                borderRadius: RADIUS_XL,
+              };
+
+              const rowDnDProps = canReorder
+                ? {
+                    draggable: true,
+                    onDragStart: () => {
+                      setDraggingIndex(itemIndex);
+                      setDropIndex(itemIndex);
+                    },
+                    onDragOver: (event: DragEvent<HTMLLIElement>) => {
+                      event.preventDefault();
+                      if (dropIndex !== itemIndex) {
+                        setDropIndex(itemIndex);
+                      }
+                    },
+                    onDrop: (event: DragEvent<HTMLLIElement>) => {
+                      event.preventDefault();
+                      if (draggingIndex !== null && draggingIndex !== itemIndex) {
+                        onReorderItems?.(draggingIndex, itemIndex);
+                      }
+                      setDraggingIndex(null);
+                      setDropIndex(null);
+                    },
+                    onDragEnd: () => {
+                      setDraggingIndex(null);
+                      setDropIndex(null);
+                    },
+                  }
+                : {};
 
               if (hasChildren) {
                 return (
-                  <li key={item.text} style={liCollapsedStyle}>
+                  <li
+                    key={item.text}
+                    style={{ ...liCollapsedStyle, ...draggableRowStyle }}
+                    {...rowDnDProps}
+                    title={canReorder ? 'Drag to reorder module' : undefined}
+                  >
                     <button
                       type="button"
                       style={applyActiveRow(!!parentRowActive)}
@@ -329,7 +374,12 @@ export default function CrmSidebar({
               }
 
               return (
-                <li key={item.path} style={liCollapsedStyle}>
+                <li
+                  key={item.path}
+                  style={{ ...liCollapsedStyle, ...draggableRowStyle }}
+                  {...rowDnDProps}
+                  title={canReorder ? 'Drag to reorder module' : undefined}
+                >
                   <Link
                     href={item.path}
                     onClick={() => onMobileNavigate?.()}
