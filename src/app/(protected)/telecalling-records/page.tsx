@@ -643,6 +643,7 @@ export default function TelecallingRecordsPage() {
       }
       const data = snap.data() as Enquiry;
       const prev = Array.isArray(data.followUps) ? data.followUps : [];
+      const now = new Date();
       const followUpData = {
         ...newFollowUp,
         id:
@@ -653,6 +654,54 @@ export default function TelecallingRecordsPage() {
       };
       const updated = [...prev, followUpData];
       await updateDoc(ref, { followUps: updated });
+      const statusMeta = getEnquiryStatusMeta({ ...data, id: logEnquiryId } as Record<string, unknown>);
+      const referenceList = refList(data.reference);
+      const centerId = (data.visitingCenter || data.center || '').trim();
+      const centerLabel = centerId ? resolveCenterDisplay(centerId, centerIdToName) : undefined;
+      const subjectLine =
+        (data.subject && String(data.subject).trim()) || (data.message && String(data.message).trim()) || '';
+      const optimisticRecord: TelecallingRecord = {
+        id: `${logEnquiryId}_${followUpData.id}`,
+        enquiryId: logEnquiryId,
+        enquiryName: data.name || 'Unknown',
+        enquiryPhone: data.phone || '',
+        enquiryEmail: data.email || '',
+        enquirySubject: subjectLine,
+        assignedTo: data.assignedTo || '',
+        referenceList,
+        journeyLabel: statusMeta.label,
+        journeyChipColor: statusMeta.color,
+        journeySource: statusMeta.source,
+        centerLabel,
+        totalFollowUpsOnEnquiry: updated.length,
+        followUpId: followUpData.id,
+        followUpDate: followUpData.date || '',
+        telecaller: (followUpData.callerName || data.telecaller || data.assignedTo || 'Unknown').trim() || 'Unknown',
+        remarks: followUpData.remarks || '',
+        nextFollowUpDate: followUpData.nextFollowUpDate || '',
+        createdAt: now,
+        recordSource: 'followup_log',
+      };
+      setEnquiryById((prevMap) => ({
+        ...prevMap,
+        [logEnquiryId]: { ...(prevMap[logEnquiryId] || {}), ...data, id: logEnquiryId, followUps: updated },
+      }));
+      setRecords((prevRecords) => {
+        const withoutCoveredPatientInfo = prevRecords.filter(
+          (r) =>
+            !(
+              r.enquiryId === logEnquiryId &&
+              r.recordSource === 'patient_info' &&
+              normalizeYmd(r.nextFollowUpDate) === normalizeYmd(followUpData.nextFollowUpDate)
+            )
+        );
+        const normalized = withoutCoveredPatientInfo.map((r) =>
+          r.enquiryId === logEnquiryId ? { ...r, totalFollowUpsOnEnquiry: updated.length } : r
+        );
+        const next = [optimisticRecord, ...normalized];
+        next.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        return next;
+      });
       const entityName = data.name || data.phone || 'Enquiry';
       void logActivity(db, userProfile, userProfile?.centerId, {
         action: 'FOLLOW_UP',
@@ -679,7 +728,6 @@ export default function TelecallingRecordsPage() {
       }, user);
       setSnackbar({ open: true, message: 'Call logged successfully', severity: 'success' });
       setLogEnquiryId(null);
-      await fetchTelecallingRecords();
     } catch (err) {
       console.error(err);
       setSnackbar({
