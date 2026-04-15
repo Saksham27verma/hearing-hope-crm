@@ -44,6 +44,7 @@ import {
   stockTransferMatchesDataScope,
 } from '@/lib/tenant/centerScope';
 import { useRouter } from 'next/navigation';
+import { openInNewTab } from '@/utils/openInNewTab';
 import { alpha, useTheme } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
 import SvgIcon from '@mui/material/SvgIcon';
@@ -710,7 +711,7 @@ export default function DashboardPage() {
                         key={enquiry.id}
                         hover
                         sx={{ cursor: 'pointer' }}
-                        onClick={() => router.push(`/interaction/enquiries/edit/${enquiry.id}`)}
+                        onClick={() => openInNewTab(`/interaction/enquiries/edit/${enquiry.id}`)}
                       >
                         <TableCell>
                           <Chip
@@ -745,7 +746,7 @@ export default function DashboardPage() {
                             color="primary"
                             onClick={(e) => {
                               e.stopPropagation();
-                              router.push(`/interaction/enquiries/edit/${enquiry.id}`);
+                              openInNewTab(`/interaction/enquiries/edit/${enquiry.id}`);
                             }}
                           >
                             Add Audiogram
@@ -1094,7 +1095,7 @@ export default function DashboardPage() {
                   todaysEnquiries.map((enquiry: any) => (
                     <TableRow
                       key={enquiry.id}
-                      onClick={() => router.push(`/interaction/enquiries/${enquiry.id}`)}
+                      onClick={() => openInNewTab(`/interaction/enquiries/${enquiry.id}`)}
                       sx={pulseRowSx}
                     >
                       <TableCell>
@@ -1261,7 +1262,7 @@ export default function DashboardPage() {
                   todaysBookingAdvances.map((row: any) => (
                     <TableRow
                       key={`${row.enquiryId}-${row.visitId || row.paidDateKey}`}
-                      onClick={() => router.push(`/interaction/enquiries/${row.enquiryId}`)}
+                      onClick={() => openInNewTab(`/interaction/enquiries/${row.enquiryId}`)}
                       sx={pulseRowSx}
                     >
                       <TableCell sx={{ maxWidth: 0 }}>

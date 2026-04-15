@@ -17,6 +17,8 @@ export default function EnquiryProfileLink({ enquiryId, children }: Props) {
     <MuiLink
       component={NextLink}
       href={`/interaction/enquiries/${id}`}
+      target="_blank"
+      rel="noopener noreferrer"
       underline="hover"
       fontWeight={600}
       color="primary"

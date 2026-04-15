@@ -45,6 +45,7 @@ import {
   where
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { isDetailOrEditPath, openInNewTab } from '@/utils/openInNewTab';
 
 interface SearchResult {
   id: string;
@@ -369,7 +370,11 @@ const UniversalSearch: React.FC<UniversalSearchProps> = ({ open, onClose }) => {
   };
 
   const handleResultClick = (result: SearchResult) => {
-    router.push(result.path);
+    if (isDetailOrEditPath(result.path)) {
+      openInNewTab(result.path);
+    } else {
+      router.push(result.path);
+    }
     onClose();
     setSearchTerm('');
   };

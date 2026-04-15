@@ -3,6 +3,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
 import { useRouter } from 'next/navigation';
+import { openInNewTab } from '@/utils/openInNewTab';
 import {
   Box, 
   Typography, 
@@ -2652,8 +2653,7 @@ export default function EnquiriesPage() {
   
   // Open detail dialog - navigate to details page
   const handleOpenDetailDialog = (enquiry: Enquiry) => {
-    // Navigate to the enquiry details page in the same tab
-    router.push(`/interaction/enquiries/${enquiry.id}`);
+    openInNewTab(`/interaction/enquiries/${enquiry.id}`);
   };
   
   // Close detail dialog
@@ -3062,8 +3062,7 @@ export default function EnquiriesPage() {
   
   // Edit enquiry with simplified form
   const handleEdit = (enquiry: Enquiry) => {
-    // Navigate to edit enquiry page
-    window.location.href = `/interaction/enquiries/edit/${enquiry.id}`;
+    openInNewTab(`/interaction/enquiries/edit/${enquiry.id}`);
   };
 
   // Create a function to validate the test form fields

@@ -33,6 +33,7 @@ import {
 } from '@mui/icons-material';
 import type { PatientPaymentLine, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import { Timestamp } from 'firebase/firestore';
+import { isDetailOrEditPath } from '@/utils/openInNewTab';
 
 export type SortKey = 'invoiceNumber' | 'date' | 'client' | 'linked' | 'total';
 
@@ -219,6 +220,8 @@ export default function SalesInvoicesDataTable({
             ) : (
               slice.map((r) => {
                 const voided = !!r.isCancelled;
+                const profileHref = patientProfileHref(r);
+                const openProfileInNewTab = profileHref ? isDetailOrEditPath(profileHref) : false;
                 return (
                 <TableRow
                   key={r.rowId}
@@ -266,10 +269,12 @@ export default function SalesInvoicesDataTable({
                   </TableCell>
                   {!compact && (
                     <TableCell>
-                      {patientProfileHref(r) ? (
+                      {profileHref ? (
                         <Button
                           component={Link}
-                          href={patientProfileHref(r)!}
+                          href={profileHref}
+                          target={openProfileInNewTab ? '_blank' : undefined}
+                          rel={openProfileInNewTab ? 'noopener noreferrer' : undefined}
                           size="small"
                           variant="outlined"
                           color="primary"

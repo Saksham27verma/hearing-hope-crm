@@ -20,6 +20,7 @@ import CircleIcon from '@mui/icons-material/Circle';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import { useRouter } from 'next/navigation';
 import type { NotificationWithId } from '@/lib/notifications/types';
+import { isDetailOrEditPath, openInNewTab } from '@/utils/openInNewTab';
 
 function createdAtToMs(createdAt: unknown): number | null {
   if (!createdAt) return null;
@@ -176,7 +177,13 @@ export function NotificationDrawer(props: {
                           setBusyId(n.id);
                           try {
                             await markAsRead(n.id);
-                            if (n.href) router.push(n.href);
+                            if (n.href) {
+                              if (isDetailOrEditPath(n.href)) {
+                                openInNewTab(n.href);
+                              } else {
+                                router.push(n.href);
+                              }
+                            }
                             onClose();
                           } finally {
                             setBusyId(null);
@@ -233,7 +240,13 @@ export function NotificationDrawer(props: {
                       <Tooltip key={n.id} title="Open">
                         <ListItemButton
                           onClick={() => {
-                            if (n.href) router.push(n.href);
+                            if (n.href) {
+                              if (isDetailOrEditPath(n.href)) {
+                                openInNewTab(n.href);
+                              } else {
+                                router.push(n.href);
+                              }
+                            }
                             onClose();
                           }}
                           sx={{
