@@ -53,6 +53,32 @@ interface AuthContextInterface {
   isAllowedModule: (moduleName: string) => boolean;
 }
 
+function areStringArraysEqual(a?: string[] | null, b?: string[] | null) {
+  if (a === b) return true;
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function areUserProfilesEqual(a: UserProfile | null, b: UserProfile | null) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.uid === b.uid &&
+    a.email === b.email &&
+    a.displayName === b.displayName &&
+    a.nickname === b.nickname &&
+    a.role === b.role &&
+    a.createdAt === b.createdAt &&
+    a.branchId === b.branchId &&
+    a.centerId === b.centerId &&
+    a.isSuperAdmin === b.isSuperAdmin &&
+    areStringArraysEqual(a.allowedModules, b.allowedModules) &&
+    areStringArraysEqual(a.centerIds, b.centerIds)
+  );
+}
+
 // Create the auth context
 const AuthContext = createContext<AuthContextInterface>({
   user: null,
@@ -197,7 +223,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   return;
                 }
                 const profile = snap.data() as UserProfile;
-                setUserProfile(profile);
+                setUserProfile((prev) => (areUserProfilesEqual(prev, profile) ? prev : profile));
                 setLoading(false);
                 setError(null);
                 signOutInFlightRef.current = false;
