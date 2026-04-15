@@ -2939,7 +2939,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   };
 
   const calculateOutstanding = () => {
-    const incomingOutstanding = Math.max(calculateTotalDue() - calculateTotalIncoming(), 0);
+    // Due should be settled by net cash retained (incoming minus outgoing refunds).
+    const incomingOutstanding = Math.max(
+      calculateTotalDue() + calculateTotalOutgoing() - calculateTotalIncoming(),
+      0
+    );
     const refundOutstanding = Math.max(calculatePendingRefundDue() - calculateTotalOutgoing(), 0);
     return incomingOutstanding + refundOutstanding;
   };
