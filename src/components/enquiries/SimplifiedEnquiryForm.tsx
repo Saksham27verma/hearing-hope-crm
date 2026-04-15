@@ -1828,16 +1828,27 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     if (open) {
       if (isEditMode && enquiry) {
         // Set form values for edit mode
-        const visits = enquiry.visitSchedules?.map((visit: any, index: number) => {
-          const savedFlat = enquiry.visits?.[index];
-          const had = visit.hearingAidDetails || {};
+        const visitSource = Array.isArray(enquiry.visitSchedules) && enquiry.visitSchedules.length > 0
+          ? enquiry.visitSchedules
+          : (Array.isArray(enquiry.visits) ? enquiry.visits : []);
+        const visits = visitSource.map((visit: any, index: number) => {
+          const savedFlat = enquiry.visits?.[index] ?? {};
+          const medicalServices = Array.isArray(visit?.medicalServices) ? visit.medicalServices : [];
+          const had = visit?.hearingAidDetails || {};
+          const nestedAccessoryDetails = visit?.accessoryDetails || {};
+          const nestedProgrammingDetails = visit?.programmingDetails || {};
+          const mergedVisit = {
+            ...visit,
+            ...savedFlat,
+          };
           const isBookingService =
-            visit.medicalServices?.includes('hearing_aid_booked') ||
-            false;
+            medicalServices.includes('hearing_aid_booked') ||
+            Boolean(mergedVisit.hearingAidBooked);
           const isSaleService =
-            visit.medicalServices?.includes('hearing_aid_sale') ||
-            visit.medicalServices?.includes('hearing_aid') ||
-            false;
+            medicalServices.includes('hearing_aid_sale') ||
+            medicalServices.includes('hearing_aid') ||
+            Boolean(mergedVisit.hearingAidSale) ||
+            mergedVisit.hearingAidStatus === 'sold';
           const allowBookingFallbackFromSaleTotals = isBookingService && !isSaleService;
           const normalizedItems = normalizeSalesReturnItemsFromSaved(savedFlat, had);
           const persistedSerial = String(
@@ -1847,117 +1858,124 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             persistedSerial || linesToLegacyReturnSerialString(normalizedItems);
 
           return {
-          id: visit.id || (index + 1).toString(),
-          visitDate: visit.visitDate || '',
-          visitTime: visit.visitTime || '',
-          visitType: visit.visitType || 'center',
+          id: visit.id || savedFlat?.id || (index + 1).toString(),
+          visitDate: visit.visitDate || savedFlat?.visitDate || '',
+          visitTime: visit.visitTime || savedFlat?.visitTime || '',
+          visitType: visit.visitType || savedFlat?.visitType || 'center',
           homeVisitCharges: Math.max(
             0,
             Number(visit.homeVisitCharges ?? savedFlat?.homeVisitCharges) || 0
           ),
-          visitNotes: visit.notes || '',
-          hearingTest: visit.medicalServices?.includes('hearing_test') || false,
-          hearingAidTrial: visit.medicalServices?.includes('hearing_aid_trial') || false,
-          hearingAidBooked: visit.medicalServices?.includes('hearing_aid_booked') || false,
-          hearingAidSale: visit.medicalServices?.includes('hearing_aid_sale') || visit.medicalServices?.includes('hearing_aid') || false,
-          accessory: visit.medicalServices?.includes('accessory') || false,
-          programming: visit.medicalServices?.includes('programming') || false,
-          repair: visit.medicalServices?.includes('repair') || false,
-          counselling: visit.medicalServices?.includes('counselling') || false,
-          entService: visit.medicalServices?.includes('ent_service') || false,
+          visitNotes: visit.notes || savedFlat?.visitNotes || '',
+          hearingTest: medicalServices.includes('hearing_test') || Boolean(mergedVisit.hearingTest),
+          hearingAidTrial: medicalServices.includes('hearing_aid_trial') || Boolean(mergedVisit.hearingAidTrial || mergedVisit.trialGiven),
+          hearingAidBooked: medicalServices.includes('hearing_aid_booked') || Boolean(mergedVisit.hearingAidBooked),
+          hearingAidSale:
+            medicalServices.includes('hearing_aid_sale') ||
+            medicalServices.includes('hearing_aid') ||
+            Boolean(mergedVisit.hearingAidSale || mergedVisit.purchaseFromTrial || mergedVisit.hearingAidStatus === 'sold'),
+          accessory: medicalServices.includes('accessory') || Boolean(mergedVisit.accessory),
+          programming: medicalServices.includes('programming') || Boolean(mergedVisit.programming),
+          repair: medicalServices.includes('repair') || Boolean(mergedVisit.repair),
+          counselling: medicalServices.includes('counselling') || Boolean(mergedVisit.counselling),
+          entService: medicalServices.includes('ent_service') || Boolean(mergedVisit.entService),
           ...(() => {
-            const entProcedureEntries = normalizeEntProcedureEntriesFromSavedVisit(visit);
+            const entProcedureEntries = normalizeEntProcedureEntriesFromSavedVisit(mergedVisit);
             const ep = sumEntProcedurePrices({
               entServiceDetails: {
                 entProcedureEntries,
-                totalPrice: visit.entServiceDetails?.totalPrice,
+                totalPrice: visit.entServiceDetails?.totalPrice ?? mergedVisit.entServicePrice,
               },
-              entServicePrice: visit.entServicePrice,
+              entServicePrice: mergedVisit.entServicePrice,
             });
             return {
               entProcedureEntries,
-              entProcedureDoneBy: visit.entServiceDetails?.doneBy || '',
+              entProcedureDoneBy: visit.entServiceDetails?.doneBy || mergedVisit.entProcedureDoneBy || '',
               entServicePrice: ep,
             };
           })(),
           ...(() => {
-            const hearingTestEntries = normalizeHearingTestEntriesFromSavedVisit(visit);
+            const hearingTestEntries = normalizeHearingTestEntriesFromSavedVisit(mergedVisit);
             const line = hearingTestEntries.map((x) => x.testType).filter(Boolean).join(', ');
             const tp = sumHearingTestEntryPrices({
               hearingTestDetails: {
                 hearingTestEntries,
-                testPrice: visit.hearingTestDetails?.testPrice,
+                testPrice: visit.hearingTestDetails?.testPrice ?? mergedVisit.testPrice,
               },
-              testPrice: visit.testPrice,
+              testPrice: mergedVisit.testPrice,
             });
             return {
               hearingTestEntries,
-              testType: line || visit.hearingTestDetails?.testType || '',
+              testType: line || visit.hearingTestDetails?.testType || mergedVisit.testType || '',
               testPrice: tp,
             };
           })(),
-          testDoneBy: visit.hearingTestDetails?.testDoneBy || '',
-          testResults: visit.hearingTestDetails?.testResults || '',
-          recommendations: visit.hearingTestDetails?.recommendations || '',
-          audiogramData: visit.hearingTestDetails?.audiogramData || undefined,
+          testDoneBy: visit.hearingTestDetails?.testDoneBy || mergedVisit.testDoneBy || '',
+          testResults: visit.hearingTestDetails?.testResults || mergedVisit.testResults || '',
+          recommendations: visit.hearingTestDetails?.recommendations || mergedVisit.recommendations || '',
+          audiogramData: visit.hearingTestDetails?.audiogramData ?? mergedVisit.audiogramData ?? undefined,
           externalPtaReport:
-            visit.hearingTestDetails?.externalPtaReport || visit.externalPtaReport || undefined,
-          hearingAidType: visit.hearingAidDetails?.hearingAidSuggested || '',
-          hearingAidBrand: visit.hearingAidDetails?.whoSold || '',
-          hearingAidModel: visit.hearingAidDetails?.quotation || '',
-          hearingAidPrice: visit.hearingAidDetails?.bookingAmount || 0,
-          warranty: visit.hearingAidDetails?.trialPeriod || '',
-          whichEar: visit.hearingAidDetails?.whichEar || 'both',
-          hearingAidStatus: visit.hearingAidDetails?.hearingAidStatus || 'booked',
+            visit.hearingTestDetails?.externalPtaReport || visit.externalPtaReport || mergedVisit.externalPtaReport || undefined,
+          hearingAidType: visit.hearingAidDetails?.hearingAidSuggested || mergedVisit.hearingAidType || '',
+          hearingAidBrand: visit.hearingAidDetails?.whoSold || mergedVisit.hearingAidBrand || '',
+          hearingAidModel: visit.hearingAidDetails?.quotation || mergedVisit.hearingAidModel || '',
+          hearingAidPrice: visit.hearingAidDetails?.bookingAmount || mergedVisit.hearingAidPrice || 0,
+          warranty: visit.hearingAidDetails?.trialPeriod || mergedVisit.warranty || '',
+          whichEar: visit.hearingAidDetails?.whichEar || mergedVisit.whichEar || 'both',
+          hearingAidStatus: visit.hearingAidDetails?.hearingAidStatus || mergedVisit.hearingAidStatus || 'booked',
           // Journey tracking fields
-          hearingAidJourneyId: visit.hearingAidDetails?.hearingAidJourneyId || '',
-          previousVisitId: visit.hearingAidDetails?.previousVisitId || '',
-          nextVisitId: visit.hearingAidDetails?.nextVisitId || '',
-          journeyStage: visit.hearingAidDetails?.journeyStage || 'initial',
+          hearingAidJourneyId: visit.hearingAidDetails?.hearingAidJourneyId || mergedVisit.hearingAidJourneyId || '',
+          previousVisitId: visit.hearingAidDetails?.previousVisitId || mergedVisit.previousVisitId || '',
+          nextVisitId: visit.hearingAidDetails?.nextVisitId || mergedVisit.nextVisitId || '',
+          journeyStage: visit.hearingAidDetails?.journeyStage || mergedVisit.journeyStage || 'initial',
           // Trial related fields
-          trialGiven: visit.hearingAidDetails?.trialGiven || false,
-          trialDuration: visit.hearingAidDetails?.trialDuration || 7,
-          trialStartDate: visit.hearingAidDetails?.trialStartDate || '',
-          trialEndDate: visit.hearingAidDetails?.trialEndDate || '',
-          trialHearingAidBrand: visit.hearingAidDetails?.trialHearingAidBrand || '',
-          trialHearingAidModel: visit.hearingAidDetails?.trialHearingAidModel || '',
-          trialHearingAidType: visit.hearingAidDetails?.trialHearingAidType || '',
-          trialSerialNumber: visit.hearingAidDetails?.trialSerialNumber || '',
+          trialGiven: visit.hearingAidDetails?.trialGiven || Boolean(mergedVisit.trialGiven),
+          trialDuration: visit.hearingAidDetails?.trialDuration || mergedVisit.trialDuration || 7,
+          trialStartDate: visit.hearingAidDetails?.trialStartDate || mergedVisit.trialStartDate || '',
+          trialEndDate: visit.hearingAidDetails?.trialEndDate || mergedVisit.trialEndDate || '',
+          trialHearingAidBrand: visit.hearingAidDetails?.trialHearingAidBrand || mergedVisit.trialHearingAidBrand || '',
+          trialHearingAidModel: visit.hearingAidDetails?.trialHearingAidModel || mergedVisit.trialHearingAidModel || '',
+          trialHearingAidType: visit.hearingAidDetails?.trialHearingAidType || mergedVisit.trialHearingAidType || '',
+          trialSerialNumber: visit.hearingAidDetails?.trialSerialNumber || mergedVisit.trialSerialNumber || '',
           trialHomeSecurityDepositAmount:
-            Number(visit.hearingAidDetails?.trialHomeSecurityDepositAmount) || 0,
-          trialNotes: visit.hearingAidDetails?.trialNotes || '',
-          trialResult: visit.hearingAidDetails?.trialResult || 'ongoing',
-          trialRefundAmount: Number(visit.hearingAidDetails?.trialRefundAmount) || 0,
-          trialRefundDate: visit.hearingAidDetails?.trialRefundDate || '',
+            Number(visit.hearingAidDetails?.trialHomeSecurityDepositAmount ?? mergedVisit.trialHomeSecurityDepositAmount) || 0,
+          trialNotes: visit.hearingAidDetails?.trialNotes || mergedVisit.trialNotes || '',
+          trialResult: visit.hearingAidDetails?.trialResult || mergedVisit.trialResult || 'ongoing',
+          trialRefundAmount: Number(visit.hearingAidDetails?.trialRefundAmount ?? mergedVisit.trialRefundAmount) || 0,
+          trialRefundDate: visit.hearingAidDetails?.trialRefundDate || mergedVisit.trialRefundDate || '',
           // Booking related fields
-          bookingFromTrial: visit.hearingAidDetails?.bookingFromTrial || false,
-          bookingAdvanceAmount: visit.hearingAidDetails?.bookingAdvanceAmount || 0,
-          bookingDate: visit.hearingAidDetails?.bookingDate || '',
-          bookingFromVisitId: visit.hearingAidDetails?.bookingFromVisitId || '',
+          bookingFromTrial: visit.hearingAidDetails?.bookingFromTrial || Boolean(mergedVisit.bookingFromTrial),
+          bookingAdvanceAmount: visit.hearingAidDetails?.bookingAdvanceAmount || mergedVisit.bookingAdvanceAmount || 0,
+          bookingDate: visit.hearingAidDetails?.bookingDate || mergedVisit.bookingDate || '',
+          bookingFromVisitId: visit.hearingAidDetails?.bookingFromVisitId || mergedVisit.bookingFromVisitId || '',
           bookingSellingPrice:
             visit.hearingAidDetails?.bookingSellingPrice ||
+            mergedVisit.bookingSellingPrice ||
             (allowBookingFallbackFromSaleTotals
-              ? visit.hearingAidDetails?.grossSalesBeforeTax
+              ? visit.hearingAidDetails?.grossSalesBeforeTax ?? mergedVisit.grossSalesBeforeTax
               : 0) ||
             0,
-          bookingQuantity: visit.hearingAidDetails?.bookingQuantity || 1,
+          bookingQuantity: visit.hearingAidDetails?.bookingQuantity || mergedVisit.bookingQuantity || 1,
           // Purchase related fields
-          purchaseFromTrial: visit.hearingAidDetails?.purchaseFromTrial || false,
-          purchaseDate: visit.hearingAidDetails?.purchaseDate || '',
-          purchaseFromVisitId: visit.hearingAidDetails?.purchaseFromVisitId || '',
-          accessoryName: visit.accessoryDetails?.accessoryName || '',
-          accessoryDetails: visit.accessoryDetails?.accessoryDetails || '',
-          accessoryFOC: visit.accessoryDetails?.accessoryFOC || false,
-          accessoryAmount: visit.accessoryDetails?.accessoryAmount || 0,
-          accessoryQuantity: visit.accessoryDetails?.accessoryQuantity || 1,
-          programmingReason: visit.programmingDetails?.programmingReason || '',
-          hearingAidPurchaseDate: visit.programmingDetails?.hearingAidPurchaseDate || '',
-          hearingAidName: visit.programmingDetails?.hearingAidName || '',
-          underWarranty: visit.programmingDetails?.underWarranty || false,
-          programmingAmount: visit.programmingDetails?.programmingAmount || 0,
-          programmingDoneBy: visit.programmingDetails?.programmingDoneBy || '',
+          purchaseFromTrial: visit.hearingAidDetails?.purchaseFromTrial || Boolean(mergedVisit.purchaseFromTrial),
+          purchaseDate: visit.hearingAidDetails?.purchaseDate || mergedVisit.purchaseDate || '',
+          purchaseFromVisitId: visit.hearingAidDetails?.purchaseFromVisitId || mergedVisit.purchaseFromVisitId || '',
+          accessoryName: nestedAccessoryDetails.accessoryName || mergedVisit.accessoryName || '',
+          accessoryDetails:
+            nestedAccessoryDetails.accessoryDetails ||
+            (typeof mergedVisit.accessoryDetails === 'string' ? mergedVisit.accessoryDetails : '') ||
+            '',
+          accessoryFOC: nestedAccessoryDetails.accessoryFOC || Boolean(mergedVisit.accessoryFOC),
+          accessoryAmount: nestedAccessoryDetails.accessoryAmount || mergedVisit.accessoryAmount || 0,
+          accessoryQuantity: nestedAccessoryDetails.accessoryQuantity || mergedVisit.accessoryQuantity || 1,
+          programmingReason: nestedProgrammingDetails.programmingReason || mergedVisit.programmingReason || '',
+          hearingAidPurchaseDate: nestedProgrammingDetails.hearingAidPurchaseDate || mergedVisit.hearingAidPurchaseDate || '',
+          hearingAidName: nestedProgrammingDetails.hearingAidName || mergedVisit.hearingAidName || '',
+          underWarranty: nestedProgrammingDetails.underWarranty || Boolean(mergedVisit.underWarranty),
+          programmingAmount: nestedProgrammingDetails.programmingAmount || mergedVisit.programmingAmount || 0,
+          programmingDoneBy: nestedProgrammingDetails.programmingDoneBy || mergedVisit.programmingDoneBy || '',
           ...(() => {
-            const raw = visit.hearingAidDetails?.products || [];
+            const raw = visit.hearingAidDetails?.products || mergedVisit.products || [];
             const products = raw.map((p: any) => ({
               ...p,
               quantity: hearingAidLineQty({ quantity: p.quantity }),
@@ -1972,11 +1990,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               salesAfterTax: t.salesAfterTax,
             };
           })(),
-          totalDiscountPercent: visit.hearingAidDetails?.totalDiscountPercent || 0,
+          totalDiscountPercent: visit.hearingAidDetails?.totalDiscountPercent || mergedVisit.totalDiscountPercent || 0,
           salesReturn:
             !!savedFlat?.salesReturn ||
             !!had.salesReturn ||
-            visit.medicalServices?.includes('sales_return') ||
+            medicalServices.includes('sales_return') ||
             false,
           salesReturnItems: normalizedItems,
           returnSerialNumber: serialStr,
@@ -1994,7 +2012,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             savedFlat?.returnOriginalSaleVisitId ?? had.returnOriginalSaleVisitId ?? '',
           returnNotes: savedFlat?.returnNotes ?? had.returnNotes ?? '',
           };
-        }) || [];
+        });
 
         reset({
           name: enquiry.name || '',

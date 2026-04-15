@@ -221,6 +221,19 @@ export default function NewEnquiryPage() {
             updatedByRole: actor.role,
           }))
         : [];
+      const withVisitScheduleActors = Array.isArray(enquiryData.visitSchedules)
+        ? enquiryData.visitSchedules.map((visit: Record<string, unknown>) => ({
+            ...visit,
+            createdByUid: visit.createdByUid ?? actor.uid,
+            createdByName: visit.createdByName ?? actor.name,
+            createdByEmail: visit.createdByEmail ?? actor.email,
+            createdByRole: visit.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
       const withPaymentActors = Array.isArray(enquiryData.paymentRecords)
         ? enquiryData.paymentRecords.map((payment: Record<string, unknown>) => ({
             ...payment,
@@ -252,7 +265,7 @@ export default function NewEnquiryPage() {
       const docRef = await addDoc(collection(db, 'enquiries'), {
         ...enquiryData,
         visits: withVisitActors,
-        visitSchedules: withVisitActors,
+        visitSchedules: withVisitScheduleActors,
         paymentRecords: withPaymentActors,
         payments: withLegacyPaymentActors,
       });

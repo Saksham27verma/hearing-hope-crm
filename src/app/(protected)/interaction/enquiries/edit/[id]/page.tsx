@@ -255,6 +255,19 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
             updatedByRole: actor.role,
           }))
         : [];
+      const visitSchedules = Array.isArray(data.visitSchedules)
+        ? data.visitSchedules.map((visit: Record<string, unknown>) => ({
+            ...visit,
+            createdByUid: visit.createdByUid ?? actor.uid,
+            createdByName: visit.createdByName ?? actor.name,
+            createdByEmail: visit.createdByEmail ?? actor.email,
+            createdByRole: visit.createdByRole ?? actor.role,
+            updatedByUid: actor.uid,
+            updatedByName: actor.name,
+            updatedByEmail: actor.email,
+            updatedByRole: actor.role,
+          }))
+        : [];
       const paymentRecords = Array.isArray(data.paymentRecords)
         ? data.paymentRecords.map((payment: Record<string, unknown>) => ({
             ...payment,
@@ -374,7 +387,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         ...data,
         phone,
         visits,
-        visitSchedules: visits,
+        visitSchedules,
         paymentRecords,
         payments,
         updatedByUid: actor.uid,
