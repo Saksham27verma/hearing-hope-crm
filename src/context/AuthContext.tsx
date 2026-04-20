@@ -118,8 +118,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const routerRef = useRef(router);
   routerRef.current = router;
   const profileUnsubRef = useRef<(() => void) | null>(null);
-  /** Avoid re-running auth bootstrap for duplicate same-user emissions across tabs. */
-  const activeAuthUidRef = useRef<string | null>(null);
+  /**
+   * Avoid re-running auth bootstrap for duplicate same-user emissions across tabs.
+   * Use a sentinel so the first `null` auth event is still processed and clears the
+   * initial loading screen for signed-out sessions.
+   */
+  const UNRESOLVED_AUTH_UID = '__auth_unresolved__';
+  const activeAuthUidRef = useRef<string | null>(UNRESOLVED_AUTH_UID);
   /** Guards against transient null auth emissions across tabs before forcing /login. */
   const nullAuthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Marks explicit sign-out initiated in this tab (skip null-state guard). */
