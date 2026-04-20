@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
@@ -52,11 +53,13 @@ export function NotificationDrawer(props: {
   notifications: NotificationWithId[];
   unreadCount: number;
   markAsRead: (id: string) => Promise<void>;
+  markAllAsRead: (ids: string[]) => Promise<void>;
 }) {
-  const { anchorEl, onClose, notifications, unreadCount, markAsRead } = props;
+  const { anchorEl, onClose, notifications, unreadCount, markAsRead, markAllAsRead } = props;
   const router = useRouter();
   const open = Boolean(anchorEl);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [markingAll, setMarkingAll] = useState(false);
 
   const { unread, read } = useMemo(() => {
     const u: NotificationWithId[] = [];
@@ -70,7 +73,7 @@ export function NotificationDrawer(props: {
       open={open}
       anchorEl={anchorEl}
       onClose={() => {
-        if (busyId) return;
+        if (busyId || markingAll) return;
         onClose();
       }}
       anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
@@ -117,10 +120,31 @@ export function NotificationDrawer(props: {
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
               Click an item to mark it read.
             </Typography>
+            {unreadCount > 0 ? (
+              <Button
+                size="small"
+                variant="text"
+                disabled={Boolean(busyId) || markingAll}
+                onClick={async () => {
+                  if (busyId || markingAll) return;
+                  const unreadIds = unread.map((n) => n.id).filter(Boolean);
+                  if (unreadIds.length === 0) return;
+                  setMarkingAll(true);
+                  try {
+                    await markAllAsRead(unreadIds);
+                  } finally {
+                    setMarkingAll(false);
+                  }
+                }}
+                sx={{ mt: 0.75, px: 0, minWidth: 0, fontWeight: 700, textTransform: 'none' }}
+              >
+                {markingAll ? 'Marking all…' : 'Mark all as read'}
+              </Button>
+            ) : null}
           </Box>
           <IconButton
             size="small"
-            onClick={() => !busyId && onClose()}
+            onClick={() => !busyId && !markingAll && onClose()}
             aria-label="Close notifications"
             sx={{ mt: 0.25 }}
           >

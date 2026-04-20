@@ -130,12 +130,27 @@ export function useNotifications(opts?: { limit?: number }) {
     });
   }, []);
 
+  const markAllAsRead = useCallback(async (ids: string[]) => {
+    if (!db) return;
+    const cleanIds = Array.from(new Set((ids || []).map((id) => String(id || '').trim()).filter(Boolean)));
+    if (cleanIds.length === 0) return;
+    await Promise.all(
+      cleanIds.map((id) =>
+        updateDoc(doc(db, 'notifications', id), {
+          is_read: true,
+          readAt: serverTimestamp(),
+        }),
+      ),
+    );
+  }, []);
+
   return {
     notifications,
     unreadCount,
     loading,
     error,
     markAsRead,
+    markAllAsRead,
   };
 }
 

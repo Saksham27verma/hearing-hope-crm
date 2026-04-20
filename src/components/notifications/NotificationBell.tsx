@@ -13,7 +13,7 @@ export function NotificationBell() {
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
-  const { notifications, unreadCount, markAsRead } = useNotifications({ limit: 60 });
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications({ limit: 60 });
   useNotificationToasts(notifications);
 
   return (
@@ -57,6 +57,7 @@ export function NotificationBell() {
         notifications={notifications}
         unreadCount={unreadCount}
         markAsRead={markAsRead}
+        markAllAsRead={markAllAsRead}
       />
     </>
   );
