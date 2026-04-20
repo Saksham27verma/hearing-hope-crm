@@ -4,6 +4,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
 import { useRouter } from 'next/navigation';
 import { openInNewTab } from '@/utils/openInNewTab';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   Box, 
   Typography, 
@@ -105,6 +107,8 @@ import {
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
   LocalFireDepartment as LocalFireDepartmentIcon,
+  TableView as TableViewIcon,
+  PictureAsPdf as PictureAsPdfIcon,
 } from '@mui/icons-material';
 import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc, getDoc, where, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -521,6 +525,7 @@ export default function EnquiriesPage() {
     searchTerm: '',
     status: 'all',
     enquiryType: 'all',
+    hotEnquiry: 'all',
     
     // Date filters
     dateFrom: '',
@@ -930,6 +935,7 @@ export default function EnquiriesPage() {
   // Visit Management States for comprehensive tabs
   const [mainActiveTab, setMainActiveTab] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null);
   const [visitTypeFilterMain, setVisitTypeFilterMain] = useState('all');
   const [centerFilterMain, setCenterFilterMain] = useState('all');
   
@@ -1016,6 +1022,413 @@ export default function EnquiriesPage() {
     if (!centerId) return '-';
     const center = centers.find(c => String(c.id) === String(centerId));
     return center?.name || '-';
+  };
+
+  const exportSafeText = (value: unknown): string => {
+    if (value == null) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    return '';
+  };
+
+  const exportDateOnly = (raw: string | undefined): string => {
+    if (!raw) return '-';
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return raw;
+    return d.toLocaleDateString('en-IN');
+  };
+
+  const exportDateTimeFromCreatedAt = (enquiry: Enquiry): string => {
+    const c = enquiry?.createdAt as { _seconds?: number; seconds?: number } | undefined;
+    const sec = typeof c?._seconds === 'number' ? c._seconds : typeof c?.seconds === 'number' ? c.seconds : undefined;
+    if (sec == null) return '-';
+    return new Date(sec * 1000).toLocaleString('en-IN');
+  };
+
+  const exportReference = (reference: unknown): string => {
+    if (Array.isArray(reference)) {
+      const values = reference.map((r) => exportSafeText(r)).filter(Boolean);
+      return values.length ? values.join(' | ') : '-';
+    }
+    const one = exportSafeText(reference);
+    return one || '-';
+  };
+
+  const buildFollowUpExportRows = (enquiry: Enquiry): Array<{
+    date: string;
+    nextFollowUpDate: string;
+    callerName: string;
+    remarks: string;
+  }> => {
+    const followUps = Array.isArray(enquiry.followUps) ? enquiry.followUps : [];
+    return followUps.map((fu) => ({
+      date: exportDateOnly(exportSafeText(fu?.date)),
+      nextFollowUpDate: exportDateOnly(exportSafeText(fu?.nextFollowUpDate)),
+      callerName: exportSafeText(fu?.callerName) || '-',
+      remarks: exportSafeText(fu?.remarks) || '-',
+    }));
+  };
+
+  const buildVisitExportRows = (enquiry: Enquiry): Array<{
+    source: string;
+    date: string;
+    time: string;
+    type: string;
+    staff: string;
+    status: string;
+    notes: string;
+    details: string;
+  }> => {
+    const rows: Array<{
+      source: string;
+      date: string;
+      time: string;
+      type: string;
+      staff: string;
+      status: string;
+      notes: string;
+      details: string;
+    }> = [];
+    const visits = Array.isArray(enquiry.visits) ? enquiry.visits : [];
+    visits.forEach((visit) => {
+      const detailParts: string[] = [];
+      const activeForms = Array.isArray(visit.activeFormTypes) ? visit.activeFormTypes.filter(Boolean) : [];
+      if (activeForms.length > 0) detailParts.push(`Services: ${activeForms.join(' / ')}`);
+      if (visit.testDetails?.testResults) detailParts.push(`Test: ${visit.testDetails.testResults}`);
+      if (visit.trialDetails?.trialResult) detailParts.push(`Trial: ${visit.trialDetails.trialResult}`);
+      if (visit.fittingDetails?.hearingAidModel) {
+        const brand = exportSafeText(visit.fittingDetails.hearingAidBrand);
+        detailParts.push(`Aid: ${brand ? `${brand} ` : ''}${visit.fittingDetails.hearingAidModel}`);
+      }
+      rows.push({
+        source: 'Visit',
+        date: exportDateOnly(exportSafeText(visit.date)),
+        time: exportSafeText(visit.time) || '-',
+        type: exportSafeText((visit as { visitType?: string }).visitType) || exportSafeText(visit.purpose) || '-',
+        staff: exportSafeText(visit.staff) || '-',
+        status: exportSafeText((visit as { status?: string }).status) || '-',
+        notes: exportSafeText(visit.notes) || '-',
+        details: detailParts.length > 0 ? detailParts.join(' | ') : '-',
+      });
+    });
+
+    const schedules = Array.isArray(enquiry.visitSchedules) ? enquiry.visitSchedules : [];
+    schedules.forEach((schedule) => {
+      const detailParts: string[] = [];
+      if (schedule.hearingTestDetails?.testResults) {
+        detailParts.push(`Test: ${schedule.hearingTestDetails.testResults}`);
+      }
+      if (schedule.hearingAidDetails?.model) {
+        const brand = exportSafeText(schedule.hearingAidDetails.brand);
+        detailParts.push(`Aid: ${brand ? `${brand} ` : ''}${schedule.hearingAidDetails.model}`);
+      }
+      if (schedule.homeAddress) detailParts.push(`Address: ${schedule.homeAddress}`);
+      rows.push({
+        source: 'Scheduled',
+        date: exportDateOnly(exportSafeText(schedule.visitDate)),
+        time: exportSafeText(schedule.visitTime) || '-',
+        type: exportSafeText(schedule.visitType) || '-',
+        staff:
+          exportSafeText(schedule.hearingTestDetails?.testDoneBy) ||
+          exportSafeText(schedule.hearingAidDetails?.brand) ||
+          '-',
+        status: exportSafeText((schedule as { status?: string }).status) || '-',
+        notes: exportSafeText(schedule.notes) || '-',
+        details: detailParts.length > 0 ? detailParts.join(' | ') : '-',
+      });
+    });
+    return rows;
+  };
+
+  const csvEscape = (value: unknown): string => {
+    const text = exportSafeText(value).replace(/\r?\n/g, ' ');
+    if (text.includes(',') || text.includes('"')) return `"${text.replace(/"/g, '""')}"`;
+    return text;
+  };
+
+  const handleExportCsv = async () => {
+    if (filteredEnquiries.length === 0) {
+      setAlert({ open: true, message: 'No filtered enquiries to export.', severity: 'warning' });
+      return;
+    }
+    setExporting('csv');
+    try {
+      const headers = [
+        'Name',
+        'Customer Name',
+        'Phone',
+        'Email',
+        'Journey Status',
+        'Hot Enquiry',
+        'Assigned To',
+        'Telecaller',
+        'Center',
+        'Reference',
+        'Enquiry Type',
+        'Subject',
+        'Message',
+        'Visit Count',
+        'Call Log Count',
+        'Created At',
+      ];
+      const rows = filteredEnquiries.map((enquiry) => {
+        const visits = buildVisitExportRows(enquiry);
+        const followUps = buildFollowUpExportRows(enquiry);
+        const statusMeta = getEnquiryStatusMeta(enquiry as Record<string, unknown>);
+        return [
+          exportSafeText(enquiry.name) || '-',
+          exportSafeText(enquiry.customerName) || '-',
+          exportSafeText(enquiry.phone) || '-',
+          exportSafeText(enquiry.email) || '-',
+          statusMeta.label,
+          enquiry.hotEnquiry ? 'Yes' : 'No',
+          exportSafeText(enquiry.assignedTo) || '-',
+          exportSafeText(enquiry.telecaller) || '-',
+          getCenterName(enquiry.visitingCenter || (enquiry as { center?: string }).center),
+          exportReference(enquiry.reference),
+          exportSafeText(enquiry.enquiryType) || '-',
+          exportSafeText(enquiry.subject) || '-',
+          exportSafeText(enquiry.message) || '-',
+          String(visits.length),
+          String(followUps.length),
+          exportDateTimeFromCreatedAt(enquiry),
+        ];
+      });
+      const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\n');
+      const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      a.href = url;
+      a.download = `enquiries_filtered_${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setAlert({
+        open: true,
+        message: `CSV exported with ${filteredEnquiries.length} filtered enquiries.`,
+        severity: 'success',
+      });
+    } catch (err) {
+      console.error('CSV export failed:', err);
+      setAlert({ open: true, message: 'Failed to export CSV.', severity: 'error' });
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (filteredEnquiries.length === 0) {
+      setAlert({ open: true, message: 'No filtered enquiries to export.', severity: 'warning' });
+      return;
+    }
+    setExporting('pdf');
+    try {
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const docAny = doc as jsPDF & { lastAutoTable?: { finalY?: number } };
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const maxY = pageHeight - 10;
+      const ensureSpace = (required: number, resetY = 12) => {
+        if (cursorY + required > maxY) {
+          doc.addPage();
+          cursorY = resetY;
+        }
+      };
+      const compact = (value: string, max = 140) => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
+
+      doc.setFontSize(15);
+      doc.setTextColor(18, 18, 18);
+      doc.text('Enquiries Export (Filtered)', 10, 10);
+      doc.setFontSize(8.5);
+      doc.setTextColor(90, 90, 90);
+      doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, 10, 15);
+      doc.text(`Total: ${filteredEnquiries.length}`, pageWidth - 10, 15, { align: 'right' });
+
+      autoTable(doc, {
+        startY: 18,
+        head: [['#', 'Name', 'Reference', 'Phone', 'Journey', 'Hot', 'Visits', 'Calls']],
+        body: filteredEnquiries.map((enquiry, index) => {
+          const statusMeta = getEnquiryStatusMeta(enquiry as Record<string, unknown>);
+          return [
+            String(index + 1),
+            compact(exportSafeText(enquiry.name) || 'Unnamed'),
+            compact(exportReference(enquiry.reference), 42),
+            exportSafeText(enquiry.phone) || '-',
+            statusMeta.label,
+            enquiry.hotEnquiry ? 'Yes' : 'No',
+            String(buildVisitExportRows(enquiry).length),
+            String(buildFollowUpExportRows(enquiry).length),
+          ];
+        }),
+        headStyles: { fillColor: [22, 78, 99], textColor: [255, 255, 255], fontStyle: 'bold' },
+        bodyStyles: { fontSize: 7.5, cellPadding: 1.1 },
+        columnStyles: {
+          0: { cellWidth: 8, halign: 'center' },
+          1: { cellWidth: 40 },
+          2: { cellWidth: 48 },
+          3: { cellWidth: 30 },
+          4: { cellWidth: 35 },
+          5: { cellWidth: 15, halign: 'center' },
+          6: { cellWidth: 14, halign: 'center' },
+          7: { cellWidth: 14, halign: 'center' },
+        },
+        margin: { left: 8, right: 8 },
+      });
+
+      let cursorY = (docAny.lastAutoTable?.finalY ?? 24) + 4;
+
+      filteredEnquiries.forEach((enquiry, idx) => {
+        const followUps = buildFollowUpExportRows(enquiry);
+        const visits = buildVisitExportRows(enquiry);
+        const statusMeta = getEnquiryStatusMeta(enquiry as Record<string, unknown>);
+
+        const detailEntries: Array<[string, string]> = [
+          ['Reference', exportReference(enquiry.reference)],
+          ['Journey', statusMeta.label],
+          ['Hot', enquiry.hotEnquiry ? 'Yes' : 'No'],
+          ['Phone', exportSafeText(enquiry.phone)],
+          ['Email', exportSafeText(enquiry.email)],
+          ['Assigned To', exportSafeText(enquiry.assignedTo)],
+          ['Telecaller', exportSafeText(enquiry.telecaller)],
+          ['Center', getCenterName(enquiry.visitingCenter || (enquiry as { center?: string }).center)],
+          ['Type', exportSafeText(enquiry.enquiryType)],
+          ['Subject', exportSafeText(enquiry.subject)],
+          ['Message', exportSafeText(enquiry.message)],
+          ['Notes', exportSafeText(enquiry.notes)],
+          ['Created At', exportDateTimeFromCreatedAt(enquiry)],
+        ].filter(([, value]) => {
+          const t = exportSafeText(value);
+          return t !== '' && t !== '-';
+        });
+
+        const detailRows: string[][] = [];
+        for (let i = 0; i < detailEntries.length; i += 2) {
+          const left = detailEntries[i];
+          const right = detailEntries[i + 1];
+          detailRows.push([
+            left?.[0] || '',
+            compact(left?.[1] || '', 72),
+            right?.[0] || '',
+            compact(right?.[1] || '', 72),
+          ]);
+        }
+
+        ensureSpace(18 + detailRows.length * 4);
+        doc.setFontSize(10.5);
+        doc.setTextColor(18, 18, 18);
+        doc.text(
+          `${idx + 1}. ${compact(exportSafeText(enquiry.name) || 'Unnamed enquiry', 52)}`,
+          9,
+          cursorY + 3,
+        );
+        autoTable(doc, {
+          startY: cursorY + 4,
+          body: detailRows,
+          styles: { fontSize: 7.4, cellPadding: 1.05, overflow: 'linebreak' },
+          bodyStyles: { textColor: [31, 41, 55] },
+          columnStyles: {
+            0: { cellWidth: 22, fontStyle: 'bold', textColor: [17, 24, 39] },
+            1: { cellWidth: 92 },
+            2: { cellWidth: 22, fontStyle: 'bold', textColor: [17, 24, 39] },
+            3: { cellWidth: 134 },
+          },
+          margin: { left: 9, right: 9 },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+        });
+        cursorY = (docAny.lastAutoTable?.finalY ?? cursorY) + 2;
+
+        if (followUps.length > 0) {
+          ensureSpace(12 + Math.min(followUps.length, 8) * 3.8);
+          doc.setFontSize(8.8);
+          doc.setTextColor(21, 128, 61);
+          doc.text(`Call logs (${followUps.length})`, 9, cursorY + 2.8);
+          autoTable(doc, {
+            startY: cursorY + 3.5,
+            head: [['Date', 'Next', 'Telecaller', 'Remarks']],
+            body: followUps.map((fu) => [
+              fu.date,
+              fu.nextFollowUpDate,
+              compact(fu.callerName, 28),
+              compact(fu.remarks, 98),
+            ]),
+            styles: { fontSize: 7.1, cellPadding: 0.9, overflow: 'linebreak' },
+            headStyles: { fillColor: [16, 185, 129], textColor: [255, 255, 255] },
+            columnStyles: {
+              0: { cellWidth: 21 },
+              1: { cellWidth: 21 },
+              2: { cellWidth: 32 },
+              3: { cellWidth: 191 },
+            },
+            margin: { left: 9, right: 9 },
+          });
+          cursorY = (docAny.lastAutoTable?.finalY ?? cursorY) + 1.5;
+        }
+
+        if (visits.length > 0) {
+          const meaningfulVisits = visits.filter((visit) =>
+            [visit.date, visit.time, visit.type, visit.staff, visit.status, visit.notes, visit.details].some(
+              (v) => exportSafeText(v) && exportSafeText(v) !== '-',
+            ),
+          );
+          if (meaningfulVisits.length > 0) {
+            ensureSpace(12 + Math.min(meaningfulVisits.length, 8) * 3.8);
+            doc.setFontSize(8.8);
+            doc.setTextColor(180, 83, 9);
+            doc.text(`Visits (${meaningfulVisits.length})`, 9, cursorY + 2.8);
+            autoTable(doc, {
+              startY: cursorY + 3.5,
+              head: [['Date', 'Time', 'Type', 'Staff', 'Status', 'Details']],
+              body: meaningfulVisits.map((visit) => [
+                visit.date,
+                visit.time,
+                compact(visit.type, 22),
+                compact(visit.staff, 25),
+                compact(visit.status, 22),
+                compact(
+                  [visit.notes, visit.details].filter((x) => exportSafeText(x) && exportSafeText(x) !== '-').join(' | ') || '-',
+                  120,
+                ),
+              ]),
+              styles: { fontSize: 7.1, cellPadding: 0.9, overflow: 'linebreak' },
+              headStyles: { fillColor: [245, 158, 11], textColor: [255, 255, 255] },
+              columnStyles: {
+                0: { cellWidth: 21 },
+                1: { cellWidth: 17 },
+                2: { cellWidth: 30 },
+                3: { cellWidth: 30 },
+                4: { cellWidth: 24 },
+                5: { cellWidth: 164 },
+              },
+              margin: { left: 9, right: 9 },
+            });
+            cursorY = (docAny.lastAutoTable?.finalY ?? cursorY) + 1.5;
+          }
+        }
+
+        if (idx !== filteredEnquiries.length - 1) {
+          ensureSpace(4);
+          doc.setDrawColor(226, 232, 240);
+          doc.line(9, cursorY + 0.6, pageWidth - 9, cursorY + 0.6);
+          cursorY += 2.6;
+        }
+      });
+
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      doc.save(`enquiries_filtered_${stamp}.pdf`);
+      setAlert({
+        open: true,
+        message: `PDF exported with ${filteredEnquiries.length} filtered enquiries.`,
+        severity: 'success',
+      });
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      const msg = err instanceof Error && err.message ? `Failed to export PDF: ${err.message}` : 'Failed to export PDF.';
+      setAlert({ open: true, message: msg, severity: 'error' });
+    } finally {
+      setExporting(null);
+    }
   };
 
   useEffect(() => {
@@ -1383,6 +1796,11 @@ export default function EnquiriesPage() {
     if (filters.enquiryType !== 'all' || typeFilter !== 'all') {
       const type = filters.enquiryType !== 'all' ? filters.enquiryType : typeFilter;
       result = result.filter(enquiry => enquiry.enquiryType === type);
+    }
+    if (filters.hotEnquiry !== 'all') {
+      result = result.filter((enquiry) =>
+        filters.hotEnquiry === 'hot' ? enquiry.hotEnquiry === true : enquiry.hotEnquiry !== true
+      );
     }
 
     // Apply remaining "More" filters (these existed in the UI but previously did nothing)
@@ -2414,6 +2832,7 @@ export default function EnquiriesPage() {
       searchTerm: '',
       status: 'all',
       enquiryType: 'all',
+      hotEnquiry: 'all',
       dateFrom: '',
       dateTo: '',
       visitDateFrom: '',
@@ -3988,6 +4407,48 @@ export default function EnquiriesPage() {
               }}
             >
               Columns
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<TableViewIcon sx={{ fontSize: '1.25rem' }} />}
+            onClick={() => void handleExportCsv()}
+            size="small"
+            disabled={exporting !== null || filteredEnquiries.length === 0}
+            sx={{
+              borderColor: 'primary.main',
+              color: 'primary.main',
+              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+              py: { xs: 0.75, sm: 1 },
+              px: { xs: 1.5, sm: 2 },
+              '&:hover': {
+                borderColor: 'primary.dark',
+                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
+              },
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {exporting === 'csv' ? 'Exporting CSV…' : 'Export CSV'}
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<PictureAsPdfIcon sx={{ fontSize: '1.25rem' }} />}
+            onClick={() => void handleExportPdf()}
+            size="small"
+            disabled={exporting !== null || filteredEnquiries.length === 0}
+            sx={{
+              borderColor: 'primary.main',
+              color: 'primary.main',
+              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+              py: { xs: 0.75, sm: 1 },
+              px: { xs: 1.5, sm: 2 },
+              '&:hover': {
+                borderColor: 'primary.dark',
+                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
+              },
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {exporting === 'pdf' ? 'Exporting PDF…' : 'Export PDF'}
           </Button>
         {userProfile?.role !== 'audiologist' && (
           <Button 
@@ -6567,32 +7028,31 @@ export default function EnquiriesPage() {
             ? enquiries.find((e) => e.id === journeyStatusMenu.enquiryId)
             : undefined;
           const manual = parseJourneyStatusOverride(menuEnquiry?.journeyStatusOverride);
-          return (
-            <>
+          return [
+            <MenuItem
+              key="auto"
+              selected={!manual}
+              onClick={() =>
+                journeyStatusMenu?.enquiryId &&
+                handleJourneyStatusOverrideSave(journeyStatusMenu.enquiryId, 'auto')
+              }
+            >
+              Automatic (from visits & lead outcome)
+            </MenuItem>,
+            <Divider key="divider" />,
+            ...ENQUIRY_STATUS_OPTIONS.map((opt) => (
               <MenuItem
-                selected={!manual}
+                key={opt.value}
+                selected={manual === opt.value}
                 onClick={() =>
                   journeyStatusMenu?.enquiryId &&
-                  handleJourneyStatusOverrideSave(journeyStatusMenu.enquiryId, 'auto')
+                  handleJourneyStatusOverrideSave(journeyStatusMenu.enquiryId, opt.value)
                 }
               >
-                Automatic (from visits & lead outcome)
+                {opt.label}
               </MenuItem>
-              <Divider />
-              {ENQUIRY_STATUS_OPTIONS.map((opt) => (
-                <MenuItem
-                  key={opt.value}
-                  selected={manual === opt.value}
-                  onClick={() =>
-                    journeyStatusMenu?.enquiryId &&
-                    handleJourneyStatusOverrideSave(journeyStatusMenu.enquiryId, opt.value)
-                  }
-                >
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </>
-          );
+            )),
+          ];
         })()}
       </Menu>
 

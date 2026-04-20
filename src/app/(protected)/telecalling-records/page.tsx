@@ -68,6 +68,7 @@ import { format, parseISO, isWithinInterval } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLogger';
 import { getEnquiryStatusMeta, type EnquiryStatusChipColor } from '@/utils/enquiryStatus';
+import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator';
 import {
   getAllActiveStaffDisplayNames,
   collectTelecallerExtrasFromEnquiry,
@@ -116,6 +117,7 @@ interface Enquiry {
   visitSchedules?: unknown[];
   financialSummary?: { paymentStatus?: string; totalDue?: number };
   leadOutcome?: string;
+  hotEnquiry?: boolean;
   /** Patient information section — optional scheduled follow-up (YYYY-MM-DD). */
   followUpDate?: string;
   followUps?: FollowUp[];
@@ -135,6 +137,7 @@ interface TelecallingRecord {
   referenceList: string[];
   /** Journey status label (CRM parity with enquiries list) */
   journeyLabel: string;
+  hotEnquiry: boolean;
   journeyChipColor: EnquiryStatusChipColor;
   journeySource: 'manual' | 'auto';
   centerLabel?: string;
@@ -269,6 +272,7 @@ export default function TelecallingRecordsPage() {
     const telecaller = (searchParams.get('telecaller') || '').trim();
     const validQuickFilters = new Set([
       '',
+      'hot_enquiries',
       'today_calls',
       'yesterday_calls',
       'last_week_calls',
@@ -385,6 +389,7 @@ export default function TelecallingRecordsPage() {
           const rowContext = {
             referenceList,
             journeyLabel: statusMeta.label,
+                hotEnquiry: enquiryData.hotEnquiry === true,
             journeyChipColor: statusMeta.color,
             journeySource: statusMeta.source,
             centerLabel,
@@ -561,6 +566,9 @@ export default function TelecallingRecordsPage() {
           }
         });
       }
+    }
+    if (quickFilter === 'hot_enquiries') {
+      filtered = filtered.filter((record) => record.hotEnquiry === true);
     }
 
     // Search filter
@@ -795,6 +803,7 @@ export default function TelecallingRecordsPage() {
   // Quick filter options
   const quickFilterOptions = [
     { label: 'All Calls', value: '', color: 'default' },
+    { label: 'Hot Enquiries', value: 'hot_enquiries', color: 'warning' },
     { label: 'Today\'s Calls', value: 'today_calls', color: 'primary' },
     { label: 'Yesterday\'s Calls', value: 'yesterday_calls', color: 'secondary' },
     { label: 'Last Week Calls', value: 'last_week_calls', color: 'info' },
@@ -1216,7 +1225,23 @@ export default function TelecallingRecordsPage() {
               </TableHead>
               <TableBody>
                 {paginatedRecords.map((record) => (
-                  <TableRow key={record.id} hover>
+                  <TableRow
+                    key={record.id}
+                    hover
+                    sx={
+                      record.hotEnquiry
+                        ? {
+                            bgcolor: (theme) =>
+                              theme.palette.mode === 'dark' ? 'rgba(255,111,0,0.12)' : 'rgba(255,152,0,0.10)',
+                            boxShadow: 'inset 4px 0 0 0 #ef6c00',
+                            '&:hover': {
+                              bgcolor: (theme) =>
+                                theme.palette.mode === 'dark' ? 'rgba(255,111,0,0.18)' : 'rgba(255,152,0,0.16)',
+                            },
+                          }
+                        : undefined
+                    }
+                  >
                     <TableCell>
                       <Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
@@ -1231,6 +1256,7 @@ export default function TelecallingRecordsPage() {
                             label={`${record.totalFollowUpsOnEnquiry} calls`}
                             variant="outlined"
                           />
+                          {record.hotEnquiry ? <HotEnquiryBadgeChip /> : null}
                         </Box>
                         <Typography variant="body2" color="text.secondary">
                           {record.enquiryPhone}

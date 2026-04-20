@@ -33,6 +33,7 @@ import {
   ArrowBack as ArrowBackIcon,
   Tune as TuneIcon,
   AccountTree as AccountTreeIcon,
+  LocalFireDepartment as LocalFireDepartmentIcon,
 } from '@mui/icons-material';
 import { ENQUIRY_STATUS_OPTIONS } from '@/utils/enquiryStatus';
 import {
@@ -412,6 +413,13 @@ export default function EnquiryFilterSection({
         key: 'legacy-type',
         label: `Type: ${f.enquiryType}`,
         onDelete: () => updateFilter('enquiryType', 'all'),
+      });
+    }
+    if (f.hotEnquiry && f.hotEnquiry !== 'all') {
+      chips.push({
+        key: 'legacy-hot',
+        label: `Priority: ${f.hotEnquiry === 'hot' ? 'Hot enquiries only' : 'Non-hot enquiries only'}`,
+        onDelete: () => updateFilter('hotEnquiry', 'all'),
       });
     }
     if (f.dateFrom || f.dateTo) {
@@ -879,6 +887,30 @@ export default function EnquiryFilterSection({
             <MenuItem value="appointment">Appointment</MenuItem>
           </Select>
         </FormControl>
+        <Tooltip title={filters.hotEnquiry === 'hot' ? 'Hot enquiries only (click to clear)' : 'Show hot enquiries only'}>
+          <IconButton
+            size="small"
+            onClick={() => updateFilter('hotEnquiry', filters.hotEnquiry === 'hot' ? 'all' : 'hot')}
+            aria-label="Toggle hot enquiry filter"
+            sx={{
+              border: 1,
+              borderColor: filters.hotEnquiry === 'hot' ? 'warning.main' : 'divider',
+              bgcolor: (t) =>
+                filters.hotEnquiry === 'hot'
+                  ? (t.palette.mode === 'dark' ? alpha(t.palette.warning.main, 0.22) : alpha(t.palette.warning.main, 0.14))
+                  : (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+              color: filters.hotEnquiry === 'hot' ? 'warning.dark' : 'text.secondary',
+              '&:hover': {
+                bgcolor: (t) =>
+                  filters.hotEnquiry === 'hot'
+                    ? (t.palette.mode === 'dark' ? alpha(t.palette.warning.main, 0.3) : alpha(t.palette.warning.main, 0.2))
+                    : (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.08) : alpha(t.palette.warning.main, 0.08)),
+              },
+            }}
+          >
+            <LocalFireDepartmentIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75, fontWeight: 600 }}>
