@@ -43,54 +43,12 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   
-  // Webpack optimizations
-  webpack: (config, { dev, isServer }) => {
-    // Production optimizations
-    if (!dev && !isServer) {
-      config.optimization.splitChunks = {
-        chunks: 'all',
-        cacheGroups: {
-          /** Keep jsPDF + autotable in one chunk — avoids undefined module factory at runtime. */
-          jspdfExport: {
-            test: /[\\/]node_modules[\\/](jspdf|jspdf-autotable)([\\/]|$)/,
-            name: 'jspdf-export',
-            chunks: 'all',
-            priority: 35,
-            enforce: true,
-          },
-          xlsxExport: {
-            test: /[\\/]node_modules[\\/]xlsx[\\/]/,
-            name: 'xlsx-export',
-            chunks: 'all',
-            priority: 35,
-            enforce: true,
-          },
-          vendor: {
-            test: /[\\/]node_modules[\\/]/,
-            chunks: 'all',
-            priority: 10,
-            name: 'vendor',
-            enforce: true,
-          },
-          mui: {
-            test: /[\\/]node_modules[\\/]@mui[\\/]/,
-            chunks: 'all',
-            priority: 20,
-            name: 'mui',
-            enforce: true,
-          },
-          firebase: {
-            test: /[\\/]node_modules[\\/]firebase[\\/]/,
-            chunks: 'all',
-            priority: 20,
-            name: 'firebase',
-            enforce: true,
-          },
-        },
-      };
-    }
-    return config;
-  },
+  /**
+   * Do not override Next's production chunk graph here.
+   * In App Router builds, a custom splitChunks config can leak CSS files into
+   * the root JS manifest, which causes the generated HTML to emit
+   * `<script src="/_next/static/css/*.css">` and the app stalls on load.
+   */
   
   async redirects() {
     return [
