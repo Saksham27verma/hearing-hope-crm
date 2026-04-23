@@ -608,6 +608,13 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
   } else if (sale.dueDate?.seconds != null) {
     dueStr = new Date(sale.dueDate.seconds * 1000).toLocaleDateString('en-IN');
   }
+  const customerGST =
+    sale.customerGstNumber ||
+    sale.customerGSTIN ||
+    sale.customerGSTNumber ||
+    sale.customerGST ||
+    sale.gstNumber ||
+    '';
 
   return {
     companyName: 'Hope Hearing Solutions',
@@ -624,6 +631,7 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
     customerAddress: sale.address || '',
     customerPhone: sale.phone || '',
     customerEmail: sale.email || '',
+    customerGST,
 
     items,
 

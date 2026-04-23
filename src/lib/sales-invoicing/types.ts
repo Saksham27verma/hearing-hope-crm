@@ -25,6 +25,7 @@ export interface SaleRecord {
   phone?: string;
   email?: string;
   address?: string;
+  customerGstNumber?: string;
   products: unknown[];
   accessories?: unknown[];
   manualLineItems?: ManualLineItem[];
@@ -64,7 +65,9 @@ export interface DerivedEnquirySale {
   whoSoldName?: string;
   patientName: string;
   phone?: string;
+  email?: string;
   address?: string;
+  customerGstNumber?: string;
   visitDate: Timestamp;
   products: unknown[];
   totalAmount: number;

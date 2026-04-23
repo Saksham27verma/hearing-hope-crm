@@ -8,7 +8,10 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
   docs.forEach((rec: any) => {
     const name = rec.name || rec.patientName || rec.fullName || 'Unknown';
     const phone = rec.phone || rec.mobile || '';
+    const email = rec.email || '';
     const address = rec.address || rec.location || '';
+    const customerGstNumber =
+      rec.customerGstNumber || rec.customerGSTIN || rec.customerGSTNumber || rec.customerGST || rec.gstNumber || '';
     const visits: any[] = Array.isArray(rec.visits) ? rec.visits : [];
     visits.forEach((visit: any, idx: number) => {
       // Only treat as invoicable "sale" when the visit is explicitly marked as a sale.
@@ -47,7 +50,9 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
         grandTotal: invoiceGrandTotal,
         ...(accessories.length > 0 ? { accessories } : {}),
         phone,
+        email,
         address,
+        ...(customerGstNumber ? { customerGstNumber } : {}),
       };
       if (source === 'visitor') base.visitorId = rec.id;
       else base.enquiryId = rec.id;
