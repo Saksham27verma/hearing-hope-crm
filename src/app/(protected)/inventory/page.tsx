@@ -330,6 +330,7 @@ export default function InventoryPage() {
           materialsOutRes,
           salesRes,
           enquiriesRes,
+          stockTransfersRes,
         ] = await Promise.allSettled([
           getDocs(collection(db, 'products')),
           getDocs(collection(db, 'materialInward')),
@@ -337,6 +338,11 @@ export default function InventoryPage() {
           getDocs(collection(db, 'materialsOut')),
           getDocs(collection(db, 'sales')),
           getDocs(collection(db, 'enquiries')),
+          // Authoritative source of stock transfer moves; ordered by createdAt
+          // (serverTimestamp) so applyStockTransferMoves runs strictly in
+          // chronological order even when transferDate ties for transfers
+          // created in the same browser session.
+          getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
         ]);
 
         const toDocs = (res: PromiseSettledResult<any>, label: string) => {
@@ -351,6 +357,7 @@ export default function InventoryPage() {
         const materialsOutSnap = toDocs(materialsOutRes, 'materialsOut');
         const salesSnap = toDocs(salesRes, 'sales');
         const enquiriesSnap = toDocs(enquiriesRes, 'enquiries');
+        const stockTransfersSnap = toDocs(stockTransfersRes, 'stockTransfers');
 
         // Products map
         const productsList = productsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() as any) }));
@@ -990,8 +997,35 @@ export default function InventoryPage() {
         const nonSerialInByProductAndLocation = new Map<string, NonSerialAgg>(); // key: `${productId}|${location}`
         const nonSerialInByProduct = new Map<string, NonSerialAgg>(); // Legacy: for backward compatibility
 
+        // Sort materialIn / purchases chronologically so that when multiple
+        // "Stock Transfer from X" docs target the same serial, the newest one
+        // wins the location override. Primary key: receivedDate/purchaseDate;
+        // tiebreaker: createdAt (a serverTimestamp that is strictly monotonic).
+        const docTs = (val: any): number => {
+          if (!val) return 0;
+          if (typeof val === 'number') return val;
+          if (typeof val?.toMillis === 'function') return val.toMillis();
+          if (typeof val?.seconds === 'number') return val.seconds * 1000;
+          const d = new Date(val);
+          return isNaN(d.getTime()) ? 0 : d.getTime();
+        };
+        const materialInDocsSorted = [...materialInSnap.docs].sort((a: any, b: any) => {
+          const ad: any = a.data();
+          const bd: any = b.data();
+          const primary = docTs(ad.receivedDate) - docTs(bd.receivedDate);
+          if (primary !== 0) return primary;
+          return docTs(ad.createdAt) - docTs(bd.createdAt);
+        });
+        const purchasesDocsSorted = [...purchasesSnap.docs].sort((a: any, b: any) => {
+          const ad: any = a.data();
+          const bd: any = b.data();
+          const primary = docTs(ad.purchaseDate) - docTs(bd.purchaseDate);
+          if (primary !== 0) return primary;
+          return docTs(ad.createdAt) - docTs(bd.createdAt);
+        });
+
         // Material Inward
-        materialInSnap.docs.forEach((docSnap: any) => {
+        materialInDocsSorted.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const receivedDate = data.receivedDate;
           const supplierName = data.supplier?.name || '';
@@ -1085,7 +1119,7 @@ export default function InventoryPage() {
         });
 
         // Purchases (only add serials not already present from Material In)
-        purchasesSnap.docs.forEach((docSnap: any) => {
+        purchasesDocsSorted.forEach((docSnap: any) => {
           const data: any = docSnap.data();
           const purchaseDate = data.purchaseDate;
           const supplierName = data.party?.name || '';
@@ -1228,6 +1262,41 @@ export default function InventoryPage() {
                 }
               });
             }
+          });
+        });
+
+        // Authoritative stock-transfer moves for serial items. We use the
+        // `stockTransfers` collection (already ordered by createdAt asc) as
+        // the source of truth, so successive transfers always place the
+        // serial at the latest destination — even if the synthetic
+        // "Stock Transfer from X" materialInward docs are missing, ordered
+        // unexpectedly, or share a tied receivedDate.
+        stockTransfersSnap.docs.forEach((trDoc: any) => {
+          const tr: any = trDoc.data();
+          const toBranch = String(tr.toBranch || '').trim();
+          if (!toBranch) return;
+          const transferCompany =
+            tr.transferType === 'intercompany'
+              ? (tr.toCompany || tr.company || '')
+              : (tr.company || tr.toCompany || '');
+          (tr.products || []).forEach((p: any) => {
+            const productId = p.productId || p.id || '';
+            const serials: string[] = Array.isArray(p.serialNumbers)
+              ? p.serialNumbers
+              : (p.serialNumber ? [p.serialNumber] : []);
+            serials.forEach((sn: string) => {
+              const key = makeSerialKey(productId, sn);
+              const existing = incomingMap.get(key);
+              if (!existing) return;
+              // Never move sold serials – their location must reflect where
+              // the sale was recorded (already handled by sold metadata).
+              if (existing.status === 'Sold') return;
+              incomingMap.set(key, {
+                ...existing,
+                location: toBranch,
+                company: transferCompany || existing.company,
+              });
+            });
           });
         });
 
@@ -1460,6 +1529,69 @@ export default function InventoryPage() {
           });
         });
         
+        // Safety net for non-serial quantities: if a stockTransfer was saved
+        // but its synthetic materialOut/materialInward docs are missing
+        // (e.g. createInventoryMovements failed midway), apply the move
+        // directly to the non-serial aggregation so source/destination centers
+        // reflect the move. We detect already-accounted-for transfers by
+        // their transferNumber appearing in materialsOut.reason / notes.
+        const accountedTransferNumbers = new Set<string>();
+        materialsOutSnap.docs.forEach((d: any) => {
+          const data: any = d.data();
+          const reason = String(data.reason || '');
+          const notes = String(data.notes || '');
+          const blob = `${reason} ${notes}`;
+          const match = blob.match(/Transfer\s*#\s*([A-Za-z0-9_-]+)/);
+          if (match && match[1]) accountedTransferNumbers.add(match[1]);
+        });
+        stockTransfersSnap.docs.forEach((trDoc: any) => {
+          const tr: any = trDoc.data();
+          if (tr.transferNumber && accountedTransferNumbers.has(tr.transferNumber)) return;
+          const fromBranch = String(tr.fromBranch || '').trim();
+          const toBranch = String(tr.toBranch || '').trim();
+          if (!fromBranch || !toBranch) return;
+          (tr.products || []).forEach((p: any) => {
+            const productId = p.productId || p.id || '';
+            const serials: string[] = Array.isArray(p.serialNumbers)
+              ? p.serialNumbers
+              : (p.serialNumber ? [p.serialNumber] : []);
+            // Serial-tracked moves are already handled via incomingMap above.
+            if (!productId || serials.length > 0) return;
+            const productRef = productById.get(productId) || {};
+            if (productRef.hasSerialNumber) return;
+            const qty = Math.max(0, Number(p.quantity) || 0);
+            if (qty <= 0) return;
+            const fromKey = `${productId}|${fromBranch}`;
+            const toKey = `${productId}|${toBranch}`;
+            const fromPrev = nonSerialInByProductAndLocation.get(fromKey);
+            if (fromPrev) {
+              nonSerialInByProductAndLocation.set(fromKey, {
+                ...fromPrev,
+                qty: Math.max(0, (fromPrev.qty || 0) - qty),
+              });
+            }
+            const toPrev = nonSerialInByProductAndLocation.get(toKey) || {
+              qty: 0,
+              lastDate: tr.transferDate || null,
+              lastSupplier: `Stock Transfer from ${fromBranch}`,
+              lastInvoice: tr.transferNumber || '',
+              lastLocation: toBranch,
+              mrp: Number(productRef.mrp || 0),
+              dealerPrice: Number(productRef.dealerPrice || 0),
+              lastSourceType: undefined as 'materialIn' | 'purchase' | undefined,
+              lastDocId: undefined as string | undefined,
+            };
+            nonSerialInByProductAndLocation.set(toKey, {
+              ...toPrev,
+              qty: (toPrev.qty || 0) + qty,
+              lastDate: tr.transferDate || toPrev.lastDate,
+              lastSupplier: `Stock Transfer from ${fromBranch}`,
+              lastInvoice: tr.transferNumber || toPrev.lastInvoice,
+              lastLocation: toBranch,
+            });
+          });
+        });
+
         // Build non-serial items per product and location with remaining quantity
         const nonSerialItems: InventoryItem[] = [];
         nonSerialInByProductAndLocation.forEach((inInfo, key) => {

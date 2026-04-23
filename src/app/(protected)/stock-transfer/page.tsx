@@ -299,7 +299,9 @@ const StockTransferPage = () => {
         getDocs(collection(db, 'materialsOut')),
         getDocs(collection(db, 'sales')),
         getDocs(collection(db, 'enquiries')),
-        getDocs(collection(db, 'stockTransfers')),
+        // Order by createdAt asc so applyStockTransferMoves processes moves in
+        // strict chronological order even when transferDate ties.
+        getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
       ]);
 
       const productById = new Map<string, any>();
@@ -447,18 +449,24 @@ const StockTransferPage = () => {
         }
       };
 
-      // Apply stockTransfers as authoritative "moves" by transferDate.
-      // This makes the Stock Transfer form match the Inventory module even if
-      // legacy movement docs (material in/out) are missing or inconsistent.
+      // Apply stockTransfers as authoritative "moves" using createdAt (a
+      // serverTimestamp that is strictly monotonic per write). This guarantees
+      // chronological order even when transferDate ties for transfers created
+      // in the same browser session.
       const applyStockTransferMoves = () => {
         const transfers: any[] = stockTransfersSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        transfers.sort((a, b) => getTs(a.transferDate) - getTs(b.transferDate));
+        const moveOrderTs = (t: any) => getTs(t.createdAt) || getTs(t.transferDate) || 0;
+        transfers.sort((a, b) => moveOrderTs(a) - moveOrderTs(b));
         for (const tr of transfers) {
           const toBranch = normalizeLocation(tr.toBranch);
           const transferCompany =
             tr.transferType === 'intercompany'
               ? (tr.toCompany || tr.company || '')
               : (tr.company || tr.toCompany || '');
+          // Ensure a strictly increasing per-move timestamp so that no later
+          // upsertSerial call from materialIn (with a tied receivedDate) can
+          // silently overwrite this move with stale source data.
+          const trTs = moveOrderTs(tr);
           (tr.products || []).forEach((p: any) => {
             const productId = p.productId || p.id || '';
             const serials: string[] = Array.isArray(p.serialNumbers)
@@ -468,15 +476,13 @@ const StockTransferPage = () => {
               const key = `${productId}|${sn}`;
               const existing = serialAvailableByKey.get(key);
               if (!existing) return;
-              // Move item to destination branch/company
               const moved: AvailableStockItem = {
                 ...existing.item,
                 location: toBranch,
                 businessCompany: transferCompany || existing.item.businessCompany,
               };
-              // Ensure the move wins over prior inbound timestamps
-              const moveTs = getTs(tr.transferDate) || (existing.ts + 1);
-              serialAvailableByKey.set(key, { item: moved, ts: Math.max(existing.ts, moveTs) });
+              const moveTs = Math.max(existing.ts + 1, trTs || existing.ts + 1);
+              serialAvailableByKey.set(key, { item: moved, ts: moveTs });
             });
           });
         }
@@ -902,6 +908,9 @@ const StockTransferPage = () => {
       transferNumber,
       transferType: 'intracompany',
       company: defaultCompany,
+      // Generate fresh transferDate at dialog open time so that successive transfers
+      // in the same browser session have strictly different timestamps.
+      transferDate: Timestamp.now(),
     });
     
     setSelectedProduct(null);

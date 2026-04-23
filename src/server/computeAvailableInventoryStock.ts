@@ -22,15 +22,23 @@ export type StaffInventoryRow = {
  */
 export async function listAvailableHearingAidSerialRows(): Promise<StaffInventoryRow[]> {
   const db = adminDb();
-  const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap] =
-    await Promise.all([
-      db.collection('products').get(),
-      db.collection('materialInward').get(),
-      db.collection('purchases').get(),
-      db.collection('materialsOut').get(),
-      db.collection('sales').get(),
-      db.collection('enquiries').get(),
-    ]);
+  const [
+    productsSnap,
+    materialInSnap,
+    purchasesSnap,
+    materialsOutSnap,
+    salesSnap,
+    enquiriesSnap,
+    stockTransfersSnap,
+  ] = await Promise.all([
+    db.collection('products').get(),
+    db.collection('materialInward').get(),
+    db.collection('purchases').get(),
+    db.collection('materialsOut').get(),
+    db.collection('sales').get(),
+    db.collection('enquiries').get(),
+    db.collection('stockTransfers').orderBy('createdAt', 'asc').get(),
+  ]);
 
   const productById = new Map<string, Record<string, unknown>>();
   productsSnap.docs.forEach((d) => productById.set(d.id, { id: d.id, ...(d.data() as Record<string, unknown>) }));
@@ -38,6 +46,28 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
   const serialsInByProduct = new Map<string, Set<string>>();
   const qtyInByProduct = new Map<string, number>();
   const stockTransferInSerials = new Set<string>();
+
+  // Authoritative source: any serial that appears in a stockTransfer doc
+  // is considered an internal move, so its corresponding materialOut should
+  // not deplete availability. This protects against missing/out-of-order
+  // synthetic materialInward "Stock Transfer from X" docs.
+  stockTransfersSnap.docs.forEach((trDoc) => {
+    const tr = trDoc.data() as Record<string, unknown>;
+    const products = (tr.products as unknown[]) || [];
+    products.forEach((prod: unknown) => {
+      const p = prod as Record<string, unknown>;
+      const productId = String(p.productId || p.id || '');
+      if (!productId) return;
+      const serials: string[] = Array.isArray(p.serialNumbers)
+        ? (p.serialNumbers as string[])
+        : p.serialNumber
+          ? [String(p.serialNumber)]
+          : [];
+      serials.forEach((sn) => {
+        if (sn) stockTransferInSerials.add(`${productId}|${sn}`);
+      });
+    });
+  });
 
   materialInSnap.docs.forEach((docSnap) => {
     const data = docSnap.data() as Record<string, unknown>;
