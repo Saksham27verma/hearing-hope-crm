@@ -312,6 +312,7 @@ export default function NewEnquiryPage() {
           phone: data.phone || '',
           email: data.email || '',
           address: data.address || '',
+          customerGstNumber: data.customerGstNumber || '',
           products,
           accessories: [],
           manualLineItems: [],

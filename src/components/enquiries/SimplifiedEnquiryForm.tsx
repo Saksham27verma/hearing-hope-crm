@@ -750,6 +750,7 @@ interface FormData {
   // Basic Information
   name: string;
   customerName: string;
+  customerGstNumber: string;
   phone: string;
   email: string;
   address: string;
@@ -1059,6 +1060,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     defaultValues: {
       name: '',
       customerName: '',
+      customerGstNumber: '',
       phone: '',
       email: '',
       address: '',
@@ -2017,6 +2019,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         reset({
           name: enquiry.name || '',
           customerName: enquiry.customerName || '',
+          customerGstNumber:
+            enquiry.customerGstNumber || enquiry.customerGSTNumber || enquiry.customerGSTIN || '',
           phone: enquiry.phone || '',
           email: enquiry.email || '',
           address: enquiry.address || '',
@@ -3513,6 +3517,24 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           label="Email"
                           type="email"
                           disabled={isAudiologist}
+                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Controller
+                      name="customerGstNumber"
+                      control={control}
+                      render={({ field }) => (
+                        <TextField
+                          {...field}
+                          fullWidth
+                          label="Customer GST Number"
+                          disabled={isAudiologist}
+                          value={(field.value || '').toUpperCase()}
+                          onChange={(e) => field.onChange((e.target.value || '').toUpperCase())}
+                          helperText="Optional - used for tax invoice GSTIN."
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
                       )}

@@ -39,6 +39,8 @@ export function enquiryVisitToInvoiceSalePayload(
     phone: enquiry?.phone || '',
     email: enquiry?.email || '',
     address: enquiry?.address || '',
+    customerGstNumber:
+      enquiry?.customerGstNumber || enquiry?.customerGSTIN || enquiry?.customerGSTNumber || '',
     saleDate: visit?.purchaseDate || visit?.visitDate || visit?.date || new Date().toISOString().slice(0, 10),
     invoiceNumber,
     notes: visit?.saleNotes || visit?.notes || '',
@@ -177,6 +179,12 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
 
   const refDoc = sale.referenceDoctor as { name?: string } | undefined;
   const salesDoc = sale.salesperson as { name?: string } | undefined;
+  const customerGST =
+    (sale.customerGstNumber as string) ||
+    (sale.customerGSTIN as string) ||
+    (sale.customerGSTNumber as string) ||
+    (sale.customerGST as string) ||
+    '';
 
   return {
     companyName: 'Hope Hearing Solutions',
@@ -190,6 +198,7 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
     customerAddress: (sale.address as string) || '',
     customerPhone: (sale.phone as string) || '',
     customerEmail: (sale.email as string) || '',
+    customerGST,
     items,
     subtotal,
     totalDiscount: totalDiscount > 0 ? totalDiscount : undefined,

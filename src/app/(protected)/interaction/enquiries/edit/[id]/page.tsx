@@ -341,6 +341,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           phone: data.phone || '',
           email: data.email || '',
           address: data.address || '',
+          customerGstNumber: data.customerGstNumber || '',
           products,
           accessories: [],
           manualLineItems: [],
@@ -401,7 +402,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
 
       const ENQUIRY_SCALAR_FIELDS = [
-        'name', 'customerName', 'phone', 'email', 'address', 'status',
+        'name', 'customerName', 'customerGstNumber', 'phone', 'email', 'address', 'status',
         'reference', 'enquiryType', 'assignedTo', 'telecaller', 'subject',
         'message', 'notes', 'visitingCenter', 'visitorType', 'companyName',
         'contactPerson', 'purposeOfVisit', 'priority', 'source',
