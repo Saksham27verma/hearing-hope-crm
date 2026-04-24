@@ -263,13 +263,14 @@ export default function MaterialOutPage() {
   // Build available inventory (only items in stock)
   const loadAvailableInventory = async () => {
     try {
-      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap] = await Promise.all([
+      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, stockTransfersSnap] = await Promise.all([
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'materialInward')),
         getDocs(collection(db, 'purchases')),
         getDocs(collection(db, 'materialsOut')),
         getDocs(collection(db, 'sales')),
         getDocs(collection(db, 'enquiries')),
+        getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
       ]);
 
       const prodMap: Record<string, any> = {};
@@ -300,6 +301,22 @@ export default function MaterialOutPage() {
 
       addInbound(materialInSnap.docs);
       addInbound(purchasesSnap.docs);
+
+      // Authoritative safety pass from stockTransfers: materialize serials even if
+      // transfer movement docs (materialIn/materialOut) are partially missing.
+      stockTransfersSnap.docs.forEach(docSnap => {
+        const data: any = docSnap.data();
+        (data.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id;
+          if (!productId) return;
+          const serialArray: string[] = Array.isArray(p.serialNumbers)
+            ? p.serialNumbers
+            : (p.serialNumber ? [p.serialNumber] : []);
+          if (serialArray.length === 0) return;
+          if (!serialsByProduct[productId]) serialsByProduct[productId] = new Set<string>();
+          serialArray.forEach(sn => sn && serialsByProduct[productId].add(String(sn)));
+        });
+      });
 
       // Track stock-transfer IN serials so we don't subtract transfer OUT globally
       const stockTransferInSerials = new Set<string>();

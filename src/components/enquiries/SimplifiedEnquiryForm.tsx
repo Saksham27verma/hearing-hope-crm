@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useForm, Controller } from 'react-hook-form';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, orderBy, query, setDoc, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
@@ -1483,7 +1483,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const headOfficeId = await getHeadOfficeId();
         
         // Get data from multiple collections (same as material-out page)
-        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, centersSnap] =
+        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, centersSnap, stockTransfersSnap] =
           await Promise.all([
             getDocs(collection(db, 'products')),
             getDocs(collection(db, 'materialInward')),
@@ -1492,10 +1492,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             getDocs(collection(db, 'sales')),
             getDocs(collection(db, 'enquiries')),
             getDocs(collection(db, 'centers')),
+            getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
           ]);
 
         console.log(
-          `📊 Found ${productsSnap.docs.length} products, ${materialInSnap.docs.length} material-in, ${purchasesSnap.docs.length} purchases, ${materialsOutSnap.docs.length} materials-out, ${salesSnap.docs.length} sales, ${enquiriesSnap.docs.length} enquiries, ${centersSnap.docs.length} centers`
+          `📊 Found ${productsSnap.docs.length} products, ${materialInSnap.docs.length} material-in, ${purchasesSnap.docs.length} purchases, ${materialsOutSnap.docs.length} materials-out, ${salesSnap.docs.length} sales, ${enquiriesSnap.docs.length} enquiries, ${centersSnap.docs.length} centers, ${stockTransfersSnap.docs.length} stock-transfers`
         );
 
         const centerNameById: Record<string, string> = {};
@@ -1504,6 +1505,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           const nm = String(x.name ?? x.displayName ?? x.centerName ?? '').trim();
           centerNameById[d.id] = nm || d.id;
         });
+        const centerIdByName: Record<string, string> = {};
+        Object.entries(centerNameById).forEach(([id, name]) => {
+          const key = String(name || '').trim().toLowerCase();
+          if (key) centerIdByName[key] = id;
+        });
+        const normalizeLocationId = (raw: unknown): string => {
+          const val = String(raw || '').trim();
+          if (!val) return headOfficeId;
+          if (centerNameById[val]) return val;
+          const byName = centerIdByName[val.toLowerCase()];
+          return byName || val;
+        };
 
         const prodMap: Record<string, any> = {};
         productsSnap.docs.forEach(d => { prodMap[d.id] = { id: d.id, ...(d.data() as any) }; });
@@ -1540,10 +1553,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             const data: any = docSnap.data();
             
             // Handle location filtering with backward compatibility
-            const dataLocation = data.location || headOfficeId; // Default to head office if no location specified
+            const dataLocation = normalizeLocationId(data.location || headOfficeId); // Default to head office if no location specified
             
             // Filter by location if a center is selected
-            if (selectedCenter && dataLocation !== selectedCenter) {
+            if (selectedCenter && dataLocation !== normalizeLocationId(selectedCenter)) {
               return; // Skip this document if it's not at the selected center
             }
 
@@ -1597,10 +1610,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           const data: any = d.data();
           
           // Handle location filtering with backward compatibility
-          const dataLocation = data.location || headOfficeId; // Default to head office if no location specified
+            const dataLocation = normalizeLocationId(data.location || headOfficeId); // Default to head office if no location specified
           
           // Filter by location if a center is selected
-          if (selectedCenter && dataLocation !== selectedCenter) {
+          if (selectedCenter && dataLocation !== normalizeLocationId(selectedCenter)) {
             return; // Skip this document if it's not at the selected center
           }
 
@@ -1638,6 +1651,46 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         // Align with inventory page: remove serials / qty already sold (sales + enquiry visits)
         applySalesCollectionToAvailabilityMaps(salesSnap.docs, serialsByProductLoc, qtyByProductLoc);
         applyEnquiryVisitsSalesToAvailabilityMaps(enquiriesSnap.docs, serialsByProductLoc, qtyByProductLoc);
+
+        // Authoritative transfer moves: if stockTransfer movement docs are out of order
+        // or partially missing, this keeps serial/qty placement consistent with the
+        // stock-transfer module and inventory page.
+        stockTransfersSnap.docs.forEach((trDoc) => {
+          const tr: any = trDoc.data();
+          const fromLoc = normalizeLocationId(tr.fromBranch || headOfficeId);
+          const toLoc = normalizeLocationId(tr.toBranch || headOfficeId);
+          const selectedLoc = selectedCenter ? normalizeLocationId(selectedCenter) : '';
+          (tr.products || []).forEach((p: any) => {
+            const productId = p.productId || p.id || '';
+            if (!productId) return;
+            const serialArray = serialsFromLineProduct(p);
+            if (serialArray.length > 0) {
+              serialArray.forEach((sn) => {
+                if (!sn) return;
+                const fromKey = makeProductLocationKey(productId, fromLoc);
+                const toKey = makeProductLocationKey(productId, toLoc);
+                if (!selectedLoc || fromLoc === selectedLoc) {
+                  serialsByProductLoc[fromKey]?.delete(String(sn));
+                }
+                if (!selectedLoc || toLoc === selectedLoc) {
+                  if (!serialsByProductLoc[toKey]) serialsByProductLoc[toKey] = new Set<string>();
+                  serialsByProductLoc[toKey].add(String(sn));
+                }
+              });
+            } else {
+              const qty = Math.max(0, Number(p.quantity ?? 0) || 0);
+              if (qty <= 0) return;
+              const fromKey = makeProductLocationKey(productId, fromLoc);
+              const toKey = makeProductLocationKey(productId, toLoc);
+              if (!selectedLoc || fromLoc === selectedLoc) {
+                qtyByProductLoc[fromKey] = Math.max(0, (qtyByProductLoc[fromKey] || 0) - qty);
+              }
+              if (!selectedLoc || toLoc === selectedLoc) {
+                qtyByProductLoc[toKey] = (qtyByProductLoc[toKey] || 0) + qty;
+              }
+            }
+          });
+        });
 
         // Flatten to items array (real per-center location + resolved center name)
         const items: EnquiryInventoryRow[] = [];

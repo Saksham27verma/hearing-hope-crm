@@ -475,7 +475,27 @@ const StockTransferPage = () => {
             serials.forEach((sn) => {
               const key = `${productId}|${sn}`;
               const existing = serialAvailableByKey.get(key);
-              if (!existing) return;
+              // If legacy material-in/out docs are missing for a transfer chain,
+              // still materialize the serial from stockTransfers so downstream
+              // modules (stock transfer form, hearing-aid sale, material out)
+              // can pick it reliably.
+              if (!existing) {
+                const p = productById.get(productId) || {};
+                serialAvailableByKey.set(key, {
+                  item: {
+                    productId,
+                    name: p.name || p.productName || p.modelName || 'Product',
+                    type: p.type || '',
+                    company: p.company || '',
+                    businessCompany: transferCompany || p.company || '',
+                    location: toBranch,
+                    isSerialTracked: true,
+                    serialNumber: sn,
+                  },
+                  ts: Math.max(1, trTs || 1),
+                });
+                return;
+              }
               const moved: AvailableStockItem = {
                 ...existing.item,
                 location: toBranch,
