@@ -53,6 +53,7 @@ import { useAuth } from '@/context/AuthContext';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
+  Edit as EditIcon,
   Info as InfoIcon,
   CurrencyRupee as RupeeIcon,
   Receipt as ReceiptIcon,
@@ -217,6 +218,9 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   const [dealerPrice, setDealerPrice] = useState(0);
   const [mrp, setMrp] = useState(0);
   const [discountPercent, setDiscountPercent] = useState(0);
+  const [serialEditIndex, setSerialEditIndex] = useState<number | null>(null);
+  const [serialEditInput, setSerialEditInput] = useState('');
+  const [serialEditError, setSerialEditError] = useState('');
 
   const [remarks, setRemarks] = useState('');
 
@@ -781,6 +785,57 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       products: updatedProducts,
       totalAmount: newTotalAmount
     }));
+  };
+
+  const handleOpenSerialEdit = (index: number) => {
+    const target = materialData.products[index];
+    if (!target || !target.serialNumbers?.length) return;
+    setSerialEditIndex(index);
+    setSerialEditInput(target.serialNumbers.join(', '));
+    setSerialEditError('');
+  };
+
+  const handleCancelSerialEdit = () => {
+    setSerialEditIndex(null);
+    setSerialEditInput('');
+    setSerialEditError('');
+  };
+
+  const handleSaveSerialEdit = () => {
+    if (serialEditIndex === null) return;
+    const target = materialData.products[serialEditIndex];
+    if (!target) return;
+    const parsed = parseSerialInput(serialEditInput);
+    if (parsed.length !== target.serialNumbers.length) {
+      setSerialEditError(
+        `You must keep exactly ${target.serialNumbers.length} serial number(s). This editor is for typo fixes only.`,
+      );
+      return;
+    }
+    if (new Set(parsed).size !== parsed.length) {
+      setSerialEditError('Duplicate serial numbers are not allowed.');
+      return;
+    }
+    const duplicatesInOtherProducts = materialData.products
+      .flatMap((product, idx) => (idx === serialEditIndex ? [] : product.serialNumbers || []))
+      .map((serial) => String(serial || '').trim())
+      .filter((serial) => parsed.includes(serial));
+    if (duplicatesInOtherProducts.length > 0) {
+      setSerialEditError(`These serial(s) already exist in another product row: ${duplicatesInOtherProducts.join(', ')}`);
+      return;
+    }
+    const updatedProducts = materialData.products.map((product, idx) =>
+      idx === serialEditIndex ? { ...product, serialNumbers: parsed } : product,
+    );
+    const newTotalAmount = updatedProducts.reduce((sum, product) => {
+      return sum + ((product.finalPrice || product.dealerPrice || 0) * product.quantity);
+    }, 0);
+    setMaterialData((prev) => ({
+      ...prev,
+      products: updatedProducts,
+      totalAmount: newTotalAmount,
+    }));
+    handleCancelSerialEdit();
   };
 
   // Handle form submission
@@ -1477,6 +1532,31 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
             No products added yet. Add products using the form above.
           </Alert>
         ) : (
+          <>
+            {serialEditIndex !== null && materialData.products[serialEditIndex] && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  Editing serials for <strong>{materialData.products[serialEditIndex].name}</strong>. Keep the same count and fix typos.
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    label="Serial numbers (comma / space / slash separated)"
+                    value={serialEditInput}
+                    onChange={(e) => setSerialEditInput(e.target.value)}
+                    error={!!serialEditError}
+                    helperText={serialEditError || `Required count: ${materialData.products[serialEditIndex].serialNumbers.length}`}
+                  />
+                  <Button variant="contained" size="small" onClick={handleSaveSerialEdit}>
+                    Save serials
+                  </Button>
+                  <Button variant="outlined" size="small" onClick={handleCancelSerialEdit}>
+                    Cancel
+                  </Button>
+                </Box>
+              </Alert>
+            )}
           <TableContainer>
             <Table>
               <TableHead>
@@ -1516,6 +1596,16 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
                       ((product.finalPrice || product.dealerPrice || 0) * product.quantity)
                     )}</TableCell>
                     <TableCell align="center">
+                      {product.serialNumbers.length > 0 && (
+                        <IconButton
+                          color="primary"
+                          size="small"
+                          onClick={() => handleOpenSerialEdit(index)}
+                          title="Edit serial numbers"
+                        >
+                          <EditIcon />
+                        </IconButton>
+                      )}
                       <IconButton 
                         color="error" 
                         size="small" 
@@ -1541,6 +1631,7 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
               </TableBody>
             </Table>
           </TableContainer>
+          </>
         )}
         
         {errors.products && (

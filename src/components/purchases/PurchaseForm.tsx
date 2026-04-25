@@ -53,6 +53,7 @@ import { useAuth } from '@/context/AuthContext';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
+  Edit as EditIcon,
   Info as InfoIcon,
   CurrencyRupee as RupeeIcon,
   Receipt as ReceiptIcon,
@@ -184,6 +185,9 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   const [dealerPrice, setDealerPrice] = useState(0);
   const [mrp, setMrp] = useState(0);
   const [discountPercent, setDiscountPercent] = useState(0);
+  const [serialEditIndex, setSerialEditIndex] = useState<number | null>(null);
+  const [serialEditInput, setSerialEditInput] = useState('');
+  const [serialEditError, setSerialEditError] = useState('');
 
   // All serial numbers that already exist anywhere in the system
   const [existingSerials, setExistingSerials] = useState<SerialIndex | null>(null);
@@ -681,6 +685,55 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       products: updatedProducts,
       totalAmount
     }));
+  };
+
+  const handleOpenSerialEdit = (index: number) => {
+    const target = purchaseData.products[index];
+    if (!target || !target.serialNumbers?.length) return;
+    setSerialEditIndex(index);
+    setSerialEditInput(target.serialNumbers.join(', '));
+    setSerialEditError('');
+  };
+
+  const handleCancelSerialEdit = () => {
+    setSerialEditIndex(null);
+    setSerialEditInput('');
+    setSerialEditError('');
+  };
+
+  const handleSaveSerialEdit = () => {
+    if (serialEditIndex === null) return;
+    const target = purchaseData.products[serialEditIndex];
+    if (!target) return;
+    const parsed = parseSerialInput(serialEditInput);
+    if (parsed.length !== target.serialNumbers.length) {
+      setSerialEditError(
+        `You must keep exactly ${target.serialNumbers.length} serial number(s). This editor is for typo fixes only.`,
+      );
+      return;
+    }
+
+    const uniqueCount = new Set(parsed).size;
+    if (uniqueCount !== parsed.length) {
+      setSerialEditError('Duplicate serial numbers are not allowed.');
+      return;
+    }
+
+    const duplicatesInOtherProducts = purchaseData.products
+      .flatMap((product, idx) => (idx === serialEditIndex ? [] : product.serialNumbers || []))
+      .map((serial) => String(serial || '').trim())
+      .filter((serial) => parsed.includes(serial));
+
+    if (duplicatesInOtherProducts.length > 0) {
+      setSerialEditError(`These serial(s) already exist in another product row: ${duplicatesInOtherProducts.join(', ')}`);
+      return;
+    }
+
+    const updatedProducts = purchaseData.products.map((product, idx) =>
+      idx === serialEditIndex ? { ...product, serialNumbers: parsed } : product,
+    );
+    setPurchaseData((prev) => ({ ...prev, products: updatedProducts }));
+    handleCancelSerialEdit();
   };
   
   // Handle form submission
@@ -1557,6 +1610,30 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
           </Typography>
         </Box>
         
+        {serialEditIndex !== null && purchaseData.products[serialEditIndex] && (
+          <Alert severity="info" sx={{ m: 2 }}>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Editing serials for <strong>{purchaseData.products[serialEditIndex].name}</strong>. Keep the same count and fix typos.
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <TextField
+                size="small"
+                fullWidth
+                label="Serial numbers (comma / space / slash separated)"
+                value={serialEditInput}
+                onChange={(e) => setSerialEditInput(e.target.value)}
+                error={!!serialEditError}
+                helperText={serialEditError || `Required count: ${purchaseData.products[serialEditIndex].serialNumbers.length}`}
+              />
+              <Button variant="contained" size="small" onClick={handleSaveSerialEdit}>
+                Save serials
+              </Button>
+              <Button variant="outlined" size="small" onClick={handleCancelSerialEdit}>
+                Cancel
+              </Button>
+            </Box>
+          </Alert>
+        )}
         {purchaseData.products.length === 0 ? (
           <Box p={4} textAlign="center">
             <Typography color="text.secondary" variant="body1">
@@ -1642,6 +1719,16 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                       </Typography>
                     </TableCell>
                     <TableCell align="center">
+                      {product.serialNumbers.length > 0 && (
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => handleOpenSerialEdit(index)}
+                          title="Edit serial numbers"
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      )}
                       <IconButton 
                         size="small" 
                         color="error" 
