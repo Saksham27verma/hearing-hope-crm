@@ -129,6 +129,56 @@ interface MaterialInward {
   purchaseId?: string;
   purchaseInvoiceNo?: string;
 }
+type SerialChangePair = {
+  oldSerial: string;
+  newSerial: string;
+};
+
+const normalizeSerial = (value: string): string => String(value || '').trim();
+
+const collectSerialChanges = (
+  beforeProducts: MaterialProduct[],
+  afterProducts: MaterialProduct[],
+): SerialChangePair[] => {
+  const changes: SerialChangePair[] = [];
+  const seen = new Set<string>();
+  const beforeByProduct = new Map<string, string[]>();
+  const afterByProduct = new Map<string, string[]>();
+
+  beforeProducts.forEach((product) => {
+    beforeByProduct.set(
+      product.productId,
+      Array.isArray(product.serialNumbers)
+        ? product.serialNumbers.map(normalizeSerial).filter(Boolean)
+        : [],
+    );
+  });
+  afterProducts.forEach((product) => {
+    afterByProduct.set(
+      product.productId,
+      Array.isArray(product.serialNumbers)
+        ? product.serialNumbers.map(normalizeSerial).filter(Boolean)
+        : [],
+    );
+  });
+
+  for (const [productId, beforeSerials] of beforeByProduct.entries()) {
+    const afterSerials = afterByProduct.get(productId);
+    if (!afterSerials) continue;
+    const sharedLen = Math.min(beforeSerials.length, afterSerials.length);
+    for (let i = 0; i < sharedLen; i += 1) {
+      const oldSerial = beforeSerials[i];
+      const newSerial = afterSerials[i];
+      if (!oldSerial || !newSerial || oldSerial === newSerial) continue;
+      const key = `${oldSerial}=>${newSerial}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      changes.push({ oldSerial, newSerial });
+    }
+  }
+
+  return changes;
+};
 
 export default function MaterialInPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
@@ -646,6 +696,43 @@ export default function MaterialInPage() {
     try {
       setSavingMaterial(true);
       if (currentMaterial?.id) {
+        const serialChanges = collectSerialChanges(currentMaterial.products, materialData.products);
+        if (serialChanges.length > 0) {
+          const token = await user?.getIdToken();
+          if (!token) {
+            throw new Error('You must be signed in to edit serial numbers.');
+          }
+          for (const change of serialChanges) {
+            const renameRes = await fetch('/api/admin/rename-serial', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                oldSerial: change.oldSerial,
+                newSerial: change.newSerial,
+                sourceCollection: 'materialInward',
+                sourceDocId: currentMaterial.id,
+              }),
+            });
+
+            const payload = (await renameRes.json().catch(() => ({}))) as {
+              error?: string;
+              conflicts?: Array<{ collection?: string; docId?: string; fieldPath?: string }>;
+            };
+            if (!renameRes.ok) {
+              if (renameRes.status === 409 && Array.isArray(payload.conflicts) && payload.conflicts.length > 0) {
+                const first = payload.conflicts[0];
+                throw new Error(
+                  `Cannot rename serial ${change.oldSerial} to ${change.newSerial}. Conflict found in ${first.collection}/${first.docId} (${first.fieldPath}).`,
+                );
+              }
+              throw new Error(payload.error || `Failed to rename serial ${change.oldSerial}`);
+            }
+          }
+        }
+
         // Update existing material
         const materialRef = doc(db, 'materialInward', currentMaterial.id);
         await updateDoc(materialRef, {

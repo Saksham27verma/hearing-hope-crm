@@ -70,7 +70,7 @@ export const fetchExistingSerialNumbers = async (): Promise<SerialIndex> => {
       getDocs(collection(db, 'sales')),
       getDocs(collection(db, 'distributions')),
       getDocs(collection(db, 'materialsOut')),
-      getDocs(collection(db, 'stockTransfer')),
+      getDocs(collection(db, 'stockTransfers')),
     ]);
 
     const processSnapshot = (snap: any) => {
