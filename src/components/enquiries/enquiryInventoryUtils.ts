@@ -13,6 +13,7 @@ export type EnquiryInventoryRow = {
   serialNumbers?: string[];
   /** True when this row represents two devices sold together (pair product). */
   isPairRow?: boolean;
+  pairSource?: 'serialPairs' | 'manualOverride' | 'legacyFallback' | 'unpaired';
   quantityType?: 'piece' | 'pair';
   isSerialTracked?: boolean;
   quantity?: number;

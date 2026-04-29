@@ -49,8 +49,9 @@ export type StaffPaymentEmailPayload = {
   subject: string;
   text: string;
   html: string;
-  pdfBuffer: Buffer;
-  pdfFileName: string;
+  /** Optional — omit for in-office trial notifications which are recorded without a receipt PDF. */
+  pdfBuffer?: Buffer;
+  pdfFileName?: string;
 };
 
 export async function sendStaffPaymentNotifyEmail(payload: StaffPaymentEmailPayload): Promise<void> {
@@ -63,19 +64,25 @@ export async function sendStaffPaymentNotifyEmail(payload: StaffPaymentEmailPayl
 
   const from = process.env.SMTP_FROM?.trim() || process.env.SMTP_USER?.trim() || 'noreply@localhost';
 
+  const hasAttachment = Boolean(payload.pdfBuffer && payload.pdfFileName);
+
   await transport.sendMail({
     from,
     to: payload.to.join(', '),
     subject: payload.subject,
     text: payload.text,
     html: payload.html,
-    attachments: [
-      {
-        filename: payload.pdfFileName,
-        content: payload.pdfBuffer,
-        contentType: 'application/pdf',
-      },
-    ],
+    ...(hasAttachment
+      ? {
+          attachments: [
+            {
+              filename: payload.pdfFileName!,
+              content: payload.pdfBuffer!,
+              contentType: 'application/pdf',
+            },
+          ],
+        }
+      : {}),
   });
 }
 

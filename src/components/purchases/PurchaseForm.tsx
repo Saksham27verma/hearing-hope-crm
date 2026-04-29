@@ -94,6 +94,7 @@ interface PurchaseProduct {
   name: string;
   type: string;
   serialNumbers: string[];
+  serialPairs?: [string, string][];
   quantity: number;
   dealerPrice: number;
   mrp: number;
@@ -141,6 +142,20 @@ interface PurchaseFormProps {
 
 // Define a Grid component that works with our props
 const Grid = MuiGrid;
+
+const buildSerialPairs = (
+  serials: string[],
+  isPairProduct: boolean,
+): [string, string][] => {
+  if (!isPairProduct || serials.length < 2) return [];
+  const pairs: [string, string][] = [];
+  for (let i = 0; i + 1 < serials.length; i += 2) {
+    const a = String(serials[i] || '').trim();
+    const b = String(serials[i + 1] || '').trim();
+    if (a && b) pairs.push([a, b]);
+  }
+  return pairs;
+};
 
 const PurchaseForm: React.FC<PurchaseFormProps> = ({
   initialData,
@@ -636,6 +651,10 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       name: currentProduct.name,
       type: currentProduct.type,
       serialNumbers: [...serialNumbers],
+      serialPairs: buildSerialPairs(
+        serialNumbers,
+        currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair',
+      ),
       quantity,
       dealerPrice,
       mrp,
@@ -730,7 +749,16 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     }
 
     const updatedProducts = purchaseData.products.map((product, idx) =>
-      idx === serialEditIndex ? { ...product, serialNumbers: parsed } : product,
+      idx === serialEditIndex
+        ? {
+            ...product,
+            serialNumbers: parsed,
+            serialPairs: buildSerialPairs(
+              parsed,
+              product.type === 'Hearing Aid' && product.quantityType === 'pair',
+            ),
+          }
+        : product,
     );
     setPurchaseData((prev) => ({ ...prev, products: updatedProducts }));
     handleCancelSerialEdit();

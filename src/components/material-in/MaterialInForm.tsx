@@ -117,6 +117,7 @@ interface MaterialProduct {
   name: string;
   type: string;
   serialNumbers: string[];
+  serialPairs?: [string, string][];
   quantity: number;
   dealerPrice?: number;
   mrp?: number;
@@ -162,6 +163,20 @@ interface MaterialInFormProps {
 
 // Define a Grid component that works with our props
 const Grid = MuiGrid;
+
+const buildSerialPairs = (
+  serials: string[],
+  isPairProduct: boolean,
+): [string, string][] => {
+  if (!isPairProduct || serials.length < 2) return [];
+  const pairs: [string, string][] = [];
+  for (let i = 0; i + 1 < serials.length; i += 2) {
+    const a = String(serials[i] || '').trim();
+    const b = String(serials[i + 1] || '').trim();
+    if (a && b) pairs.push([a, b]);
+  }
+  return pairs;
+};
 
 const MaterialInForm: React.FC<MaterialInFormProps> = ({
   initialData,
@@ -690,6 +705,10 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       name: currentProduct.name,
       type: currentProduct.type,
       serialNumbers: [...serialNumbers],
+      serialPairs: buildSerialPairs(
+        serialNumbers,
+        currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair',
+      ),
       quantity,
       dealerPrice,
       mrp,
@@ -717,17 +736,29 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
         updatedProducts[existingIndex].quantity += quantity;
         // Merge serial numbers if any
         if (serialNumbers.length > 0) {
-          updatedProducts[existingIndex].serialNumbers = [
+          const merged = [
             ...updatedProducts[existingIndex].serialNumbers,
             ...serialNumbers
           ];
+          updatedProducts[existingIndex].serialNumbers = merged;
+          updatedProducts[existingIndex].serialPairs = buildSerialPairs(
+            merged,
+            updatedProducts[existingIndex].type === 'Hearing Aid' &&
+              updatedProducts[existingIndex].quantityType === 'pair',
+          );
         }
       } else {
         // For hearing aids, we need to add serial numbers
-        updatedProducts[existingIndex].serialNumbers = [
+        const merged = [
           ...updatedProducts[existingIndex].serialNumbers,
           ...serialNumbers
         ];
+        updatedProducts[existingIndex].serialNumbers = merged;
+        updatedProducts[existingIndex].serialPairs = buildSerialPairs(
+          merged,
+          updatedProducts[existingIndex].type === 'Hearing Aid' &&
+            updatedProducts[existingIndex].quantityType === 'pair',
+        );
         updatedProducts[existingIndex].quantity += quantity;
       }
       
@@ -825,7 +856,16 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
       return;
     }
     const updatedProducts = materialData.products.map((product, idx) =>
-      idx === serialEditIndex ? { ...product, serialNumbers: parsed } : product,
+      idx === serialEditIndex
+        ? {
+            ...product,
+            serialNumbers: parsed,
+            serialPairs: buildSerialPairs(
+              parsed,
+              product.type === 'Hearing Aid' && product.quantityType === 'pair',
+            ),
+          }
+        : product,
     );
     const newTotalAmount = updatedProducts.reduce((sum, product) => {
       return sum + ((product.finalPrice || product.dealerPrice || 0) * product.quantity);

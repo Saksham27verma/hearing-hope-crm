@@ -36,6 +36,14 @@ import {
   DialogActions,
   Switch,
   FormControlLabel,
+  Tabs,
+  Tab,
+  Drawer,
+  List,
+  ListSubheader,
+  ListItemButton,
+  ListItemText,
+  LinearProgress,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import type { Theme } from '@mui/material/styles';
@@ -64,8 +72,9 @@ import {
   TrendingDown as TrendingDownIcon,
   Warning as WarningIcon,
   CheckCircle as CheckCircleIcon,
+  Link as LinkIcon,
 } from '@mui/icons-material';
-import { collection, query, getDocs, where, orderBy, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, query, getDocs, where, orderBy, addDoc, updateDoc, deleteDoc, doc, setDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { businessCompanyChipColor } from '@/utils/businessCompanies';
@@ -88,6 +97,8 @@ interface InventoryItem {
   productName: string;
   serialNumber: string;
   serialNumbers?: string[]; // For pair items or multi-serial tracking
+  pairSource?: 'serialPairs' | 'manualOverride' | 'legacyFallback' | 'unpaired';
+  pairGroupKey?: string;
   type: string;
   company: string;
   originalProductCompany?: string; // Original product company from products collection
@@ -238,6 +249,14 @@ function inventoryMutedLabelSx(theme: Theme) {
   } as const;
 }
 
+function normalizeProductNameForMatch(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export default function InventoryPage() {
   const { user, userProfile, isAllowedModule } = useAuth();
   const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
@@ -258,7 +277,7 @@ export default function InventoryPage() {
   
   // Pagination
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [rowsPerPage, setRowsPerPage] = useState(25);
   
   // Summary stats
   const [stats, setStats] = useState({
@@ -291,6 +310,81 @@ export default function InventoryPage() {
   
   // Refresh state
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pairRepairOpen, setPairRepairOpen] = useState(false);
+  const [pairRepairItem, setPairRepairItem] = useState<InventoryItem | null>(null);
+  const [pairRepairSerialList, setPairRepairSerialList] = useState<string[]>([]);
+  const [pairRepairInput, setPairRepairInput] = useState('');
+  const [savingPairRepair, setSavingPairRepair] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<'inventory' | 'pairing'>('inventory');
+  const [commandViewTab, setCommandViewTab] = useState<'live' | 'analytics'>('live');
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [selectedExplorerBrand, setSelectedExplorerBrand] = useState<string>('');
+  const [multiStatusFilter, setMultiStatusFilter] = useState<string[]>([]);
+  const [multiBrandFilter, setMultiBrandFilter] = useState<string[]>([]);
+  const [multiCenterFilter, setMultiCenterFilter] = useState<string[]>([]);
+  const [selectedPairProductId, setSelectedPairProductId] = useState('__all__');
+  const [pairingDraftByBucket, setPairingDraftByBucket] = useState<Record<string, [string, string][]>>({});
+  const [pairingSelectionByBucket, setPairingSelectionByBucket] = useState<Record<string, string[]>>({});
+  const [savingBucketKey, setSavingBucketKey] = useState<string | null>(null);
+
+  const productNameById = useMemo(() => {
+    const byId = new Map<string, string>();
+    products.forEach((p: any) => {
+      const id = String(p?.id || '').trim();
+      const name = String(p?.name || '').trim();
+      if (id && name) byId.set(id, name);
+    });
+    return byId;
+  }, [products]);
+
+  const canonicalProductNameByLower = useMemo(() => {
+    const byLower = new Map<string, string>();
+    products.forEach((p: any) => {
+      const name = String(p?.name || '').trim();
+      if (!name) return;
+      byLower.set(name.toLowerCase(), name);
+    });
+    return byLower;
+  }, [products]);
+
+  const canonicalProductNameByNormalized = useMemo(() => {
+    const byNormalized = new Map<string, string>();
+    products.forEach((p: any) => {
+      const name = String(p?.name || '').trim();
+      if (!name) return;
+      const key = normalizeProductNameForMatch(name);
+      if (!key) return;
+      if (!byNormalized.has(key)) {
+        byNormalized.set(key, name);
+      }
+    });
+    return byNormalized;
+  }, [products]);
+
+  const getCanonicalSearchProductName = (item: InventoryItem): string => {
+    const canonical = productNameById.get(String(item.productId || '').trim());
+    if (canonical) return canonical;
+    const rowName = String(item.productName || '').trim();
+    const byName = canonicalProductNameByLower.get(rowName.toLowerCase());
+    if (byName) return byName;
+    const byNormalized = canonicalProductNameByNormalized.get(normalizeProductNameForMatch(rowName));
+    return byNormalized || rowName;
+  };
+
+  const searchNameAliasesByProductId = useMemo(() => {
+    const aliases = new Map<string, Set<string>>();
+    inventory.forEach((item) => {
+      const id = String(item.productId || '').trim();
+      if (!id) return;
+      if (!aliases.has(id)) aliases.set(id, new Set<string>());
+      const set = aliases.get(id)!;
+      const canonical = productNameById.get(id);
+      const rowName = String(item.productName || '').trim();
+      if (canonical) set.add(canonical.toLowerCase());
+      if (rowName) set.add(rowName.toLowerCase());
+    });
+    return aliases;
+  }, [inventory, productNameById]);
 
   // Fetch centers
   useEffect(() => {
@@ -379,12 +473,16 @@ export default function InventoryPage() {
           journeyMap.set(normalizedSerial, events);
         };
 
-        const getJourneyProductInfo = (prod: any) => {
-          const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
+        const resolveProductName = (productId: string, fallbackName?: string) => {
           const productRef = productById.get(productId) || {};
+          return productRef.name || fallbackName || 'Unknown Product';
+        };
+
+        const getJourneyProductInfo = (prod: any) => {
+          const productId = String(prod.productId || prod.id || prod.hearingAidProductId || '').trim();
           return {
             productId,
-            productName: prod.name || productRef.name || 'Unknown Product',
+            productName: resolveProductName(productId, prod.name),
           };
         };
 
@@ -696,6 +794,49 @@ export default function InventoryPage() {
 
         const makeSerialKey = (productId: unknown, serialNumber: unknown): string =>
           `${String(productId || '').trim()}|${normalizeSerialNumber(String(serialNumber || ''))}`;
+        const makePairGroupKey = (item: InventoryItem): string =>
+          [
+            item.productId,
+            item.location,
+            item.company,
+            item.status,
+            item.purchaseInvoice,
+            item.supplier,
+          ].join('|');
+        const normalizePairTuple = (pair: unknown): [string, string] | null => {
+          if (!Array.isArray(pair) || pair.length < 2) return null;
+          const left = normalizeSerialNumber(String(pair[0] || ''));
+          const right = normalizeSerialNumber(String(pair[1] || ''));
+          if (!left || !right || left === right) return null;
+          return [left, right];
+        };
+        const normalizeSerialPairs = (value: unknown): [string, string][] => {
+          if (!Array.isArray(value)) return [];
+          const out: [string, string][] = [];
+          value.forEach((entry) => {
+            const tuple = normalizePairTuple(entry);
+            if (tuple) out.push(tuple);
+          });
+          return out;
+        };
+
+        const serialPairHints = new Map<string, string>();
+        const registerSerialPairHints = (productId: string, serialPairs: [string, string][]) => {
+          serialPairs.forEach(([left, right]) => {
+            serialPairHints.set(makeSerialKey(productId, left), right);
+            serialPairHints.set(makeSerialKey(productId, right), left);
+          });
+        };
+
+        const pairOverridesSnap = await getDocs(collection(db, 'inventoryPairOverrides'));
+        const pairOverridesByGroup = new Map<string, [string, string][]>();
+        pairOverridesSnap.docs.forEach((docSnap: any) => {
+          const data = docSnap.data() as { groupKey?: string; pairs?: unknown };
+          const groupKey = String(data?.groupKey || docSnap.id || '').trim();
+          if (!groupKey) return;
+          const pairs = normalizeSerialPairs(data?.pairs);
+          if (pairs.length > 0) pairOverridesByGroup.set(groupKey, pairs);
+        });
 
         const serialCandidatesFromProduct = (prod: any): string[] => {
           const direct = [
@@ -868,7 +1009,7 @@ export default function InventoryPage() {
                 soldSerialMetaByKey.set(key, {
                   productId: String(productId || '').trim(),
                   serialNumber: normalizeSerialNumber(String(serialNumber || '')),
-                  productName: prod.name || data.productName || '',
+                  productName: resolveProductName(String(productId || '').trim(), prod.name || data.productName || ''),
                   type: prod.type || '',
                   company: data.company || '',
                   centerId: data.centerId || '',
@@ -878,7 +1019,7 @@ export default function InventoryPage() {
                 soldSerialMetaBySerial.set(normalizeSerialNumber(String(serialNumber || '')), {
                   productId: String(productId || '').trim(),
                   serialNumber: normalizeSerialNumber(String(serialNumber || '')),
-                  productName: prod.name || data.productName || '',
+                  productName: resolveProductName(String(productId || '').trim(), prod.name || data.productName || ''),
                   type: prod.type || '',
                   company: data.company || '',
                   centerId: data.centerId || '',
@@ -935,7 +1076,7 @@ export default function InventoryPage() {
                     soldSerialMetaByKey.set(key, {
                       productId: String(productId || '').trim(),
                       serialNumber: normalizeSerialNumber(String(serialNumber || '')),
-                      productName: prod.name || '',
+                      productName: resolveProductName(String(productId || '').trim(), prod.name || ''),
                       type: prod.type || '',
                       company: data.company || '',
                       centerId: visit.centerId || data.visitingCenter || data.center || '',
@@ -945,7 +1086,7 @@ export default function InventoryPage() {
                     soldSerialMetaBySerial.set(normalizeSerialNumber(String(serialNumber || '')), {
                       productId: String(productId || '').trim(),
                       serialNumber: normalizeSerialNumber(String(serialNumber || '')),
-                      productName: prod.name || '',
+                      productName: resolveProductName(String(productId || '').trim(), prod.name || ''),
                       type: prod.type || '',
                       company: data.company || '',
                       centerId: visit.centerId || data.visitingCenter || data.center || '',
@@ -1034,7 +1175,7 @@ export default function InventoryPage() {
           (data.products || []).forEach((prod: any) => {
             const productId = prod.productId || prod.id;
             const productRef = productById.get(productId) || {};
-            const productName = prod.name || productRef.name || '';
+            const productName = resolveProductName(String(productId || '').trim(), prod.name || '');
             const type = prod.type || productRef.type || '';
             // Use companyLocation (from material-in form) as the primary company, fallback to product company
             const company = companyLocation || productRef.company || '';
@@ -1043,6 +1184,7 @@ export default function InventoryPage() {
             const mrp = prod.mrp ?? productRef.mrp ?? 0;
             const dealerPrice = prod.dealerPrice ?? prod.finalPrice ?? 0;
             const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+            registerSerialPairHints(productId, normalizeSerialPairs(prod.serialPairs));
             const hasSerial = Array.isArray(serials) && serials.length > 0;
             if (!hasSerial) {
             const prev: NonSerialAgg = nonSerialInByProduct.get(productId) || { qty: 0, lastDate: null, lastSupplier: '', lastInvoice: '', lastLocation: '', mrp, dealerPrice };
@@ -1128,7 +1270,7 @@ export default function InventoryPage() {
           (data.products || []).forEach((prod: any) => {
             const productId = prod.productId || prod.id;
             const productRef = productById.get(productId) || {};
-            const productName = prod.name || productRef.name || '';
+            const productName = resolveProductName(String(productId || '').trim(), prod.name || '');
             const type = prod.type || productRef.type || '';
             // Use companyLocation (from purchase form) as the primary company, fallback to product company
             const company = companyLocation || productRef.company || '';
@@ -1137,6 +1279,7 @@ export default function InventoryPage() {
             const mrp = prod.mrp ?? productRef.mrp ?? 0;
             const dealerPrice = prod.dealerPrice ?? prod.finalPrice ?? 0;
             const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+            registerSerialPairHints(productId, normalizeSerialPairs(prod.serialPairs));
             const hasSerial = Array.isArray(serials) && serials.length > 0;
             if (!hasSerial) {
             const prev: NonSerialAgg = nonSerialInByProduct.get(productId) || { qty: 0, lastDate: null, lastSupplier: '', lastInvoice: '', lastLocation: '', mrp, dealerPrice };
@@ -1332,7 +1475,7 @@ export default function InventoryPage() {
           incomingMap.set(key, {
             id: `sold-${key}`,
             productId: meta.productId,
-            productName: meta.productName || productRef.name || 'Unknown Product',
+            productName: resolveProductName(meta.productId, meta.productName),
             serialNumber: meta.serialNumber,
             type: meta.type || productRef.type || '',
             company: meta.company || productRef.company || '',
@@ -1366,7 +1509,7 @@ export default function InventoryPage() {
           incomingMap.set(key, {
             id: `sold-serial-${normalizedSerial}`,
             productId,
-            productName: meta?.productName || productRef.name || 'Unknown Product',
+            productName: resolveProductName(productId, meta?.productName),
             serialNumber: normalizedSerial,
             type: meta?.type || productRef.type || '',
             company: meta?.company || productRef.company || '',
@@ -1422,26 +1565,69 @@ export default function InventoryPage() {
           const groupedPairs: InventoryItem[] = [];
 
           pairGroups.forEach((itemsForKey) => {
-            const sorted = [...itemsForKey].sort((a, b) =>
-              (a.serialNumber || '').localeCompare(b.serialNumber || '')
-            );
+            const bySerial = new Map<string, InventoryItem>();
+            const orderedSerials: string[] = [];
+            itemsForKey.forEach((item) => {
+              const serial = normalizeSerialNumber(item.serialNumber || '');
+              if (!serial) return;
+              bySerial.set(serial, item);
+              orderedSerials.push(serial);
+            });
 
-            for (let i = 0; i < sorted.length; i += 2) {
-              const chunk = sorted.slice(i, i + 2);
-              const base = chunk[0];
-              const serials = chunk
-                .map((it) => it.serialNumber)
-                .filter((sn): sn is string => !!sn && sn !== '-');
+            const used = new Set<string>();
+            const groupKey = itemsForKey[0] ? makePairGroupKey(itemsForKey[0]) : '';
+            const manualPairs = pairOverridesByGroup.get(groupKey) || [];
 
-              const idSuffix = serials.join('-');
-
+            const emitPair = (a: string, b: string, source: InventoryItem['pairSource']) => {
+              const left = bySerial.get(a);
+              const right = bySerial.get(b);
+              if (!left || !right) return;
+              used.add(a);
+              used.add(b);
               groupedPairs.push({
-                ...base,
-                id: `${base.id}-pair-${idSuffix}`,
-                serialNumber: serials.join(', '),
-                serialNumbers: serials,
-                quantity: 1, // 1 pair = 1 inventory item
+                ...left,
+                id: `${left.id}-pair-${a}-${b}`,
+                serialNumber: `${a}, ${b}`,
+                serialNumbers: [a, b],
+                quantity: 1,
+                pairSource: source,
+                pairGroupKey: groupKey,
               });
+            };
+
+            manualPairs.forEach(([aRaw, bRaw]) => {
+              const a = normalizeSerialNumber(aRaw);
+              const b = normalizeSerialNumber(bRaw);
+              if (!a || !b || used.has(a) || used.has(b)) return;
+              emitPair(a, b, 'manualOverride');
+            });
+
+            orderedSerials.forEach((serial) => {
+              if (used.has(serial)) return;
+              const partner = serialPairHints.get(makeSerialKey(itemsForKey[0]?.productId || '', serial));
+              if (!partner || used.has(partner)) return;
+              emitPair(serial, partner, 'serialPairs');
+            });
+
+            const remaining = orderedSerials.filter((sn) => !used.has(sn));
+            for (let i = 0; i < remaining.length; i += 2) {
+              const a = remaining[i];
+              const b = remaining[i + 1];
+              if (b) {
+                emitPair(a, b, 'legacyFallback');
+              } else {
+                const base = bySerial.get(a);
+                if (!base) continue;
+                groupedPairs.push({
+                  ...base,
+                  id: `${base.id}-unpaired-${a}`,
+                  serialNumber: a,
+                  serialNumbers: [a],
+                  quantity: 1,
+                  pairSource: 'unpaired',
+                  pairGroupKey: groupKey,
+                });
+              }
             }
           });
 
@@ -1704,8 +1890,61 @@ export default function InventoryPage() {
         setInventory(items);
         setFilteredInventory(items);
         const serializedJourneyMap: Record<string, JourneyEvent[]> = {};
+        const eventSourcePriority: Record<string, number> = {
+          Sales: 5,
+          'Material Out': 4,
+          'Material In': 3,
+          Purchase: 2,
+          Enquiry: 1,
+        };
+        const normalizeJourneyText = (value?: string) => String(value || '').trim().toLowerCase();
+        const journeyDedupeKey = (event: JourneyEvent) => {
+          const dayBucket = Math.floor((event.sortOrder || 0) / (1000 * 60 * 60 * 24));
+          return [
+            event.eventType,
+            dayBucket,
+            normalizeJourneyText(event.location),
+            normalizeJourneyText(event.counterparty),
+            normalizeJourneyText(event.referenceNo),
+          ].join('|');
+        };
+        const mergeJourneyEvents = (existing: JourneyEvent, incoming: JourneyEvent): JourneyEvent => {
+          const existingPriority = eventSourcePriority[existing.sourceLabel || ''] || 0;
+          const incomingPriority = eventSourcePriority[incoming.sourceLabel || ''] || 0;
+          const base = incomingPriority > existingPriority ? incoming : existing;
+          const alt = base === incoming ? existing : incoming;
+          const mergedNotes = [base.notes, alt.notes]
+            .filter(Boolean)
+            .join(' • ')
+            .split('•')
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .filter((part, idx, arr) => arr.indexOf(part) === idx)
+            .join(' • ');
+          return {
+            ...base,
+            notes: mergedNotes,
+            description: base.description || alt.description,
+            sourcePath: base.sourcePath || alt.sourcePath,
+          };
+        };
         journeyMap.forEach((events, serialKey) => {
-          serializedJourneyMap[serialKey] = [...events].sort((a, b) => {
+          const dedupedMap = new Map<string, JourneyEvent>();
+          [...events]
+            .sort((a, b) => {
+              if (a.sortOrder === b.sortOrder) return a.title.localeCompare(b.title);
+              return a.sortOrder - b.sortOrder;
+            })
+            .forEach((event) => {
+              const key = journeyDedupeKey(event);
+              const existing = dedupedMap.get(key);
+              if (!existing) {
+                dedupedMap.set(key, event);
+                return;
+              }
+              dedupedMap.set(key, mergeJourneyEvents(existing, event));
+            });
+          serializedJourneyMap[serialKey] = Array.from(dedupedMap.values()).sort((a, b) => {
             if (a.sortOrder === b.sortOrder) return a.title.localeCompare(b.title);
             return a.sortOrder - b.sortOrder;
           });
@@ -1737,53 +1976,6 @@ export default function InventoryPage() {
     }
   }, [user, isAllowedModule, refreshKey, effectiveScopeCenterId, allowedCenterIds]);
   
-  // Apply filters and search
-  useEffect(() => {
-    if (!inventory.length) return;
-    
-    let filtered = [...inventory];
-    
-    // Apply search filter
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      filtered = filtered.filter(item => 
-        item.productName.toLowerCase().includes(search) ||
-        item.serialNumber.toLowerCase().includes(search) ||
-        item.company.toLowerCase().includes(search) ||
-        item.supplier.toLowerCase().includes(search)
-      );
-    }
-    
-    // Apply status filter
-    if (statusFilter) {
-      filtered = filtered.filter(item => item.status === statusFilter);
-    }
-    
-    // Apply type filter
-    if (typeFilter) {
-      filtered = filtered.filter(item => item.type === typeFilter);
-    }
-    
-    // Apply location filter
-    if (locationFilter) {
-      filtered = filtered.filter(item => item.location === locationFilter);
-    }
-    
-    // Apply company filter (check both manufacturer and business company)
-    if (companyFilter) {
-      filtered = filtered.filter(item => {
-        // Check both original product company (manufacturer) and business company
-        const manufacturerMatch = item.originalProductCompany?.toLowerCase().includes(companyFilter.toLowerCase());
-        const businessCompanyMatch = item.company?.toLowerCase().includes(companyFilter.toLowerCase());
-        return manufacturerMatch || businessCompanyMatch;
-      });
-    }
-    
-    setFilteredInventory(filtered);
-    // Reset pagination when filters change
-    setPage(0);
-  }, [inventory, searchTerm, statusFilter, typeFilter, locationFilter, companyFilter, isRestrictedUser]);
-
   // Table pagination handlers
   const handleChangePage = (event: unknown, newPage: number) => {
     setPage(newPage);
@@ -1882,6 +2074,41 @@ export default function InventoryPage() {
     }
   };
 
+  const getJourneyEventTitle = (event: JourneyEvent) => {
+    switch (event.eventType) {
+      case 'material-in':
+        return 'Received In Inventory';
+      case 'stock-transfer-in':
+        return 'Transferred In';
+      case 'stock-transfer-out':
+        return 'Transferred Out';
+      case 'material-out':
+        return 'Moved Out';
+      case 'visit-update':
+        return 'Visit Progress Update';
+      default:
+        return event.title;
+    }
+  };
+
+  const getJourneyEventDescription = (event: JourneyEvent) => {
+    const party = event.counterparty ? ` • ${event.counterparty}` : '';
+    switch (event.eventType) {
+      case 'purchase':
+        return `Purchase recorded${party}`;
+      case 'sale':
+        return `Sale completed${party}`;
+      case 'booking':
+        return `Booking confirmed${party}`;
+      case 'trial':
+        return `Trial activity logged${party}`;
+      case 'sale-return':
+        return `Sales return recorded${party}`;
+      default:
+        return event.description;
+    }
+  };
+
   const selectedJourney = useMemo(() => {
     const normalizedSerial = normalizeSerialNumber(journeySearchSerial || '');
     const events = normalizedSerial ? (journeyBySerial[normalizedSerial] || []) : [];
@@ -1898,10 +2125,10 @@ export default function InventoryPage() {
       events,
       inventoryItem,
       latestEvent,
-      productName: inventoryItem?.productName || latestEvent?.productName || 'Unknown Product',
+      productName: (inventoryItem ? getCanonicalSearchProductName(inventoryItem) : '') || latestEvent?.productName || 'Unknown Product',
       displaySerial: events[0]?.serialNumber || journeySearchSerial.trim(),
     };
-  }, [journeySearchSerial, journeyBySerial, inventory]);
+  }, [journeySearchSerial, journeyBySerial, inventory, productNameById, canonicalProductNameByLower]);
 
   const handleOpenJourney = () => {
     const serial = journeySerialInput.trim();
@@ -1957,7 +2184,7 @@ export default function InventoryPage() {
 
       const rows = filteredInventory.map((item) => {
         const base = [
-          item.productName || '',
+          getCanonicalSearchProductName(item) || '',
           item.serialNumber || '',
           item.type || '',
           item.company || '',
@@ -2019,14 +2246,19 @@ export default function InventoryPage() {
       filtered = filtered.filter(item => item.location === locationFilter);
     }
 
-    // Filter by search term (if we add it later)
+    // Filter by search term
     if (searchTerm) {
-      const searchLower = searchTerm.toLowerCase();
+      const searchLower = searchTerm.trim().toLowerCase();
+      const normalizedSearch = normalizeProductNameForMatch(searchLower);
       filtered = filtered.filter(item => 
-        item.productName?.toLowerCase().includes(searchLower) ||
+        getCanonicalSearchProductName(item).toLowerCase().includes(searchLower) ||
+        normalizeProductNameForMatch(getCanonicalSearchProductName(item)).includes(normalizedSearch) ||
+        Array.from(searchNameAliasesByProductId.get(String(item.productId || '').trim()) || []).some((name) => name.includes(searchLower)) ||
         item.serialNumber?.toLowerCase().includes(searchLower) ||
+        (Array.isArray(item.serialNumbers) && item.serialNumbers.some((sn) => String(sn || '').toLowerCase().includes(searchLower))) ||
         item.company?.toLowerCase().includes(searchLower) ||
-        item.type?.toLowerCase().includes(searchLower)
+        item.type?.toLowerCase().includes(searchLower) ||
+        item.supplier?.toLowerCase().includes(searchLower)
       );
     }
 
@@ -2070,7 +2302,8 @@ export default function InventoryPage() {
       inventoryValueDealer,
       inventoryValueMRP,
     });
-  }, [inventory, locationFilter, searchTerm, statusFilter, typeFilter, companyFilter, showSoldItems]);
+    setPage(0);
+  }, [inventory, locationFilter, searchTerm, statusFilter, typeFilter, companyFilter, showSoldItems, productNameById, searchNameAliasesByProductId, canonicalProductNameByLower, canonicalProductNameByNormalized]);
 
   // Get list of unique types, locations, and companies for filters
   const productTypes = Array.from(new Set(inventory.map(item => item.type)));
@@ -2090,7 +2323,7 @@ export default function InventoryPage() {
       byCategory[cat].dealerValue += (item.dealerPrice || 0) * (item.quantity || 1);
       byCategory[cat].mrpValue += (item.mrp || 0) * (item.quantity || 1);
       byCategory[cat].count += 1;
-      const key = item.productName || 'Unnamed';
+      const key = getCanonicalSearchProductName(item) || 'Unnamed';
       if (!byCategory[cat].products[key]) {
         byCategory[cat].products[key] = { company: item.company || '', items: [] };
       }
@@ -2112,7 +2345,7 @@ export default function InventoryPage() {
         }))
     }));
     return categories;
-  }, [filteredInventory]);
+  }, [filteredInventory, productNameById, canonicalProductNameByLower]);
 
   const openSerialsDialog = (category: string, productName: string, items: InventoryItem[]) => {
     setSerialsDialogTitle(`${category} • ${productName}`);
@@ -2281,6 +2514,261 @@ export default function InventoryPage() {
       setErrorMessage('Failed to delete inventory item');
     }
   };
+
+  const handleOpenPairRepair = (item: InventoryItem) => {
+    const groupKey = item.pairGroupKey;
+    if (!groupKey) return;
+    const serials = Array.from(
+      new Set(
+        inventory
+          .filter((row) => row.pairGroupKey === groupKey)
+          .flatMap((row) => row.serialNumbers || [])
+          .map((sn) => normalizeSerialNumber(String(sn || '')))
+          .filter(Boolean),
+      ),
+    );
+    setPairRepairItem(item);
+    setPairRepairSerialList(serials);
+    setPairRepairInput(
+      serials.length >= 2
+        ? `${serials[0]}, ${serials[1]}`
+        : serials.join(', '),
+    );
+    setPairRepairOpen(true);
+  };
+
+  const handleSavePairRepair = async () => {
+    if (!pairRepairItem?.pairGroupKey) return;
+    const tokens = pairRepairInput
+      .split(/[,\n;|]+/g)
+      .map((s) => normalizeSerialNumber(s))
+      .filter(Boolean);
+    if (tokens.length < 2 || tokens.length % 2 !== 0) {
+      setErrorMessage('Enter an even number of serials (2, 4, 6...) to define complete pairs.');
+      return;
+    }
+    const allowed = new Set(pairRepairSerialList);
+    const invalid = tokens.filter((sn) => !allowed.has(sn));
+    if (invalid.length > 0) {
+      setErrorMessage(`Unknown serial(s) for this group: ${invalid.join(', ')}`);
+      return;
+    }
+    const dedupe = new Set(tokens);
+    if (dedupe.size !== tokens.length) {
+      setErrorMessage('A serial can only appear once in pair mapping.');
+      return;
+    }
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < tokens.length; i += 2) {
+      pairs.push([tokens[i], tokens[i + 1]]);
+    }
+
+    try {
+      setSavingPairRepair(true);
+      const ref = doc(db, 'inventoryPairOverrides', pairRepairItem.pairGroupKey);
+      await setDoc(
+        ref,
+        {
+          groupKey: pairRepairItem.pairGroupKey,
+          productId: pairRepairItem.productId,
+          location: pairRepairItem.location,
+          company: pairRepairItem.company,
+          pairs,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid || null,
+        },
+        { merge: true },
+      );
+      setSuccessMessage('Pair mapping updated. Refreshing inventory.');
+      setPairRepairOpen(false);
+      setPairRepairItem(null);
+      setRefreshKey((k) => k + 1);
+    } catch (error) {
+      console.error('Failed to save pair mapping override', error);
+      setErrorMessage('Failed to save pair mapping override.');
+    } finally {
+      setSavingPairRepair(false);
+    }
+  };
+
+  const pairableProducts = useMemo(() => {
+    return products
+      .filter((p: any) => (p.quantityType || p.quantityTypeLegacy) === 'pair')
+      .sort((a: any, b: any) => String(a.name || '').localeCompare(String(b.name || '')));
+  }, [products]);
+
+  useEffect(() => {
+    if (selectedPairProductId === '__all__') return;
+    const stillExists = pairableProducts.some((p: any) => String(p.id || '') === selectedPairProductId);
+    if (!stillExists) {
+      setSelectedPairProductId('__all__');
+    }
+  }, [pairableProducts, selectedPairProductId]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [searchTerm, statusFilter, typeFilter, locationFilter, companyFilter, selectedExplorerBrand, multiStatusFilter, multiBrandFilter, multiCenterFilter]);
+
+  const pairingBuckets = useMemo(() => {
+    if (!selectedPairProductId) return [];
+    const rows = inventory.filter((item) => {
+      if (selectedPairProductId !== '__all__' && item.productId !== selectedPairProductId) return false;
+      if (item.status === 'Sold' || item.status === 'Damaged') return false;
+      return (item.serialNumbers?.length || 0) > 0 || !!item.serialNumber;
+    });
+
+    const bucketMap = new Map<string, {
+      key: string;
+      productId: string;
+      productName: string;
+      location: string;
+      company: string;
+      status: string;
+      groupKeys: string[];
+      serials: string[];
+      existingPairs: [string, string][];
+    }>();
+
+    rows.forEach((row) => {
+      const serials = (row.serialNumbers && row.serialNumbers.length > 0
+        ? row.serialNumbers
+        : [row.serialNumber]
+      )
+        .map((sn) => normalizeSerialNumber(String(sn || '')))
+        .filter(Boolean);
+      if (serials.length === 0) return;
+
+      const rowGroupKey = row.pairGroupKey || [row.productId, row.location, row.company, row.status, row.purchaseInvoice, row.supplier].join('|');
+      const key = String(row.productId || '').trim() || getCanonicalSearchProductName(row);
+      if (!bucketMap.has(key)) {
+        bucketMap.set(key, {
+          key,
+          productId: row.productId,
+          productName: getCanonicalSearchProductName(row),
+          location: 'multiple',
+          company: 'multiple',
+          status: 'In Stock',
+          groupKeys: [],
+          serials: [],
+          existingPairs: [],
+        });
+      }
+      const bucket = bucketMap.get(key)!;
+      if (!bucket.groupKeys.includes(rowGroupKey)) {
+        bucket.groupKeys.push(rowGroupKey);
+      }
+      bucket.serials.push(...serials);
+      if (serials.length === 2 && row.pairSource !== 'unpaired') {
+        bucket.existingPairs.push([serials[0], serials[1]]);
+      }
+    });
+
+    return Array.from(bucketMap.values())
+      .map((bucket) => ({
+        ...bucket,
+        serials: Array.from(new Set(bucket.serials)),
+        existingPairs: bucket.existingPairs.filter(([a, b]) => !!a && !!b),
+      }))
+      .sort((a, b) => {
+        const byProduct = String(a.productName || '').localeCompare(String(b.productName || ''));
+        if (byProduct !== 0) return byProduct;
+        return String(a.productId || '').localeCompare(String(b.productId || ''));
+      });
+  }, [inventory, selectedPairProductId, productNameById, canonicalProductNameByLower]);
+
+  const getBucketPairs = (bucketKey: string, existingPairs: [string, string][]): [string, string][] => {
+    return pairingDraftByBucket[bucketKey] || existingPairs;
+  };
+
+  const toggleBucketSerialSelection = (bucketKey: string, serial: string) => {
+    setPairingSelectionByBucket((prev) => {
+      const current = prev[bucketKey] || [];
+      if (current.includes(serial)) {
+        return { ...prev, [bucketKey]: current.filter((x) => x !== serial) };
+      }
+      if (current.length >= 2) return prev;
+      return { ...prev, [bucketKey]: [...current, serial] };
+    });
+  };
+
+  const handleCreatePairInBucket = (bucketKey: string, existingPairs: [string, string][]) => {
+    const selected = pairingSelectionByBucket[bucketKey] || [];
+    if (selected.length !== 2) {
+      setErrorMessage('Select exactly 2 serials to create a pair.');
+      return;
+    }
+    const [a, b] = selected;
+    const currentPairs = getBucketPairs(bucketKey, existingPairs);
+    const paired = new Set(currentPairs.flatMap((pair) => pair));
+    if (paired.has(a) || paired.has(b)) {
+      setErrorMessage('Selected serial is already part of a pair.');
+      return;
+    }
+    setPairingDraftByBucket((prev) => ({
+      ...prev,
+      [bucketKey]: [...currentPairs, [a, b]],
+    }));
+    setPairingSelectionByBucket((prev) => ({ ...prev, [bucketKey]: [] }));
+  };
+
+  const handleRemovePairInBucket = (bucketKey: string, pair: [string, string], existingPairs: [string, string][]) => {
+    const currentPairs = getBucketPairs(bucketKey, existingPairs);
+    setPairingDraftByBucket((prev) => ({
+      ...prev,
+      [bucketKey]: currentPairs.filter(([a, b]) => !(a === pair[0] && b === pair[1])),
+    }));
+  };
+
+  const handleClearPairsInBucket = (bucketKey: string) => {
+    if (!window.confirm('Clear all pairs in this bucket? Serial numbers will remain unchanged.')) return;
+    setPairingDraftByBucket((prev) => ({ ...prev, [bucketKey]: [] }));
+  };
+
+  const handleSaveBucketPairs = async (bucket: {
+    key: string;
+    productId: string;
+    location: string;
+    company: string;
+    status: string;
+    groupKeys: string[];
+    existingPairs: [string, string][];
+  }) => {
+    const pairs = getBucketPairs(bucket.key, bucket.existingPairs);
+    const flat = pairs.flatMap((pair) => pair);
+    if (new Set(flat).size !== flat.length) {
+      setErrorMessage('A serial cannot belong to multiple pairs.');
+      return;
+    }
+    try {
+      setSavingBucketKey(bucket.key);
+      const keysToSave = bucket.groupKeys.length > 0 ? bucket.groupKeys : [bucket.key];
+      await Promise.all(
+        keysToSave.map((groupKey) =>
+          setDoc(
+            doc(db, 'inventoryPairOverrides', groupKey),
+            {
+              groupKey,
+              productId: bucket.productId,
+              location: bucket.location,
+              company: bucket.company,
+              status: bucket.status,
+              pairs,
+              updatedAt: serverTimestamp(),
+              updatedBy: user?.uid || null,
+            },
+            { merge: true },
+          ),
+        ),
+      );
+      setSuccessMessage('Pair mapping saved successfully.');
+      setRefreshKey((x) => x + 1);
+    } catch (error) {
+      console.error('Failed saving bucket pair mappings', error);
+      setErrorMessage('Failed to save pair mapping.');
+    } finally {
+      setSavingBucketKey(null);
+    }
+  };
   
   // Loading state
   if (loading) {
@@ -2305,15 +2793,77 @@ export default function InventoryPage() {
     );
   }
   
+  const commandFilteredInventory = filteredInventory.filter((item) => {
+    if (selectedExplorerBrand && item.originalProductCompany !== selectedExplorerBrand) return false;
+    if (multiStatusFilter.length > 0 && !multiStatusFilter.includes(item.status)) return false;
+    if (multiBrandFilter.length > 0 && !multiBrandFilter.includes(item.originalProductCompany || 'Unknown')) return false;
+    if (multiCenterFilter.length > 0 && !multiCenterFilter.includes(item.location || '')) return false;
+    return true;
+  });
+
   // Paginated data
-  const paginatedData = filteredInventory.slice(
+  const paginatedData = commandFilteredInventory.slice(
     page * rowsPerPage,
     page * rowsPerPage + rowsPerPage
   );
+  const compactSectionSx = { p: { xs: 1.5, md: 2 }, mb: 2, borderRadius: 1.5, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' } as const;
+  const modernPanelSx = {
+    borderRadius: 2,
+    border: '1px solid',
+    borderColor: 'divider',
+    backdropFilter: 'blur(8px)',
+    bgcolor: 'background.paper',
+    boxShadow: 0,
+  } as const;
+  const compactCardSx = {
+    borderRadius: 1.5,
+    border: '1px solid',
+    borderColor: alpha('#64748b', 0.2),
+    bgcolor: 'background.paper',
+    transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
+    cursor: 'pointer',
+    '&:hover': { borderColor: alpha('#6366f1', 0.28), boxShadow: `0 6px 14px ${alpha('#0f172a', 0.12)}`, transform: 'translateY(-1px)' },
+  } as const;
+  const categoryRows = grouped.flatMap((group) =>
+    group.products.map((p) => ({
+      category: group.category,
+      productName: p.productName,
+      count: p.count,
+      items: p.items,
+    })),
+  );
+  const movementLogRows = commandFilteredInventory
+    .slice()
+    .sort((a, b) => getTimestampValue(b.updatedAt || b.createdAt || b.purchaseDate) - getTimestampValue(a.updatedAt || a.createdAt || a.purchaseDate))
+    .slice(0, 40);
+  const inStockByCenter = locations
+    .map((location) => ({
+      location,
+      name: getCenterName(location),
+      count: commandFilteredInventory.filter((item) => item.location === location && item.status === 'In Stock').length,
+    }))
+    .sort((a, b) => b.count - a.count);
+  const maxCenterStock = Math.max(1, ...inStockByCenter.map((row) => row.count));
+  const analyticsTotal = commandFilteredInventory.length;
+  const analyticsInStock = commandFilteredInventory.filter((item) => item.status === 'In Stock').length;
+  const analyticsSold = commandFilteredInventory.filter((item) => item.status === 'Sold').length;
+  const analyticsDamaged = commandFilteredInventory.filter((item) => item.status === 'Damaged').length;
+  const topCategories = grouped
+    .map((group) => ({
+      category: group.category,
+      count: group.totalCount,
+      dealer: group.totalDealerValue,
+    }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 6);
+
+  const toggleMultiFilter = (value: string, setter: React.Dispatch<React.SetStateAction<string[]>>) => {
+    setter((prev) => (prev.includes(value) ? prev.filter((entry) => entry !== value) : [...prev, value]));
+  };
 
   return (
     <Box sx={{ 
-      p: 3, 
+      p: { xs: 1.5, md: 2 }, 
       bgcolor: 'background.default', 
       minHeight: 'calc(100vh - 64px)',
       width: '100%',
@@ -2321,26 +2871,26 @@ export default function InventoryPage() {
       overflow: 'hidden'
     }}>
       {/* Clean Header */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
-        <Box display="flex" alignItems="center" justifyContent="space-between">
+      <Paper elevation={0} sx={{ ...compactSectionSx, py: { xs: 1.5, md: 1.75 } }}>
+        <Box display="flex" alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between" gap={1.5} flexDirection={{ xs: 'column', md: 'row' }}>
           <Box>
-            <Box display="flex" alignItems="center" mb={1}>
-              <DashboardIcon color="primary" sx={{ fontSize: 28, mr: 2 }} />
-              <Typography variant="h4" fontWeight="600" color="text.primary">
+            <Box display="flex" alignItems="center" mb={0.5}>
+              <DashboardIcon color="primary" sx={{ fontSize: 22, mr: 1 }} />
+              <Typography variant="h5" fontWeight={700} color="text.primary">
                 Inventory Management
               </Typography>
             </Box>
-            <Typography variant="body1" color="text.secondary" sx={{ mb: 1 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
               Real-time stock tracking across all locations and companies
             </Typography>
             <Box display="flex" alignItems="center" sx={{ color: 'text.secondary' }}>
-              <AnalyticsIcon sx={{ mr: 1, fontSize: 16 }} />
-              <Typography variant="body2">
+              <AnalyticsIcon sx={{ mr: 0.75, fontSize: 14 }} />
+              <Typography variant="caption">
                 Last updated: {new Date().toLocaleString()}
               </Typography>
             </Box>
           </Box>
-          <Box textAlign="right" display="flex" gap={1} alignItems="center">
+          <Box textAlign="right" display="flex" gap={1} alignItems="center" flexWrap="wrap">
             {!isRestrictedUser && (
               <FormControlLabel
                 control={
@@ -2353,42 +2903,212 @@ export default function InventoryPage() {
                 label={
                   <Box display="flex" alignItems="center">
                     <VisibilityIcon sx={{ mr: 0.5, fontSize: 16, color: 'text.secondary' }} />
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="caption" color="text.secondary">
                       Show Sold Items
                     </Typography>
                   </Box>
                 }
-                sx={{ mr: 2 }}
+                sx={{ mr: 0.5 }}
               />
             )}
             <Button
               variant="outlined"
               color="primary"
-              size="large"
+              size="small"
               startIcon={<RefreshIcon />}
               onClick={handleRefreshData}
-              sx={{ borderRadius: 2 }}
+              sx={{ borderRadius: 1.5 }}
               disabled={loading}
             >
               {loading ? 'Refreshing...' : 'Refresh Data'}
             </Button>
-            {!isRestrictedUser && (
-              <Button
-                variant="contained"
-                color="primary"
-                size="large"
-                startIcon={<AddIcon />}
-                onClick={() => handleOpenDialog()}
-                sx={{ borderRadius: 2 }}
-              >
-                Add New Item
-              </Button>
-            )}
           </Box>
         </Box>
       </Paper>
 
-      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
+      <Paper elevation={0} sx={{ mb: 2, borderRadius: 1.5, border: '1px solid', borderColor: 'divider' }}>
+        <Tabs value={workspaceTab} onChange={(_, value) => setWorkspaceTab(value)} sx={{ px: 2, pt: 1 }}>
+          <Tab value="inventory" label="Inventory View" />
+          <Tab value="pairing" label="Pairing Workspace" />
+        </Tabs>
+      </Paper>
+
+      {workspaceTab === 'pairing' && (
+        <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+          <Box display="flex" gap={2} alignItems={{ xs: 'stretch', md: 'center' }} flexDirection={{ xs: 'column', md: 'row' }} mb={2.5}>
+            <FormControl sx={{ minWidth: 320 }}>
+              <InputLabel id="pairing-product-label">Select Product</InputLabel>
+              <Select
+                labelId="pairing-product-label"
+                value={selectedPairProductId}
+                label="Select Product"
+                onChange={(e) => {
+                  setSelectedPairProductId(String(e.target.value || ''));
+                  setPairingDraftByBucket({});
+                  setPairingSelectionByBucket({});
+                }}
+              >
+                <MenuItem value="__all__">All Pair Products</MenuItem>
+                {pairableProducts.map((p: any) => (
+                  <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Typography variant="body2" color="text.secondary">
+              Serial numbers are read-only. Select two unpaired serials to form a pair inside the same bucket.
+            </Typography>
+          </Box>
+
+          {pairingBuckets.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              No available serial inventory buckets found for the selected product.
+            </Typography>
+          ) : (
+            <Stack spacing={2}>
+              {pairingBuckets.map((bucket) => {
+                const activePairs = getBucketPairs(bucket.key, bucket.existingPairs);
+                const pairedSet = new Set(activePairs.flatMap((pair) => pair));
+                const unpairedSerials = bucket.serials.filter((sn) => !pairedSet.has(sn));
+                const selected = pairingSelectionByBucket[bucket.key] || [];
+                return (
+                  <Card key={bucket.key} variant="outlined" sx={{ borderRadius: 2 }}>
+                    <CardContent>
+                      <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5}>
+                        <Typography variant="subtitle1" fontWeight={700}>{bucket.productName}</Typography>
+                        <Chip label={`${bucket.serials.length} serials`} size="small" />
+                      </Box>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                        Bucket: Combined view for all locations/entries of this product
+                      </Typography>
+                      <Box display="flex" gap={1} flexWrap="wrap" mb={1.5}>
+                        {bucket.serials.map((sn) => {
+                          const isPaired = pairedSet.has(sn);
+                          const isSelected = selected.includes(sn);
+                          return (
+                            <Chip
+                              key={sn}
+                              label={sn}
+                              color={isPaired ? 'success' : isSelected ? 'primary' : 'default'}
+                              variant={isPaired ? 'filled' : 'outlined'}
+                              onClick={isPaired ? undefined : () => toggleBucketSerialSelection(bucket.key, sn)}
+                            />
+                          );
+                        })}
+                      </Box>
+                      <Box display="flex" gap={1} alignItems="center" flexWrap="wrap" mb={1.5}>
+                        <Button variant="contained" size="small" disabled={selected.length !== 2} onClick={() => handleCreatePairInBucket(bucket.key, bucket.existingPairs)}>
+                          Create Pair
+                        </Button>
+                        <Button variant="outlined" size="small" color="warning" onClick={() => handleClearPairsInBucket(bucket.key)} disabled={activePairs.length === 0}>
+                          Clear All Pairs
+                        </Button>
+                        <Button variant="outlined" size="small" onClick={() => handleSaveBucketPairs(bucket)} disabled={savingBucketKey === bucket.key}>
+                          {savingBucketKey === bucket.key ? 'Saving...' : 'Save Pairs'}
+                        </Button>
+                        <Chip label={`Paired: ${activePairs.length}`} size="small" color="success" variant="outlined" />
+                        <Chip label={`Unpaired: ${unpairedSerials.length}`} size="small" color="warning" variant="outlined" />
+                      </Box>
+                      {activePairs.length > 0 && (
+                        <Box display="flex" gap={1} flexWrap="wrap">
+                          {activePairs.map((pair) => (
+                            <Chip
+                              key={`${pair[0]}-${pair[1]}`}
+                              label={`${pair[0]} · ${pair[1]}`}
+                              color="success"
+                              onDelete={() => handleRemovePairInBucket(bucket.key, pair, bucket.existingPairs)}
+                            />
+                          ))}
+                        </Box>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </Stack>
+          )}
+        </Paper>
+      )}
+
+      <Box sx={{ display: workspaceTab === 'inventory' ? 'block' : 'none' }}>
+      <Paper
+        elevation={0}
+        sx={(t) => ({
+          ...modernPanelSx,
+          mb: 1.5,
+          p: 1,
+          position: 'sticky',
+          top: 8,
+          zIndex: 25,
+          borderColor: alpha(t.palette.primary.main, 0.24),
+          bgcolor: t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.72) : alpha(t.palette.common.white, 0.72),
+          boxShadow: t.palette.mode === 'dark' ? `0 12px 28px ${alpha(t.palette.common.black, 0.35)}` : `0 10px 26px ${alpha(t.palette.common.black, 0.1)}`,
+        })}
+      >
+        <Box display="flex" gap={1} alignItems="center" justifyContent="space-between" flexWrap="wrap">
+          <Box display="flex" gap={1} alignItems="center" flexWrap="wrap">
+            <TextField
+              size="small"
+              placeholder="Omni-search by serial, product, source..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              sx={{ minWidth: { xs: '100%', md: 360 } }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+              }}
+            />
+            <Button size="small" variant="outlined" startIcon={<FilterListIcon />} onClick={() => setFilterDrawerOpen(true)}>
+              Filters
+            </Button>
+          </Box>
+          <Box display="flex" gap={0.75} alignItems="center" flexWrap="wrap">
+            <Chip size="small" label={`In ${commandFilteredInventory.filter((i) => i.status === 'In Stock').length}`} />
+            <Chip size="small" color="warning" variant="outlined" label={`Sold ${commandFilteredInventory.filter((i) => i.status === 'Sold').length}`} />
+            <Chip size="small" color="error" variant="outlined" label={`Damaged ${commandFilteredInventory.filter((i) => i.status === 'Damaged').length}`} />
+            <Button size="small" variant="text" startIcon={<RefreshIcon />} onClick={handleRefreshData}>Refresh</Button>
+            <Button size="small" variant="text" startIcon={<VisibilityIcon />} onClick={handleExportData}>Export</Button>
+          </Box>
+        </Box>
+        <Box mt={1} display="flex" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap">
+          <Tabs
+            value={commandViewTab}
+            onChange={(_, v) => setCommandViewTab(v)}
+            sx={{
+              minHeight: 34,
+              '& .MuiTab-root': { minHeight: 34, py: 0, textTransform: 'none', fontWeight: 600, letterSpacing: 0.2 },
+              '& .MuiTabs-indicator': { height: 2.5, borderRadius: 3 },
+            }}
+          >
+            <Tab value="live" label="Live Inventory" />
+            <Tab value="analytics" label="Stock Analytics" />
+          </Tabs>
+          <Box display="flex" gap={0.5} flexWrap="wrap">
+            {originalProductCompanies.map((brandRaw) => {
+              const brand = String(brandRaw || '').trim();
+              if (!brand) return null;
+              return (
+              <Chip
+                key={brand}
+                size="small"
+                label={brand}
+                color={selectedExplorerBrand === brand ? 'primary' : 'default'}
+                variant={selectedExplorerBrand === brand ? 'filled' : 'outlined'}
+                sx={{ borderRadius: 1, fontWeight: 600, '& .MuiChip-label': { px: 1.2 } }}
+                onClick={() => {
+                  const next = selectedExplorerBrand === brand ? '' : brand;
+                  setSelectedExplorerBrand(next);
+                  setCompanyFilter(next);
+                }}
+              />
+              );
+            })}
+          </Box>
+        </Box>
+      </Paper>
+      <Paper elevation={0} sx={{ ...compactSectionSx, ...modernPanelSx, maxHeight: { md: 430 }, overflowY: 'auto', display: commandViewTab === 'live' ? 'block' : 'none' }}>
         <Box display="flex" alignItems={{ xs: 'flex-start', md: 'center' }} justifyContent="space-between" gap={2} flexDirection={{ xs: 'column', md: 'row' }}>
           <Box>
             <Box display="flex" alignItems="center" mb={1}>
@@ -2432,119 +3152,164 @@ export default function InventoryPage() {
         </Box>
       </Paper>
 
-      {/* Clean Stats Cards */}
-      <Box display="grid" gridTemplateColumns={isRestrictedUser 
-        ? { xs: '1fr 1fr', sm: 'repeat(3, 1fr)', lg: 'repeat(3, 1fr)' }
-        : { xs: '1fr 1fr', sm: 'repeat(3, 1fr)', lg: 'repeat(6, 1fr)' }
-      } gap={2} mb={3}>
-        <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-          <Box display="flex" alignItems="center" mb={1}>
-            <InventoryIcon color="primary" sx={{ mr: 1, fontSize: 20 }} />
-            <Typography variant="subtitle2" color="text.secondary">
-              Total Items
-            </Typography>
-          </Box>
-          <Typography
-            variant="h4"
-            fontWeight="bold"
-            sx={(t) => ({ color: t.palette.mode === 'dark' ? t.palette.common.white : t.palette.text.primary })}
-          >
-            {stats.totalItems}
-          </Typography>
-        </Card>
-        
-        <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-          <Box display="flex" alignItems="center" mb={1}>
-            <CheckCircleIcon color="success" sx={{ mr: 1, fontSize: 20 }} />
-            <Typography variant="subtitle2" color="text.secondary">
-              In Stock
-            </Typography>
-          </Box>
-          <Typography variant="h4" fontWeight="bold" color="success.main">
-            {stats.inStock}
-          </Typography>
-        </Card>
-        
-        {!isRestrictedUser && (
-          <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-            <Box display="flex" alignItems="center" mb={1}>
-              <ShoppingCartIcon color="info" sx={{ mr: 1, fontSize: 20 }} />
-              <Typography variant="subtitle2" color="text.secondary">
-                Sold
-              </Typography>
-            </Box>
-            <Typography variant="h4" fontWeight="bold" color="info.main">
-              {stats.sold}
-            </Typography>
-          </Card>
-        )}
-        
-        {showSoldItems && !isRestrictedUser && (
-          <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-            <Box display="flex" alignItems="center" mb={1}>
-              <VisibilityIcon color="warning" sx={{ mr: 1, fontSize: 20 }} />
-              <Typography variant="subtitle2" color="text.secondary">
-                Sold Items Shown
-              </Typography>
-            </Box>
-            <Typography variant="h4" fontWeight="bold" color="warning.main">
-              {filteredInventory.filter(i => i.status === 'Sold').length}
-            </Typography>
-          </Card>
-        )}
+      <Paper elevation={0} sx={{ ...compactSectionSx, display: 'none' }}>
+        <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>Product Movement Trail</Typography>
+        <TableContainer>
+          <Table size="small" sx={{ '& .MuiTableCell-root': { py: 0.85 } }}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Serial</TableCell>
+                <TableCell>Product</TableCell>
+                <TableCell>Journey Trail</TableCell>
+                <TableCell align="right">Updated</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {movementLogRows.slice(0, 18).map((item) => (
+                <TableRow key={`movement-${item.id}`} hover>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.76rem' }}>{item.serialNumber || '-'}</TableCell>
+                  <TableCell>
+                    <Typography variant="caption">{getCanonicalSearchProductName(item)}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Box display="flex" alignItems="center" gap={0.5} flexWrap="wrap">
+                      <Chip size="small" label="Received" variant="outlined" />
+                      <Typography variant="caption" color="text.secondary">→</Typography>
+                      <Chip size="small" label={`Stocked (${getCenterName(item.location)})`} color="primary" variant="outlined" />
+                      <Typography variant="caption" color="text.secondary">→</Typography>
+                      <Chip size="small" label={item.status === 'Sold' ? 'Sold/Delivered' : 'Active'} color={item.status === 'Sold' ? 'warning' : 'success'} />
+                    </Box>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="caption" color="text.secondary">{formatDateTime(item.updatedAt || item.createdAt || item.purchaseDate)}</Typography>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {movementLogRows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} align="center" sx={{ color: 'text.secondary', py: 2 }}>No movement rows available</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
 
-        
-        <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-          <Box display="flex" alignItems="center" mb={1}>
-            <WarningIcon color="error" sx={{ mr: 1, fontSize: 20 }} />
-            <Typography variant="subtitle2" color="text.secondary">
-              Damaged
-            </Typography>
+      <Paper
+        elevation={0}
+        sx={(t) => ({
+          ...compactSectionSx,
+          ...modernPanelSx,
+          display: commandViewTab === 'analytics' ? 'block' : 'none',
+          borderColor: alpha(t.palette.primary.main, 0.2),
+          bgcolor: t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.82) : alpha(t.palette.common.white, 0.88),
+          backdropFilter: 'blur(6px)',
+        })}
+      >
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.25}>
+          <Typography variant="subtitle1" fontWeight={700}>Center Heatmap</Typography>
+          <Typography variant="caption" color="text.secondary">Live utilization map</Typography>
+        </Box>
+        <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={1}>
+          {inStockByCenter.map((center) => (
+            <Box
+              key={center.location}
+              sx={(t) => ({
+                border: '1px solid',
+                borderColor: alpha(t.palette.primary.main, 0.2),
+                borderRadius: 1.25,
+                p: 1,
+                background:
+                  t.palette.mode === 'dark'
+                    ? `linear-gradient(135deg, ${alpha(t.palette.primary.main, 0.14)}, ${alpha(t.palette.background.paper, 0.95)})`
+                    : `linear-gradient(135deg, ${alpha(t.palette.primary.main, 0.1)}, ${alpha(t.palette.common.white, 0.95)})`,
+                transition: 'transform 0.18s ease, box-shadow 0.18s ease',
+                '&:hover': {
+                  transform: 'translateY(-1px)',
+                  boxShadow: `0 8px 18px ${alpha(t.palette.primary.main, 0.2)}`,
+                },
+              })}
+            >
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.75}>
+                <Typography variant="caption" color="text.secondary">{center.name}</Typography>
+                <Chip size="small" label={`${center.count}`} color="primary" variant="outlined" />
+              </Box>
+              <LinearProgress
+                variant="determinate"
+                value={(center.count / maxCenterStock) * 100}
+                sx={{
+                  height: 8,
+                  borderRadius: 8,
+                  bgcolor: 'action.hover',
+                  '& .MuiLinearProgress-bar': { borderRadius: 8 },
+                }}
+              />
+            </Box>
+          ))}
+        </Box>
+      </Paper>
+
+      {/* Compact Stats Ribbon */}
+      <Paper
+        elevation={0}
+        sx={(t) => ({
+          ...compactSectionSx,
+          ...modernPanelSx,
+          p: 1.25,
+          display: commandViewTab === 'analytics' ? 'block' : 'none',
+          borderColor: alpha(t.palette.primary.main, 0.2),
+          background:
+            t.palette.mode === 'dark'
+              ? `linear-gradient(180deg, ${alpha(t.palette.common.white, 0.02)}, ${alpha(t.palette.primary.main, 0.06)})`
+              : `linear-gradient(180deg, ${alpha(t.palette.primary.main, 0.04)}, ${alpha(t.palette.common.white, 0.92)})`,
+        })}
+      >
+        <Box
+          display="grid"
+          gridTemplateColumns={{ xs: 'repeat(2, minmax(0, 1fr))', md: isRestrictedUser ? 'repeat(3, minmax(0, 1fr))' : 'repeat(6, minmax(0, 1fr))' }}
+          gap={1}
+        >
+          <Box sx={(t) => ({ p: 1, borderRadius: 1.25, border: '1px solid', borderColor: alpha(t.palette.primary.main, 0.2), bgcolor: alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.16 : 0.08) })}>
+            <Typography variant="caption" color="text.secondary">Total Records</Typography>
+            <Typography variant="h6" fontWeight={700}>{analyticsTotal}</Typography>
           </Box>
-          <Typography variant="h4" fontWeight="bold" color="error.main">
-            {stats.damaged}
-          </Typography>
-        </Card>
-        
-        {!isRestrictedUser && (
-          <>
-            <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-              <Box display="flex" alignItems="center" mb={1}>
-                <TrendingUpIcon color="primary" sx={{ mr: 1, fontSize: 20 }} />
-                <Typography variant="subtitle2" color="text.secondary">
-                  Dealer Value
-                </Typography>
-              </Box>
-              <Typography variant="h5" fontWeight="bold" color="primary.main" noWrap>
-                {formatCurrency(stats.inventoryValueDealer)}
-              </Typography>
-            </Card>
-            
-            <Card elevation={0} sx={{ borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 2 }}>
-              <Box display="flex" alignItems="center" mb={1}>
-                <TrendingUpIcon color="success" sx={{ mr: 1, fontSize: 20 }} />
-                <Typography variant="subtitle2" color="text.secondary">
-                  MRP Value
-                </Typography>
-              </Box>
-              <Typography variant="h5" fontWeight="bold" color="success.main" noWrap>
-                {formatCurrency(stats.inventoryValueMRP)}
-              </Typography>
-            </Card>
-          </>
-        )}
-      </Box>
+          <Box sx={(t) => ({ p: 1, borderRadius: 1.25, border: '1px solid', borderColor: alpha(t.palette.success.main, 0.35), bgcolor: alpha(t.palette.success.main, t.palette.mode === 'dark' ? 0.18 : 0.08) })}>
+            <Typography variant="caption" color="text.secondary">In Stock</Typography>
+            <Typography variant="h6" fontWeight={700} color="success.main">{analyticsInStock}</Typography>
+          </Box>
+          <Box sx={(t) => ({ p: 1, borderRadius: 1.25, border: '1px solid', borderColor: alpha(t.palette.warning.main, 0.35), bgcolor: alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.18 : 0.08) })}>
+            <Typography variant="caption" color="text.secondary">Sold</Typography>
+            <Typography variant="h6" fontWeight={700} color="warning.main">{analyticsSold}</Typography>
+          </Box>
+          <Box sx={(t) => ({ p: 1, borderRadius: 1.25, border: '1px solid', borderColor: alpha(t.palette.error.main, 0.35), bgcolor: alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.18 : 0.08) })}>
+            <Typography variant="caption" color="text.secondary">Damaged</Typography>
+            <Typography variant="h6" fontWeight={700} color="error.main">{analyticsDamaged}</Typography>
+          </Box>
+          {!isRestrictedUser && (
+            <Box sx={(t) => ({ p: 1, borderRadius: 1.25, border: '1px solid', borderColor: alpha(t.palette.primary.main, 0.32), bgcolor: alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.18 : 0.08) })}>
+              <Typography variant="caption" color="text.secondary">Dealer Value</Typography>
+              <Typography variant="subtitle1" fontWeight={700} color="primary.main" noWrap>{formatCurrency(stats.inventoryValueDealer)}</Typography>
+            </Box>
+          )}
+          {!isRestrictedUser && (
+            <Box sx={(t) => ({ p: 1, borderRadius: 1.25, border: '1px solid', borderColor: alpha(t.palette.success.main, 0.32), bgcolor: alpha(t.palette.success.main, t.palette.mode === 'dark' ? 0.18 : 0.08) })}>
+              <Typography variant="caption" color="text.secondary">MRP Value</Typography>
+              <Typography variant="subtitle1" fontWeight={700} color="success.main" noWrap>{formatCurrency(stats.inventoryValueMRP)}</Typography>
+            </Box>
+          )}
+        </Box>
+      </Paper>
 
       {/* Company-wise Stock Position */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
-        <Box display="flex" alignItems="center" mb={3}>
+      <Paper elevation={0} sx={{ ...compactSectionSx, ...modernPanelSx, maxHeight: { md: 400 }, overflowY: 'auto', display: commandViewTab === 'analytics' ? 'block' : 'none' }}>
+        <Box display="flex" alignItems="center" mb={1.5}>
           <BusinessIcon color="primary" sx={{ mr: 2 }} />
           <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock Position by Manufacturer
           </Typography>
         </Box>
         
-        <Grid container spacing={2}>
+        <Grid container spacing={1.25}>
           {originalProductCompanies.map(company => {
             // Use filteredInventory if any filters are applied, otherwise use all inventory
             const baseItems = (locationFilter || statusFilter || typeFilter || searchTerm || companyFilter) ? filteredInventory : inventory;
@@ -2558,53 +3323,49 @@ export default function InventoryPage() {
             };
             
             return (
-              <Grid item xs={12} md={6} key={company}>
+              <Grid item xs={12} md={6} lg={4} key={company}>
                 <Card elevation={0} sx={{ 
-                  borderRadius: 2, 
+                  ...compactCardSx,
                   border: companyFilter === company ? '2px solid' : '1px solid',
                   borderColor: companyFilter === company ? 'primary.main' : 'divider',
-                  bgcolor: 'background.paper',
-                  transition: 'all 0.2s ease',
-                  cursor: 'pointer',
-                  '&:hover': { borderColor: 'primary.light', boxShadow: 1 }
                 }}
                 onClick={() => setCompanyFilter(companyFilter === company ? '' : company || '')}
                 >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+                  <CardContent sx={{ p: 0.9, '&:last-child': { pb: 0.9 } }}>
+                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.25}>
                       <Box display="flex" alignItems="center">
                         <Box sx={{ 
-                          width: 40, 
-                          height: 40, 
+                          width: 22, 
+                          height: 22, 
                           borderRadius: 1, 
                           bgcolor: company === 'Phonak' ? 'primary.main' : company === 'Siemens' ? 'success.main' : 'secondary.main',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          mr: 2
+                          mr: 1
                         }}>
-                          <BusinessIcon sx={{ color: 'white', fontSize: 20 }} />
+                          <BusinessIcon sx={{ color: 'white', fontSize: 13 }} />
                         </Box>
                         <Box>
-                          <Typography variant="subtitle1" fontWeight="600" color="text.primary">
+                          <Typography variant="subtitle2" fontWeight={700} color="text.primary">
                             {company}
                           </Typography>
-                          <Typography variant="body2" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
+                          <Typography variant="caption" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
                             {companyStats.total} items total
                           </Typography>
                         </Box>
                       </Box>
                       <Chip 
-                        label={companyFilter === company ? "Applied" : "Click to Filter"} 
+                        label={companyFilter === company ? "Applied" : "Filter"} 
                         color={companyFilter === company ? "primary" : "default"}
                         size="small"
                         variant={companyFilter === company ? "filled" : "outlined"}
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns={isRestrictedUser ? 'repeat(2, 1fr)' : 'repeat(5, 1fr)'} gap={1}>
-                      <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'success') })}>
-                        <Typography variant="h6" fontWeight="bold" color="success.main">
+                    <Box display="grid" gridTemplateColumns={isRestrictedUser ? 'repeat(2, 1fr)' : 'repeat(5, minmax(0, 1fr))'} gap={0.5}>
+                      <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'success') })}>
+                        <Typography variant="subtitle2" fontWeight={700} color="success.main">
                           {companyStats.inStock}
                         </Typography>
                         <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
@@ -2612,8 +3373,8 @@ export default function InventoryPage() {
                         </Typography>
                       </Box>
                       {!isRestrictedUser && (
-                        <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'info') })}>
-                          <Typography variant="h6" fontWeight="bold" color="info.main">
+                        <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'info') })}>
+                          <Typography variant="subtitle2" fontWeight={700} color="info.main">
                             {companyStats.sold}
                           </Typography>
                           <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
@@ -2622,8 +3383,8 @@ export default function InventoryPage() {
                         </Box>
                       )}
                       {!isRestrictedUser && (
-                        <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'grey') })}>
-                          <Typography variant="h6" fontWeight="bold" color="text.primary">
+                        <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'grey') })}>
+                          <Typography variant="subtitle2" fontWeight={700} color="text.primary">
                             {companyStats.total}
                           </Typography>
                           <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
@@ -2633,16 +3394,16 @@ export default function InventoryPage() {
                       )}
                       {!isRestrictedUser && (
                         <>
-                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'primary') })}>
-                            <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
+                          <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'primary') })}>
+                            <Typography variant="caption" fontWeight={700} color="primary.main" noWrap>
                               {formatCurrency(companyStats.dealerValue)}
                             </Typography>
                             <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
                               Dealer
                             </Typography>
                           </Box>
-                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'warning') })}>
-                            <Typography variant="body2" fontWeight="bold" color="warning.main" noWrap>
+                          <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'warning') })}>
+                            <Typography variant="caption" fontWeight={700} color="warning.main" noWrap>
                               {formatCurrency(companyStats.mrpValue)}
                             </Typography>
                             <Typography variant="caption" sx={(t) => inventoryMutedLabelSx(t)}>
@@ -2661,15 +3422,15 @@ export default function InventoryPage() {
       </Paper>
 
       {/* Stock Distribution by Manufacturer */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
-        <Box display="flex" alignItems="center" mb={3}>
+      <Paper elevation={0} sx={{ ...compactSectionSx, ...modernPanelSx, display: commandViewTab === 'analytics' ? 'block' : 'none' }}>
+        <Box display="flex" alignItems="center" mb={1.5}>
           <BusinessIcon color="secondary" sx={{ mr: 2 }} />
           <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock Position by Company
           </Typography>
         </Box>
         
-        <Grid container spacing={2}>
+        <Grid container spacing={1.25}>
           {(() => {
             // Get all inventory items (not just hearing aids)
             const allItems = (locationFilter || statusFilter || typeFilter || searchTerm || companyFilter) ? filteredInventory : inventory;
@@ -2702,42 +3463,39 @@ export default function InventoryPage() {
             return businessCompanies.map(company => (
               <Grid item xs={12} sm={6} md={4} lg={3} key={company.name}>
                 <Card elevation={0} sx={{ 
-                  borderRadius: 2, 
-                  border: '2px solid', 
+                  ...compactCardSx,
+                  border: '1px solid',
                   borderColor: companyFilter === company.name ? businessCompanyChipColor(company.name) : 'divider',
-                  bgcolor: 'background.paper',
-                  transition: 'all 0.3s ease',
-                  cursor: 'pointer',
-                  '&:hover': { 
+                  '&:hover': {
                     borderColor: businessCompanyChipColor(company.name),
-                    boxShadow: `0 4px 20px ${businessCompanyChipColor(company.name)}20`,
-                    transform: 'translateY(-2px)'
-                  }
+                    boxShadow: `0 4px 14px ${businessCompanyChipColor(company.name)}20`,
+                    transform: 'translateY(-1px)',
+                  },
                 }}
                 onClick={() => setCompanyFilter(companyFilter === company.name ? '' : company.name)}>
-                  <CardContent sx={{ p: 2.5 }}>
-                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+                  <CardContent sx={{ p: 0.9, '&:last-child': { pb: 0.9 } }}>
+                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.25}>
                       <Box display="flex" alignItems="center">
                         <Box sx={{ 
-                          width: 48, 
-                          height: 48, 
-                          borderRadius: 2, 
+                          width: 22, 
+                          height: 22, 
+                          borderRadius: 1, 
                           bgcolor: businessCompanyChipColor(company.name),
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          mr: 2,
-                          boxShadow: `0 4px 12px ${businessCompanyChipColor(company.name)}30`
+                          mr: 1,
+                          boxShadow: `0 3px 10px ${businessCompanyChipColor(company.name)}30`
                         }}>
-                          <Typography variant="h6" fontWeight="bold" color="white">
+                          <Typography variant="caption" fontWeight={700} color="white">
                             {company.name.charAt(0)}
                           </Typography>
                         </Box>
                         <Box>
-                          <Typography variant="subtitle1" fontWeight="700" color="text.primary">
+                          <Typography variant="subtitle2" fontWeight={700} color="text.primary">
                             {company.name}
                           </Typography>
-                          <Typography variant="body2" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
+                          <Typography variant="caption" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
                             {company.totalCount} items
                           </Typography>
                         </Box>
@@ -2745,8 +3503,8 @@ export default function InventoryPage() {
                     </Box>
                     
                     {!isRestrictedUser && (
-                      <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1} mt={2}>
-                        <Box textAlign="center" sx={(t) => ({ p: 1.5, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'primary') })}>
+                      <Box display="grid" gridTemplateColumns="1fr 1fr" gap={0.5} mt={0.75}>
+                        <Box textAlign="center" sx={(t) => ({ p: 0.65, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'primary') })}>
                           <Typography variant="body2" fontWeight="bold" color="primary.main" noWrap>
                             {formatCurrency(company.dealerValue)}
                           </Typography>
@@ -2754,7 +3512,7 @@ export default function InventoryPage() {
                             Dealer Value
                           </Typography>
                         </Box>
-                        <Box textAlign="center" sx={(t) => ({ p: 1.5, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'success') })}>
+                        <Box textAlign="center" sx={(t) => ({ p: 0.65, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'success') })}>
                           <Typography variant="body2" fontWeight="bold" color="success.main" noWrap>
                             {formatCurrency(company.mrpValue)}
                           </Typography>
@@ -2766,7 +3524,7 @@ export default function InventoryPage() {
                     )}
                     
                     <Box
-                      mt={2}
+                      mt={1}
                       sx={(t) => ({
                         p: 1,
                         borderRadius: 1,
@@ -2806,15 +3564,15 @@ export default function InventoryPage() {
       </Paper>
 
       {/* Center-wise Stock Overview */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
-        <Box display="flex" alignItems="center" mb={3}>
+      <Paper elevation={0} sx={{ ...compactSectionSx, ...modernPanelSx, maxHeight: { md: 420 }, overflowY: 'auto', display: commandViewTab === 'analytics' ? 'block' : 'none' }}>
+        <Box display="flex" alignItems="center" mb={1.5}>
           <LocationIcon color="primary" sx={{ mr: 2 }} />
           <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock Position by Center
           </Typography>
         </Box>
         
-        <Grid container spacing={2}>
+        <Grid container spacing={1.25}>
           {locations.map(location => {
             // Use filteredInventory if other filters are applied, otherwise use all inventory
             const baseItems = (companyFilter || statusFilter || typeFilter || searchTerm) ? filteredInventory : inventory;
@@ -2830,52 +3588,48 @@ export default function InventoryPage() {
             const centerName = getCenterName(location);
             
             return (
-              <Grid item xs={12} sm={6} md={4} key={location}>
+              <Grid item xs={12} sm={6} md={4} lg={3} key={location}>
                 <Card elevation={0} sx={{ 
-                  borderRadius: 2, 
+                  ...compactCardSx,
                   border: locationFilter === location ? '2px solid' : '1px solid',
                   borderColor: locationFilter === location ? 'primary.main' : 'divider',
-                  bgcolor: 'background.paper',
-                  transition: 'all 0.2s ease',
-                  cursor: 'pointer',
-                  '&:hover': { borderColor: 'primary.light', boxShadow: 1 }
                 }}
                 onClick={() => setLocationFilter(locationFilter === location ? '' : location)}
                 >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+                  <CardContent sx={{ p: 0.9, '&:last-child': { pb: 0.9 } }}>
+                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.25}>
                       <Box display="flex" alignItems="center">
                         <Box sx={{ 
-                          width: 36, 
-                          height: 36, 
+                          width: 21, 
+                          height: 21, 
                           borderRadius: 1, 
                           bgcolor: 'primary.main',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          mr: 2
+                          mr: 1
                         }}>
-                          <LocationIcon sx={{ color: 'white', fontSize: 18 }} />
+                          <LocationIcon sx={{ color: 'white', fontSize: 12 }} />
                         </Box>
                         <Box>
                           <Typography variant="subtitle2" fontWeight="600" color="text.primary">
                             {centerName}
                           </Typography>
-                          <Typography variant="body2" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
+                          <Typography variant="caption" sx={(t) => ({ ...inventoryMutedLabelSx(t), fontWeight: 500 })}>
                             {locationStats.total} items
                           </Typography>
                         </Box>
                       </Box>
                       <Chip 
-                        label={locationFilter === location ? "Applied" : "Filter"} 
+                        label={locationFilter === location ? "Applied" : "Click to Filter"} 
                         color={locationFilter === location ? "primary" : "default"}
                         size="small"
                         variant={locationFilter === location ? "filled" : "outlined"}
                       />
                     </Box>
                     
-                    <Box display="grid" gridTemplateColumns={isRestrictedUser ? '1fr' : 'repeat(4, 1fr)'} gap={1} mt={2}>
-                      <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'success') })}>
+                    <Box display="grid" gridTemplateColumns={isRestrictedUser ? '1fr' : 'repeat(4, 1fr)'} gap={0.5} mt={0.75}>
+                      <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'success') })}>
                         <Typography variant="body1" fontWeight="bold" color="success.main">
                           {locationStats.inStock}
                         </Typography>
@@ -2884,7 +3638,7 @@ export default function InventoryPage() {
                         </Typography>
                       </Box>
                       {!isRestrictedUser && (
-                        <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'info') })}>
+                        <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'info') })}>
                           <Typography variant="body1" fontWeight="bold" color="info.main">
                             {locationStats.sold}
                           </Typography>
@@ -2895,7 +3649,7 @@ export default function InventoryPage() {
                       )}
                       {!isRestrictedUser && (
                         <>
-                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'primary') })}>
+                          <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'primary') })}>
                             <Typography variant="caption" fontWeight="bold" color="primary.main" noWrap>
                               {formatCurrency(locationStats.dealerValue)}
                             </Typography>
@@ -2903,7 +3657,7 @@ export default function InventoryPage() {
                               Dealer
                             </Typography>
                           </Box>
-                          <Box textAlign="center" sx={(t) => ({ p: 1, borderRadius: 1, bgcolor: inventoryStatTileBg(t, 'warning') })}>
+                          <Box textAlign="center" sx={(t) => ({ p: 0.5, borderRadius: 0.9, bgcolor: inventoryStatTileBg(t, 'warning') })}>
                             <Typography variant="caption" fontWeight="bold" color="warning.main" noWrap>
                               {formatCurrency(locationStats.mrpValue)}
                             </Typography>
@@ -2923,21 +3677,21 @@ export default function InventoryPage() {
       </Paper>
 
       {/* Stock by Category */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
-        <Box display="flex" alignItems="center" mb={3}>
+      <Paper elevation={0} sx={{ ...compactSectionSx, ...modernPanelSx, maxHeight: { md: 320 }, overflowY: 'auto', display: commandViewTab === 'analytics' ? 'block' : 'none' }}>
+        <Box display="flex" alignItems="center" mb={1.25}>
           <CategoryIcon color="primary" sx={{ mr: 2 }} />
           <Typography component="h2" variant="h6" sx={(t) => ({ fontWeight: 700, color: t.palette.text.primary })}>
             Stock by Category
           </Typography>
         </Box>
         
-        <Grid container spacing={2}>
+        <Grid container spacing={1}>
           {grouped.length === 0 ? (
             <Grid item xs={12}>
               <Paper
                 elevation={0}
                 sx={(t) => ({
-                  p: 3,
+                  p: 1.5,
                   textAlign: 'center',
                   color: 'text.secondary',
                   borderRadius: 2,
@@ -3002,55 +3756,111 @@ export default function InventoryPage() {
         </Grid>
       </Paper>
 
-      {/* Products by Category with drill-down */}
-      <Box mb={4}>
-        <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>Products by Category</Typography>
-        <Stack spacing={2}>
-          {grouped.map(group => (
-            <Paper key={group.category} elevation={0} sx={{ p: 2, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
-              <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
-                <Typography variant="subtitle1" fontWeight={700}>{group.category}</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {group.totalCount} items{!isRestrictedUser && ` • Dealer: ${formatCurrency(group.totalDealerValue)} • MRP: ${formatCurrency(group.totalMRPValue)}`}
-                </Typography>
+      <Paper
+        elevation={0}
+        sx={(t) => ({
+          ...compactSectionSx,
+          ...modernPanelSx,
+          display: commandViewTab === 'analytics' ? 'block' : 'none',
+          borderColor: alpha(t.palette.primary.main, 0.18),
+        })}
+      >
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.25}>
+          <Typography variant="subtitle1" fontWeight={700}>Top Category Momentum</Typography>
+          <Typography variant="caption" color="text.secondary">Highest inventory concentration</Typography>
+        </Box>
+        <Stack spacing={0.9}>
+          {topCategories.map((row, index) => (
+            <Box key={row.category} sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.25, p: 1 }}>
+              <Box display="flex" alignItems="center" justifyContent="space-between" mb={0.6}>
+                <Box display="flex" alignItems="center" gap={0.75}>
+                  <Chip size="small" label={`#${index + 1}`} color={index < 2 ? 'primary' : 'default'} />
+                  <Typography variant="body2" fontWeight={600}>{row.category}</Typography>
+                </Box>
+                <Typography variant="caption" color="text.secondary">{row.count} items</Typography>
               </Box>
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Product</TableCell>
-                      <TableCell align="right">In Stock</TableCell>
-                      <TableCell align="right">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {group.products.map(p => (
-                      <TableRow key={p.productName} hover>
-                        <TableCell>{p.productName}</TableCell>
-                        <TableCell align="right">
-                          <Chip label={p.count} size="small" color="success" variant="outlined" />
-                        </TableCell>
-                        <TableCell align="right">
-                          <Button size="small" variant="outlined" onClick={() => openSerialsDialog(group.category, p.productName, p.items)}>View Serials</Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {group.products.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={3} align="center" sx={{ py: 2, color: 'text.secondary' }}>No products in stock</TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            </Paper>
+              <LinearProgress
+                variant="determinate"
+                value={(row.count / Math.max(1, topCategories[0]?.count || 1)) * 100}
+                sx={{ height: 6, borderRadius: 6, mb: 0.5 }}
+              />
+              {!isRestrictedUser && (
+                <Typography variant="caption" color="text.secondary">
+                  Dealer value: {formatCurrency(row.dealer)}
+                </Typography>
+              )}
+            </Box>
           ))}
         </Stack>
-      </Box>
+      </Paper>
+
+      {/* Products by Category with drill-down */}
+      <Paper elevation={0} sx={{ ...compactSectionSx, ...modernPanelSx, overflow: 'hidden', display: commandViewTab === 'analytics' ? 'block' : 'none' }}>
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.25}>
+          <Typography variant="subtitle1" fontWeight={700}>Products by Category</Typography>
+          <Typography variant="caption" color="text.secondary">{categoryRows.length} product rows</Typography>
+        </Box>
+        <TableContainer>
+          <Table size="small" sx={{ '& .MuiTableCell-root': { py: 0.9 } }}>
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 700 }}>Category</TableCell>
+                <TableCell sx={{ fontWeight: 700 }}>Product</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>In Stock</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 700 }}>Serials</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {categoryRows.map((row) => (
+                <TableRow key={`${row.category}-${row.productName}`} hover>
+                  <TableCell>
+                    <Typography variant="caption" color="text.secondary">{row.category}</Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" fontWeight={500}>{row.productName}</Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Chip label={row.count} size="small" color="success" variant="outlined" />
+                  </TableCell>
+                  <TableCell align="right">
+                    <Tooltip title="View serial numbers">
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => openSerialsDialog(row.category, row.productName, row.items)}
+                        sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}
+                      >
+                        <VisibilityIcon sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {categoryRows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} align="center" sx={{ py: 2, color: 'text.secondary' }}>No products in stock</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
       
       {/* Clean Filters and Actions */}
-      <Paper elevation={0} sx={{ p: 3, mb: 3, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
-        <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
+      <Paper
+        elevation={0}
+        sx={(t) => ({
+          ...compactSectionSx,
+          p: 1.5,
+          position: 'sticky',
+          top: 8,
+          zIndex: 20,
+          boxShadow: t.palette.mode === 'dark' ? `0 8px 24px ${alpha(t.palette.common.black, 0.45)}` : `0 6px 18px ${alpha(t.palette.common.black, 0.08)}`,
+          backdropFilter: 'blur(6px)',
+          display: commandViewTab === 'live' ? 'block' : 'none',
+        })}
+      >
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.5}>
           <Box display="flex" alignItems="center">
             <FilterListIcon color="primary" sx={{ mr: 2 }} />
             <Typography variant="h6" fontWeight="600" color="text.primary">
@@ -3070,28 +3880,16 @@ export default function InventoryPage() {
                 Reset All
               </Button>
             )}
-            {!isRestrictedUser && (
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={<AddIcon />}
-                onClick={() => handleOpenDialog()}
-                size="small"
-                sx={{ borderRadius: 1 }}
-              >
-                Add New Item
-              </Button>
-            )}
           </Box>
         </Box>
 
         {/* Search Bar */}
-        <Box mb={3}>
+        <Box mb={1.25}>
           <TextField
             placeholder="Search by product name, serial number, company, or supplier..."
             fullWidth
             variant="outlined"
-            size="medium"
+            size="small"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             sx={{ 
@@ -3113,9 +3911,29 @@ export default function InventoryPage() {
         </Box>
 
         {/* Filter Row */}
-        <Grid container spacing={3} alignItems="center">
+        <Box display="flex" gap={0.75} flexWrap="wrap" mb={1.25}>
+          {['', 'In Stock', 'Sold', 'Damaged'].map((status) => (
+            <Chip
+              key={status || 'all'}
+              size="small"
+              label={status || 'All Statuses'}
+              color={statusFilter === status ? 'primary' : 'default'}
+              variant={statusFilter === status ? 'filled' : 'outlined'}
+              onClick={() => setStatusFilter(status)}
+            />
+          ))}
+          <Chip
+            size="small"
+            label={showSoldItems ? 'Hide Sold Rows' : 'Show Sold Rows'}
+            color={showSoldItems ? 'warning' : 'default'}
+            variant={showSoldItems ? 'filled' : 'outlined'}
+            onClick={() => setShowSoldItems((prev) => !prev)}
+          />
+        </Box>
+
+        <Grid container spacing={1} alignItems="center">
           <Grid item xs={12} sm={6} md={3}>
-            <FormControl fullWidth size="medium" variant="outlined">
+            <FormControl fullWidth size="small" variant="outlined">
               <InputLabel>
                 <Box display="flex" alignItems="center">
                   <CheckCircleIcon sx={{ mr: 1, fontSize: 20 }} />
@@ -3154,7 +3972,7 @@ export default function InventoryPage() {
           </Grid>
           
           <Grid item xs={12} sm={6} md={3}>
-            <FormControl fullWidth size="medium" variant="outlined">
+            <FormControl fullWidth size="small" variant="outlined">
               <InputLabel>
                 <Box display="flex" alignItems="center">
                   <CategoryIcon sx={{ mr: 1, fontSize: 20 }} />
@@ -3176,7 +3994,7 @@ export default function InventoryPage() {
           </Grid>
           
           <Grid item xs={12} sm={6} md={3}>
-            <FormControl fullWidth size="medium" variant="outlined">
+            <FormControl fullWidth size="small" variant="outlined">
               <InputLabel>
                 <Box display="flex" alignItems="center">
                   <LocationIcon sx={{ mr: 1, fontSize: 20 }} />
@@ -3198,7 +4016,7 @@ export default function InventoryPage() {
           </Grid>
           
           <Grid item xs={12} sm={6} md={3}>
-            <FormControl fullWidth size="medium" variant="outlined">
+            <FormControl fullWidth size="small" variant="outlined">
               <InputLabel>
                 <Box display="flex" alignItems="center">
                   <BusinessIcon sx={{ mr: 1, fontSize: 20 }} />
@@ -3222,7 +4040,7 @@ export default function InventoryPage() {
 
         {/* Active Filters Display */}
         {(searchTerm || statusFilter || typeFilter || locationFilter || companyFilter) && (
-          <Box mt={3}>
+          <Box mt={1.25}>
             <Typography variant="subtitle2" color="text.secondary" mb={1}>
               Active Filters:
             </Typography>
@@ -3273,8 +4091,17 @@ export default function InventoryPage() {
       </Paper>
       
       {/* Clean Inventory Table */}
-      <Paper elevation={0} sx={{ borderRadius: 2, border: '1px solid', borderColor: 'divider', overflow: 'hidden', bgcolor: 'background.paper' }}>
-        <Box sx={{ p: 3, bgcolor: 'background.default', borderBottom: '1px solid', borderColor: 'divider' }}>
+      <Paper
+        elevation={0}
+        sx={(t) => ({
+          ...modernPanelSx,
+          overflow: 'hidden',
+          mb: 1,
+          display: commandViewTab === 'live' ? 'block' : 'none',
+          borderColor: alpha(t.palette.primary.main, 0.16),
+        })}
+      >
+        <Box sx={{ px: 2, py: 1.25, bgcolor: 'background.default', borderBottom: '1px solid', borderColor: 'divider' }}>
           <Box display="flex" alignItems="center" justifyContent="space-between">
             <Box display="flex" alignItems="center">
               <ViewListIcon color="primary" sx={{ mr: 2 }} />
@@ -3282,7 +4109,7 @@ export default function InventoryPage() {
                 Inventory Items
               </Typography>
               <Chip 
-                label={`${filteredInventory.length} items`} 
+                label={`${commandFilteredInventory.length} items`} 
                 size="small" 
                 color="primary" 
                 variant="outlined" 
@@ -3302,7 +4129,7 @@ export default function InventoryPage() {
         </Box>
 
         <TableContainer sx={{ overflowX: 'auto' }}>
-          <Table sx={{ minWidth: 1000 }}>
+          <Table size="small" sx={{ minWidth: 1000 }}>
             <TableHead>
               <TableRow
                 sx={(t) => ({
@@ -3311,37 +4138,37 @@ export default function InventoryPage() {
                   '& th': { color: 'text.primary' },
                 })}
               >
-                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                <TableCell sx={{ fontWeight: 'bold', py: 1.25 }}>
                   <Box display="flex" alignItems="center">
                     <AssignmentIcon sx={{ mr: 1, fontSize: 20 }} />
                     Product Details
                   </Box>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                <TableCell sx={{ fontWeight: 'bold', py: 1.25 }}>
                   <Box display="flex" alignItems="center">
                     <SearchIcon sx={{ mr: 1, fontSize: 20 }} />
                     Serial Number
                   </Box>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                <TableCell sx={{ fontWeight: 'bold', py: 1.25 }}>
                   <Box display="flex" alignItems="center">
                     <BusinessIcon sx={{ mr: 1, fontSize: 20 }} />
                     Company
                   </Box>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                <TableCell sx={{ fontWeight: 'bold', py: 1.25 }}>
                   <Box display="flex" alignItems="center">
                     <BusinessIcon sx={{ mr: 1, fontSize: 20, color: 'secondary.main' }} />
                     Manufacturer
                   </Box>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                <TableCell sx={{ fontWeight: 'bold', py: 1.25 }}>
                   <Box display="flex" alignItems="center">
                     <LocationIcon sx={{ mr: 1, fontSize: 20 }} />
                     Location
                   </Box>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                <TableCell sx={{ fontWeight: 'bold', py: 1.25 }}>
                   <Box display="flex" alignItems="center">
                     <CheckCircleIcon sx={{ mr: 1, fontSize: 20 }} />
                     Status
@@ -3349,50 +4176,54 @@ export default function InventoryPage() {
                 </TableCell>
                 {!isRestrictedUser && (
                   <>
-                    <TableCell align="right" sx={{ fontWeight: 'bold', py: 2 }}>
+                    <TableCell align="right" sx={{ fontWeight: 'bold', py: 1.25 }}>
                       Pricing
                     </TableCell>
-                    <TableCell sx={{ fontWeight: 'bold', py: 2 }}>
+                    <TableCell sx={{ fontWeight: 'bold', py: 1.25 }}>
                       Purchase Info
                     </TableCell>
                   </>
                 )}
-                <TableCell align="center" sx={{ fontWeight: 'bold', py: 2 }}>
+                <TableCell align="center" sx={{ fontWeight: 'bold', py: 1.25 }}>
                   Actions
                 </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {filteredInventory.length > 0 ? (
-                filteredInventory
-                  .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
-                  .map((item) => (
+              {commandFilteredInventory.length > 0 ? (
+                paginatedData.map((item) => (
                     <TableRow 
                       key={item.id} 
                       hover 
                       sx={(t) => ({
-                        '&:hover': { bgcolor: 'action.hover' },
+                        '&:hover': { bgcolor: alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.14 : 0.06) },
                         borderBottom: '1px solid',
                         borderColor: 'divider',
+                        ...(t.palette.mode === 'dark'
+                          ? { bgcolor: alpha(t.palette.common.white, 0.01) }
+                          : { bgcolor: 'transparent' }),
+                        '&:nth-of-type(even)': {
+                          bgcolor: t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.02) : alpha(t.palette.common.black, 0.012),
+                        },
                         ...(item.status === 'Sold' && {
                           bgcolor:
                             t.palette.mode === 'dark'
                               ? alpha(t.palette.warning.main, 0.16)
-                              : 'rgba(255, 193, 7, 0.08)',
-                          borderLeft: `4px solid ${t.palette.warning.main}`,
+                              : alpha(t.palette.warning.main, 0.09),
+                          borderLeft: `3px solid ${alpha(t.palette.warning.main, 0.9)}`,
                           '&:hover': {
                             bgcolor:
                               t.palette.mode === 'dark'
                                 ? alpha(t.palette.warning.main, 0.24)
-                                : 'rgba(255, 193, 7, 0.12)',
+                                : alpha(t.palette.warning.main, 0.14),
                           },
                         }),
                       })}
                     >
-                      <TableCell sx={{ py: 3 }}>
+                      <TableCell sx={{ py: 1.25 }}>
                         <Box>
-                          <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                            {item.productName}
+                          <Typography variant="body2" fontWeight={700} gutterBottom>
+                            {getCanonicalSearchProductName(item)}
                           </Typography>
                           <Box display="flex" alignItems="center" gap={1}>
                             <Chip 
@@ -3414,15 +4245,15 @@ export default function InventoryPage() {
                           </Box>
                         </Box>
                       </TableCell>
-                      <TableCell sx={{ py: 3 }}>
+                      <TableCell sx={{ py: 1.25 }}>
                         <Box
                           sx={(t) => ({
-                            p: 1.5,
+                            p: 0.8,
                             borderRadius: 1,
                             border: '1px solid',
                             borderColor: 'divider',
                             fontFamily: 'monospace',
-                            fontSize: '0.9rem',
+                            fontSize: '0.8rem',
                             fontWeight: 'bold',
                             color: 'text.primary',
                             letterSpacing: '0.05em',
@@ -3435,7 +4266,7 @@ export default function InventoryPage() {
                           {item.serialNumber}
                         </Box>
                       </TableCell>
-                      <TableCell sx={{ py: 3 }}>
+                      <TableCell sx={{ py: 1.25 }}>
                         <Box display="flex" alignItems="center">
                           <Box sx={{ 
                             width: 8, 
@@ -3449,7 +4280,7 @@ export default function InventoryPage() {
                           </Typography>
                         </Box>
                       </TableCell>
-                      <TableCell sx={{ py: 3 }}>
+                      <TableCell sx={{ py: 1.25 }}>
                         <Box display="flex" alignItems="center">
                           <Box sx={{ 
                             width: 8, 
@@ -3466,45 +4297,62 @@ export default function InventoryPage() {
                           </Typography>
                         </Box>
                       </TableCell>
-                      <TableCell sx={{ py: 3 }}>
+                      <TableCell sx={{ py: 1.25 }}>
                         <Typography variant="body2" color="text.secondary">
                           {getCenterName(item.location)}
                         </Typography>
                       </TableCell>
-                      <TableCell sx={{ py: 3 }}>
-                        <Chip 
-                          label={item.status} 
-                          size="small" 
-                          color={getStatusColor(item.status) as any}
-                          variant="filled"
-                          sx={{ fontWeight: 'bold' }}
-                        />
+                      <TableCell sx={{ py: 1.25 }}>
+                        <Box
+                          component="span"
+                          sx={(t) => {
+                            const isStock = item.status === 'In Stock';
+                            const isSold = item.status === 'Sold';
+                            const isDamaged = item.status === 'Damaged';
+                            const tone = isStock ? t.palette.success.main : isSold ? t.palette.warning.main : isDamaged ? t.palette.error.main : t.palette.info.main;
+                            return {
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 0.75,
+                              px: 1,
+                              py: 0.35,
+                              borderRadius: 99,
+                              fontSize: 11.5,
+                              fontWeight: 700,
+                              color: tone,
+                              bgcolor: alpha(tone, t.palette.mode === 'dark' ? 0.2 : 0.12),
+                            };
+                          }}
+                        >
+                          <Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: 'currentColor' }} />
+                          {item.status}
+                        </Box>
                       </TableCell>
                       {!isRestrictedUser && (
                         <>
-                          <TableCell align="right" sx={{ py: 3 }}>
+                          <TableCell align="right" sx={{ py: 1.25 }}>
                             <Box textAlign="right">
-                              <Typography variant="body2" fontWeight="bold" color="primary">
+                              <Typography variant="body2" fontWeight={700} color="primary.main">
                                 {formatCurrency(item.dealerPrice)}
                               </Typography>
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
                                 MRP: {formatCurrency(item.mrp)}
                               </Typography>
                             </Box>
                           </TableCell>
-                          <TableCell sx={{ py: 3 }}>
+                          <TableCell sx={{ py: 1.25 }}>
                             <Box>
                               <Typography variant="body2" fontWeight="medium">
                                 {formatDate(item.purchaseDate)}
                               </Typography>
-                              <Typography variant="caption" color="text.secondary">
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.72rem' }}>
                                 {item.supplier}
                               </Typography>
                             </Box>
                           </TableCell>
                         </>
                       )}
-                      <TableCell align="center" sx={{ py: 3 }}>
+                      <TableCell align="center" sx={{ py: 1.25 }}>
                         <Box display="flex" justifyContent="center" gap={1}>
                           <Tooltip title="View Details">
                             <IconButton 
@@ -3537,20 +4385,20 @@ export default function InventoryPage() {
                               </IconButton>
                             </Tooltip>
                           )}
-                          {userProfile?.role === 'admin' && (
-                            <Tooltip title="Delete Item">
-                              <IconButton 
-                                size="small" 
-                                color="error"
-                                onClick={() => handleDeleteItem(item.id)}
+                          {!isRestrictedUser && item.serialNumbers && item.serialNumbers.length >= 1 && item.pairGroupKey && (
+                            <Tooltip title="Repair Pair Mapping">
+                              <IconButton
+                                size="small"
+                                color="secondary"
+                                onClick={() => handleOpenPairRepair(item)}
                                 sx={(t) => ({
-                                  bgcolor: alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                                  bgcolor: alpha(t.palette.secondary.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
                                   '&:hover': {
-                                    bgcolor: alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+                                    bgcolor: alpha(t.palette.secondary.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
                                   },
                                 })}
                               >
-                                <DeleteIcon fontSize="small" />
+                                <LinkIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
                           )}
@@ -3591,12 +4439,12 @@ export default function InventoryPage() {
           </Table>
         </TableContainer>
         
-        {filteredInventory.length > 0 && (
+        {commandFilteredInventory.length > 0 && (
           <Box sx={{ p: 2, bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider' }}>
             <TablePagination
-              rowsPerPageOptions={[5, 10, 25, 50, 100]}
+              rowsPerPageOptions={[10, 25, 50, 100]}
               component="div"
-              count={filteredInventory.length}
+              count={commandFilteredInventory.length}
               rowsPerPage={rowsPerPage}
               page={page}
               onPageChange={handleChangePage}
@@ -3612,6 +4460,76 @@ export default function InventoryPage() {
       </Paper>
 
       {/* Serials Dialog */}
+      <Drawer anchor="right" open={filterDrawerOpen} onClose={() => setFilterDrawerOpen(false)}>
+        <Box sx={{ width: 320, p: 1.5 }}>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>Advanced Filters</Typography>
+          <Typography variant="caption" color="text.secondary">Multi-select filters for status, brand, and center.</Typography>
+          <Divider sx={{ my: 1.25 }} />
+          <Typography variant="caption" color="text.secondary">Status</Typography>
+          <Box display="flex" flexWrap="wrap" gap={0.75} mt={0.5} mb={1.5}>
+            {['In Stock', 'Sold', 'Damaged', 'Reserved'].map((status) => (
+              <Chip
+                key={status}
+                size="small"
+                label={status}
+                color={multiStatusFilter.includes(status) ? 'primary' : 'default'}
+                variant={multiStatusFilter.includes(status) ? 'filled' : 'outlined'}
+                onClick={() => toggleMultiFilter(status, setMultiStatusFilter)}
+              />
+            ))}
+          </Box>
+          <Typography variant="caption" color="text.secondary">Brand</Typography>
+          <Box display="flex" flexWrap="wrap" gap={0.75} mt={0.5} mb={1.5}>
+            {originalProductCompanies.map((brandRaw) => {
+              const brand = String(brandRaw || '').trim();
+              if (!brand) return null;
+              return (
+              <Chip
+                key={brand}
+                size="small"
+                label={brand}
+                color={multiBrandFilter.includes(brand) ? 'primary' : 'default'}
+                variant={multiBrandFilter.includes(brand) ? 'filled' : 'outlined'}
+                onClick={() => toggleMultiFilter(brand, setMultiBrandFilter)}
+              />
+              );
+            })}
+          </Box>
+          <Typography variant="caption" color="text.secondary">Center</Typography>
+          <Box display="flex" flexWrap="wrap" gap={0.75} mt={0.5} mb={1.5}>
+            {locations.map((locRaw) => {
+              const loc = String(locRaw || '').trim();
+              if (!loc) return null;
+              return (
+              <Chip
+                key={loc}
+                size="small"
+                label={getCenterName(loc)}
+                color={multiCenterFilter.includes(loc) ? 'primary' : 'default'}
+                variant={multiCenterFilter.includes(loc) ? 'filled' : 'outlined'}
+                onClick={() => toggleMultiFilter(loc, setMultiCenterFilter)}
+              />
+              );
+            })}
+          </Box>
+          <Divider sx={{ my: 1.25 }} />
+          <Button
+            fullWidth
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              setMultiStatusFilter([]);
+              setMultiBrandFilter([]);
+              setMultiCenterFilter([]);
+            }}
+          >
+            Clear Drawer Filters
+          </Button>
+        </Box>
+      </Drawer>
+
+      </Box>
+
       <Dialog open={serialsDialogOpen} onClose={() => setSerialsDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>{serialsDialogTitle}</DialogTitle>
         <DialogContent dividers>
@@ -3755,8 +4673,8 @@ export default function InventoryPage() {
                             {getJourneyEventIcon(event.eventType)}
                           </Box>
                           <Box>
-                            <Typography fontWeight={700}>{event.title}</Typography>
-                            <Typography variant="body2" color="text.secondary">{event.description}</Typography>
+                            <Typography fontWeight={700}>{getJourneyEventTitle(event)}</Typography>
+                            <Typography variant="body2" color="text.secondary">{getJourneyEventDescription(event)}</Typography>
                           </Box>
                         </Box>
                         <Chip label={formatDateTime(event.date)} size="small" variant="outlined" />
@@ -3778,9 +4696,16 @@ export default function InventoryPage() {
                       </Stack>
 
                       {event.notes && (
-                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-                          {event.notes}
-                        </Typography>
+                        <Stack direction="row" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ mt: 1 }}>
+                          {event.notes
+                            .split('•')
+                            .map((part) => part.trim())
+                            .filter(Boolean)
+                            .slice(0, 4)
+                            .map((part) => (
+                              <Chip key={`${event.id}-${part}`} size="small" variant="outlined" label={part} />
+                            ))}
+                        </Stack>
                       )}
 
                       {event.sourcePath && (
@@ -3799,6 +4724,35 @@ export default function InventoryPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setJourneyDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={pairRepairOpen} onClose={() => !savingPairRepair && setPairRepairOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Repair Pair Mapping</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1.5}>
+            <Typography variant="body2" color="text.secondary">
+              Product: {pairRepairItem?.productName || '-'}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Available serials in this group: {pairRepairSerialList.join(', ') || '-'}
+            </Typography>
+            <TextField
+              label="Pairs (ordered serial list)"
+              value={pairRepairInput}
+              onChange={(e) => setPairRepairInput(e.target.value)}
+              multiline
+              minRows={3}
+              placeholder="SN101, SN102, SN103, SN104"
+              helperText="Enter serials in pair order: 1st+2nd = Pair 1, 3rd+4th = Pair 2, etc."
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPairRepairOpen(false)} disabled={savingPairRepair}>Cancel</Button>
+          <Button variant="contained" onClick={handleSavePairRepair} disabled={savingPairRepair}>
+            Save Pair Mapping
+          </Button>
         </DialogActions>
       </Dialog>
       

@@ -1483,7 +1483,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const headOfficeId = await getHeadOfficeId();
         
         // Get data from multiple collections (same as material-out page)
-        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, centersSnap, stockTransfersSnap] =
+        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, centersSnap, stockTransfersSnap, pairOverridesSnap] =
           await Promise.all([
             getDocs(collection(db, 'products')),
             getDocs(collection(db, 'materialInward')),
@@ -1493,6 +1493,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             getDocs(collection(db, 'enquiries')),
             getDocs(collection(db, 'centers')),
             getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
+            getDocs(collection(db, 'inventoryPairOverrides')),
           ]);
 
         console.log(
@@ -1520,6 +1521,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
         const prodMap: Record<string, any> = {};
         productsSnap.docs.forEach(d => { prodMap[d.id] = { id: d.id, ...(d.data() as any) }; });
+        const pairOverridesByProductLoc: Record<string, [string, string][]> = {};
+        pairOverridesSnap.docs.forEach((d) => {
+          const x = d.data() as { groupKey?: string; productId?: string; location?: string; pairs?: unknown };
+          const key = String(x.groupKey || d.id || '').trim();
+          if (!key || !Array.isArray(x.pairs)) return;
+          const normalized = x.pairs
+            .map((p: unknown) => {
+              if (!Array.isArray(p) || p.length < 2) return null;
+              const a = String(p[0] || '').trim();
+              const b = String(p[1] || '').trim();
+              return a && b ? ([a, b] as [string, string]) : null;
+            })
+            .filter((p: [string, string] | null): p is [string, string] => !!p);
+          const productLocKey = makeProductLocationKey(String(x.productId || ''), String(x.location || ''));
+          if (normalized.length > 0 && productLocKey !== '|') pairOverridesByProductLoc[productLocKey] = normalized;
+        });
 
         // Per center (locationId = Firestore `centers` doc id) — matches inventory, fixes labels vs raw ids
         const serialsByProductLoc: Record<string, Set<string>> = {};
@@ -1587,10 +1604,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   (prodRef.quantityType || prodRef.quantityTypeLegacy) === 'pair';
                 if (isPairProduct && serialArray.length >= 2) {
                   if (!inboundPairsByPlKey[plKey]) inboundPairsByPlKey[plKey] = [];
-                  for (let i = 0; i + 1 < serialArray.length; i += 2) {
-                    const a = String(serialArray[i] || '').trim();
-                    const b = String(serialArray[i + 1] || '').trim();
-                    if (a && b) inboundPairsByPlKey[plKey].push([a, b]);
+                  const explicitPairs: [string, string][] = Array.isArray(p.serialPairs)
+                    ? p.serialPairs
+                        .map((pair: unknown) => {
+                          if (!Array.isArray(pair) || pair.length < 2) return null;
+                          const a = String(pair[0] || '').trim();
+                          const b = String(pair[1] || '').trim();
+                          return a && b ? ([a, b] as [string, string]) : null;
+                        })
+                        .filter((pair: [string, string] | null): pair is [string, string] => !!pair)
+                    : [];
+                  const pairsToUse = explicitPairs.length > 0 ? explicitPairs : [];
+                  if (pairsToUse.length > 0) {
+                    inboundPairsByPlKey[plKey].push(...pairsToUse);
+                  } else {
+                    for (let i = 0; i + 1 < serialArray.length; i += 2) {
+                      const a = String(serialArray[i] || '').trim();
+                      const b = String(serialArray[i + 1] || '').trim();
+                      if (a && b) inboundPairsByPlKey[plKey].push([a, b]);
+                    }
                   }
                 }
               } else {
@@ -1699,6 +1731,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           serialNumber: string;
           serialNumbers?: string[];
           isPairRow?: boolean;
+          pairSource?: 'serialPairs' | 'manualOverride' | 'legacyFallback' | 'unpaired';
           quantityType?: 'piece' | 'pair';
           productId: string;
           locationId: string;
@@ -1718,6 +1751,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             serialNumber: args.serialNumber,
             serialNumbers: args.serialNumbers,
             isPairRow: args.isPairRow,
+            pairSource: args.pairSource,
             quantityType: args.quantityType,
             isSerialTracked: true,
             mrp: Number(args.prod.mrp) || 0,
@@ -1750,6 +1784,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 serialNumber: sn,
                 serialNumbers: [sn],
                 isPairRow: false,
+                pairSource: 'unpaired',
                 quantityType: 'piece',
               });
             });
@@ -1758,7 +1793,34 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
           const available = new Set(set);
           const consumed = new Set<string>();
+          const manualPairs = pairOverridesByProductLoc[plKey] || [];
           const inboundPairs = inboundPairsByPlKey[plKey] || [];
+
+          for (const [a, b] of manualPairs) {
+            if (
+              a &&
+              b &&
+              available.has(a) &&
+              available.has(b) &&
+              !consumed.has(a) &&
+              !consumed.has(b)
+            ) {
+              pushSerialRow({
+                id: `${productId}-${a}-${b}-${locationId}-manual`,
+                productId,
+                locationId,
+                prod,
+                locLabel,
+                serialNumber: `${a}, ${b}`,
+                serialNumbers: [a, b],
+                isPairRow: true,
+                pairSource: 'manualOverride',
+                quantityType: 'pair',
+              });
+              consumed.add(a);
+              consumed.add(b);
+            }
+          }
 
           for (const [a, b] of inboundPairs) {
             if (
@@ -1778,6 +1840,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 serialNumber: `${a}, ${b}`,
                 serialNumbers: [a, b],
                 isPairRow: true,
+                pairSource: 'serialPairs',
                 quantityType: 'pair',
               });
               consumed.add(a);
@@ -1786,37 +1849,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           }
 
           const remaining = Array.from(available)
-            .filter((sn) => !consumed.has(sn))
-            .sort((x, y) => x.localeCompare(y));
-          for (let i = 0; i < remaining.length; i += 2) {
-            const a = remaining[i];
-            const b = remaining[i + 1];
-            if (b !== undefined) {
-              pushSerialRow({
-                id: `${productId}-${a}-${b}-${locationId}-fb`,
-                productId,
-                locationId,
-                prod,
-                locLabel,
-                serialNumber: `${a}, ${b}`,
-                serialNumbers: [a, b],
-                isPairRow: true,
-                quantityType: 'pair',
-              });
-            } else {
-              pushSerialRow({
-                id: `${productId}-${a}-${locationId}-single`,
-                productId,
-                locationId,
-                prod,
-                locLabel,
-                serialNumber: a,
-                serialNumbers: [a],
-                isPairRow: false,
-                quantityType: 'pair',
-              });
-            }
-          }
+            .filter((sn) => !consumed.has(sn));
+          remaining.forEach((a) => {
+            pushSerialRow({
+              id: `${productId}-${a}-${locationId}-single`,
+              productId,
+              locationId,
+              prod,
+              locLabel,
+              serialNumber: a,
+              serialNumbers: [a],
+              isPairRow: false,
+              pairSource: 'unpaired',
+              quantityType: 'pair',
+            });
+          });
         });
         
         Object.entries(qtyByProductLoc).forEach(([plKey, qty]) => {

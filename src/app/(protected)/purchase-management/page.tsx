@@ -98,6 +98,7 @@ interface PurchaseProduct {
   name: string;
   type: string;
   serialNumbers: string[];
+  serialPairs?: [string, string][];
   quantity: number;
   dealerPrice: number;
   mrp: number;
@@ -128,7 +129,7 @@ interface Purchase {
   updatedAt?: Timestamp;
 }
 
-interface CompanyRecord extends CompanyMasterRow {}
+type CompanyRecord = CompanyMasterRow;
 type SerialChangePair = {
   oldSerial: string;
   newSerial: string;
@@ -142,28 +143,28 @@ const collectSerialChanges = (
 ): SerialChangePair[] => {
   const changes: SerialChangePair[] = [];
   const seen = new Set<string>();
-  const beforeByProduct = new Map<string, string[]>();
-  const afterByProduct = new Map<string, string[]>();
+  const beforeByRow = new Map<string, string[]>();
+  const afterByRow = new Map<string, string[]>();
 
   beforeProducts.forEach((product) => {
-    beforeByProduct.set(
-      product.productId,
+    beforeByRow.set(
+      `${product.productId}#${beforeByRow.size}`,
       Array.isArray(product.serialNumbers)
         ? product.serialNumbers.map(normalizeSerial).filter(Boolean)
         : [],
     );
   });
   afterProducts.forEach((product) => {
-    afterByProduct.set(
-      product.productId,
+    afterByRow.set(
+      `${product.productId}#${afterByRow.size}`,
       Array.isArray(product.serialNumbers)
         ? product.serialNumbers.map(normalizeSerial).filter(Boolean)
         : [],
     );
   });
 
-  for (const [productId, beforeSerials] of beforeByProduct.entries()) {
-    const afterSerials = afterByProduct.get(productId);
+  for (const [rowKey, beforeSerials] of beforeByRow.entries()) {
+    const afterSerials = afterByRow.get(rowKey);
     if (!afterSerials) continue;
     const sharedLen = Math.min(beforeSerials.length, afterSerials.length);
     for (let i = 0; i < sharedLen; i += 1) {

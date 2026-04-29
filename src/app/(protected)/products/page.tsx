@@ -437,6 +437,10 @@ export default function ProductsPage() {
       }
       
       if (editingProduct) {
+        const oldName = String(editingProduct.name || '').trim();
+        const newName = String(formDataToSave.name || '').trim();
+        const shouldPropagateRename = oldName !== newName;
+
         // Update existing product
         const productRef = doc(db, 'products', editingProduct.id);
         await updateDoc(productRef, {
@@ -448,6 +452,37 @@ export default function ProductsPage() {
           quantityType: formDataToSave.quantityType || 'piece',
           updatedAt: serverTimestamp(),
         });
+
+        if (shouldPropagateRename) {
+          const token = await user?.getIdToken();
+          if (!token) {
+            throw new Error('Product name updated, but rename propagation failed because your session is unavailable. Please sign in again.');
+          }
+
+          const renameRes = await fetch('/api/admin/rename-product', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              productId: editingProduct.id,
+              newName,
+            }),
+          });
+
+          const renamePayload = (await renameRes.json().catch(() => ({}))) as {
+            error?: string;
+            changedDocs?: number;
+            changedLineItems?: number;
+          };
+
+          if (!renameRes.ok) {
+            throw new Error(
+              renamePayload.error || 'Product name updated, but failed to propagate the new name across inventory records.',
+            );
+          }
+        }
         
         // Update local state
         const cleanedData = {

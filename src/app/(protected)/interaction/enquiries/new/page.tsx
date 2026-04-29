@@ -32,6 +32,7 @@ import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
+import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
 import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { logActivity } from '@/lib/activityLogger';
@@ -261,17 +262,30 @@ export default function NewEnquiryPage() {
           }))
         : [];
 
+      // Allocate strict BR-NNNNNN / TR-NNNNNN numbers for new bookings and home trials
+      // before persisting, so the receipts UI doesn't fall back to BR-{visitId} ("BR-1").
+      const {
+        visits: visitsWithReceiptNumbers,
+        visitSchedules: visitSchedulesWithReceiptNumbers,
+      } = await assignReceiptNumbersToVisits(db, withVisitActors, withVisitScheduleActors);
+
       // Save to Firestore
       const docRef = await addDoc(collection(db, 'enquiries'), {
         ...enquiryData,
-        visits: withVisitActors,
-        visitSchedules: withVisitScheduleActors,
+        visits: visitsWithReceiptNumbers,
+        visitSchedules: visitSchedulesWithReceiptNumbers,
         paymentRecords: withPaymentActors,
         payments: withLegacyPaymentActors,
       });
 
       // Mirror sale visits into `sales` collection (so Sales & Invoicing/inventory sold tracking are consistent).
-      const visits = Array.isArray(data.visits) ? [...data.visits] : [];
+      // Use the receipt-numbered visits as our base so the optional `updateDoc` below preserves the
+      // freshly allocated `bookingReceiptNumber` / `trialReceiptNumber` instead of overwriting them.
+      const visits = Array.isArray(visitsWithReceiptNumbers)
+        ? [...visitsWithReceiptNumbers]
+        : Array.isArray(data.visits)
+          ? [...data.visits]
+          : [];
       let visitsPatched = false;
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};

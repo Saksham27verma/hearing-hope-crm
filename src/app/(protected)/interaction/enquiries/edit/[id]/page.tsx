@@ -34,6 +34,7 @@ import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
+import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
 import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { logActivity, computeChanges } from '@/lib/activityLogger';
@@ -294,6 +295,21 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
             updatedByRole: actor.role,
           }))
         : [];
+
+      // Allocate strict BR-NNNNNN / TR-NNNNNN numbers for any new bookings or home trials
+      // that don't already carry one (skips in-office trials). Mutates the local `visits` /
+      // `visitSchedules` arrays so the downstream sale-mirror loop and final updateDoc both
+      // persist the freshly assigned numbers.
+      {
+        const receiptResult = await assignReceiptNumbersToVisits(db, visits, visitSchedules);
+        if (receiptResult.changed) {
+          visits.length = 0;
+          visits.push(...receiptResult.visits);
+          visitSchedules.length = 0;
+          visitSchedules.push(...receiptResult.visitSchedules);
+        }
+      }
+
       // Upsert sale visits into `sales` collection and ensure invoice numbers.
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
