@@ -1,5 +1,10 @@
 import type { BookingReceiptData } from '@/components/receipts/BookingReceiptTemplate';
 import type { TrialReceiptData } from '@/components/receipts/TrialReceiptTemplate';
+import {
+  getEnquiryPaymentLedgerLines,
+  sumEnquiryPaymentLedgerAmounts,
+  type EnquiryPaymentLedgerLine,
+} from '@/utils/enquiryPaymentLedger';
 
 export const receiptDefaultCompany = {
   companyName: 'Hope Digital Innovations Pvt Ltd',
@@ -22,7 +27,12 @@ export const defaultTrialFooter = `This receipt confirms that the above hearing 
 Please return the device in good condition by the end date. Damages or loss may attract charges.
 Thank you for choosing us.`;
 
+export const defaultPaymentAcknowledgmentTerms = `This document acknowledges payments recorded in our system against the customer named above. It is not a tax invoice unless referenced against a formal invoice number.`;
+
+export const defaultPaymentAcknowledgmentFooter = `Please retain this acknowledgment for your records. For any discrepancy, contact the center with the document number above.`;
+
 export type EnquiryLike = {
+  id?: string;
   name?: string;
   phone?: string;
   email?: string;
@@ -213,5 +223,57 @@ export function buildTrialReceiptData(
     centerName: options?.centerName,
     visitDate: visit.visitDate,
     terms: defaultTrialTerms,
+  };
+}
+
+export type PaymentAcknowledgmentData = {
+  companyName: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  documentTitle: string;
+  documentNumber: string;
+  statementDate: string;
+  patientName: string;
+  patientPhone?: string;
+  patientEmail?: string;
+  patientAddress?: string;
+  centerName?: string;
+  lineCount: number;
+  totalPaid: number;
+  lines: EnquiryPaymentLedgerLine[];
+  terms: string;
+  footer: string;
+};
+
+/** Build payment acknowledgment / statement data from enquiry (all ledger lines). */
+export function buildPaymentAcknowledgmentData(
+  enquiry: EnquiryLike,
+  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+): PaymentAcknowledgmentData {
+  const asDoc = enquiry as EnquiryLike & Record<string, unknown>;
+  const lines = getEnquiryPaymentLedgerLines(asDoc);
+  const statementDate = options?.statementDate?.trim() || new Date().toLocaleDateString('en-IN');
+  const enquiryId = String(enquiry.id ?? '').trim() || 'enquiry';
+  const documentNumber =
+    options?.documentNumber !== undefined && String(options.documentNumber).trim() !== ''
+      ? String(options.documentNumber).trim()
+      : `PA-${enquiryId}`;
+  const totalPaid = sumEnquiryPaymentLedgerAmounts(lines);
+  return {
+    ...receiptDefaultCompany,
+    documentTitle: 'Payment acknowledgment',
+    documentNumber,
+    statementDate,
+    patientName: enquiry.name || 'Customer',
+    patientPhone: enquiry.phone,
+    patientEmail: enquiry.email,
+    patientAddress: enquiry.address,
+    centerName: options?.centerName,
+    lineCount: lines.length,
+    totalPaid,
+    lines,
+    terms: defaultPaymentAcknowledgmentTerms,
+    footer: defaultPaymentAcknowledgmentFooter,
   };
 }

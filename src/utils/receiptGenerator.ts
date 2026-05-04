@@ -16,14 +16,17 @@ import {
 } from '@/utils/invoiceTemplateSelection';
 import {
   buildBookingReceiptHtmlString,
+  buildPaymentAcknowledgmentHtmlString,
   buildTrialReceiptHtmlString,
 } from '@/utils/receiptTemplateHtml';
 import {
   buildBookingReceiptData,
+  buildPaymentAcknowledgmentData,
   buildTrialReceiptData,
   type EnquiryLike,
   type VisitLike,
 } from '@/utils/receiptDataBuilders';
+import { getEnquiryPaymentLedgerLines } from '@/utils/enquiryPaymentLedger';
 
 export type { EnquiryLike, VisitLike };
 
@@ -201,6 +204,32 @@ async function generateReceiptPdfServer(
   return res.blob();
 }
 
+async function generatePaymentAcknowledgmentPdfServer(
+  enquiry: EnquiryLike,
+  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+): Promise<Blob> {
+  const res = await fetch('/api/receipts/render', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      receiptType: 'payment_acknowledgment',
+      enquiry,
+      options,
+    }),
+  });
+  if (!res.ok) {
+    let message = 'Failed to render payment acknowledgment';
+    try {
+      const j = (await res.json()) as { error?: string };
+      if (j?.error) message = j.error;
+    } catch {
+      // no-op
+    }
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
 /**
  * Uses the same Invoice Manager template resolution as `/api/receipts/render` (admin + routing),
  * but returns HTML only — then rasterizes in-browser. Use when Puppeteer/Chrome PDF fails locally.
@@ -229,7 +258,28 @@ async function generateReceiptPdfFromServerHtmlFragment(
   return createPdfFromHtml(j.htmlFragment);
 }
 
-export { buildBookingReceiptData, buildTrialReceiptData } from '@/utils/receiptDataBuilders';
+async function generatePaymentAcknowledgmentPdfFromServerHtmlFragment(
+  enquiry: EnquiryLike,
+  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+): Promise<Blob> {
+  const res = await fetch('/api/receipts/render-html', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      receiptType: 'payment_acknowledgment',
+      enquiry,
+      options,
+    }),
+  });
+  const j = (await res.json()) as { ok?: boolean; htmlFragment?: string; error?: string };
+  if (!res.ok || !j?.htmlFragment) {
+    const msg = j?.error || 'Failed to load payment acknowledgment HTML';
+    throw new Error(msg);
+  }
+  return createPdfFromHtml(j.htmlFragment);
+}
+
+export { buildBookingReceiptData, buildTrialReceiptData, buildPaymentAcknowledgmentData } from '@/utils/receiptDataBuilders';
 
 /** Generate booking receipt PDF blob. */
 export async function generateBookingReceiptPDF(
@@ -314,6 +364,76 @@ async function _legacyClientTrialPdf(
   }
   const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
   return createPdfFromHtml(buildTrialReceiptHtmlString(customTemplate, data, { logoPublicOrigin: origin }));
+}
+
+async function _legacyClientPaymentAcknowledgmentPdf(
+  enquiry: EnquiryLike,
+  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+): Promise<Blob> {
+  const data = buildPaymentAcknowledgmentData(enquiry, {
+    documentNumber: options?.documentNumber,
+    centerName: options?.centerName,
+    statementDate: options?.statementDate,
+  });
+  const customTemplate = await getPreferredCustomTemplate('payment_acknowledgment');
+  if (!customTemplate?.htmlContent) {
+    throw new Error('Payment acknowledgment HTML template is not configured in Invoice Manager.');
+  }
+  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
+  return createPdfFromHtml(
+    buildPaymentAcknowledgmentHtmlString(customTemplate, data, { logoPublicOrigin: origin })
+  );
+}
+
+/** Generate payment acknowledgment PDF (all payments on the enquiry). */
+export async function generatePaymentAcknowledgmentPDF(
+  enquiry: EnquiryLike,
+  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+): Promise<Blob> {
+  const lines = getEnquiryPaymentLedgerLines(enquiry as Record<string, unknown>);
+  if (lines.length === 0) {
+    throw new Error('No payments recorded for this enquiry.');
+  }
+  try {
+    return await generatePaymentAcknowledgmentPdfServer(enquiry, options);
+  } catch (error) {
+    console.warn('generatePaymentAcknowledgmentPDF: server PDF failed, trying HTML fragment + client rasterize', error);
+    try {
+      return await generatePaymentAcknowledgmentPdfFromServerHtmlFragment(enquiry, options);
+    } catch (e2) {
+      console.warn('generatePaymentAcknowledgmentPDF: server HTML fragment failed, legacy client template pick', e2);
+      return _legacyClientPaymentAcknowledgmentPdf(enquiry, options);
+    }
+  }
+}
+
+/** Download payment acknowledgment PDF. */
+export async function downloadPaymentAcknowledgmentPDF(
+  enquiry: EnquiryLike,
+  filename?: string,
+  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+): Promise<void> {
+  const blob = await generatePaymentAcknowledgmentPDF(enquiry, options);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  const data = buildPaymentAcknowledgmentData(enquiry, options);
+  link.download = filename ?? `payment-acknowledgment-${data.documentNumber.replace(/[^a-zA-Z0-9-_]/g, '-')}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/** Open payment acknowledgment PDF in a new tab. */
+export async function openPaymentAcknowledgmentPDF(
+  enquiry: EnquiryLike,
+  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+): Promise<void> {
+  const blob = await generatePaymentAcknowledgmentPDF(enquiry, options);
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** Download booking receipt PDF. */

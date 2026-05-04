@@ -1,3 +1,5 @@
+import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
+
 /**
  * Helpers for enquiry "pick from stock" — aligned with inventory page serial/qty handling.
  */
@@ -118,6 +120,7 @@ export function applySalesCollectionToAvailabilityMaps(
 ): void {
   for (const doc of salesDocs) {
     const data = doc.data() as Record<string, unknown>;
+    if (data.cancelled === true) continue;
     const products = (Array.isArray(data.products) ? data.products : Array.isArray(data.items) ? data.items : []) as Record<
       string,
       unknown
@@ -145,6 +148,17 @@ export function applyEnquiryVisitsSalesToAvailabilityMaps(
   for (const doc of enquiryDocs) {
     const data = doc.data();
     const visits = Array.isArray(data.visits) ? (data.visits as Record<string, unknown>[]) : [];
+    const returnedNorms = new Set<string>();
+    for (const v of visits) {
+      if (!v?.salesReturn) continue;
+      expandSalesReturnLinesFromVisit(
+        v as Parameters<typeof expandSalesReturnLinesFromVisit>[0]
+      ).forEach((line) => {
+        splitSerialStringIntoTokens(line.serialNumber).forEach((t) =>
+          returnedNorms.add(String(t || '').trim().toLowerCase())
+        );
+      });
+    }
     for (const visit of visits) {
       if (!visitIsHearingAidSale(visit)) continue;
       const products = (Array.isArray(visit.products) ? visit.products : []) as Record<string, unknown>[];
@@ -153,7 +167,10 @@ export function applyEnquiryVisitsSalesToAvailabilityMaps(
         if (!pid) continue;
         const sns = serialCandidatesFromSaleProduct(p as Parameters<typeof serialCandidatesFromSaleProduct>[0]);
         if (sns.length > 0) {
-          sns.forEach((sn) => subtractSerialFromLocationMap(serialsByProductLoc, pid, sn));
+          sns.forEach((sn) => {
+            if (returnedNorms.has(String(sn || '').trim().toLowerCase())) return;
+            subtractSerialFromLocationMap(serialsByProductLoc, pid, sn);
+          });
         } else {
           const q = Number(p.quantity ?? 1) || 1;
           subtractQtyFromLocationMap(qtyByProductLoc, pid, q);

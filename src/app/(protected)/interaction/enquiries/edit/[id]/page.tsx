@@ -22,6 +22,7 @@ import {
   getDoc,
   updateDoc,
   serverTimestamp,
+  deleteField,
   collection,
   getDocs,
   runTransaction,
@@ -38,6 +39,11 @@ import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryRecei
 import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { logActivity, computeChanges } from '@/lib/activityLogger';
+import {
+  collectSaleVisitIndicesVoidedByReturns,
+  buildSalesReturnInventoryRestores,
+} from '@/lib/enquiries/salesReturnVisitTargets';
+import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInventoryForSalesReturn';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -328,7 +334,17 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         const saleDate = enquiryVisitSaleDateToTimestamp(saleDateRaw);
         const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
         const gstAmount = Number(visit.taxAmount) || 0;
-        const grandTotal = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+        const baseGrand =
+          Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+        const exchangeCredit = Math.min(
+          Math.max(0, Number(visit.exchangeCreditAmount) || 0),
+          baseGrand
+        );
+        const grandTotal = Math.round(baseGrand - exchangeCredit);
+        const exPrior =
+          visit.exchangePriorVisitIndex === '' || visit.exchangePriorVisitIndex == null
+            ? undefined
+            : Number(visit.exchangePriorVisitIndex);
 
         const existing = await getDocs(
           query(
@@ -386,6 +402,11 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           updatedByEmail: actor.email,
           updatedByRole: actor.role,
           updatedAt: serverTimestamp(),
+          exchangeCreditInr: exchangeCredit > 0 ? exchangeCredit : deleteField(),
+          exchangePriorVisitIndex:
+            typeof exPrior === 'number' && !Number.isNaN(exPrior) && exPrior >= 0
+              ? exPrior
+              : deleteField(),
         } as Record<string, unknown> as any;
 
         if (existingSaleDoc == null) {
@@ -416,6 +437,38 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
 
       // Update in Firestore
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
+
+      const voidVisitIndices = collectSaleVisitIndicesVoidedByReturns(visits);
+      const centerFallback = String(
+        data.visitingCenter || data.center || ''
+      ).trim();
+      for (const saleVisitIdx of voidVisitIndices) {
+        const saleSnap = await getDocs(
+          query(
+            collection(db, 'sales'),
+            where('enquiryId', '==', resolvedParams.id),
+            where('enquiryVisitIndex', '==', saleVisitIdx),
+            limit(1)
+          )
+        );
+        if (saleSnap.empty) continue;
+        const sid = saleSnap.docs[0].id;
+        await updateDoc(doc(db, 'sales', sid), {
+          cancelled: true,
+          cancelledAt: serverTimestamp(),
+          cancelledByUid: actor.uid ?? null,
+          cancelReason: 'Sales return',
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      const restoreRows = buildSalesReturnInventoryRestores(visits, centerFallback);
+      if (restoreRows.length > 0) {
+        const invResult = await restoreInventoryForSalesReturnRows(db, restoreRows);
+        if (invResult.errors.length > 0) {
+          console.error('Sales return inventory restore:', invResult.errors);
+        }
+      }
 
       const ENQUIRY_SCALAR_FIELDS = [
         'name', 'customerName', 'customerGstNumber', 'phone', 'email', 'address', 'status',

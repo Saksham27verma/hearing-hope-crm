@@ -5,10 +5,14 @@ import {
   replaceTemplateTokens,
   type TemplateImage,
 } from '@/utils/documentTemplateUtils';
+import type { PaymentAcknowledgmentData } from '@/utils/receiptDataBuilders';
 import {
   defaultBookingFooter,
+  defaultPaymentAcknowledgmentFooter,
+  defaultPaymentAcknowledgmentTerms,
   defaultTrialFooter,
 } from '@/utils/receiptDataBuilders';
+import type { EnquiryPaymentLedgerLine } from '@/utils/enquiryPaymentLedger';
 
 export type HtmlDocumentTemplate = {
   id?: string;
@@ -108,6 +112,76 @@ export function buildBookingReceiptHtmlString(
       CENTER_NAME: formatHtmlText(data.centerName),
       VISIT_DATE: formatHtmlText(data.visitDate),
       TERMS_TEXT: formatHtmlText(data.terms, true),
+      FOOTER_TEXT: formatHtmlText(footerText, true),
+      LOGO_PLACEHOLDER: '',
+      SIGNATURE_PLACEHOLDER: '',
+    },
+    images
+  );
+}
+
+function buildPaymentsTableHtmlString(lines: EnquiryPaymentLedgerLine[]): string {
+  if (lines.length === 0) {
+    return '<p style="margin:0;color:#6b7280;font-size:14px">No payment entries.</p>';
+  }
+  const accent = '#A80000';
+  const head = `<thead><tr style="border-bottom:2px solid ${accent};text-align:left;color:${accent};font-weight:700">
+<th style="padding:10px 8px">Date</th>
+<th style="padding:10px 8px">Particulars</th>
+<th style="padding:10px 8px;text-align:right">Amount</th>
+<th style="padding:10px 8px">Mode</th>
+<th style="padding:10px 8px">Reference</th>
+<th style="padding:10px 8px">Remarks</th>
+</tr></thead>`;
+  const rows = lines
+    .map((line) => {
+      const date = formatHtmlText(line.date || '—');
+      const label = formatHtmlText(line.label);
+      const amount = formatHtmlText(formatCurrencyForTemplate(line.amount));
+      const mode = formatHtmlText(line.mode ? String(line.mode) : '—');
+      const ref = formatHtmlText(line.referenceNumber || '—');
+      const remarks = line.remarks ? formatHtmlText(line.remarks, true) : '—';
+      return `<tr style="border-bottom:1px solid #EDF2F7;vertical-align:top">
+<td style="padding:10px 8px;white-space:nowrap">${date}</td>
+<td style="padding:10px 8px">${label}</td>
+<td style="padding:10px 8px;text-align:right;font-weight:600">${amount}</td>
+<td style="padding:10px 8px">${mode}</td>
+<td style="padding:10px 8px;word-break:break-word">${ref}</td>
+<td style="padding:10px 8px;font-size:12px;color:#4A5568">${remarks}</td>
+</tr>`;
+    })
+    .join('');
+  return `<table style="width:100%;border-collapse:collapse;font-size:13px;color:#1A202C">${head}<tbody>${rows}</tbody></table>`;
+}
+
+export function buildPaymentAcknowledgmentHtmlString(
+  template: HtmlDocumentTemplate,
+  data: PaymentAcknowledgmentData,
+  opts?: BuildReceiptHtmlOptions
+) {
+  const footerText = opts?.footerText ?? data.footer ?? defaultPaymentAcknowledgmentFooter;
+  const termsBody = data.terms ?? defaultPaymentAcknowledgmentTerms;
+  const images = mergeTemplateImagesWithDefaultLogo(template.images, opts?.logoPublicOrigin);
+  const paymentsTable = buildPaymentsTableHtmlString(data.lines);
+  return replaceTemplateTokens(
+    template.htmlContent || '',
+    {
+      COMPANY_NAME: formatHtmlText(data.companyName),
+      COMPANY_ADDRESS: formatHtmlText(data.companyAddress, true),
+      COMPANY_PHONE: formatHtmlText(data.companyPhone),
+      COMPANY_EMAIL: formatHtmlText(data.companyEmail),
+      DOCUMENT_TITLE: formatHtmlText(data.documentTitle),
+      DOCUMENT_NUMBER: formatHtmlText(data.documentNumber),
+      STATEMENT_DATE: formatHtmlText(data.statementDate),
+      PATIENT_NAME: formatHtmlText(data.patientName),
+      PATIENT_PHONE: formatHtmlText(data.patientPhone),
+      PATIENT_EMAIL: formatHtmlText(data.patientEmail),
+      PATIENT_ADDRESS: formatHtmlText(data.patientAddress, true),
+      CENTER_NAME: formatHtmlText(data.centerName),
+      LINE_COUNT: formatHtmlText(String(data.lineCount)),
+      TOTAL_PAID: formatHtmlText(formatCurrencyForTemplate(data.totalPaid)),
+      PAYMENTS_TABLE_HTML: paymentsTable,
+      TERMS_TEXT: formatHtmlText(termsBody, true),
       FOOTER_TEXT: formatHtmlText(footerText, true),
       LOGO_PLACEHOLDER: '',
       SIGNATURE_PLACEHOLDER: '',

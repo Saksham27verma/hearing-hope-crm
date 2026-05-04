@@ -83,7 +83,10 @@ import {
   downloadBookingReceiptPDF,
   openTrialReceiptPDF,
   downloadTrialReceiptPDF,
+  openPaymentAcknowledgmentPDF,
+  downloadPaymentAcknowledgmentPDF,
 } from '@/utils/receiptGenerator';
+import { getEnquiryPaymentLedgerLines } from '@/utils/enquiryPaymentLedger';
 import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
@@ -608,91 +611,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }
   };
 
-  const legacyPaymentsById = new Map<string, any>(
-    (Array.isArray(enquiry?.payments) ? enquiry.payments : []).map((p: any) => [String(p?.id ?? ''), p])
-  );
-
-  const normalizedPaymentRecords = Array.isArray(enquiry?.paymentRecords)
-    ? enquiry.paymentRecords.map((payment: any) => {
-        const legacy = payment?.id != null ? legacyPaymentsById.get(String(payment.id)) : undefined;
-        const referenceNumber = String(
-          payment.referenceNumber ?? legacy?.referenceNumber ?? ''
-        ).trim();
-        const remarks = String(payment.remarks ?? legacy?.remarks ?? '').trim();
-        return {
-          id: payment.id,
-          label:
-            payment.paymentType === 'hearing_aid_test'
-              ? 'Test'
-              : payment.paymentType === 'ent_service'
-                ? 'ENT service'
-              : payment.paymentType === 'staff_trial_request'
-                ? 'Trial (staff request)'
-                : payment.paymentType === 'hearing_aid_booking'
-                  ? 'Booking'
-                  : payment.paymentType === 'hearing_aid_sale'
-                    ? 'Sale'
-                    : payment.paymentType || 'Payment',
-          amount: Number(payment.amount || 0),
-          date: payment.paymentDate,
-          mode: payment.paymentMethod,
-          actorName:
-            payment.createdByName ||
-            payment.updatedByName ||
-            payment.createdByEmail ||
-            payment.updatedByEmail ||
-            payment.createdByUid ||
-            payment.updatedByUid ||
-            '',
-          ...(referenceNumber ? { referenceNumber } : {}),
-          ...(remarks ? { remarks } : {}),
-        };
-      })
-    : [];
-  const normalizedLegacyPayments = Array.isArray(enquiry?.payments)
-    ? enquiry.payments.map((payment: any) => {
-        const referenceNumber = String(payment.referenceNumber ?? '').trim();
-        const remarks = String(payment.remarks ?? '').trim();
-        return {
-          id: payment.id,
-          label:
-            payment.paymentFor === 'hearing_test'
-              ? 'Test'
-              : payment.paymentFor === 'ent_service'
-                ? 'ENT service'
-              : payment.paymentFor === 'booking_advance'
-                ? 'Booking'
-                : payment.paymentFor === 'hearing_aid'
-                  ? 'Hearing Aid'
-                  : payment.paymentFor === 'accessory'
-                    ? 'Accessory'
-                    : payment.paymentFor === 'trial_home_security_deposit'
-                      ? 'Trial security deposit'
-                      : payment.paymentFor === 'programming'
-                        ? 'Programming'
-                        : payment.paymentFor === 'full_payment'
-                          ? 'Full Payment'
-                          : payment.paymentFor === 'partial_payment'
-                            ? 'Partial Payment'
-                            : payment.paymentFor || 'Payment',
-          amount: Number(payment.amount || 0),
-          date: payment.paymentDate,
-          mode: payment.paymentMode,
-          actorName:
-            payment.createdByName ||
-            payment.updatedByName ||
-            payment.createdByEmail ||
-            payment.updatedByEmail ||
-            payment.createdByUid ||
-            payment.updatedByUid ||
-            '',
-          ...(referenceNumber ? { referenceNumber } : {}),
-          ...(remarks ? { remarks } : {}),
-        };
-      })
-    : [];
-  const paymentEntries =
-    normalizedPaymentRecords.length > 0 ? normalizedPaymentRecords : normalizedLegacyPayments;
+  const paymentEntries = getEnquiryPaymentLedgerLines(enquiry);
   const hasPayments = paymentEntries.length > 0 || Boolean(enquiry?.financialSummary);
 
   const hasValue = (value: any) => {
@@ -755,7 +674,10 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
         ((Array.isArray(visit.products) && visit.products.length > 0) || hasValue(visit.salesAfterTax))
     );
   const hasReceipts =
-    bookingReceipts.length > 0 || trialReceipts.length > 0 || saleInvoiceReceipts.length > 0;
+    bookingReceipts.length > 0 ||
+    trialReceipts.length > 0 ||
+    saleInvoiceReceipts.length > 0 ||
+    paymentEntries.length > 0;
 
   const getCenterName = (visit?: any) => {
     const centerId =
@@ -2205,7 +2127,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                 <SectionHeading
                   icon={<ReceiptIcon fontSize="small" />}
                   title="Receipts & invoices"
-                  subtitle="Booking and trial receipts, plus sales invoices (PDF)"
+                  subtitle="Booking and trial receipts, payment acknowledgment, plus sales invoices (PDF)"
                 />
                 <Stack spacing={2}>
                   {bookingReceipts.map(({ visit, index }: { visit: any; index: number }) => (
@@ -2295,6 +2217,60 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       </Stack>
                     </Paper>
                   ))}
+
+                  {paymentEntries.length > 0 && (
+                    <Paper
+                      key="payment-acknowledgment"
+                      variant="outlined"
+                      sx={{
+                        p: 2,
+                        borderRadius: 2.5,
+                        bgcolor: alpha('#0f766e', 0.04),
+                        borderColor: alpha('#0f766e', 0.15),
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                        <Chip
+                          label="Payment acknowledgment"
+                          size="small"
+                          color="success"
+                          sx={{ borderRadius: 99, fontWeight: 700 }}
+                        />
+                        <Typography variant="caption" color="text.secondary">
+                          {paymentEntries.length} entr{paymentEntries.length === 1 ? 'y' : 'ies'}
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.6 }}>
+                        All recorded payments with mode and references (PDF).
+                      </Typography>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          size="small"
+                          startIcon={<VisibilityIcon />}
+                          onClick={() =>
+                            openPaymentAcknowledgmentPDF(enquiry, {
+                              centerName: getCenterName(Array.isArray(visits) ? visits[0] : undefined),
+                            })
+                          }
+                          sx={{ borderRadius: 99 }}
+                        >
+                          View
+                        </Button>
+                        <Button
+                          size="small"
+                          startIcon={<DownloadIcon />}
+                          onClick={() =>
+                            downloadPaymentAcknowledgmentPDF(enquiry, undefined, {
+                              centerName: getCenterName(Array.isArray(visits) ? visits[0] : undefined),
+                            })
+                          }
+                          sx={{ borderRadius: 99 }}
+                        >
+                          Download
+                        </Button>
+                      </Stack>
+                    </Paper>
+                  )}
 
                   {saleInvoiceReceipts.map(({ visit, index }: { visit: any; index: number }) => (
                     <Paper

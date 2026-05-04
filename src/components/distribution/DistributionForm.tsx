@@ -358,6 +358,7 @@ const DistributionForm: React.FC<Props> = ({ initialData, dealers, onSave, onCan
       // Track sold serials (sales collection + enquiry visit sales)
       const soldSerials = new Set<string>();
       salesDocs.forEach((doc: any) => {
+        if (doc.cancelled === true) return;
         (doc.products || []).forEach((p: any) => {
           const productId = p.productId || p.id || '';
           const serial = p.serialNumber || '';

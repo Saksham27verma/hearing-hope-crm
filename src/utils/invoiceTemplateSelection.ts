@@ -10,6 +10,16 @@ export function normalizeManagedDocumentType(raw: unknown): ManagedDocumentType 
   if (s === 'invoice') return 'invoice';
   if (s === 'booking_receipt' || s === 'booking') return 'booking_receipt';
   if (s === 'trial_receipt' || s === 'trial') return 'trial_receipt';
+  if (
+    s === 'payment_acknowledgment' ||
+    s === 'paymentacknowledgment' ||
+    s === 'payment_statement' ||
+    s === 'paymentstatement' ||
+    s === 'payment' ||
+    s === 'customer_payment'
+  ) {
+    return 'payment_acknowledgment';
+  }
   if (s === 'salary_slip' || s === 'salary' || s === 'salaryslip') return 'salary_slip';
   return null;
 }

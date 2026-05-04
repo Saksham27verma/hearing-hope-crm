@@ -271,6 +271,8 @@ interface HearingAidProduct {
   warranty: string;
   company?: string;
   location?: string;
+  /** Firestore `centers` doc id where stock was picked from (sales return restore). */
+  soldFromCenterId?: string;
 }
 
 /** Units per sale line; amounts on the line are per unit. */
@@ -473,7 +475,11 @@ interface Visit {
   purchaseFromTrial: boolean;
   purchaseDate: string;
   purchaseFromVisitId: string; // Which visit this purchase relates to
-  
+  /** Prior sale visit index (0-based) when this sale is an exchange — drives suggested credit. */
+  exchangePriorVisitIndex?: number | '';
+  /** INR credit toward this invoice (inc GST); mirrored `sales.grandTotal` = sale total minus this. */
+  exchangeCreditAmount?: number;
+
   // Sales Return related fields
   /** One row per returned device (serial + model). Kept in sync with returnSerialNumber for legacy readers. */
   salesReturnItems: SalesReturnLine[];
@@ -913,7 +919,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     gstType: 'IGST' as 'CGST' | 'IGST',
     warranty: '',
     company: '',
-    location: ''
+    location: '',
+    soldFromCenterId: ''
   });
 
   /** Hearing-aid sale line: mirror manual Sales & Invoicing pair / single serial entry. */
@@ -2062,6 +2069,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           purchaseFromTrial: visit.hearingAidDetails?.purchaseFromTrial || Boolean(mergedVisit.purchaseFromTrial),
           purchaseDate: visit.hearingAidDetails?.purchaseDate || mergedVisit.purchaseDate || '',
           purchaseFromVisitId: visit.hearingAidDetails?.purchaseFromVisitId || mergedVisit.purchaseFromVisitId || '',
+          exchangePriorVisitIndex:
+            visit.hearingAidDetails?.exchangePriorVisitIndex ??
+            savedFlat?.exchangePriorVisitIndex ??
+            (mergedVisit as { exchangePriorVisitIndex?: number | '' }).exchangePriorVisitIndex ??
+            '',
+          exchangeCreditAmount:
+            Number(
+              visit.hearingAidDetails?.exchangeCreditAmount ??
+                savedFlat?.exchangeCreditAmount ??
+                (mergedVisit as { exchangeCreditAmount?: number }).exchangeCreditAmount
+            ) || 0,
           accessoryName: nestedAccessoryDetails.accessoryName || mergedVisit.accessoryName || '',
           accessoryDetails:
             nestedAccessoryDetails.accessoryDetails ||
@@ -2286,6 +2304,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         finalAmount: roundInrRupee(lineSelling + gstAmount),
         company: item.company ?? prev.company ?? '',
         location: item.location ?? prev.location ?? '',
+        soldFromCenterId: item.locationId ? String(item.locationId) : '',
       }));
     },
     [
@@ -2530,7 +2549,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       purchaseFromTrial: false,
       purchaseDate: '',
       purchaseFromVisitId: '',
-      
+      exchangePriorVisitIndex: '',
+      exchangeCreditAmount: 0,
+
       // Sales Return related fields
       salesReturnItems: [],
       returnSerialNumber: '',
@@ -2648,6 +2669,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         warranty: currentProduct.warranty,
         company: currentProduct.company,
         location: currentProduct.location,
+        soldFromCenterId: currentProduct.soldFromCenterId || '',
       };
 
       const updatedVisits = [...watchedVisits];
@@ -2684,6 +2706,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         warranty: '',
         company: '',
         location: '',
+        soldFromCenterId: '',
       });
       setSalePairSaleMode('pair');
       setSaleSerialPrimary('');
@@ -3378,6 +3401,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           purchaseFromTrial: visit.purchaseFromTrial,
           purchaseDate: visit.purchaseDate,
           purchaseFromVisitId: visit.purchaseFromVisitId,
+          exchangePriorVisitIndex: visit.exchangePriorVisitIndex,
+          exchangeCreditAmount: visit.exchangeCreditAmount,
           // Sales return (mirrors flat visit for consumers that read visitSchedules only)
           salesReturn: visit.salesReturn,
           salesReturnItems: visit.salesReturnItems,
@@ -5880,6 +5905,85 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Alert>
                             );
                           })()}
+
+                          <Box sx={{ mb: 2 }}>
+                            <Divider sx={{ my: 2 }} />
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                              Exchange / upgrade (optional)
+                            </Typography>
+                            <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
+                              For an exchange in a new month, set <strong>Purchase date</strong> in the quick fields
+                              below to the new sale date so the mirrored invoice and reports use the correct period.
+                            </Alert>
+                            <Grid container spacing={2}>
+                              <Grid item xs={12} md={6}>
+                                <FormControl fullWidth size="small">
+                                  <InputLabel id="ex-prior-visit-label">Credit from prior sale visit</InputLabel>
+                                  <Select
+                                    labelId="ex-prior-visit-label"
+                                    label="Credit from prior sale visit"
+                                    value={
+                                      currentVisit.exchangePriorVisitIndex === '' ||
+                                      currentVisit.exchangePriorVisitIndex == null
+                                        ? ''
+                                        : String(currentVisit.exchangePriorVisitIndex)
+                                    }
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (v === '') {
+                                        updateVisitFields(activeVisit, {
+                                          exchangePriorVisitIndex: '',
+                                          exchangeCreditAmount: 0,
+                                        });
+                                        return;
+                                      }
+                                      const idx = parseInt(v, 10);
+                                      const prior = watchedVisits[idx];
+                                      const suggested = Math.round(Number(prior?.salesAfterTax) || 0);
+                                      updateVisitFields(activeVisit, {
+                                        exchangePriorVisitIndex: idx,
+                                        exchangeCreditAmount: suggested,
+                                      });
+                                    }}
+                                  >
+                                    <MenuItem value="">
+                                      <em>None</em>
+                                    </MenuItem>
+                                    {watchedVisits.flatMap((pv, idx) =>
+                                      idx !== activeVisit &&
+                                      pv.hearingAidSale &&
+                                      (Number(pv.salesAfterTax) > 0 || (pv.products?.length || 0) > 0)
+                                        ? [
+                                            <MenuItem key={`ex-prior-${idx}`} value={String(idx)}>
+                                              Visit #{idx + 1} — {pv.visitDate || '—'} —{' '}
+                                              {formatCurrencySale(Number(pv.salesAfterTax) || 0)}
+                                            </MenuItem>,
+                                          ]
+                                        : []
+                                    )}
+                                  </Select>
+                                </FormControl>
+                              </Grid>
+                              <Grid item xs={12} md={6}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="Exchange credit (₹, inc. GST)"
+                                  type="number"
+                                  value={currentVisit.exchangeCreditAmount || ''}
+                                  onChange={(e) =>
+                                    updateVisitFields(activeVisit, {
+                                      exchangeCreditAmount: Math.max(0, parseFloat(e.target.value) || 0),
+                                    })
+                                  }
+                                  InputProps={{
+                                    startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+                                  }}
+                                  helperText="Net invoice total = this visit sale total minus this credit. Confirm GST treatment with your advisor."
+                                />
+                              </Grid>
+                            </Grid>
+                          </Box>
 
                           {/* Show device names from Trial and Booking journeys when auto-population is not used */}
                           {(() => {

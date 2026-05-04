@@ -54,6 +54,10 @@ export interface SaleRecord {
   cancelledAt?: Timestamp;
   cancelledByUid?: string;
   cancelReason?: string;
+  /** When the patient exchanged a prior device: credit applied (₹ inc GST) on the mirrored enquiry sale. */
+  exchangeCreditInr?: number;
+  /** Enquiry visit index (0-based) the exchange credit was taken from. */
+  exchangePriorVisitIndex?: number;
 }
 
 export interface DerivedEnquirySale {

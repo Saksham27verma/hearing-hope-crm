@@ -1,4 +1,9 @@
-export type ManagedDocumentType = 'invoice' | 'booking_receipt' | 'trial_receipt' | 'salary_slip';
+export type ManagedDocumentType =
+  | 'invoice'
+  | 'booking_receipt'
+  | 'trial_receipt'
+  | 'payment_acknowledgment'
+  | 'salary_slip';
 
 export type TemplateImage = {
   placeholder: string;
@@ -294,6 +299,46 @@ const trialReceiptSample = baseHtmlShell(
 `
 );
 
+const paymentAcknowledgmentSample = baseHtmlShell(
+  'Payment Acknowledgment Template',
+  '#0f766e',
+  `
+  <div class="header">
+    <div>
+      <img src="{{LOGO_PLACEHOLDER}}" alt="Logo" class="logo" />
+      <div class="eyebrow">{{DOCUMENT_TITLE}}</div>
+      <h1 class="title">{{COMPANY_NAME}}</h1>
+      <div class="muted">{{COMPANY_ADDRESS}}</div>
+      <div class="muted">Phone: {{COMPANY_PHONE}} | Email: {{COMPANY_EMAIL}}</div>
+    </div>
+    <div class="meta">
+      <div class="meta-row"><span class="meta-label">Document #</span><strong>{{DOCUMENT_NUMBER}}</strong></div>
+      <div class="meta-row"><span class="meta-label">Statement date</span>{{STATEMENT_DATE}}</div>
+      <div class="meta-row"><span class="meta-label">Center</span>{{CENTER_NAME}}</div>
+      <div class="meta-row"><span class="meta-label">Entries</span>{{LINE_COUNT}}</div>
+    </div>
+  </div>
+  <div class="section">
+    <h2 class="section-title">Customer</h2>
+    <div class="card grid">
+      <div><div class="field-label">Name</div><div class="field-value">{{PATIENT_NAME}}</div></div>
+      <div><div class="field-label">Phone</div><div class="field-value">{{PATIENT_PHONE}}</div></div>
+      <div><div class="field-label">Email</div><div class="field-value">{{PATIENT_EMAIL}}</div></div>
+      <div><div class="field-label">Address</div><div class="field-value">{{PATIENT_ADDRESS}}</div></div>
+    </div>
+  </div>
+  <div class="section">
+    <h2 class="section-title">Payment history</h2>
+    <div class="card">{{PAYMENTS_TABLE_HTML}}</div>
+  </div>
+  <div class="hero">
+    <div class="hero-label">Total received (per ledger)</div>
+    <div class="hero-value">{{TOTAL_PAID}}</div>
+  </div>
+  <div class="footer">{{TERMS_TEXT}}&#10;&#10;{{FOOTER_TEXT}}</div>
+`
+);
+
 const salarySlipSample = baseHtmlShell(
   'Salary Slip Template',
   '#1d4ed8',
@@ -402,6 +447,29 @@ export const DOCUMENT_TEMPLATE_META: Record<ManagedDocumentType, {
           '{{SECURITY_DEPOSIT_AMOUNT}}',
         ],
       },
+      { title: 'Copy', tokens: ['{{TERMS_TEXT}}', '{{FOOTER_TEXT}}'] },
+      { title: 'Images', tokens: ['{{LOGO_PLACEHOLDER}}', '{{SIGNATURE_PLACEHOLDER}}'] },
+    ],
+  },
+  payment_acknowledgment: {
+    label: 'Payment acknowledgment',
+    color: 'primary',
+    sampleHtml: paymentAcknowledgmentSample,
+    placeholderSections: [
+      { title: 'Company', tokens: ['{{COMPANY_NAME}}', '{{COMPANY_ADDRESS}}', '{{COMPANY_PHONE}}', '{{COMPANY_EMAIL}}'] },
+      {
+        title: 'Document',
+        tokens: [
+          '{{DOCUMENT_TITLE}}',
+          '{{DOCUMENT_NUMBER}}',
+          '{{STATEMENT_DATE}}',
+          '{{CENTER_NAME}}',
+          '{{LINE_COUNT}}',
+          '{{TOTAL_PAID}}',
+        ],
+      },
+      { title: 'Customer', tokens: ['{{PATIENT_NAME}}', '{{PATIENT_PHONE}}', '{{PATIENT_EMAIL}}', '{{PATIENT_ADDRESS}}'] },
+      { title: 'Ledger', tokens: ['{{PAYMENTS_TABLE_HTML}}'] },
       { title: 'Copy', tokens: ['{{TERMS_TEXT}}', '{{FOOTER_TEXT}}'] },
       { title: 'Images', tokens: ['{{LOGO_PLACEHOLDER}}', '{{SIGNATURE_PLACEHOLDER}}'] },
     ],
@@ -551,6 +619,34 @@ export const getTemplatePreviewHtml = (
       SECURITY_DEPOSIT_AMOUNT: 'Rs. 5,000',
       TERMS_TEXT: 'Return the device by the end date in good condition.',
       FOOTER_TEXT: 'Damage or loss may attract charges.',
+      LOGO_PLACEHOLDER: '',
+      SIGNATURE_PLACEHOLDER: '',
+    },
+    payment_acknowledgment: {
+      COMPANY_NAME: 'Hope Hearing Solutions',
+      COMPANY_ADDRESS: '123 Hearing Street<br/>New Delhi - 110001',
+      COMPANY_PHONE: '+91 98765 43210',
+      COMPANY_EMAIL: 'care@hopehearing.com',
+      DOCUMENT_TITLE: 'Payment acknowledgment',
+      DOCUMENT_NUMBER: 'PA-ENQ-2026-001',
+      STATEMENT_DATE: '04/05/2026',
+      CENTER_NAME: 'Main Center',
+      LINE_COUNT: '3',
+      PATIENT_NAME: 'Rohan Sharma',
+      PATIENT_PHONE: '+91 91234 56789',
+      PATIENT_EMAIL: 'rohan@example.com',
+      PATIENT_ADDRESS: '14 Green Avenue, Delhi',
+      TOTAL_PAID: 'Rs. 18,500',
+      PAYMENTS_TABLE_HTML: `<table style="width:100%;border-collapse:collapse;font-size:13px">
+<thead><tr style="border-bottom:2px solid #0f766e;text-align:left;color:#0f766e">
+<th style="padding:8px 6px">Date</th><th style="padding:8px 6px">Particulars</th><th style="padding:8px 6px;text-align:right">Amount</th><th style="padding:8px 6px">Mode</th><th style="padding:8px 6px">Reference</th></tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:8px 6px">2026-03-10</td><td style="padding:8px 6px">Test</td><td style="padding:8px 6px;text-align:right">Rs. 500</td><td style="padding:8px 6px">UPI</td><td style="padding:8px 6px">—</td></tr>
+<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:8px 6px">2026-03-16</td><td style="padding:8px 6px">Booking</td><td style="padding:8px 6px;text-align:right">Rs. 10,000</td><td style="padding:8px 6px">Cash</td><td style="padding:8px 6px">—</td></tr>
+<tr><td style="padding:8px 6px">2026-04-01</td><td style="padding:8px 6px">Sale</td><td style="padding:8px 6px;text-align:right">Rs. 8,000</td><td style="padding:8px 6px">Card</td><td style="padding:8px 6px">UTR123</td></tr>
+</tbody></table>`,
+      TERMS_TEXT: 'This statement summarizes payments recorded in our system for the customer named above.',
+      FOOTER_TEXT: 'For queries, contact the center with this document number.',
       LOGO_PLACEHOLDER: '',
       SIGNATURE_PLACEHOLDER: '',
     },

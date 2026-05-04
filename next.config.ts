@@ -61,10 +61,13 @@ const nextConfig: NextConfig = {
   },
   
   // Headers for better caching and security
+  // IMPORTANT: Do not apply `nosniff` (or other catch-all headers) to `/_next/static/*` or `/_next/image`.
+  // A blanket `/(.*)` rule can break chunk responses in dev and triggers "MIME type text/plain" /
+  // refused-to-execute when `<script>` requests get a non-JavaScript body.
   async headers() {
     return [
       {
-        source: '/(.*)',
+        source: '/((?!_next/static|_next/image|favicon.ico).*)',
         headers: [
           {
             key: 'X-Frame-Options',

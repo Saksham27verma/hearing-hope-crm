@@ -34,12 +34,14 @@ function statusChip(status: PaymentStatus): { label: string; variant: UnifiedInv
 }
 
 function isDerivedCoveredBySale(sale: SaleRecord, d: DerivedEnquirySale): boolean {
-  if (sale.cancelled) return false;
   const vIdx = sale.enquiryVisitIndex;
+  // Same visit index always "covers" the derived row — including voided invoices —
+  // so we do not show a phantom Uninvoiced duplicate after cancel.
   if (typeof vIdx === 'number' && vIdx === d.visitIndex) {
     if (sale.enquiryId && d.enquiryId && sale.enquiryId === d.enquiryId) return true;
     if (sale.visitorId && d.visitorId && sale.visitorId === d.visitorId) return true;
   }
+  if (sale.cancelled) return false;
   const saleTs = sale.saleDate?.seconds;
   const dTs = d.visitDate?.seconds;
   if (saleTs && dTs) {

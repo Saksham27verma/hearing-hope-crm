@@ -3,6 +3,7 @@ import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { collectSaleVisitIndicesVoidedByReturns } from '@/lib/enquiries/salesReturnVisitTargets';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
     for (const enquiryDoc of enquiriesSnap.docs) {
       const data = enquiryDoc.data() as Record<string, unknown>;
       const visits = Array.isArray(data.visits) ? [...(data.visits as Record<string, unknown>[])] : [];
+      const voidTargets = new Set(collectSaleVisitIndicesVoidedByReturns(visits));
 
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
@@ -47,7 +49,18 @@ export async function POST(req: Request) {
           : Timestamp.now();
         const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
         const gstAmount = Number(visit.taxAmount) || 0;
-        const grandTotal = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+        const baseGrand = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+        const v = visit as Record<string, unknown>;
+        const exchangeCredit = Math.min(
+          Math.max(0, Number(v.exchangeCreditAmount) || 0),
+          baseGrand
+        );
+        const grandTotal = Math.round(baseGrand - exchangeCredit);
+        const exPriorRaw = v.exchangePriorVisitIndex;
+        const exPrior =
+          exPriorRaw === '' || exPriorRaw == null
+            ? undefined
+            : Number(exPriorRaw);
 
         const existingSaleSnap = await db
           .collection('sales')
@@ -64,7 +77,7 @@ export async function POST(req: Request) {
             ? existingSalesInvoice
             : '';
 
-        const payload = {
+        const payload: Record<string, unknown> = {
           invoiceNumber,
           patientName: String(data.name || data.patientName || 'Patient'),
           phone: String(data.phone || data.mobile || ''),
@@ -90,7 +103,17 @@ export async function POST(req: Request) {
           enquiryId: enquiryDoc.id,
           enquiryVisitIndex: visitIndex,
           updatedAt: FieldValue.serverTimestamp(),
+          ...(exchangeCredit > 0 ? { exchangeCreditInr: exchangeCredit } : {}),
+          ...(typeof exPrior === 'number' && !Number.isNaN(exPrior) && exPrior >= 0
+            ? { exchangePriorVisitIndex: exPrior }
+            : {}),
         };
+
+        if (voidTargets.has(visitIndex)) {
+          payload.cancelled = true;
+          payload.cancelReason = 'Sales return (admin sync)';
+          payload.cancelledAt = FieldValue.serverTimestamp();
+        }
 
         if (existingSaleSnap.empty) {
           await db.collection('sales').add({

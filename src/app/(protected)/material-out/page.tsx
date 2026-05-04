@@ -383,6 +383,7 @@ export default function MaterialOutPage() {
 
       salesSnap.docs.forEach(docSnap => {
         const data: any = docSnap.data();
+        if (data.cancelled === true) return;
         (data.products || []).forEach((p: any) => {
           const productId = p.productId || p.id || '';
           const serialNumber = p.serialNumber || '';

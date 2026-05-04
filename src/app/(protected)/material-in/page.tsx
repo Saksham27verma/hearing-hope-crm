@@ -136,6 +136,59 @@ type SerialChangePair = {
 
 const normalizeSerial = (value: string): string => String(value || '').trim();
 
+/** Resolve catalog product + center from enquiry visits for a sales return line. */
+function matchSoldProductForReturnLine(
+  visits: Record<string, unknown>[],
+  returnVisit: Record<string, unknown>,
+  lineSerial: string
+): { productId: string; resolvedProductName: string; soldFromCenterId: string } | null {
+  const tokens = String(lineSerial || '')
+    .split(/[,;|]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const toScan = tokens.length ? tokens : [String(lineSerial || '').trim()].filter(Boolean);
+  const isSaleVisit = (ov: Record<string, unknown>) =>
+    Boolean(ov?.hearingAidSale || ov?.purchaseFromTrial || ov?.hearingAidStatus === 'sold');
+
+  const tryVisit = (j: number) => {
+    if (j < 0 || j >= visits.length) return null;
+    const ov = visits[j] as Record<string, unknown>;
+    if (!isSaleVisit(ov)) return null;
+    const prods = Array.isArray(ov.products) ? (ov.products as Record<string, unknown>[]) : [];
+    for (const p of prods) {
+      const psn = String(p.serialNumber || '');
+      const pToks = psn
+        .split(/[,;|]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (const tok of toScan) {
+        const hit = pToks.length
+          ? pToks.some((x) => x.toLowerCase() === tok.toLowerCase())
+          : psn.trim().toLowerCase() === tok.toLowerCase();
+        if (hit) {
+          return {
+            productId: String(p.productId || '').trim(),
+            resolvedProductName: String(p.name || '').trim(),
+            soldFromCenterId: String(p.soldFromCenterId || ov.centerId || '').trim(),
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  const origIdx = parseInt(String(returnVisit.returnOriginalSaleVisitId || '').trim(), 10);
+  if (!Number.isNaN(origIdx)) {
+    const r = tryVisit(origIdx);
+    if (r?.productId) return r;
+  }
+  for (let j = 0; j < visits.length; j++) {
+    const r = tryVisit(j);
+    if (r?.productId) return r;
+  }
+  return null;
+}
+
 const collectSerialChanges = (
   beforeProducts: MaterialProduct[],
   afterProducts: MaterialProduct[],
@@ -439,12 +492,12 @@ export default function MaterialInPage() {
       
       snapshot.docs.forEach(enquiryDoc => {
         const enquiryData = enquiryDoc.data();
-        const visits = enquiryData.visits || [];
-        
+        const visits = (enquiryData.visits || []) as Record<string, unknown>[];
         visits.forEach((visit: any, visitIndex: number) => {
           if (!visit.salesReturn) return;
           const lines = expandSalesReturnLinesFromVisit(visit);
           lines.forEach((line) => {
+            const matched = matchSoldProductForReturnLine(visits, visit as Record<string, unknown>, line.serialNumber);
             salesReturnsData.push({
               enquiryId: enquiryDoc.id,
               enquiryName: enquiryData.name || 'Unknown',
@@ -460,6 +513,9 @@ export default function MaterialInPage() {
               notes: visit.returnNotes || '',
               originalSaleDate: visit.returnOriginalSaleDate || '',
               originalSaleVisitId: visit.returnOriginalSaleVisitId || '',
+              productId: matched?.productId || '',
+              resolvedProductName: matched?.resolvedProductName || '',
+              soldFromCenterId: matched?.soldFromCenterId || '',
             });
           });
         });
@@ -496,20 +552,30 @@ export default function MaterialInPage() {
     const dateString = now.toISOString().slice(0, 10).replace(/-/g, '');
     const randomNum = Math.floor(Math.random() * 900) + 100; // 3-digit random number
     const challanNumber = `SR-${dateString}-${randomNum}`;
-    
-    // Find a generic hearing aid product for now
-    // In a real scenario, you'd match the exact product based on serial number
-    const product = products.find(p => 
-      p.type?.toLowerCase().includes('hearing aid') || 
-      p.name.toLowerCase().includes('hearing aid')
-    );
-    
-    // If still no product found, show error
+
+    const pid = String(salesReturn.productId || '').trim();
+    const resolvedName = String(salesReturn.resolvedProductName || '').trim();
+    let product =
+      (pid ? products.find((p) => p.id === pid) : undefined) ||
+      (resolvedName
+        ? products.find((p) => p.name.toLowerCase() === resolvedName.toLowerCase())
+        : undefined) ||
+      products.find(
+        (p) =>
+          p.type?.toLowerCase().includes('hearing aid') ||
+          p.name.toLowerCase().includes('hearing aid')
+      );
+
     if (!product) {
-      setErrorMsg(`No hearing aid product found. Please create a hearing aid product in the Products module first.`);
+      setErrorMsg(
+        `No matching product found for this return. Create the product in Products or record the return from the enquiry with inventory linked.`
+      );
       return;
     }
-    
+
+    const locationId =
+      String(salesReturn.soldFromCenterId || '').trim() || (await getHeadOfficeId());
+
     const materialIn: MaterialInward = {
       challanNumber,
       supplier: { 
@@ -517,7 +583,7 @@ export default function MaterialInPage() {
         name: 'Sales Return'
       },
       company: '',
-      location: await getHeadOfficeId(), // Returns go to Head Office
+      location: locationId,
       products: [{
         productId: product.id,
         name: product.name,

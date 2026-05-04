@@ -498,7 +498,9 @@ const InvoiceManagerPage = () => {
         [field]: template.id,
       }));
       setSuccessMsg(
-        `${getDocumentTypeLabel(template.documentType)} — this template is now used for staff app PDFs (collect payment).`
+        template.documentType === 'payment_acknowledgment'
+          ? `${getDocumentTypeLabel(template.documentType)} — this template is now the default for CRM payment acknowledgment PDFs.`
+          : `${getDocumentTypeLabel(template.documentType)} — this template is now used for staff app PDFs (collect payment).`
       );
     } catch (error) {
       console.error('Error saving staff PDF template:', error);
@@ -548,8 +550,8 @@ const InvoiceManagerPage = () => {
                   Invoice Manager
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
-                  Create and manage templates. For HTML templates, use &quot;Use for staff app PDF&quot; to choose which
-                  design staff PDFs use (booking, trial, salary slip, or invoice).
+                  Create and manage templates. For HTML templates, use &quot;Use for staff app PDF&quot; to pin the default
+                  design for PDFs (booking, trial, payment acknowledgment, salary slip, or invoice) where routing applies.
                 </Typography>
               </Box>
             </Box>
@@ -942,6 +944,35 @@ const InvoiceManagerPage = () => {
                     Edit the trial receipt layout used for trial documents
                   </Typography>
                   <Chip label="Auto-used when marked favorite" color="warning" size="small" />
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Card
+                sx={{
+                  cursor: 'pointer',
+                  border: 2,
+                  borderColor: 'divider',
+                  '&:hover': {
+                    borderColor: 'success.main',
+                    boxShadow: 3,
+                  },
+                }}
+                onClick={() => {
+                  setCreatingDocumentType('payment_acknowledgment');
+                  setTemplateTypeDialogOpen(false);
+                  setHtmlCreatorOpen(true);
+                }}
+              >
+                <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                  <TemplateIcon sx={{ fontSize: 64, color: 'success.main', mb: 2 }} />
+                  <Typography variant="h6" gutterBottom>
+                    Payment acknowledgment template
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    PDF listing all customer payments (date, particulars, amount, mode, reference)
+                  </Typography>
+                  <Chip label="CRM enquiry receipts" color="success" size="small" />
                 </CardContent>
               </Card>
             </Grid>

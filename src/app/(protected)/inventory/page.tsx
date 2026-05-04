@@ -597,6 +597,7 @@ export default function InventoryPage() {
 
         salesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
+          if (data.cancelled === true) return;
           const patientName = data.patientName || 'Unknown patient';
           const location = data.centerId || data.branch || '';
 
@@ -978,11 +979,25 @@ export default function InventoryPage() {
           invoiceNumber?: string;
         }>();
 
-        // Align inventory sold-serial truth with Product Journey:
-        // if a serial has a "sale" event in journey, treat it as sold in inventory too.
+        // Align inventory sold-serial truth with Product Journey: a serial counts as sold from
+        // journey only if the latest relevant event is still a sale (returns / SR material-in clear it).
         const soldFromJourneyOnly = new Set<string>();
+        const journeyClearsSoldState = (e: JourneyEvent) => {
+          if (e.eventType === 'sale-return') return true;
+          if (e.eventType === 'material-in') {
+            const c = String(e.counterparty || '').toLowerCase();
+            return c.includes('sales return');
+          }
+          return false;
+        };
         journeyMap.forEach((events, serialKey) => {
-          if (events.some((e) => e.eventType === 'sale')) {
+          const sorted = [...events].sort((a, b) => a.sortOrder - b.sortOrder);
+          let sold = false;
+          for (const ev of sorted) {
+            if (ev.eventType === 'sale') sold = true;
+            else if (journeyClearsSoldState(ev)) sold = false;
+          }
+          if (sold) {
             const normalized = normalizeSerialNumber(serialKey);
             if (normalized) soldFromJourneyOnly.add(normalized);
           }
@@ -994,6 +1009,7 @@ export default function InventoryPage() {
         // Process sales from sales collection
         salesSnap.docs.forEach((docSnap: any) => {
           const data: any = docSnap.data();
+          if (data.cancelled === true) return;
           const saleProducts: any[] = Array.isArray(data.products)
             ? data.products
             : (Array.isArray(data.items) ? data.items : []);
@@ -1106,6 +1122,63 @@ export default function InventoryPage() {
               });
             }
           });
+        });
+
+        // Serials on a sales return for this enquiry must not stay marked sold from visit mirrors
+        // (the `sales` doc may be voided, but visit rows can still carry the sold device until edited).
+        enquiriesSnap.docs.forEach((docSnap: any) => {
+          const data: any = docSnap.data();
+          const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
+          const stripKeys = new Set<string>();
+          visits.forEach((rv: any) => {
+            if (!rv?.salesReturn) return;
+            expandSalesReturnLinesFromVisit(rv).forEach((line) => {
+              const retTokens = splitSerialCandidates(line.serialNumber);
+              retTokens.forEach((normRet) => {
+                if (!normRet) return;
+                visits.forEach((sv: any) => {
+                  const isSale = !!(
+                    sv?.hearingAidSale ||
+                    sv?.purchaseFromTrial ||
+                    sv?.hearingAidStatus === 'sold' ||
+                    sv?.hearingAidDetails?.hearingAidStatus === 'sold'
+                  );
+                  if (!isSale) return;
+                  const products: any[] = Array.isArray(sv.products)
+                    ? sv.products
+                    : Array.isArray(sv?.hearingAidDetails?.products)
+                      ? sv.hearingAidDetails.products
+                      : [];
+                  products.forEach((prod: any) => {
+                    const productId = prod.productId || prod.id || prod.hearingAidProductId || '';
+                    serialCandidatesFromProduct(prod).forEach((cand) => {
+                      if (normalizeSerialNumber(String(cand)) === normRet) {
+                        stripKeys.add(makeSerialKey(productId, cand));
+                        stripKeys.add(makeSerialKey(productId, normRet));
+                      }
+                    });
+                  });
+                });
+              });
+            });
+          });
+          stripKeys.forEach((k) => {
+            soldSerials.delete(k);
+            soldSerialMetaByKey.delete(k);
+          });
+        });
+
+        const soldNormsFromKeys = new Set<string>();
+        soldSerials.forEach((k) => {
+          const pipe = k.indexOf('|');
+          if (pipe >= 0) soldNormsFromKeys.add(k.slice(pipe + 1));
+        });
+        soldSerialOnly.clear();
+        soldNormsFromKeys.forEach((n) => soldSerialOnly.add(n));
+        soldFromJourneyOnly.forEach((n) => soldSerialOnly.add(n));
+        soldSerialMetaBySerial.clear();
+        soldSerialMetaByKey.forEach((meta) => {
+          soldSerialMetaBySerial.set(meta.serialNumber, meta);
         });
 
         const inventoryRowIsSold = (productId: string, serialKey: string, sn: string): boolean => {

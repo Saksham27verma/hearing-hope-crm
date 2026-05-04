@@ -169,6 +169,7 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
 
   salesSnap.docs.forEach((docSnap) => {
     const data = docSnap.data() as Record<string, unknown>;
+    if (data.cancelled === true) return;
     const products = (data.products as unknown[]) || [];
     products.forEach((prod: unknown) => {
       const p = prod as Record<string, unknown>;
@@ -191,9 +192,76 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     });
   });
 
+  const normalizeSerial = (s: string) =>
+    String(s || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '');
+
   enquiriesSnap.docs.forEach((docSnap) => {
     const data = docSnap.data() as Record<string, unknown>;
     const visits = Array.isArray(data.visits) ? (data.visits as Record<string, unknown>[]) : [];
+
+    /** Serials (per productId) on this enquiry that are covered by a sales return — do not treat as sold. */
+    const returnedSerialsByProduct = new Map<string, Set<string>>();
+    const addReturn = (productId: string, rawSerial: string) => {
+      const pid = String(productId || '').trim();
+      if (!pid) return;
+      const tokens = String(rawSerial || '')
+        .split(/[,;|]+/)
+        .map((x) => normalizeSerial(x))
+        .filter(Boolean);
+      if (!tokens.length) return;
+      if (!returnedSerialsByProduct.has(pid)) returnedSerialsByProduct.set(pid, new Set());
+      const set = returnedSerialsByProduct.get(pid)!;
+      tokens.forEach((t) => set.add(t));
+    };
+
+    visits.forEach((visit) => {
+      if (!visit?.salesReturn) return;
+      const items = visit.salesReturnItems as unknown[] | undefined;
+      const lines: { serialNumber?: string }[] = Array.isArray(items)
+        ? (items as { serialNumber?: string }[])
+        : [];
+      const legacy = String(visit.returnSerialNumber || '').trim();
+      if (lines.length === 0 && legacy) {
+        legacy.split(/[,;|]+/).forEach((part) => {
+          const sn = normalizeSerial(part);
+          if (!sn) return;
+          visits.forEach((sv) => {
+            const prods = Array.isArray(sv.products) ? (sv.products as Record<string, unknown>[]) : [];
+            for (const p of prods) {
+              const ps = String(p.serialNumber || '');
+              if (normalizeSerial(ps) === sn || ps.split(/[,;|]+/).some((x) => normalizeSerial(x) === sn)) {
+                addReturn(String(p.productId || p.id || ''), part.trim());
+              }
+            }
+          });
+        });
+        return;
+      }
+      lines.forEach((line) => {
+        const raw = String(line.serialNumber || '').trim();
+        if (!raw) return;
+        const tokens = raw
+          .split(/[,;|]+/)
+          .map((x) => normalizeSerial(x))
+          .filter(Boolean);
+        if (!tokens.length) return;
+        visits.forEach((sv) => {
+          const prods = Array.isArray(sv.products) ? (sv.products as Record<string, unknown>[]) : [];
+          for (const p of prods) {
+            const pid = String(p.productId || p.id || '').trim();
+            const cands: string[] = [];
+            const ps = String(p.serialNumber || '');
+            ps.split(/[,;|]+/).forEach((x) => cands.push(normalizeSerial(x)));
+            if (ps.trim()) cands.push(normalizeSerial(ps));
+            if (tokens.some((t) => cands.includes(t))) addReturn(pid, raw);
+          }
+        });
+      });
+    });
+
     visits.forEach((visit) => {
       const reserveSale = visit.hearingAidSale && visit.hearingAidProductId;
       const reserveTrialHome =
@@ -205,6 +273,8 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
         const productId = String(visit.hearingAidProductId);
         const sn = String(visit.trialSerialNumber || '');
         if (sn) {
+          const ret = returnedSerialsByProduct.get(productId);
+          if (ret?.has(normalizeSerial(sn))) return;
           if (!soldSerials.has(productId)) soldSerials.set(productId, new Set());
           soldSerials.get(productId)!.add(sn);
         } else {
@@ -216,16 +286,50 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
         const productId = String(visit.hearingAidProductId);
         const sn = String(visit.trialSerialNumber || '');
         if (sn) {
+          const ret = returnedSerialsByProduct.get(productId);
+          if (ret?.has(normalizeSerial(sn))) return;
           if (!soldSerials.has(productId)) soldSerials.set(productId, new Set());
           soldSerials.get(productId)!.add(sn);
         }
         const pid2 = String(visit.secondHearingAidProductId || '').trim();
         const sn2 = String(visit.secondTrialSerialNumber || '').trim();
         if (pid2 && sn2) {
+          const ret2 = returnedSerialsByProduct.get(pid2);
+          if (ret2?.has(normalizeSerial(sn2))) return;
           if (!soldSerials.has(pid2)) soldSerials.set(pid2, new Set());
           soldSerials.get(pid2)!.add(sn2);
         }
       }
+
+      const isSaleVisit = Boolean(
+        visit.hearingAidSale ||
+          visit.purchaseFromTrial ||
+          visit.hearingAidStatus === 'sold'
+      );
+      if (!isSaleVisit) return;
+      const products = Array.isArray(visit.products) ? (visit.products as Record<string, unknown>[]) : [];
+      products.forEach((p) => {
+        const productId = String(p.productId || p.id || '').trim();
+        if (!productId) return;
+        const serialArray: string[] = Array.isArray(p.serialNumbers)
+          ? (p.serialNumbers as string[])
+          : p.serialNumber
+            ? [String(p.serialNumber)]
+            : [];
+        serialArray.forEach((rawSn) => {
+          const tokens = String(rawSn || '')
+            .split(/[,;|]+/)
+            .map((x) => normalizeSerial(x))
+            .filter(Boolean);
+          const toScan = tokens.length ? tokens : [normalizeSerial(String(rawSn || ''))].filter(Boolean);
+          toScan.forEach((normSn) => {
+            const ret = returnedSerialsByProduct.get(productId);
+            if (ret?.has(normSn)) return;
+            if (!soldSerials.has(productId)) soldSerials.set(productId, new Set());
+            soldSerials.get(productId)!.add(rawSn.trim() || normSn);
+          });
+        });
+      });
     });
   });
 

@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- Invoice Manager: set document type to payment_acknowledgment. -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    body {
+      font-family: 'Inter', sans-serif;
+      color: #1a202c;
+      margin: 0;
+      padding: 0;
+      line-height: 1.4;
+      background: #fff;
+    }
+    .receipt-page {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 25px;
+      background: #fff;
+    }
+
+    .brand-red {
+      color: #a80000;
+    }
+    .text-light {
+      color: #4a5568;
+      font-size: 11px;
+    }
+    .text-muted {
+      color: #718096;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .header-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+    }
+    .company-name {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+      text-transform: uppercase;
+      letter-spacing: -0.5px;
+    }
+    .document-type {
+      font-size: 10px;
+      font-weight: 700;
+      color: #a80000;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      border: 1px solid #a80000;
+      padding: 3px 10px;
+      display: inline-block;
+      margin-bottom: 5px;
+    }
+
+    .meta-grid {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+      border-top: 1px solid #edf2f7;
+      padding-top: 15px;
+    }
+    .meta-grid td {
+      vertical-align: top;
+      padding: 0;
+    }
+    .label {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #a0aec0;
+      margin-bottom: 2px;
+    }
+
+    /* Summary strip (mirrors trial stat bar) */
+    .payment-summary-bar {
+      background: #fff5f5;
+      border: 1px solid #fed7d7;
+      padding: 12px;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 15px;
+    }
+    .payment-stat {
+      flex: 1;
+      min-width: 120px;
+      text-align: center;
+      border-right: 1px solid #fed7d7;
+    }
+    .payment-stat:last-child {
+      border-right: none;
+    }
+    .stat-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      color: #c53030;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .stat-val {
+      font-size: 14px;
+      font-weight: 700;
+      color: #1a202c;
+      display: block;
+      margin-top: 2px;
+    }
+    .stat-val-accent {
+      color: #a80000;
+    }
+
+    .ledger-shell {
+      border: 1px solid #edf2f7;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 15px;
+    }
+    .ledger-header {
+      background: #f9fafb;
+      padding: 6px 15px;
+      border-bottom: 1px solid #edf2f7;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #4a5568;
+    }
+    .ledger-body {
+      padding: 0;
+    }
+
+    .protocol-box {
+      margin-top: 10px;
+    }
+    .protocol-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #a80000;
+      margin-bottom: 5px;
+    }
+    .protocol-text {
+      font-size: 11px;
+      color: #4a5568;
+      line-height: 1.5;
+    }
+
+    .terms-footer {
+      margin-top: 20px;
+      font-size: 9px;
+      color: #a0aec0;
+      border-top: 1px dashed #edf2f7;
+      padding-top: 10px;
+      text-align: center;
+    }
+    .digital-disclaimer {
+      font-size: 9px;
+      color: #a0aec0;
+      margin-top: 8px;
+      font-style: italic;
+      font-weight: 500;
+    }
+    .footer-watermark {
+      letter-spacing: 1px;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-top: 10px;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt-page">
+    <table class="header-table">
+      <tr>
+        <td width="65%">
+          <img src="{{LOGO_PLACEHOLDER}}" style="width: 110px; margin-bottom: 5px" alt="Logo" /><br />
+          <h1 class="company-name brand-red">HOPE DIGITAL INNOVATIONS PVT LTD</h1>
+          <div class="text-light">
+            G-14, Ground Floor, King Mall, Rohini, Delhi - 85<br />
+            <strong>Contact:</strong> 9711871169 | <strong>Web:</strong> hearinghope.in
+          </div>
+        </td>
+        <td width="35%" style="text-align: right; vertical-align: top">
+          <div class="document-type">{{DOCUMENT_TITLE}}</div>
+          <div style="font-size: 12px; margin-top: 5px; line-height: 1.6">
+            <span class="text-muted">Statement date</span> <strong>{{STATEMENT_DATE}}</strong><br />
+            <span class="text-muted">Document no.</span> <strong>{{DOCUMENT_NUMBER}}</strong><br />
+            <span class="text-muted">Center</span> <strong>{{CENTER_NAME}}</strong>
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <table class="meta-grid">
+      <tr>
+        <td>
+          <div class="label">Customer / patient</div>
+          <div style="font-weight: 700; font-size: 14px">{{PATIENT_NAME}}</div>
+          <div class="text-light">
+            {{PATIENT_ADDRESS}}<br />
+            <strong>Phone:</strong> {{PATIENT_PHONE}}<br />
+            <strong>Email:</strong> {{PATIENT_EMAIL}}
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <div class="payment-summary-bar">
+      <div class="payment-stat">
+        <span class="stat-label">Ledger lines</span>
+        <span class="stat-val">{{LINE_COUNT}}</span>
+      </div>
+      <div class="payment-stat">
+        <span class="stat-label">Total received</span>
+        <span class="stat-val stat-val-accent">{{TOTAL_PAID}}</span>
+      </div>
+      <div class="payment-stat">
+        <span class="stat-label">Document</span>
+        <span class="stat-val" style="font-size: 12px">{{DOCUMENT_NUMBER}}</span>
+      </div>
+    </div>
+
+    <div class="ledger-shell">
+      <div class="ledger-header">Payment ledger</div>
+      <div class="ledger-body">{{PAYMENTS_TABLE_HTML}}</div>
+    </div>
+
+    <div class="protocol-box">
+      <div class="protocol-title">Terms &amp; acknowledgment</div>
+      <div class="protocol-text">{{TERMS_TEXT}}</div>
+    </div>
+
+    <div class="terms-footer">
+      <div style="margin-bottom: 10px; text-align: left">{{FOOTER_TEXT}}</div>
+      <div style="text-align: center; margin: 12px 0">{{SIGNATURE_PLACEHOLDER}}</div>
+      <div class="digital-disclaimer">
+        This is a computer-generated statement; it does not require a physical signature unless separately attested by
+        the center.
+      </div>
+      <div class="footer-watermark">Payment acknowledgment / customer copy</div>
+    </div>
+  </div>
+</body>
+</html>

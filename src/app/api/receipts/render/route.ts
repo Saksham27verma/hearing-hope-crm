@@ -6,14 +6,17 @@ import {
 import { renderHtmlToPdfBuffer } from '@/server/htmlToPdfBuffer';
 import {
   buildBookingReceiptData,
+  buildPaymentAcknowledgmentData,
   buildTrialReceiptData,
   type EnquiryLike,
   type VisitLike,
 } from '@/utils/receiptDataBuilders';
 import {
   buildBookingReceiptHtmlString,
+  buildPaymentAcknowledgmentHtmlString,
   buildTrialReceiptHtmlString,
 } from '@/utils/receiptTemplateHtml';
+import { getEnquiryPaymentLedgerLines } from '@/utils/enquiryPaymentLedger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -41,13 +44,15 @@ ${inner}
 }
 
 type RenderReceiptBody = {
-  receiptType: 'booking' | 'trial';
+  receiptType: 'booking' | 'trial' | 'payment_acknowledgment';
   enquiry: Record<string, unknown>;
-  visit: Record<string, unknown>;
+  visit?: Record<string, unknown>;
   options?: {
     receiptNumber?: string;
     centerName?: string;
     paymentMode?: string;
+    documentNumber?: string;
+    statementDate?: string;
   };
 };
 
@@ -55,13 +60,48 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as RenderReceiptBody;
     const receiptType = body?.receiptType;
-    if (receiptType !== 'booking' && receiptType !== 'trial') {
-      return NextResponse.json({ ok: false, error: 'receiptType must be booking or trial' }, { status: 400 });
+    if (receiptType !== 'booking' && receiptType !== 'trial' && receiptType !== 'payment_acknowledgment') {
+      return NextResponse.json(
+        { ok: false, error: 'receiptType must be booking, trial, or payment_acknowledgment' },
+        { status: 400 }
+      );
     }
     const enquiry = (body?.enquiry || {}) as EnquiryLike;
     const visit = (body?.visit || {}) as VisitLike;
     const opts = body?.options || {};
     const origin = publicSiteOrigin();
+
+    if (receiptType === 'payment_acknowledgment') {
+      const lines = getEnquiryPaymentLedgerLines(body?.enquiry as Record<string, unknown>);
+      if (lines.length === 0) {
+        return NextResponse.json({ ok: false, error: 'No payments recorded for this enquiry.' }, { status: 400 });
+      }
+      const template = await getResolvedHtmlTemplateAdmin('payment_acknowledgment');
+      if (!template?.htmlContent) {
+        return NextResponse.json(
+          { ok: false, error: 'payment_acknowledgment HTML template is required in Invoice Manager.' },
+          { status: 422 }
+        );
+      }
+      const centerName =
+        opts.centerName !== undefined && String(opts.centerName).trim() !== ''
+          ? String(opts.centerName)
+          : undefined;
+      const data = buildPaymentAcknowledgmentData(enquiry, {
+        documentNumber: opts.documentNumber,
+        centerName,
+        statementDate: opts.statementDate,
+      });
+      const inner = buildPaymentAcknowledgmentHtmlString(template, data, { logoPublicOrigin: origin });
+      const buffer = await renderHtmlToPdfBuffer(wrapFragmentInDocument(inner));
+      return new NextResponse(buffer, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="payment-acknowledgment.pdf"`,
+        },
+      });
+    }
 
     if (receiptType === 'booking') {
       const template = await getResolvedHtmlTemplateAdmin('booking_receipt');
