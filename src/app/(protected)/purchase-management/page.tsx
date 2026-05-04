@@ -32,6 +32,7 @@ import {
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
+import { stripSerialPairsFromProductLines } from '@/utils/stripSerialPairsForFirestore';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -520,6 +521,7 @@ export default function PurchaseManagement() {
         const purchaseRef = doc(db, 'purchases', currentPurchase.id);
         await updateDoc(purchaseRef, {
           ...purchaseData,
+          products: stripSerialPairsFromProductLines(purchaseData.products),
           updatedAt: serverTimestamp()
         });
         void logActivity(db, userProfile, userProfile?.centerId, {
@@ -547,6 +549,7 @@ export default function PurchaseManagement() {
         // Add new purchase
         const newPurchaseData = {
           ...purchaseData,
+          products: stripSerialPairsFromProductLines(purchaseData.products),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         };

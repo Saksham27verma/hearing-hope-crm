@@ -67,6 +67,7 @@ import MaterialInForm from '@/components/material-in/MaterialInForm';
 import MaterialInPreviewDialog from '@/components/material-in/MaterialInPreviewDialog';
 import ConvertToPurchaseDialog from '@/components/material-in/ConvertToPurchaseDialog';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
+import { stripSerialPairsFromProductLines } from '@/utils/stripSerialPairsForFirestore';
 
 // Types
 interface Product {
@@ -803,6 +804,7 @@ export default function MaterialInPage() {
         const materialRef = doc(db, 'materialInward', currentMaterial.id);
         await updateDoc(materialRef, {
           ...materialData,
+          products: stripSerialPairsFromProductLines(materialData.products),
           updatedAt: serverTimestamp()
         });
         void logActivity(db, userProfile, userProfile?.centerId, {
@@ -826,6 +828,7 @@ export default function MaterialInPage() {
         // Add new material
         const newMaterialData = {
           ...materialData,
+          products: stripSerialPairsFromProductLines(materialData.products),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         };
