@@ -1,5 +1,6 @@
 import { adminDb } from '@/server/firebaseAdmin';
 import { effectiveGstPercentFromCatalogData } from '@/server/staffEnquiryCatalogHelpers';
+import { loadStaffTrialCustodySerialsByProduct } from '@/server/staffTrialCustody';
 
 export type StaffInventoryRow = {
   lineId: string;
@@ -30,6 +31,7 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     salesSnap,
     enquiriesSnap,
     stockTransfersSnap,
+    staffTrialCustodyByProduct,
   ] = await Promise.all([
     db.collection('products').get(),
     db.collection('materialInward').get(),
@@ -38,6 +40,7 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     db.collection('sales').get(),
     db.collection('enquiries').get(),
     db.collection('stockTransfers').orderBy('createdAt', 'asc').get(),
+    loadStaffTrialCustodySerialsByProduct(db),
   ]);
 
   const productById = new Map<string, Record<string, unknown>>();
@@ -342,10 +345,12 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     const inSerials = serialsInByProduct.get(productId) || new Set<string>();
     const outSerials = serialsOutByProduct.get(productId) || new Set<string>();
     const sold = soldSerials.get(productId) || new Set<string>();
+    const staffCustody = staffTrialCustodyByProduct.get(productId) || new Set<string>();
 
     const available = new Set(inSerials);
     outSerials.forEach((sn) => available.delete(sn));
     sold.forEach((sn) => available.delete(sn));
+    staffCustody.forEach((sn) => available.delete(sn));
 
     const name = String(product.name || '');
     const company = String(product.company || '');

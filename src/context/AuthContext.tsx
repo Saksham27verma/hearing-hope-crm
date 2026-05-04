@@ -669,6 +669,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Module keys that staff can access (aligned with layout staffAllowedModules)
   const STAFF_ALLOWED_MODULE_KEYS = [
     'dashboard', 'products', 'sales', 'interaction', 'stock transfer', 'inventory',
+    'staff stock assign', 'staff trial stock', 'trial custody', 'staff trial',
     'materials', 'deliveries', 'material in', 'material out', 'cash register',
     'appointment scheduler', 'appointments',
   ];

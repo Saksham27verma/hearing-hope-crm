@@ -103,7 +103,7 @@ interface InventoryItem {
   company: string;
   originalProductCompany?: string; // Original product company from products collection
   location: string;
-  status: 'In Stock' | 'Sold' | 'Reserved' | 'Damaged';
+  status: 'In Stock' | 'Sold' | 'Reserved' | 'Damaged' | 'Staff assign';
   dealerPrice: number;
   mrp: number;
   purchaseDate: any;
@@ -425,6 +425,7 @@ export default function InventoryPage() {
           salesRes,
           enquiriesRes,
           stockTransfersRes,
+          staffTrialCustodyRes,
         ] = await Promise.allSettled([
           getDocs(collection(db, 'products')),
           getDocs(collection(db, 'materialInward')),
@@ -437,6 +438,7 @@ export default function InventoryPage() {
           // chronological order even when transferDate ties for transfers
           // created in the same browser session.
           getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
+          getDocs(collection(db, 'staffTrialCustody')),
         ]);
 
         const toDocs = (res: PromiseSettledResult<any>, label: string) => {
@@ -452,6 +454,7 @@ export default function InventoryPage() {
         const salesSnap = toDocs(salesRes, 'sales');
         const enquiriesSnap = toDocs(enquiriesRes, 'enquiries');
         const stockTransfersSnap = toDocs(stockTransfersRes, 'stockTransfers');
+        const staffTrialCustodySnap = toDocs(staffTrialCustodyRes, 'staffTrialCustody');
 
         // Products map
         const productsList = productsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() as any) }));
@@ -1168,6 +1171,19 @@ export default function InventoryPage() {
           });
         });
 
+        // Staff trial custody: show as "Staff assign" in inventory (not sold); still excluded from sale/trial pickers server-side.
+        const staffAssignSerialKeys = new Set<string>();
+        staffTrialCustodySnap.docs.forEach((docSnap: any) => {
+          const data: any = docSnap.data();
+          const productId = String(data.productId || '').trim();
+          const serials: string[] = Array.isArray(data.serialNumbers)
+            ? data.serialNumbers.map((x: unknown) => String(x || '').trim()).filter(Boolean)
+            : [];
+          serials.forEach((sn: string) => {
+            staffAssignSerialKeys.add(makeSerialKey(productId, sn));
+          });
+        });
+
         const soldNormsFromKeys = new Set<string>();
         soldSerials.forEach((k) => {
           const pipe = k.indexOf('|');
@@ -1306,7 +1322,14 @@ export default function InventoryPage() {
               
               // Determine status based on sales / pending out
               const isReserved = pendingOutSerials.has(key);
-              const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
+              const isStaffAssign = staffAssignSerialKeys.has(key);
+              const status: InventoryItem['status'] = isSold
+                ? 'Sold'
+                : isStaffAssign
+                  ? 'Staff assign'
+                  : isReserved
+                    ? 'Reserved'
+                    : 'In Stock';
               
               incomingMap.set(key, {
                 // Stable unique id per product+serial (avoids collisions across products in same challan)
@@ -1382,7 +1405,14 @@ export default function InventoryPage() {
               
               // Determine status based on sales / pending out
               const isReserved = pendingOutSerials.has(key);
-              const status: InventoryItem['status'] = isSold ? 'Sold' : (isReserved ? 'Reserved' : 'In Stock');
+              const isStaffAssign = staffAssignSerialKeys.has(key);
+              const status: InventoryItem['status'] = isSold
+                ? 'Sold'
+                : isStaffAssign
+                  ? 'Staff assign'
+                  : isReserved
+                    ? 'Reserved'
+                    : 'In Stock';
               
               incomingMap.set(key, {
                 // Same stable id strategy for purchases
@@ -1534,7 +1564,7 @@ export default function InventoryPage() {
         incomingMap.forEach((itm, k) => {
           const normalizedSerial = normalizeSerialNumber(String(itm.serialNumber || ''));
           if (!normalizedSerial) return;
-          if (soldSerialOnly.has(normalizedSerial) && itm.status !== 'Sold') {
+          if (soldSerialOnly.has(normalizedSerial) && itm.status !== 'Sold' && itm.status !== 'Staff assign') {
             incomingMap.set(k, { ...itm, status: 'Sold' });
           }
         });
@@ -2085,6 +2115,8 @@ export default function InventoryPage() {
         return 'info';
       case 'Damaged':
         return 'error';
+      case 'Staff assign':
+        return 'secondary';
       default:
         return 'default';
     }
@@ -2686,7 +2718,7 @@ export default function InventoryPage() {
     if (!selectedPairProductId) return [];
     const rows = inventory.filter((item) => {
       if (selectedPairProductId !== '__all__' && item.productId !== selectedPairProductId) return false;
-      if (item.status === 'Sold' || item.status === 'Damaged') return false;
+      if (item.status === 'Sold' || item.status === 'Damaged' || item.status === 'Staff assign') return false;
       return (item.serialNumbers?.length || 0) > 0 || !!item.serialNumber;
     });
 
@@ -3139,6 +3171,12 @@ export default function InventoryPage() {
           </Box>
           <Box display="flex" gap={0.75} alignItems="center" flexWrap="wrap">
             <Chip size="small" label={`In ${commandFilteredInventory.filter((i) => i.status === 'In Stock').length}`} />
+            <Chip
+              size="small"
+              color="secondary"
+              variant="outlined"
+              label={`Staff ${commandFilteredInventory.filter((i) => i.status === 'Staff assign').length}`}
+            />
             <Chip size="small" color="warning" variant="outlined" label={`Sold ${commandFilteredInventory.filter((i) => i.status === 'Sold').length}`} />
             <Chip size="small" color="error" variant="outlined" label={`Damaged ${commandFilteredInventory.filter((i) => i.status === 'Damaged').length}`} />
             <Button size="small" variant="text" startIcon={<RefreshIcon />} onClick={handleRefreshData}>Refresh</Button>
@@ -3250,7 +3288,19 @@ export default function InventoryPage() {
                       <Typography variant="caption" color="text.secondary">→</Typography>
                       <Chip size="small" label={`Stocked (${getCenterName(item.location)})`} color="primary" variant="outlined" />
                       <Typography variant="caption" color="text.secondary">→</Typography>
-                      <Chip size="small" label={item.status === 'Sold' ? 'Sold/Delivered' : 'Active'} color={item.status === 'Sold' ? 'warning' : 'success'} />
+                      <Chip
+                        size="small"
+                        label={
+                          item.status === 'Sold'
+                            ? 'Sold/Delivered'
+                            : item.status === 'Staff assign'
+                              ? 'Staff assign'
+                              : 'Active'
+                        }
+                        color={
+                          item.status === 'Sold' ? 'warning' : item.status === 'Staff assign' ? 'secondary' : 'success'
+                        }
+                      />
                     </Box>
                   </TableCell>
                   <TableCell align="right">
@@ -3985,7 +4035,7 @@ export default function InventoryPage() {
 
         {/* Filter Row */}
         <Box display="flex" gap={0.75} flexWrap="wrap" mb={1.25}>
-          {['', 'In Stock', 'Sold', 'Damaged'].map((status) => (
+          {['', 'In Stock', 'Staff assign', 'Sold', 'Damaged'].map((status) => (
             <Chip
               key={status || 'all'}
               size="small"
@@ -4024,6 +4074,12 @@ export default function InventoryPage() {
                   <Box display="flex" alignItems="center">
                     <CheckCircleIcon color="success" sx={{ mr: 1 }} />
                     In Stock
+                  </Box>
+                </MenuItem>
+                <MenuItem value="Staff assign">
+                  <Box display="flex" alignItems="center">
+                    <AssignmentIcon color="secondary" sx={{ mr: 1 }} />
+                    Staff assign
                   </Box>
                 </MenuItem>
                 {!isRestrictedUser && (
@@ -4291,6 +4347,19 @@ export default function InventoryPage() {
                                 : alpha(t.palette.warning.main, 0.14),
                           },
                         }),
+                        ...(item.status === 'Staff assign' && {
+                          bgcolor:
+                            t.palette.mode === 'dark'
+                              ? alpha(t.palette.secondary.main, 0.14)
+                              : alpha(t.palette.secondary.main, 0.08),
+                          borderLeft: `3px solid ${alpha(t.palette.secondary.main, 0.85)}`,
+                          '&:hover': {
+                            bgcolor:
+                              t.palette.mode === 'dark'
+                                ? alpha(t.palette.secondary.main, 0.22)
+                                : alpha(t.palette.secondary.main, 0.12),
+                          },
+                        }),
                       })}
                     >
                       <TableCell sx={{ py: 1.25 }}>
@@ -4382,7 +4451,16 @@ export default function InventoryPage() {
                             const isStock = item.status === 'In Stock';
                             const isSold = item.status === 'Sold';
                             const isDamaged = item.status === 'Damaged';
-                            const tone = isStock ? t.palette.success.main : isSold ? t.palette.warning.main : isDamaged ? t.palette.error.main : t.palette.info.main;
+                            const isStaffAssign = item.status === 'Staff assign';
+                            const tone = isStock
+                              ? t.palette.success.main
+                              : isSold
+                                ? t.palette.warning.main
+                                : isStaffAssign
+                                  ? t.palette.secondary.main
+                                  : isDamaged
+                                    ? t.palette.error.main
+                                    : t.palette.info.main;
                             return {
                               display: 'inline-flex',
                               alignItems: 'center',
@@ -4540,7 +4618,7 @@ export default function InventoryPage() {
           <Divider sx={{ my: 1.25 }} />
           <Typography variant="caption" color="text.secondary">Status</Typography>
           <Box display="flex" flexWrap="wrap" gap={0.75} mt={0.5} mb={1.5}>
-            {['In Stock', 'Sold', 'Damaged', 'Reserved'].map((status) => (
+            {['In Stock', 'Staff assign', 'Sold', 'Damaged', 'Reserved'].map((status) => (
               <Chip
                 key={status}
                 size="small"

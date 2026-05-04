@@ -194,4 +194,21 @@
  * @field transactionDate - Date of the transaction
  * @field createdBy - User who recorded the transaction
  * @field createdAt - Timestamp when the transaction was recorded
- */ 
+ */
+
+// Collection: staffTrialCustody
+/**
+ * @collection staffTrialCustody
+ * @description Serial-tracked trial units issued to staff (custody ledger). Document id is deterministic (stc_ + sha256).
+ * @field productId - Firestore products/{id}
+ * @field serialNumbers - One or two serial strings (pair products use two)
+ * @field staffId - Firestore staff/{id} (holder)
+ * @field staffName - Denormalized holder name
+ * @field centerId - Optional issuing center (centers doc id)
+ * @field assignedAt - ms epoch when first assigned
+ * @field updatedAt - ms epoch on last change
+ * @field assignedByUid - CRM users/{uid} who created the row
+ * @field notes - Optional free text
+ * @field transferHistory - Optional capped array of assign/transfer events
+ * @field createdAt - serverTimestamp (optional)
+ */

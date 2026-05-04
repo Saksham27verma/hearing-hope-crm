@@ -1,4 +1,5 @@
 import { adminDb } from '@/server/firebaseAdmin';
+import { loadStaffTrialCustodySerialsByProduct } from '@/server/staffTrialCustody';
 import type { HopeAICitation } from '../types';
 import { extractQueryTokens, normalizeText, rankCitations, summarizeForCitation } from '../utils';
 
@@ -21,14 +22,16 @@ export async function retrieveProducts(query: string): Promise<{ citations: Hope
   const db = adminDb();
   const tokens = extractQueryTokens(query);
 
-  const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap] = await Promise.all([
-    db.collection('products').get(),
-    db.collection('materialInward').get(),
-    db.collection('purchases').get(),
-    db.collection('materialsOut').get(),
-    db.collection('sales').get(),
-    db.collection('enquiries').get(),
-  ]);
+  const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, staffTrialCustodyByProduct] =
+    await Promise.all([
+      db.collection('products').get(),
+      db.collection('materialInward').get(),
+      db.collection('purchases').get(),
+      db.collection('materialsOut').get(),
+      db.collection('sales').get(),
+      db.collection('enquiries').get(),
+      loadStaffTrialCustodySerialsByProduct(db),
+    ]);
 
   const productById = new Map<string, any>();
   productsSnap.docs.forEach(d => productById.set(d.id, { id: d.id, ...d.data() }));
@@ -167,6 +170,7 @@ export async function retrieveProducts(query: string): Promise<{ citations: Hope
     const inSerials = serialsInByProduct.get(productId) || new Set<string>();
     const outSerials = serialsOutByProduct.get(productId) || new Set<string>();
     const sold = soldSerials.get(productId) || new Set<string>();
+    const staffCustody = staffTrialCustodyByProduct.get(productId) || new Set<string>();
 
     let currentStock: number;
     let serialsInStock: string[] = [];
@@ -175,6 +179,7 @@ export async function retrieveProducts(query: string): Promise<{ citations: Hope
       const available = new Set(inSerials);
       outSerials.forEach(sn => available.delete(sn));
       sold.forEach(sn => available.delete(sn));
+      staffCustody.forEach(sn => available.delete(sn));
       serialsInStock = Array.from(available);
       currentStock = serialsInStock.length;
     } else {

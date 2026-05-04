@@ -57,6 +57,7 @@ export async function POST(req: Request) {
         'dashboard',
         'products',
         'inventory',
+        'staff stock assign',
         'purchases',
         'materials',
         'deliveries',

@@ -1490,7 +1490,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const headOfficeId = await getHeadOfficeId();
         
         // Get data from multiple collections (same as material-out page)
-        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, centersSnap, stockTransfersSnap, pairOverridesSnap] =
+        const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, centersSnap, stockTransfersSnap, pairOverridesSnap, staffTrialCustodySnap] =
           await Promise.all([
             getDocs(collection(db, 'products')),
             getDocs(collection(db, 'materialInward')),
@@ -1501,6 +1501,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             getDocs(collection(db, 'centers')),
             getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
             getDocs(collection(db, 'inventoryPairOverrides')),
+            getDocs(collection(db, 'staffTrialCustody')),
           ]);
 
         console.log(
@@ -1728,6 +1729,21 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 qtyByProductLoc[toKey] = (qtyByProductLoc[toKey] || 0) + qty;
               }
             }
+          });
+        });
+
+        staffTrialCustodySnap.docs.forEach((custodyDoc) => {
+          const c = custodyDoc.data() as { productId?: string; serialNumbers?: unknown };
+          const productId = String(c.productId || '').trim();
+          const sns: string[] = Array.isArray(c.serialNumbers)
+            ? c.serialNumbers.map((x) => String(x || '').trim()).filter(Boolean)
+            : [];
+          if (!productId || sns.length === 0) return;
+          Object.keys(serialsByProductLoc).forEach((plKey) => {
+            const { productId: plPid } = splitProductLocationKey(plKey);
+            if (plPid !== productId) return;
+            const set = serialsByProductLoc[plKey];
+            sns.forEach((sn) => set.delete(sn));
           });
         });
 

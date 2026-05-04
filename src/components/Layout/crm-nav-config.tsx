@@ -25,6 +25,7 @@ import {
   TrendingUp,
   Activity,
   Wallet,
+  PackageSearch,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -46,6 +47,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { text: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
   { text: 'Products', path: '/products', icon: Headphones },
   { text: 'Inventory', path: '/inventory', icon: Package },
+  { text: 'Staff stock assign', path: '/staff-stock-assign', icon: PackageSearch },
   { text: 'Purchases', path: '/purchase-management', icon: ShoppingCart },
   { text: 'Material In', path: '/material-in', icon: ArrowDownToLine },
   { text: 'Material Out', path: '/material-out', icon: ArrowUpFromLine },
@@ -93,6 +95,12 @@ export const NAV_ITEM_ACCESS_KEYS: Record<string, string[]> = {
   Dashboard: ['dashboard'],
   Products: ['products'],
   Inventory: ['inventory'],
+  'Staff stock assign': [
+    'staff stock assign',
+    'staff trial stock',
+    'trial custody',
+    'staff trial',
+  ],
   Purchases: ['purchases'],
   'Material In': ['materials', 'material in'],
   'Material Out': ['deliveries', 'material out'],
@@ -121,6 +129,7 @@ export const CRM_MODULE_ACCESS_OPTIONS: { key: string; label: string }[] = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'products', label: 'Products' },
   { key: 'inventory', label: 'Inventory' },
+  { key: 'staff stock assign', label: 'Staff stock assign' },
   { key: 'purchases', label: 'Purchases' },
   { key: 'materials', label: 'Material In' },
   { key: 'deliveries', label: 'Material Out' },
@@ -164,6 +173,7 @@ export const STAFF_ALLOWED_MODULES = [
   'Material In',
   'Material Out',
   'Inventory',
+  'Staff stock assign',
 ] as const;
 
 export const AUDIOLOGIST_ALLOWED_MODULES = [
