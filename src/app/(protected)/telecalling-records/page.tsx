@@ -140,6 +140,8 @@ interface TelecallingRecord {
   hotEnquiry: boolean;
   journeyChipColor: EnquiryStatusChipColor;
   journeySource: 'manual' | 'auto';
+  /** Firestore `centers` doc id from enquiry `visitingCenter` / `center` */
+  centerId?: string;
   centerLabel?: string;
   /** Total follow-up rows on this enquiry (for context) */
   totalFollowUpsOnEnquiry: number;
@@ -254,6 +256,7 @@ export default function TelecallingRecordsPage() {
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTelecaller, setSelectedTelecaller] = useState('');
+  const [selectedCenter, setSelectedCenter] = useState('');
   const [selectedReferences, setSelectedReferences] = useState<string[]>([]);
   const [selectedJourneys, setSelectedJourneys] = useState<string[]>([]);
   const [followUpDateFrom, setFollowUpDateFrom] = useState<Date | null>(null);
@@ -270,6 +273,7 @@ export default function TelecallingRecordsPage() {
   useEffect(() => {
     const quick = (searchParams.get('quickFilter') || '').trim();
     const telecaller = (searchParams.get('telecaller') || '').trim();
+    const center = (searchParams.get('center') || '').trim();
     const validQuickFilters = new Set([
       '',
       'hot_enquiries',
@@ -292,6 +296,9 @@ export default function TelecallingRecordsPage() {
     }
     if (telecaller) {
       setSelectedTelecaller(telecaller);
+    }
+    if (center) {
+      setSelectedCenter(center);
     }
   }, [searchParams]);
 
@@ -392,6 +399,7 @@ export default function TelecallingRecordsPage() {
                 hotEnquiry: enquiryData.hotEnquiry === true,
             journeyChipColor: statusMeta.color,
             journeySource: statusMeta.source,
+            centerId: centerId || undefined,
             centerLabel,
             totalFollowUpsOnEnquiry: totalFu,
           };
@@ -508,6 +516,18 @@ export default function TelecallingRecordsPage() {
     });
     return [...journeys].sort((a, b) => a.localeCompare(b));
   }, [records]);
+  const uniqueCenterIds = useMemo(() => {
+    const ids = new Set<string>();
+    records.forEach((record) => {
+      const id = (record.centerId || '').trim();
+      if (id) ids.add(id);
+    });
+    return [...ids].sort((a, b) => {
+      const na = (centerIdToName[a] || a).toLowerCase();
+      const nb = (centerIdToName[b] || b).toLowerCase();
+      return na.localeCompare(nb);
+    });
+  }, [records, centerIdToName]);
 
   // Quick filter functions
   const getDateRange = (filterType: string) => {
@@ -595,6 +615,9 @@ export default function TelecallingRecordsPage() {
     if (selectedTelecaller) {
       filtered = filtered.filter(record => record.telecaller === selectedTelecaller);
     }
+    if (selectedCenter) {
+      filtered = filtered.filter((record) => (record.centerId || '').trim() === selectedCenter);
+    }
     if (selectedReferences.length > 0) {
       const selected = new Set(selectedReferences.map((r) => r.toLowerCase()));
       filtered = filtered.filter((record) =>
@@ -646,12 +669,13 @@ export default function TelecallingRecordsPage() {
 
     setFilteredRecords(filtered);
     setPage(0); // Reset to first page when filters change
-  }, [records, searchTerm, selectedTelecaller, selectedReferences, selectedJourneys, quickFilter, followUpDateFrom, followUpDateTo, nextFollowUpDateFrom, nextFollowUpDateTo]);
+  }, [records, searchTerm, selectedTelecaller, selectedCenter, selectedReferences, selectedJourneys, quickFilter, followUpDateFrom, followUpDateTo, nextFollowUpDateFrom, nextFollowUpDateTo]);
 
   // Clear all filters
   const clearFilters = () => {
     setSearchTerm('');
     setSelectedTelecaller('');
+    setSelectedCenter('');
     setSelectedReferences([]);
     setSelectedJourneys([]);
     setQuickFilter('');
@@ -713,6 +737,7 @@ export default function TelecallingRecordsPage() {
         journeyLabel: statusMeta.label,
         journeyChipColor: statusMeta.color,
         journeySource: statusMeta.source,
+        centerId: centerId || undefined,
         centerLabel,
         totalFollowUpsOnEnquiry: updated.length,
         followUpId: followUpData.id,
@@ -1054,6 +1079,7 @@ export default function TelecallingRecordsPage() {
                 disabled={
                   !searchTerm &&
                   !selectedTelecaller &&
+                  !selectedCenter &&
                   selectedReferences.length === 0 &&
                   selectedJourneys.length === 0 &&
                   !quickFilter &&
@@ -1101,6 +1127,24 @@ export default function TelecallingRecordsPage() {
                     {uniqueTelecallers.map((telecaller) => (
                       <MenuItem key={telecaller} value={telecaller}>
                         {telecaller}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={3}>
+                <FormControl fullWidth>
+                  <InputLabel>Center</InputLabel>
+                  <Select
+                    value={selectedCenter}
+                    onChange={(e) => setSelectedCenter(e.target.value)}
+                    label="Center"
+                  >
+                    <MenuItem value="">All Centers</MenuItem>
+                    {uniqueCenterIds.map((cid) => (
+                      <MenuItem key={cid} value={cid}>
+                        {centerIdToName[cid] || cid}
                       </MenuItem>
                     ))}
                   </Select>
