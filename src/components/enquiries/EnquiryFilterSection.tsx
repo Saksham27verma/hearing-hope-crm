@@ -751,8 +751,8 @@ export default function EnquiryFilterSection({
         bgcolor: 'background.paper',
         border: 1,
         borderColor: 'divider',
-        borderRadius: 2,
-        boxShadow: isDark ? 'none' : '0 1px 2px rgba(60,64,67,0.08)',
+        borderRadius: 3,
+        boxShadow: isDark ? '0 1px 10px rgba(0,0,0,0.25)' : '0 8px 22px rgba(15,23,42,0.05)',
       }}
     >
       <Box
@@ -811,34 +811,44 @@ export default function EnquiryFilterSection({
         </Tooltip>
       </Box>
 
-      <TextField
-        fullWidth
-        size="small"
-        placeholder="Search name, phone, email, reference, notes, message, address…"
-        value={filters.searchTerm ?? searchTerm}
-        onChange={e => updateFilter('searchTerm', e.target.value)}
+      <Box
         sx={{
           mb: 1.5,
-          '& .MuiOutlinedInput-root': {
-            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
-            borderRadius: 1.5,
-          },
+          p: 1,
+          border: '1px solid',
+          borderColor: 'divider',
+          borderRadius: 2.25,
+          bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.03) : alpha(t.palette.primary.main, 0.02)),
         }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <SearchIcon fontSize="small" color="action" />
-            </InputAdornment>
-          ),
-          endAdornment: (filters.searchTerm || searchTerm) ? (
-            <InputAdornment position="end">
-              <IconButton size="small" onClick={() => updateFilter('searchTerm', '')} edge="end">
-                <ClearIcon fontSize="small" />
-              </IconButton>
-            </InputAdornment>
-          ) : null,
-        }}
-      />
+      >
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Search name, phone, email, reference, notes, message, address…"
+          value={filters.searchTerm ?? searchTerm}
+          onChange={e => updateFilter('searchTerm', e.target.value)}
+          sx={{
+            '& .MuiOutlinedInput-root': {
+              bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+              borderRadius: 1.75,
+            },
+          }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" color="action" />
+              </InputAdornment>
+            ),
+            endAdornment: (filters.searchTerm || searchTerm) ? (
+              <InputAdornment position="end">
+                <IconButton size="small" onClick={() => updateFilter('searchTerm', '')} edge="end">
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </InputAdornment>
+            ) : null,
+          }}
+        />
+      </Box>
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2, alignItems: 'center' }}>
         <FormControl
@@ -965,12 +975,10 @@ export default function EnquiryFilterSection({
           startIcon={<TuneIcon />}
           onClick={handleOpenAdd}
           sx={{
-            borderRadius: 2,
+            borderRadius: 2.25,
             textTransform: 'none',
             fontWeight: 700,
-            background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
-            boxShadow: '0 2px 8px rgba(255,107,53,0.35)',
-            '&:hover': { background: 'linear-gradient(135deg, #ff5722 0%, #ff6b35 100%)' },
+            boxShadow: '0 8px 16px rgba(25,118,210,0.25)',
           }}
         >
           Add filter

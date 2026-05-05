@@ -99,7 +99,6 @@ import {
   Assignment as AssignmentIcon,
   WhatsApp as WhatsAppIcon,
   Call as CallIcon,
-  Refresh as RefreshIcon,
   Badge as BadgeIcon,
   Close as CloseIcon,
   ViewColumn as ViewColumnIcon,
@@ -107,8 +106,6 @@ import {
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
   LocalFireDepartment as LocalFireDepartmentIcon,
-  TableView as TableViewIcon,
-  PictureAsPdf as PictureAsPdfIcon,
 } from '@mui/icons-material';
 import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc, getDoc, where, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -116,6 +113,9 @@ import { v4 as uuidv4 } from 'uuid';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator';
 import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
+import EnquiriesPageHeader, { headerIcons } from '@/components/enquiries/EnquiriesPageHeader';
+import EnquiriesStatsStrip from '@/components/enquiries/EnquiriesStatsStrip';
+import EnquiriesDataTableShell from '@/components/enquiries/EnquiriesDataTableShell';
 import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
@@ -135,6 +135,15 @@ import {
   type StaffRecord,
 } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
+
+type AdvancedFilterRowState = {
+  id: string;
+  field: string;
+  operator: string;
+  value: any;
+  dataType: 'text' | 'number' | 'date' | 'boolean' | 'array';
+  logicalOperator?: 'AND' | 'OR';
+};
 
 // Create a Grid component that doesn't have TypeScript errors
 const Grid = (props: any) => <MuiGrid {...props} />;
@@ -507,14 +516,7 @@ export default function EnquiriesPage() {
   const [dateFilter, setDateFilter] = useState<string>('');
 
   // Advanced filter system with operators
-  const [advancedFilters, setAdvancedFilters] = useState<Array<{
-    id: string;
-    field: string;
-    operator: string;
-    value: any;
-    dataType: 'text' | 'number' | 'date' | 'boolean' | 'array';
-    logicalOperator?: 'AND' | 'OR';
-  }>>([]);
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedFilterRowState[]>([]);
 
   /** How to combine advanced filter rules (legacy table filters stay AND-combined with this set). */
   const [advancedFiltersLogic, setAdvancedFiltersLogic] = useState<'AND' | 'OR'>('AND');
@@ -570,18 +572,31 @@ export default function EnquiriesPage() {
     customField2: '',
   });
 
-  // Filter presets
-  const [filterPresets, setFilterPresets] = useState<Array<{
+  type EnquiryFilterPreset = {
     id: string;
     name: string;
     filters: typeof filters;
-    advancedFilters?: typeof advancedFilters;
+    advancedFilters?: AdvancedFilterRowState[];
+    advancedFiltersLogic?: 'AND' | 'OR';
     isDefault?: boolean;
-  }>>([]);
+  };
+  const [filterPresets, setFilterPresets] = useState<EnquiryFilterPreset[]>([]);
   
   const [currentPreset, setCurrentPreset] = useState<string>('');
   const [presetName, setPresetName] = useState<string>('');
   const [showPresetDialog, setShowPresetDialog] = useState<boolean>(false);
+
+  const persistFilterPresets = async (nextPresets: EnquiryFilterPreset[]) => {
+    if (!db || !user?.uid) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        enquiryFilterPresets: nextPresets,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      console.error('Error saving enquiry filter presets:', error);
+    }
+  };
 
   /** Active staff names from Firestore — same pool the enquiry form uses for dropdowns */
   const [staffNameOptions, setStaffNameOptions] = useState<string[]>([]);
@@ -2901,14 +2916,12 @@ export default function EnquiriesPage() {
       advancedFiltersLogic,
     };
     
-    setFilterPresets(prev => [...prev, newPreset]);
+    const updatedPresets = [...filterPresets, newPreset];
+    setFilterPresets(updatedPresets);
     setPresetName('');
     setShowPresetDialog(false);
     setCurrentPreset(newPreset.id);
-    
-    // Save to localStorage
-    const updatedPresets = [...filterPresets, newPreset];
-    localStorage.setItem('enquiry_filter_presets', JSON.stringify(updatedPresets));
+    void persistFilterPresets(updatedPresets);
   };
 
   const loadFilterPreset = (presetId: string) => {
@@ -2916,7 +2929,7 @@ export default function EnquiriesPage() {
     if (preset) {
       setFilters(preset.filters);
       setAdvancedFilters(preset.advancedFilters || []);
-      setAdvancedFiltersLogic((preset as any).advancedFiltersLogic === 'OR' ? 'OR' : 'AND');
+      setAdvancedFiltersLogic(preset.advancedFiltersLogic === 'OR' ? 'OR' : 'AND');
       setCurrentPreset(presetId);
       
       // Also update legacy filter states for backward compatibility
@@ -2928,14 +2941,12 @@ export default function EnquiriesPage() {
   };
 
   const deleteFilterPreset = (presetId: string) => {
-    setFilterPresets(prev => prev.filter(p => p.id !== presetId));
+    const updatedPresets = filterPresets.filter(p => p.id !== presetId);
+    setFilterPresets(updatedPresets);
     if (currentPreset === presetId) {
       setCurrentPreset('');
     }
-    
-    // Update localStorage
-    const updatedPresets = filterPresets.filter(p => p.id !== presetId);
-    localStorage.setItem('enquiry_filter_presets', JSON.stringify(updatedPresets));
+    void persistFilterPresets(updatedPresets);
   };
 
   const updateFilter = (key: string, value: any) => {
@@ -2965,17 +2976,43 @@ export default function EnquiriesPage() {
     return filteredEnquiries.slice(startIndex, endIndex);
   };
 
-  // Load presets from localStorage on component mount
+  // Load user-scoped presets so they follow login across devices/sessions.
   useEffect(() => {
-    const savedPresets = localStorage.getItem('enquiry_filter_presets');
-    if (savedPresets) {
-      try {
-        setFilterPresets(JSON.parse(savedPresets));
-      } catch (error) {
-        console.error('Error loading filter presets:', error);
-      }
+    if (!db || !user?.uid) {
+      setFilterPresets([]);
+      setCurrentPreset('');
+      return;
     }
-  }, []);
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const userSnap = await getDoc(doc(db, 'users', user.uid));
+        if (!userSnap.exists() || cancelled) return;
+        const data = userSnap.data() as { enquiryFilterPresets?: unknown };
+        const rawPresets = data.enquiryFilterPresets;
+        if (!Array.isArray(rawPresets)) {
+          setFilterPresets([]);
+          setCurrentPreset('');
+          return;
+        }
+        const safePresets = rawPresets.filter((preset): preset is EnquiryFilterPreset => (
+          !!preset &&
+          typeof preset === 'object' &&
+          typeof (preset as EnquiryFilterPreset).id === 'string' &&
+          typeof (preset as EnquiryFilterPreset).name === 'string' &&
+          typeof (preset as EnquiryFilterPreset).filters === 'object'
+        ));
+        setFilterPresets(safePresets);
+      } catch (error) {
+        console.error('Error loading enquiry filter presets:', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
 
   // Column management functions
   const availableColumns = [
@@ -4345,269 +4382,96 @@ export default function EnquiriesPage() {
     }
   };
 
+  const totalEnquiries = enquiries.length;
+  const openEnquiries = enquiries.filter(e => e.status === 'open').length;
+  const inProgressEnquiries = enquiries.filter(e => e.status === 'in-progress').length;
+  const resolvedEnquiries = enquiries.filter(e => e.status === 'resolved').length;
+  const todayEnquiries = enquiries.filter(e => {
+    if (e.createdAt?._seconds) {
+      const enquiryDate = new Date(e.createdAt._seconds * 1000).toDateString();
+      return enquiryDate === new Date().toDateString();
+    }
+    return false;
+  }).length;
+
+  const headerActions = [
+    {
+      key: 'refresh',
+      label: refreshing ? 'Refreshing...' : 'Refresh',
+      onClick: handleRefresh,
+      disabled: refreshing,
+      icon: headerIcons.refresh,
+      variant: 'outlined' as const,
+    },
+    {
+      key: 'columns',
+      label: 'Columns',
+      onClick: () => setColumnManagementOpen(true),
+      icon: headerIcons.columns,
+      variant: 'outlined' as const,
+    },
+    {
+      key: 'export-csv',
+      label: exporting === 'csv' ? 'Exporting CSV…' : 'Export CSV',
+      onClick: () => void handleExportCsv(),
+      disabled: exporting !== null || filteredEnquiries.length === 0,
+      icon: headerIcons.exportCsv,
+      variant: 'outlined' as const,
+    },
+    {
+      key: 'export-pdf',
+      label: exporting === 'pdf' ? 'Exporting PDF…' : 'Export PDF',
+      onClick: () => void handleExportPdf(),
+      disabled: exporting !== null || filteredEnquiries.length === 0,
+      icon: headerIcons.exportPdf,
+      variant: 'outlined' as const,
+    },
+  ];
+  if (userProfile?.role !== 'audiologist') {
+    headerActions.push({
+      key: 'new-enquiry',
+      label: 'New Enquiry',
+      onClick: handleOpenSimplifiedDialog,
+      icon: headerIcons.add,
+      variant: 'contained',
+    });
+  }
+
   return (
-    <Box sx={{ 
-      width: '100%',
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      bgcolor: 'background.default',
-      transition: 'background-color 0.28s ease',
-    }}>
-      {/* Header Section */}
-      <Paper 
-        elevation={0}
-        sx={{ 
-          p: { xs: 2, sm: 2.5, md: 3 },
-          mb: { xs: 2, sm: 3 },
-          bgcolor: 'background.paper',
-          borderRadius: 0,
-          borderBottom: 1,
-          borderColor: 'divider',
-        }}
-      >
-        <Stack 
-          direction={{ xs: 'column', sm: 'row' }} 
-          spacing={2}
-          alignItems={{ xs: 'flex-start', sm: 'center' }}
-          justifyContent="space-between"
-        >
-          <Typography 
-            variant="h4" 
-            component="h1" 
-            sx={{ 
-              fontWeight: 700,
-              color: 'primary.main',
-              fontSize: { xs: '1.25rem', sm: '1.5rem', md: '1.75rem' },
+    <Box
+      sx={{
+        width: '100%',
+        minWidth: 0,
         display: 'flex',
-        alignItems: 'center',
-              gap: 1,
-        flexShrink: 0
-            }}
-          >
-            <Box component="span" sx={{ fontSize: { xs: '1.5rem', sm: '1.75rem', md: '2rem' } }}>📋</Box>
-            <Box component="span" sx={{ whiteSpace: 'nowrap' }}>Enquiries Management</Box>
-        </Typography>
-          <Stack 
-            direction="row" 
-            spacing={1}
-            sx={{ 
-              flexShrink: 0,
-              width: { xs: '100%', sm: 'auto' },
-              justifyContent: { xs: 'flex-start', sm: 'flex-end' }
-            }}
-          >
-          <Button 
-            variant="outlined" 
-              startIcon={<RefreshIcon sx={{ fontSize: '1.25rem' }} />}
-            onClick={handleRefresh}
-            disabled={refreshing}
-            size="small"
-              sx={{ 
-                borderColor: 'primary.main',
-                color: 'primary.main',
-                fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                py: { xs: 0.75, sm: 1 },
-                px: { xs: 1.5, sm: 2 },
-                '&:hover': {
-                  borderColor: 'primary.dark',
-                  bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
-                },
-                whiteSpace: 'nowrap'
-              }}
-          >
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </Button>
-          <Button 
-            variant="outlined" 
-              startIcon={<ViewColumnIcon sx={{ fontSize: '1.25rem' }} />}
-            onClick={() => setColumnManagementOpen(true)}
-            size="small"
-              sx={{ 
-                borderColor: 'primary.main',
-                color: 'primary.main',
-                fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                py: { xs: 0.75, sm: 1 },
-                px: { xs: 1.5, sm: 2 },
-                '&:hover': {
-                  borderColor: 'primary.dark',
-                  bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
-                },
-                whiteSpace: 'nowrap'
-              }}
-            >
-              Columns
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<TableViewIcon sx={{ fontSize: '1.25rem' }} />}
-            onClick={() => void handleExportCsv()}
-            size="small"
-            disabled={exporting !== null || filteredEnquiries.length === 0}
-            sx={{
-              borderColor: 'primary.main',
-              color: 'primary.main',
-              fontSize: { xs: '0.75rem', sm: '0.875rem' },
-              py: { xs: 0.75, sm: 1 },
-              px: { xs: 1.5, sm: 2 },
-              '&:hover': {
-                borderColor: 'primary.dark',
-                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
-              },
-              whiteSpace: 'nowrap'
-            }}
-          >
-            {exporting === 'csv' ? 'Exporting CSV…' : 'Export CSV'}
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<PictureAsPdfIcon sx={{ fontSize: '1.25rem' }} />}
-            onClick={() => void handleExportPdf()}
-            size="small"
-            disabled={exporting !== null || filteredEnquiries.length === 0}
-            sx={{
-              borderColor: 'primary.main',
-              color: 'primary.main',
-              fontSize: { xs: '0.75rem', sm: '0.875rem' },
-              py: { xs: 0.75, sm: 1 },
-              px: { xs: 1.5, sm: 2 },
-              '&:hover': {
-                borderColor: 'primary.dark',
-                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.08 : 0.18),
-              },
-              whiteSpace: 'nowrap'
-            }}
-          >
-            {exporting === 'pdf' ? 'Exporting PDF…' : 'Export PDF'}
-          </Button>
-        {userProfile?.role !== 'audiologist' && (
-          <Button 
-            variant="contained" 
-              startIcon={<AddIcon sx={{ fontSize: '1.25rem' }} />}
-            onClick={handleOpenSimplifiedDialog}
-            size="small"
-              sx={{ 
-                background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)',
-                boxShadow: '0 4px 12px rgba(255, 107, 53, 0.3)',
-                fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                py: { xs: 0.75, sm: 1 },
-                px: { xs: 1.5, sm: 2 },
-                '&:hover': {
-                  background: 'linear-gradient(135deg, #ff5722 0%, #ff6b35 100%)',
-                  boxShadow: '0 6px 16px rgba(255, 107, 53, 0.4)',
-                  transform: 'translateY(-2px)'
-                },
-                transition: 'all 0.3s',
-                whiteSpace: 'nowrap'
-              }}
-          >
-            New Enquiry
-          </Button>
-        )}
-          </Stack>
-        </Stack>
-      </Paper>
-
-      {/* Content Area */}
-      <Stack 
-        spacing={{ xs: 2, sm: 3 }} 
-        sx={{ 
-        flex: 1,
-          p: { xs: 2, sm: 3 },
-          overflow: 'auto'
+        flexDirection: 'column',
+        bgcolor: 'background.default',
+        transition: 'background-color 0.28s ease',
+      }}
+    >
+      <Stack
+        spacing={{ xs: 2, sm: 2.5 }}
+        sx={{
+          flex: 1,
+          p: { xs: 1.5, sm: 2.5 },
+          minWidth: 0,
+          overflowX: 'hidden',
         }}
       >
+        <EnquiriesPageHeader
+          title="Enquiries Management"
+          subtitle="Track leads, manage follow-ups, and move enquiries through the journey faster."
+          actions={headerActions}
+        />
 
-      {/* Enquiry Statistics Cards */}
-      <Grid container spacing={{ xs: 2, sm: 2, md: 3 }}>
-        {(() => {
-          const totalEnquiries = enquiries.length;
-          const openEnquiries = enquiries.filter(e => e.status === 'open').length;
-          const inProgressEnquiries = enquiries.filter(e => e.status === 'in-progress').length;
-          const resolvedEnquiries = enquiries.filter(e => e.status === 'resolved').length;
-          const todayEnquiries = enquiries.filter(e => {
-            if (e.createdAt?._seconds) {
-              const enquiryDate = new Date(e.createdAt._seconds * 1000).toDateString();
-              return enquiryDate === new Date().toDateString();
-            }
-            return false;
-          }).length;
-          
-          const statCards = [
+        <EnquiriesStatsStrip
+          stats={[
             { title: 'Total Enquiries', value: totalEnquiries, icon: <AssignmentIcon />, color: '#ff6b35' },
             { title: "Today's Enquiries", value: todayEnquiries, icon: <TodayIcon />, color: '#4caf50' },
             { title: 'Open', value: openEnquiries, icon: <EmailIcon />, color: '#2196f3' },
             { title: 'In Progress', value: inProgressEnquiries, icon: <ScheduleIcon />, color: '#ff9800' },
-            { title: 'Resolved', value: resolvedEnquiries, icon: <CheckCircleIcon />, color: '#66bb6a' }
-          ];
-          
-          return statCards.map((stat, index) => (
-            <Grid item xs={12} sm={6} md={2.4} key={index}>
-              <Paper 
-                elevation={0}
-                sx={{ 
-                  p: 2.5, 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  bgcolor: 'background.paper',
-                  border: '2px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2,
-                  height: '100%',
-                  transition: 'all 0.3s',
-                  '&:hover': {
-                    borderColor: stat.color,
-                    transform: 'translateY(-4px)',
-                    boxShadow: `0 8px 24px ${alpha(stat.color, 0.2)}`
-                  }
-                }}
-              >
-                <Box 
-                  sx={{ 
-                    mr: 2, 
-                    p: 1.5,
-                    borderRadius: 2, 
-                    bgcolor: alpha(stat.color, 0.1),
-                    color: stat.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '1.5rem',
-                    minWidth: 56,
-                    minHeight: 56
-                  }}
-                >
-                  {stat.icon}
-                </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography 
-                    variant="h4" 
-                    sx={{ 
-                      fontWeight: 800, 
-                      fontSize: '1.75rem',
-                      color: stat.color,
-                      lineHeight: 1,
-                      mb: 0.5
-                    }}
-                  >
-                    {stat.value}
-                  </Typography>
-                  <Typography 
-                    variant="body2" 
-                    color="text.secondary" 
-                    sx={{ 
-                      fontSize: '0.875rem',
-                      fontWeight: 500
-                    }}
-                  >
-                    {stat.title}
-                  </Typography>
-                </Box>
-              </Paper>
-            </Grid>
-          ));
-        })()}
-      </Grid>
+            { title: 'Resolved', value: resolvedEnquiries, icon: <CheckCircleIcon />, color: '#66bb6a' },
+          ]}
+        />
 
 
 
@@ -4791,20 +4655,7 @@ export default function EnquiriesPage() {
       </Dialog>
 
       {/* Enquiries Table */}
-       <Paper 
-         elevation={0}
-         sx={{ 
-         overflow: 'hidden', 
-         display: 'flex', 
-         flexDirection: 'column',
-           flex: 1,
-           minHeight: { xs: '400px', sm: '500px' },
-           bgcolor: 'background.paper',
-           border: 1,
-           borderColor: 'divider',
-           borderRadius: 2
-         }}
-       >
+      <EnquiriesDataTableShell>
          <TableContainer sx={{ 
            flex: 1,
            // Ensure the table scrolls inside this container so sticky headers work reliably
@@ -4812,6 +4663,7 @@ export default function EnquiriesPage() {
            minHeight: 0,
            overflowX: 'auto',
            overflowY: 'auto',
+           minWidth: 0,
            '&::-webkit-scrollbar': { height: '12px', width: '12px' },
            '&::-webkit-scrollbar-track': { 
              backgroundColor: '#f5f5f5',
@@ -4834,9 +4686,10 @@ export default function EnquiriesPage() {
            <Table 
              stickyHeader 
              sx={{ 
-               width: '100%', 
+              width: 'max-content',
+              minWidth: '100%',
                tableLayout: 'fixed',
-               borderCollapse: 'separate'
+              borderCollapse: 'separate',
              }}
            >
           <TableHead>
@@ -4865,7 +4718,7 @@ export default function EnquiriesPage() {
                      }}
                    >
                      <Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                       👤 Name
+                      Name
                        <Box
                          onMouseDown={(e) => handleMouseDown('name', e)}
                          sx={{
@@ -4903,7 +4756,7 @@ export default function EnquiriesPage() {
                        overflow: 'visible'
                      }}>
                        <Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                         📞 Phone
+                        Phone
                          <Box
                            onMouseDown={(e) => handleMouseDown('phone', e)}
                            sx={{
@@ -4940,21 +4793,21 @@ export default function EnquiriesPage() {
                      overflow: 'visible'
                    }}>
                      <Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                       📧 Email
+                      Email
                        <Box onMouseDown={(e) => handleMouseDown('email', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'email' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} />
                      </Box>
                    </TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.address}px`, maxWidth: `${columnWidths.address}px`, minWidth: `${columnWidths.address}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏠 Address<Box onMouseDown={(e) => handleMouseDown('address', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'address' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.reference}px`, maxWidth: `${columnWidths.reference}px`, minWidth: `${columnWidths.reference}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🔖 Reference<Box onMouseDown={(e) => handleMouseDown('reference', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'reference' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>👔 Assigned To<Box onMouseDown={(e) => handleMouseDown('assignedTo', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'assignedTo' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📱 Telecaller<Box onMouseDown={(e) => handleMouseDown('telecaller', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'telecaller' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🏢 Center<Box onMouseDown={(e) => handleMouseDown('center', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'center' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.address}px`, maxWidth: `${columnWidths.address}px`, minWidth: `${columnWidths.address}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Address<Box onMouseDown={(e) => handleMouseDown('address', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'address' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.reference}px`, maxWidth: `${columnWidths.reference}px`, minWidth: `${columnWidths.reference}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Reference<Box onMouseDown={(e) => handleMouseDown('reference', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'reference' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.assignedTo}px`, maxWidth: `${columnWidths.assignedTo}px`, minWidth: `${columnWidths.assignedTo}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Assigned To<Box onMouseDown={(e) => handleMouseDown('assignedTo', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'assignedTo' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.telecaller}px`, maxWidth: `${columnWidths.telecaller}px`, minWidth: `${columnWidths.telecaller}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Telecaller<Box onMouseDown={(e) => handleMouseDown('telecaller', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'telecaller' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.center}px`, maxWidth: `${columnWidths.center}px`, minWidth: `${columnWidths.center}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Center<Box onMouseDown={(e) => handleMouseDown('center', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'center' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
                    {visibleColumns.includes('status') && (
-                     <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📊 Status<Box onMouseDown={(e) => handleMouseDown('status', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'status' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                    <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.status}px`, maxWidth: `${columnWidths.status}px`, minWidth: `${columnWidths.status}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Status<Box onMouseDown={(e) => handleMouseDown('status', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'status' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
                    )}
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📝 Subject<Box onMouseDown={(e) => handleMouseDown('subject', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'subject' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>💬 Message<Box onMouseDown={(e) => handleMouseDown('message', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'message' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
-                   <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>📅 Date<Box onMouseDown={(e) => handleMouseDown('date', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'date' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.subject}px`, maxWidth: `${columnWidths.subject}px`, minWidth: `${columnWidths.subject}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Subject<Box onMouseDown={(e) => handleMouseDown('subject', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'subject' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.message}px`, maxWidth: `${columnWidths.message}px`, minWidth: `${columnWidths.message}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Message<Box onMouseDown={(e) => handleMouseDown('message', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'message' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
+                  <TableCell sx={{ fontWeight: 700, fontSize: '0.85rem', width: `${columnWidths.date}px`, maxWidth: `${columnWidths.date}px`, minWidth: `${columnWidths.date}px`, background: 'linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%)', color: 'white', borderBottom: '3px solid #ff6b35', py: 2, textTransform: 'uppercase', letterSpacing: '0.5px', overflow: 'visible' }}><Box sx={{ position: 'relative', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Date<Box onMouseDown={(e) => handleMouseDown('date', e)} sx={{ position: 'absolute', right: '-4px', top: '-16px', bottom: '-16px', width: '8px', cursor: 'col-resize', backgroundColor: isResizing === 'date' ? 'rgba(255, 255, 255, 0.7)' : 'transparent', '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.5)', borderRight: '2px solid white' }, zIndex: 10, userSelect: 'none' }} /></Box></TableCell>
                    <TableCell 
                      sx={{ 
                        fontWeight: 700, 
@@ -4975,7 +4828,7 @@ export default function EnquiriesPage() {
                        textAlign: 'center'
                      }}
                    >
-                     ⚡ Actions
+                    Actions
                    </TableCell>
             </TableRow>
           </TableHead>
@@ -5421,7 +5274,7 @@ export default function EnquiriesPage() {
           }
         }}
       />
-       </Paper>
+      </EnquiriesDataTableShell>
 
       {/* Add/Edit Enquiry Dialog */}
       <Dialog 
