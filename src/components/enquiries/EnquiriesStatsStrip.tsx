@@ -21,16 +21,20 @@ export default function EnquiriesStatsStrip({ stats }: Props) {
           <Paper
             elevation={0}
             sx={{
-              p: 2,
+              p: 2.2,
               height: '100%',
-              borderRadius: 2.5,
+              borderRadius: 3,
               border: '1px solid',
               borderColor: (t) => alpha(stat.color, t.palette.mode === 'dark' ? 0.35 : 0.22),
-              bgcolor: 'background.paper',
-              transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+              bgcolor: (t) =>
+                t.palette.mode === 'dark'
+                  ? alpha(t.palette.background.paper, 0.96)
+                  : alpha('#ffffff', 0.95),
+              transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
               '&:hover': {
                 transform: 'translateY(-2px)',
                 boxShadow: `0 10px 24px ${alpha(stat.color, 0.18)}`,
+                borderColor: alpha(stat.color, 0.5),
               },
             }}
           >

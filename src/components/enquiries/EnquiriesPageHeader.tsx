@@ -37,26 +37,29 @@ export default function EnquiriesPageHeader({ title, subtitle, actions }: Props)
     <Paper
       elevation={0}
       sx={{
-        p: { xs: 2, sm: 2.5, md: 3 },
-        bgcolor: 'background.paper',
-        borderRadius: 3,
+        p: { xs: 1.25, sm: 1.5, md: 1.75 },
+        background: (t) =>
+          t.palette.mode === 'dark'
+            ? `linear-gradient(150deg, ${alpha(t.palette.background.paper, 0.98)} 0%, ${alpha(t.palette.primary.dark, 0.22)} 100%)`
+            : 'linear-gradient(150deg, #ffffff 0%, #f6f9ff 100%)',
+        borderRadius: 3.5,
         border: 1,
-        borderColor: 'divider',
+        borderColor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.38 : 0.14),
         boxShadow: (t) =>
-          t.palette.mode === 'dark' ? '0 2px 12px rgba(0,0,0,0.35)' : '0 6px 16px rgba(15, 23, 42, 0.06)',
+          t.palette.mode === 'dark' ? '0 12px 28px rgba(0,0,0,0.35)' : '0 16px 36px rgba(15, 23, 42, 0.08)',
       }}
     >
-      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+      <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="h4" component="h1" sx={{ fontWeight: 800, fontSize: { xs: '1.3rem', sm: '1.7rem' }, mb: 0.5 }}>
+          <Typography variant="h4" component="h1" sx={{ fontWeight: 800, fontSize: { xs: '1.05rem', sm: '1.25rem' }, mb: 0.15 }}>
             {title}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
             {subtitle}
           </Typography>
         </Box>
 
-        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+        <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', rowGap: 0.75 }}>
           {actions.map((action) => (
             <Button
               key={action.key}
@@ -66,16 +69,18 @@ export default function EnquiriesPageHeader({ title, subtitle, actions }: Props)
               onClick={action.onClick}
               startIcon={action.icon}
               sx={{
-                borderRadius: 2,
+                borderRadius: 2.5,
                 textTransform: 'none',
                 fontWeight: 700,
-                px: 1.75,
+                px: 1.8,
+                py: 0.6,
                 ...(action.variant === 'contained'
                   ? {
-                      boxShadow: '0 8px 18px rgba(25, 118, 210, 0.24)',
+                      boxShadow: '0 10px 20px rgba(25, 118, 210, 0.26)',
                     }
                   : {
-                      borderColor: 'divider',
+                      borderColor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.36 : 0.24),
+                      bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.1 : 0.02),
                       '&:hover': {
                         borderColor: 'primary.main',
                         bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.2 : 0.08),

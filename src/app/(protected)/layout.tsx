@@ -518,11 +518,13 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
         style={{
           marginLeft: shouldHideSidebar ? 0 : isDesktop ? mainOffset : 0,
           marginTop: HEADER_HEIGHT + scopeBarOffset,
-          padding: 28,
+          padding: pathname?.includes('/interaction/enquiries') && !pathname?.includes('/new') && !pathname?.includes('/edit') ? 8 : 28,
           transition: 'margin-left 0.32s cubic-bezier(0.4, 0, 0.2, 1)',
           minHeight: `calc(100vh - ${HEADER_HEIGHT + scopeBarOffset}px)`,
-          width: '100%',
+          width: shouldHideSidebar ? '100%' : `calc(100% - ${isDesktop ? mainOffset : 0}px)`,
+          maxWidth: '100%',
           boxSizing: 'border-box',
+          overflow: 'hidden',
         }}
       >
         {children}

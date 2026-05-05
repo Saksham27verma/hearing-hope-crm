@@ -23,6 +23,7 @@ import {
   MenuItem,
   Autocomplete,
   Tooltip,
+  Collapse,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import {
@@ -34,6 +35,8 @@ import {
   Tune as TuneIcon,
   AccountTree as AccountTreeIcon,
   LocalFireDepartment as LocalFireDepartmentIcon,
+  ExpandLess as ExpandLessIcon,
+  ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import { ENQUIRY_STATUS_OPTIONS } from '@/utils/enquiryStatus';
 import {
@@ -61,7 +64,6 @@ type CentersOpt = { id: string; name?: string };
 export interface EnquiryFilterSectionProps {
   filters: Record<string, any>;
   updateFilter: (key: string, value: any) => void;
-  searchTerm: string;
   advancedFilters: AdvancedFilterRow[];
   setAdvancedFilters: React.Dispatch<React.SetStateAction<AdvancedFilterRow[]>>;
   advancedFiltersLogic: 'AND' | 'OR';
@@ -263,7 +265,6 @@ function enumOptionsForField(
 export default function EnquiryFilterSection({
   filters,
   updateFilter,
-  searchTerm,
   advancedFilters,
   setAdvancedFilters,
   advancedFiltersLogic,
@@ -301,6 +302,7 @@ export default function EnquiryFilterSection({
     dataType: 'text' as AdvancedFilterRow['dataType'],
   });
   const [multiEnumValue, setMultiEnumValue] = useState<string[]>([]);
+  const [filtersVisible, setFiltersVisible] = useState(true);
 
   const filterableFlat = useMemo(() => flatFilterFields(), []);
 
@@ -545,7 +547,7 @@ export default function EnquiryFilterSection({
     return chips;
   }, [filters, centers, updateFilter]);
 
-  const hasSearch = Boolean((filters.searchTerm || searchTerm || '').trim());
+  const hasSearch = Boolean(String(filters.searchTerm || '').trim());
   const activeRuleCount = advancedFilters.length + legacyChips.length + (hasSearch ? 1 : 0);
 
   const renderValueControl = () => {
@@ -748,13 +750,53 @@ export default function EnquiryFilterSection({
       elevation={0}
       sx={{
         p: { xs: 2, sm: 2.5 },
-        bgcolor: 'background.paper',
+        bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.97) : alpha('#ffffff', 0.95)),
         border: 1,
-        borderColor: 'divider',
-        borderRadius: 3,
-        boxShadow: isDark ? '0 1px 10px rgba(0,0,0,0.25)' : '0 8px 22px rgba(15,23,42,0.05)',
+        borderColor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.35 : 0.16),
+        borderRadius: 3.5,
+        boxShadow: isDark ? '0 14px 26px rgba(0,0,0,0.28)' : '0 18px 34px rgba(15,23,42,0.07)',
       }}
     >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 1,
+          mb: filtersVisible ? 2 : 0.5,
+        }}
+      >
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+            Smart Filters
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Refine results with quick filters and advanced rules.
+          </Typography>
+        </Box>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => setFiltersVisible((prev) => !prev)}
+          endIcon={filtersVisible ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+          sx={{
+            borderRadius: 2,
+            textTransform: 'none',
+            fontWeight: 700,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {filtersVisible ? 'Hide filters' : 'Show filters'}
+        </Button>
+      </Box>
+
+      {!filtersVisible ? (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          Filters hidden. {activeRuleCount} active rule{activeRuleCount === 1 ? '' : 's'} applied.
+        </Typography>
+      ) : null}
+
+      <Collapse in={filtersVisible} timeout={220} unmountOnExit>
       <Box
         sx={{
           display: 'flex',
@@ -809,45 +851,6 @@ export default function EnquiryFilterSection({
             </ToggleButtonGroup>
           </Box>
         </Tooltip>
-      </Box>
-
-      <Box
-        sx={{
-          mb: 1.5,
-          p: 1,
-          border: '1px solid',
-          borderColor: 'divider',
-          borderRadius: 2.25,
-          bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.03) : alpha(t.palette.primary.main, 0.02)),
-        }}
-      >
-        <TextField
-          fullWidth
-          size="small"
-          placeholder="Search name, phone, email, reference, notes, message, address…"
-          value={filters.searchTerm ?? searchTerm}
-          onChange={e => updateFilter('searchTerm', e.target.value)}
-          sx={{
-            '& .MuiOutlinedInput-root': {
-              bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
-              borderRadius: 1.75,
-            },
-          }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" color="action" />
-              </InputAdornment>
-            ),
-            endAdornment: (filters.searchTerm || searchTerm) ? (
-              <InputAdornment position="end">
-                <IconButton size="small" onClick={() => updateFilter('searchTerm', '')} edge="end">
-                  <ClearIcon fontSize="small" />
-                </IconButton>
-              </InputAdornment>
-            ) : null,
-          }}
-        />
       </Box>
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2, alignItems: 'center' }}>
@@ -1005,21 +1008,11 @@ export default function EnquiryFilterSection({
         </Button>
       </Box>
 
-      {(hasSearch || legacyChips.length > 0 || advancedFilters.length > 0) && (
+      {(legacyChips.length > 0 || advancedFilters.length > 0) && (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mb: 2, alignItems: 'center' }}>
           <Typography variant="caption" sx={{ fontWeight: 700, color: 'text.secondary', width: '100%', mb: 0.5 }}>
             Active filters
           </Typography>
-          {hasSearch ? (
-            <Chip
-              size="small"
-              label={`Contains: “${(filters.searchTerm || searchTerm).trim().slice(0, 40)}${(filters.searchTerm || searchTerm).trim().length > 40 ? '…' : ''}”`}
-              onDelete={() => updateFilter('searchTerm', '')}
-              color="primary"
-              variant="filled"
-              sx={{ fontWeight: 600 }}
-            />
-          ) : null}
           {legacyChips.map(c => (
             <Chip key={c.key} size="small" label={c.label} onDelete={c.onDelete} variant="outlined" sx={{ fontWeight: 500 }} />
           ))}
@@ -1070,6 +1063,7 @@ export default function EnquiryFilterSection({
           {filteredCount !== totalCount ? ` (from ${totalCount} total)` : ''}
         </Typography>
       </Box>
+      </Collapse>
 
       <Popover
         open={Boolean(addAnchor)}
