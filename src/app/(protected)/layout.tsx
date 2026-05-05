@@ -20,6 +20,30 @@ const SCOPE_TOOLBAR_HEIGHT_EXPANDED = 88;
 const SCOPE_TOOLBAR_HEIGHT_COLLAPSED = 40;
 import SqueezeLoader from '@/components/ui/loading-indicator';
 
+/** v1: per-uid only (role was removed — it changed after profile load and broke persistence). */
+const SIDEBAR_ORDER_STORAGE_PREFIX = 'crm_sidebar_order_v1_';
+
+function readSidebarOrderFromLocalStorage(uid: string): string[] {
+  if (typeof window === 'undefined' || !uid) return [];
+  const legacyRoleKeys = ['guest', 'staff', 'audiologist', 'admin'].map(
+    (role) => `${SIDEBAR_ORDER_STORAGE_PREFIX}${role}_${uid}`,
+  );
+  const keysToTry = [`${SIDEBAR_ORDER_STORAGE_PREFIX}${uid}`, ...legacyRoleKeys];
+  for (const key of keysToTry) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) continue;
+      const filtered = parsed.filter((item): item is string => typeof item === 'string');
+      if (filtered.length > 0) return filtered;
+    } catch {
+      /* try next key */
+    }
+  }
+  return [];
+}
+
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
   const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
@@ -48,37 +72,27 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   );
 
   const sidebarOrderStorageKey = useMemo(() => {
-    const role = userProfile?.role ?? 'guest';
-    const uid = user?.uid ?? 'anonymous';
-    return `crm_sidebar_order_v1_${role}_${uid}`;
-  }, [userProfile?.role, user?.uid]);
+    const uid = user?.uid;
+    if (!uid) return '';
+    return `${SIDEBAR_ORDER_STORAGE_PREFIX}${uid}`;
+  }, [user?.uid]);
 
-  useEffect(() => {
+  /** Hydrate from Firestore or localStorage before passive effects so merge does not clobber with defaults. */
+  useLayoutEffect(() => {
     const profileOrder = userProfile?.sidebarOrder;
     if (Array.isArray(profileOrder) && profileOrder.length > 0) {
       setSidebarOrder(profileOrder.filter((item): item is string => typeof item === 'string'));
       return;
     }
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(sidebarOrderStorageKey);
-      if (!raw) {
-        setSidebarOrder([]);
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setSidebarOrder(parsed.filter((item): item is string => typeof item === 'string'));
-      } else {
-        setSidebarOrder([]);
-      }
-    } catch {
-      setSidebarOrder([]);
-    }
-  }, [sidebarOrderStorageKey, userProfile?.sidebarOrder]);
+    const uid = user?.uid;
+    if (!uid || typeof window === 'undefined') return;
+    const fromStorage = readSidebarOrderFromLocalStorage(uid);
+    setSidebarOrder(fromStorage);
+  }, [user?.uid, userProfile?.sidebarOrder]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !sidebarOrderStorageKey || !user?.uid) return;
+    if (baseVisibleNav.length === 0) return;
     const baseKeys = baseVisibleNav.map((item) => item.text);
     const normalized = sidebarOrder.filter((key) => baseKeys.includes(key));
     const missing = baseKeys.filter((key) => !normalized.includes(key));
@@ -90,7 +104,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       return;
     }
     window.localStorage.setItem(sidebarOrderStorageKey, JSON.stringify(merged));
-  }, [baseVisibleNav, sidebarOrder, sidebarOrderStorageKey]);
+  }, [baseVisibleNav, sidebarOrder, sidebarOrderStorageKey, user?.uid]);
 
   useEffect(() => {
     const uid = user?.uid;
