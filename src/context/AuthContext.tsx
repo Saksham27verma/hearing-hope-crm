@@ -33,6 +33,8 @@ export interface UserProfile {
   isSuperAdmin?: boolean;
   /** Optional user-specific ordering for top-level CRM sidebar modules. */
   sidebarOrder?: string[];
+  /** Set with `sidebarOrder` when saved so clients know which copy is newer vs localStorage. */
+  sidebarOrderUpdatedAt?: number;
 }
 
 // Auth context interface
@@ -53,6 +55,8 @@ interface AuthContextInterface {
   updateUserEmail: (uid: string, newEmail: string) => Promise<void>;
   resetError: () => void;
   isAllowedModule: (moduleName: string) => boolean;
+  /** Merge fields into the in-memory profile (e.g. after persisting preferences). Does not write Firestore. */
+  patchLocalUserProfile: (partial: Partial<UserProfile>) => void;
 }
 
 function areStringArraysEqual(a?: string[] | null, b?: string[] | null) {
@@ -78,7 +82,8 @@ function areUserProfilesEqual(a: UserProfile | null, b: UserProfile | null) {
     a.isSuperAdmin === b.isSuperAdmin &&
     areStringArraysEqual(a.allowedModules, b.allowedModules) &&
     areStringArraysEqual(a.centerIds, b.centerIds) &&
-    areStringArraysEqual(a.sidebarOrder, b.sidebarOrder)
+    areStringArraysEqual(a.sidebarOrder, b.sidebarOrder) &&
+    (a.sidebarOrderUpdatedAt ?? 0) === (b.sidebarOrderUpdatedAt ?? 0)
   );
 }
 
@@ -99,6 +104,7 @@ const AuthContext = createContext<AuthContextInterface>({
   updateUserEmail: async () => {},
   resetError: () => {},
   isAllowedModule: () => false,
+  patchLocalUserProfile: () => {},
 });
 
 // Provider component
@@ -666,6 +672,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
   };
 
+  const patchLocalUserProfile = React.useCallback((partial: Partial<UserProfile>) => {
+    setUserProfile((prev) => (prev ? { ...prev, ...partial } : null));
+  }, []);
+
   // Module keys that staff can access (aligned with layout staffAllowedModules)
   const STAFF_ALLOWED_MODULE_KEYS = [
     'dashboard', 'products', 'sales', 'interaction', 'stock transfer', 'inventory',
@@ -720,6 +730,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       updateUserEmail,
       resetError,
       isAllowedModule,
+      patchLocalUserProfile,
     }}>
       {children}
     </AuthContext.Provider>

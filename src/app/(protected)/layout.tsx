@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import UniversalSearch from '@/components/universal-search/UniversalSearch';
@@ -20,10 +20,17 @@ const SCOPE_TOOLBAR_HEIGHT_EXPANDED = 88;
 const SCOPE_TOOLBAR_HEIGHT_COLLAPSED = 40;
 import SqueezeLoader from '@/components/ui/loading-indicator';
 
-/** v1: per-uid only (role was removed — it changed after profile load and broke persistence). */
+/** v1: flat JSON arrays only (legacy). v2: `{ order, updatedAt }` for conflict resolution with Firestore. */
 const SIDEBAR_ORDER_STORAGE_PREFIX = 'crm_sidebar_order_v1_';
+const SIDEBAR_ORDER_V2_PREFIX = 'crm_sidebar_order_v2_';
 
-function readSidebarOrderFromLocalStorage(uid: string): string[] {
+function mergeSidebarOrderWithBaseKeys(order: string[], baseKeys: string[]): string[] {
+  const normalized = order.filter((key) => baseKeys.includes(key));
+  const missing = baseKeys.filter((key) => !normalized.includes(key));
+  return [...normalized, ...missing];
+}
+
+function readSidebarOrderV1Only(uid: string): string[] {
   if (typeof window === 'undefined' || !uid) return [];
   const legacyRoleKeys = ['guest', 'staff', 'audiologist', 'admin'].map(
     (role) => `${SIDEBAR_ORDER_STORAGE_PREFIX}${role}_${uid}`,
@@ -44,9 +51,41 @@ function readSidebarOrderFromLocalStorage(uid: string): string[] {
   return [];
 }
 
+function readSidebarBundleFromLocalStorage(uid: string): { order: string[]; updatedAt: number } {
+  if (typeof window === 'undefined' || !uid) return { order: [], updatedAt: 0 };
+  try {
+    const rawV2 = window.localStorage.getItem(`${SIDEBAR_ORDER_V2_PREFIX}${uid}`);
+    if (rawV2) {
+      const data = JSON.parse(rawV2) as { order?: unknown; updatedAt?: unknown };
+      if (data && Array.isArray(data.order)) {
+        const order = data.order.filter((item): item is string => typeof item === 'string');
+        const updatedAt =
+          typeof data.updatedAt === 'number' && Number.isFinite(data.updatedAt) ? data.updatedAt : 0;
+        return { order, updatedAt };
+      }
+    }
+  } catch {
+    /* fall through to v1 */
+  }
+  const legacy = readSidebarOrderV1Only(uid);
+  return { order: legacy, updatedAt: legacy.length > 0 ? 1 : 0 };
+}
+
+function writeSidebarBundleToLocalStorage(uid: string, mergedOrder: string[], updatedAt: number) {
+  if (typeof window === 'undefined' || !uid) return;
+  try {
+    window.localStorage.setItem(
+      `${SIDEBAR_ORDER_V2_PREFIX}${uid}`,
+      JSON.stringify({ order: mergedOrder, updatedAt }),
+    );
+  } catch {
+    /* ignore quota / privacy mode */
+  }
+}
+
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const theme = useTheme();
-  const { user, loading, signOut, userProfile, isAllowedModule, error } = useAuth();
+  const { user, loading, signOut, userProfile, isAllowedModule, error, patchLocalUserProfile } = useAuth();
   const { canOverrideScope, lockedCenterId, scopeToolbarExpanded } = useCenterScope();
   const showScopeToolbar = canOverrideScope || !!lockedCenterId;
   const router = useRouter();
@@ -62,7 +101,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   const redirectFailsafeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isDesktop, setIsDesktop] = useState(false);
   const [sidebarOrder, setSidebarOrder] = useState<string[]>([]);
-  const lastSyncedSidebarOrderRef = useRef<string>('');
+  const [sidebarSaveStatus, setSidebarSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   const shouldHideSidebar = pathname?.includes('/enquiries/new') || pathname?.includes('/enquiries/edit');
 
@@ -71,28 +110,68 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     [userProfile, isAllowedModule],
   );
 
-  const sidebarOrderStorageKey = useMemo(() => {
-    const uid = user?.uid;
-    if (!uid) return '';
-    return `${SIDEBAR_ORDER_STORAGE_PREFIX}${uid}`;
-  }, [user?.uid]);
+  const sidebarOrderBaseKeys = useMemo(() => baseVisibleNav.map((item) => item.text), [baseVisibleNav]);
 
-  /** Hydrate from Firestore or localStorage before passive effects so merge does not clobber with defaults. */
+  const mergedServerOrderSig = useMemo(() => {
+    const profileOrder = Array.isArray(userProfile?.sidebarOrder)
+      ? userProfile.sidebarOrder.filter((x): x is string => typeof x === 'string')
+      : [];
+    return mergeSidebarOrderWithBaseKeys(profileOrder, sidebarOrderBaseKeys).join('|');
+  }, [userProfile?.sidebarOrder, sidebarOrderBaseKeys]);
+
+  const mergedLocalOrderSig = useMemo(
+    () => mergeSidebarOrderWithBaseKeys(sidebarOrder, sidebarOrderBaseKeys).join('|'),
+    [sidebarOrder, sidebarOrderBaseKeys],
+  );
+
+  const showSidebarOrderSave =
+    isDesktop &&
+    drawerOpen &&
+    baseVisibleNav.length > 0 &&
+    mergedServerOrderSig !== mergedLocalOrderSig;
+
   useLayoutEffect(() => {
-    const profileOrder = userProfile?.sidebarOrder;
-    if (Array.isArray(profileOrder) && profileOrder.length > 0) {
-      setSidebarOrder(profileOrder.filter((item): item is string => typeof item === 'string'));
-      return;
-    }
     const uid = user?.uid;
     if (!uid || typeof window === 'undefined') return;
-    const fromStorage = readSidebarOrderFromLocalStorage(uid);
-    setSidebarOrder(fromStorage);
-  }, [user?.uid, userProfile?.sidebarOrder]);
+    if (baseVisibleNav.length === 0) return;
+
+    const baseKeys = baseVisibleNav.map((item) => item.text);
+    const profileOrder = Array.isArray(userProfile?.sidebarOrder)
+      ? userProfile.sidebarOrder.filter((x): x is string => typeof x === 'string')
+      : [];
+    const profileTs =
+      typeof userProfile?.sidebarOrderUpdatedAt === 'number' &&
+      Number.isFinite(userProfile.sidebarOrderUpdatedAt)
+        ? userProfile.sidebarOrderUpdatedAt
+        : 0;
+
+    const mergedProfile = mergeSidebarOrderWithBaseKeys(profileOrder, baseKeys);
+    const { order: storageRaw, updatedAt: storageTs } = readSidebarBundleFromLocalStorage(uid);
+    const mergedStorage = mergeSidebarOrderWithBaseKeys(storageRaw, baseKeys);
+
+    let next: string[];
+    let persistTs: number;
+
+    if (storageTs > profileTs) {
+      next = mergedStorage;
+      persistTs = storageTs;
+    } else if (profileOrder.length > 0) {
+      next = mergedProfile;
+      persistTs = profileTs;
+    } else {
+      next = mergedStorage;
+      persistTs = storageTs;
+    }
+
+    setSidebarOrder((prev) => (prev.join('|') === next.join('|') ? prev : next));
+    writeSidebarBundleToLocalStorage(uid, next, persistTs);
+  }, [user?.uid, userProfile?.sidebarOrder, userProfile?.sidebarOrderUpdatedAt, baseVisibleNav]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !sidebarOrderStorageKey || !user?.uid) return;
+    if (typeof window === 'undefined' || !user?.uid) return;
     if (baseVisibleNav.length === 0) return;
+    if (sidebarOrder.length === 0) return;
+
     const baseKeys = baseVisibleNav.map((item) => item.text);
     const normalized = sidebarOrder.filter((key) => baseKeys.includes(key));
     const missing = baseKeys.filter((key) => !normalized.includes(key));
@@ -103,42 +182,44 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       setSidebarOrder(merged);
       return;
     }
-    window.localStorage.setItem(sidebarOrderStorageKey, JSON.stringify(merged));
-  }, [baseVisibleNav, sidebarOrder, sidebarOrderStorageKey, user?.uid]);
 
-  useEffect(() => {
-    const uid = user?.uid;
-    if (!uid) return;
-    if (sidebarOrder.length === 0) return;
-
-    const profileOrder = Array.isArray(userProfile?.sidebarOrder) ? userProfile.sidebarOrder : [];
-    const profileSignature = profileOrder.join('|');
-    const nextSignature = sidebarOrder.join('|');
-    if (nextSignature === profileSignature) {
-      lastSyncedSidebarOrderRef.current = nextSignature;
-      return;
+    const uid = user.uid;
+    const prevBundle = readSidebarBundleFromLocalStorage(uid);
+    const prevMerged = mergeSidebarOrderWithBaseKeys(prevBundle.order, baseKeys);
+    const prevSig = prevMerged.join('|');
+    let updatedAt = prevBundle.updatedAt;
+    if (next !== prevSig) {
+      updatedAt = Date.now();
     }
-    if (lastSyncedSidebarOrderRef.current === nextSignature) return;
+    writeSidebarBundleToLocalStorage(uid, merged, updatedAt);
+  }, [baseVisibleNav, sidebarOrder, user?.uid]);
 
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const { db } = await import('@/firebase/config');
-          if (!db) return;
-          const { doc, updateDoc } = await import('firebase/firestore');
-          await updateDoc(doc(db, 'users', uid), {
-            sidebarOrder,
-            updatedAt: Date.now(),
-          });
-          lastSyncedSidebarOrderRef.current = nextSignature;
-        } catch (syncError) {
-          console.warn('Failed to save sidebar order for user:', syncError);
-        }
-      })();
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [sidebarOrder, user?.uid, userProfile?.sidebarOrder]);
+  const handleSaveSidebarOrder = useCallback(async () => {
+    const uid = user?.uid;
+    if (!uid || !userProfile) return;
+    setSidebarSaveStatus('saving');
+    try {
+      const baseKeys = baseVisibleNav.map((item) => item.text);
+      const merged = mergeSidebarOrderWithBaseKeys(sidebarOrder, baseKeys);
+      const ts = Date.now();
+      const { db } = await import('@/firebase/config');
+      if (!db) throw new Error('Database not available');
+      const { doc, updateDoc } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'users', uid), {
+        sidebarOrder: merged,
+        sidebarOrderUpdatedAt: ts,
+        updatedAt: ts,
+      });
+      writeSidebarBundleToLocalStorage(uid, merged, ts);
+      patchLocalUserProfile({ sidebarOrder: merged, sidebarOrderUpdatedAt: ts });
+      setSidebarOrder(merged);
+      setSidebarSaveStatus('saved');
+      window.setTimeout(() => setSidebarSaveStatus('idle'), 2500);
+    } catch (saveErr) {
+      console.error('Save sidebar order failed:', saveErr);
+      setSidebarSaveStatus('error');
+    }
+  }, [user?.uid, userProfile, sidebarOrder, baseVisibleNav, patchLocalUserProfile]);
 
   const visibleNav = useMemo(() => {
     if (sidebarOrder.length === 0) return baseVisibleNav;
@@ -482,6 +563,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
             if (!isDesktop) setDrawerOpen(false);
           }}
           onReorderItems={handleReorderItems}
+          sidebarOrderSave={
+            showSidebarOrderSave
+              ? { show: true, status: sidebarSaveStatus, onSave: handleSaveSidebarOrder }
+              : undefined
+          }
         />
       )}
 

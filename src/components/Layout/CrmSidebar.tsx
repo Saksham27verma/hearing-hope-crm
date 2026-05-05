@@ -41,6 +41,12 @@ export type CrmSidebarProps = {
   mobileOpen: boolean;
   onMobileNavigate?: () => void;
   onReorderItems?: (fromIndex: number, toIndex: number) => void;
+  /** When set and `show` is true, renders a save control for persisting sidebar order to the server. */
+  sidebarOrderSave?: {
+    show: boolean;
+    status: 'idle' | 'saving' | 'saved' | 'error';
+    onSave: () => void;
+  };
 };
 
 export default function CrmSidebar({
@@ -55,6 +61,7 @@ export default function CrmSidebar({
   mobileOpen,
   onMobileNavigate,
   onReorderItems,
+  sidebarOrderSave,
 }: CrmSidebarProps) {
   const theme = useTheme();
   const shell = useMemo(() => getCrmShellTokens(theme), [theme]);
@@ -233,7 +240,7 @@ export default function CrmSidebar({
           )}
         </div>
 
-        <nav style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px 0 16px' }}>
+        <nav style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '10px 0 16px' }}>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
             {items.map((item, itemIndex) => {
               const Icon = item.icon;
@@ -403,6 +410,63 @@ export default function CrmSidebar({
             })}
           </ul>
         </nav>
+        {sidebarOrderSave?.show && showLabels && (
+          <div
+            style={{
+              flexShrink: 0,
+              padding: '10px 14px 14px',
+              borderTop: `1px solid ${shell.surfaceBorder}`,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => sidebarOrderSave.onSave()}
+              disabled={sidebarOrderSave.status === 'saving'}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: RADIUS_XL,
+                border: `1px solid ${alpha(shell.accent, 0.45)}`,
+                background: alpha(shell.accent, 0.12),
+                color: shell.accent,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: sidebarOrderSave.status === 'saving' ? 'wait' : 'pointer',
+                opacity: sidebarOrderSave.status === 'saving' ? 0.85 : 1,
+                transition: 'background-color 0.2s ease, transform 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (sidebarOrderSave.status !== 'saving') {
+                  e.currentTarget.style.backgroundColor = alpha(shell.accent, 0.2);
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = alpha(shell.accent, 0.12);
+              }}
+            >
+              {sidebarOrderSave.status === 'saving'
+                ? 'Saving order…'
+                : sidebarOrderSave.status === 'saved'
+                  ? 'Saved to your account'
+                  : sidebarOrderSave.status === 'error'
+                    ? 'Retry saving order'
+                    : 'Save module order'}
+            </button>
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 11,
+                lineHeight: 1.35,
+                color: shell.sidebarTextMuted,
+                fontWeight: 500,
+              }}
+            >
+              {sidebarOrderSave.status === 'error'
+                ? 'Could not reach the server. Your order still works on this device after refresh.'
+                : 'Keeps this layout on every device after you sign in.'}
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );
