@@ -1045,6 +1045,36 @@ export default function EnquiriesPage() {
     return new Date(sec * 1000).toLocaleString('en-IN');
   };
 
+  const exportLastVisitDate = (enquiry: Enquiry): string => {
+    const schedules = Array.isArray(enquiry.visitSchedules) ? enquiry.visitSchedules : [];
+    const visits = Array.isArray(enquiry.visits) ? enquiry.visits : [];
+    const allVisitDates = [
+      ...schedules.map((schedule) => exportSafeText(schedule?.visitDate)),
+      ...visits.map((visit) => exportSafeText(visit?.date)),
+    ].filter(Boolean);
+
+    if (allVisitDates.length === 0) return '-';
+
+    let latestRaw = '';
+    let latestTime = Number.NEGATIVE_INFINITY;
+
+    allVisitDates.forEach((raw) => {
+      const timestamp = Date.parse(raw);
+      if (Number.isFinite(timestamp)) {
+        if (timestamp > latestTime) {
+          latestTime = timestamp;
+          latestRaw = raw;
+        }
+        return;
+      }
+      if (!latestRaw || raw > latestRaw) {
+        latestRaw = raw;
+      }
+    });
+
+    return exportDateOnly(latestRaw);
+  };
+
   const exportReference = (reference: unknown): string => {
     if (Array.isArray(reference)) {
       const values = reference.map((r) => exportSafeText(r)).filter(Boolean);
@@ -1169,7 +1199,7 @@ export default function EnquiriesPage() {
         'Message',
         'Visit Count',
         'Call Log Count',
-        'Created At',
+        'Last Date of Visit',
       ];
       const rows = filteredEnquiries.map((enquiry) => {
         const visits = buildVisitExportRows(enquiry);
@@ -1191,7 +1221,7 @@ export default function EnquiriesPage() {
           exportSafeText(enquiry.message) || '-',
           String(visits.length),
           String(followUps.length),
-          exportDateTimeFromCreatedAt(enquiry),
+          exportLastVisitDate(enquiry),
         ];
       });
       const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\n');
