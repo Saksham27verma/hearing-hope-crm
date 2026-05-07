@@ -60,6 +60,7 @@ import {
   OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { collection, getDocs, getDoc, query, orderBy, updateDoc, doc, Timestamp } from 'firebase/firestore';
@@ -226,6 +227,21 @@ function toDateTimeInputValue(value: Date): string {
   return format(value, "yyyy-MM-dd'T'HH:mm");
 }
 
+function atTenAm(value: Date): Date {
+  const d = new Date(value);
+  d.setHours(10, 0, 0, 0);
+  return d;
+}
+
+function isSameDayValue(a: Date, b: Date): boolean {
+  return format(a, 'yyyy-MM-dd') === format(b, 'yyyy-MM-dd');
+}
+
+function normalizeNextFollowUpDefault(nextValue: Date, callValue: Date): Date {
+  if (isSameDayValue(nextValue, callValue)) return nextValue;
+  return atTenAm(nextValue);
+}
+
 function parseDateSafe(raw: string | undefined): Date | null {
   if (!raw || typeof raw !== 'string') return null;
   const t = raw.trim();
@@ -373,7 +389,7 @@ export default function TelecallingRecordsPage() {
     if (!logEnquiryId) return;
     const snap = enquiryById[logEnquiryId] as Enquiry | undefined;
     const now = new Date();
-    const nextWeek = addHours(now, 24 * 7);
+    const nextWeek = atTenAm(addHours(now, 24 * 7));
     const options = getAllActiveStaffDisplayNames(staffList, [
       ...collectTelecallerExtrasFromEnquiry(snap ?? null),
       userProfile?.displayName,
@@ -1768,66 +1784,78 @@ export default function TelecallingRecordsPage() {
               </Stack>
             ) : null}
             <TextField
+              label="Quick remarks"
+              value={newFollowUp.remarks}
+              onChange={(e) => {
+                const value = e.target.value;
+                setNewFollowUp((s) => ({ ...s, remarks: value }));
+                if (selectedRemarkPreset && value !== selectedRemarkPreset) {
+                  setSelectedRemarkPreset('');
+                }
+              }}
+              fullWidth
+              multiline
+              minRows={3}
+              disabled={addFollowUpSaving}
+              helperText="Tap a chip to prefill quickly, or type custom remarks."
+            />
+            <Stack direction="row" flexWrap="wrap" gap={1}>
+              {REMARK_PRESETS.map((preset) => (
+                <Chip
+                  key={preset}
+                  size="small"
+                  clickable
+                  label={preset}
+                  color={selectedRemarkPreset === preset ? 'primary' : 'default'}
+                  variant={selectedRemarkPreset === preset ? 'filled' : 'outlined'}
+                  onClick={() => {
+                    setSelectedRemarkPreset(preset);
+                    setNewFollowUp((s) => {
+                      if (preset === 'Patient cut the call') {
+                        const autoNextDate = addHours(new Date(), 1);
+                        return {
+                          ...s,
+                          remarks: preset,
+                          nextFollowUpDateTime: toDateTimeInputValue(autoNextDate),
+                          nextFollowUpDate: toDateInputValue(autoNextDate),
+                        };
+                      }
+                      return { ...s, remarks: preset };
+                    });
+                  }}
+                />
+              ))}
+            </Stack>
+            <DateTimePicker
               label="Call date & time"
-              type="datetime-local"
-              value={newFollowUp.dateTime}
-              onChange={(e) =>
+              value={parseDateSafe(newFollowUp.dateTime)}
+              onChange={(value) => {
+                if (!value || Number.isNaN(value.getTime())) return;
                 setNewFollowUp((s) => ({
                   ...s,
-                  dateTime: e.target.value,
-                  date: e.target.value ? e.target.value.slice(0, 10) : s.date,
-                }))
-              }
-              InputLabelProps={{ shrink: true }}
-              fullWidth
+                  dateTime: toDateTimeInputValue(value),
+                  date: toDateInputValue(value),
+                }));
+              }}
               disabled={addFollowUpSaving}
+              slotProps={{ textField: { fullWidth: true } }}
             />
-            <TextField
+            <DateTimePicker
               label="Next follow-up date & time"
-              type="datetime-local"
-              value={newFollowUp.nextFollowUpDateTime}
-              onChange={(e) =>
+              value={parseDateSafe(newFollowUp.nextFollowUpDateTime)}
+              onChange={(value) => {
+                if (!value || Number.isNaN(value.getTime())) return;
+                const callValue = parseDateSafe(newFollowUp.dateTime) || new Date();
+                const normalized = normalizeNextFollowUpDefault(value, callValue);
                 setNewFollowUp((s) => ({
                   ...s,
-                  nextFollowUpDateTime: e.target.value,
-                  nextFollowUpDate: e.target.value ? e.target.value.slice(0, 10) : s.nextFollowUpDate,
-                }))
-              }
-              InputLabelProps={{ shrink: true }}
-              fullWidth
+                  nextFollowUpDateTime: toDateTimeInputValue(normalized),
+                  nextFollowUpDate: toDateInputValue(normalized),
+                }));
+              }}
               disabled={addFollowUpSaving}
+              slotProps={{ textField: { fullWidth: true } }}
             />
-            <FormControl fullWidth disabled={addFollowUpSaving}>
-              <InputLabel>Outcome preset</InputLabel>
-              <Select
-                label="Outcome preset"
-                value={selectedRemarkPreset}
-                onChange={(e) => {
-                  const preset = String(e.target.value);
-                  setSelectedRemarkPreset(preset);
-                  setNewFollowUp((s) => {
-                    if (!preset) return { ...s, remarks: '' };
-                    if (preset === 'Patient cut the call') {
-                      const autoNext = toDateTimeInputValue(addHours(new Date(), 1));
-                      return {
-                        ...s,
-                        remarks: preset,
-                        nextFollowUpDateTime: autoNext,
-                        nextFollowUpDate: autoNext.slice(0, 10),
-                      };
-                    }
-                    return { ...s, remarks: preset };
-                  });
-                }}
-              >
-                <MenuItem value="">Custom remarks</MenuItem>
-                {REMARK_PRESETS.map((preset) => (
-                  <MenuItem key={preset} value={preset}>
-                    {preset}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
             {telecallerDialogOptions.length > 0 ? (
               <FormControl fullWidth disabled={addFollowUpSaving}>
                 <InputLabel>Caller</InputLabel>
@@ -1852,21 +1880,6 @@ export default function TelecallingRecordsPage() {
                 disabled={addFollowUpSaving}
               />
             )}
-            <TextField
-              label="Remarks"
-              value={newFollowUp.remarks}
-              onChange={(e) => {
-                const value = e.target.value;
-                setNewFollowUp((s) => ({ ...s, remarks: value }));
-                if (selectedRemarkPreset && value !== selectedRemarkPreset) {
-                  setSelectedRemarkPreset('');
-                }
-              }}
-              fullWidth
-              multiline
-              minRows={3}
-              disabled={addFollowUpSaving}
-            />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
