@@ -367,7 +367,11 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           visits[visitIndex] = { ...visit, invoiceNumber };
         }
 
-        const payload = {
+        const hasExchangeCredit = exchangeCredit > 0;
+        const hasExchangePrior =
+          typeof exPrior === 'number' && !Number.isNaN(exPrior) && exPrior >= 0;
+
+        const basePayload = {
           invoiceNumber,
           patientName: data.name || 'Patient',
           phone: data.phone || '',
@@ -402,21 +406,27 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           updatedByEmail: actor.email,
           updatedByRole: actor.role,
           updatedAt: serverTimestamp(),
-          exchangeCreditInr: exchangeCredit > 0 ? exchangeCredit : deleteField(),
-          exchangePriorVisitIndex:
-            typeof exPrior === 'number' && !Number.isNaN(exPrior) && exPrior >= 0
-              ? exPrior
-              : deleteField(),
-        } as Record<string, unknown> as any;
+        } as Record<string, unknown>;
 
         if (existingSaleDoc == null) {
-          const saleRef = await addDoc(collection(db, 'sales'), {
-            ...payload,
+          // addDoc() does not allow deleteField() sentinels; only include
+          // exchange fields when there is an actual value to write.
+          const newDocPayload: Record<string, unknown> = {
+            ...basePayload,
             createdAt: serverTimestamp(),
-          });
+          };
+          if (hasExchangeCredit) newDocPayload.exchangeCreditInr = exchangeCredit;
+          if (hasExchangePrior) newDocPayload.exchangePriorVisitIndex = exPrior;
+          const saleRef = await addDoc(collection(db, 'sales'), newDocPayload);
           void notifyAdminsNewSale(saleRef.id);
         } else {
-          await updateDoc(doc(db, 'sales', existingSaleDoc.id), payload);
+          // updateDoc() supports deleteField() to clear stale exchange data.
+          const updatePayload: Record<string, unknown> = {
+            ...basePayload,
+            exchangeCreditInr: hasExchangeCredit ? exchangeCredit : deleteField(),
+            exchangePriorVisitIndex: hasExchangePrior ? exPrior : deleteField(),
+          };
+          await updateDoc(doc(db, 'sales', existingSaleDoc.id), updatePayload);
         }
       }
 

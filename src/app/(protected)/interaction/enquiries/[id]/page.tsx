@@ -117,6 +117,47 @@ import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator'
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
+/**
+ * Robustly format an enquiry timestamp value as a localized date string.
+ * Firestore values can arrive in many shapes depending on how they were
+ * written (client SDK Timestamp, admin SDK serialization, Date, ISO string,
+ * or raw millis). Returns the provided fallback when the value cannot be
+ * parsed into a valid date so the UI never renders "Invalid Date".
+ */
+function formatEnquiryDate(value: unknown, fallback = '—'): string {
+  if (value == null || value === '') return fallback;
+  let date: Date | null = null;
+  if (value instanceof Date) {
+    date = value;
+  } else if (typeof value === 'number') {
+    date = new Date(value);
+  } else if (typeof value === 'string') {
+    const parsed = new Date(value);
+    date = Number.isNaN(parsed.getTime()) ? null : parsed;
+  } else if (typeof value === 'object') {
+    const v = value as {
+      toDate?: () => Date;
+      seconds?: number;
+      _seconds?: number;
+      nanoseconds?: number;
+      _nanoseconds?: number;
+    };
+    if (typeof v.toDate === 'function') {
+      try {
+        date = v.toDate();
+      } catch {
+        date = null;
+      }
+    } else if (typeof v.seconds === 'number') {
+      date = new Date(v.seconds * 1000);
+    } else if (typeof v._seconds === 'number') {
+      date = new Date(v._seconds * 1000);
+    }
+  }
+  if (!date || Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleDateString();
+}
+
 /** Home trials: duration/dates/result and trial receipts; in-office trials do not. */
 function isHomeTrialVisit(visit: any): boolean {
   return (
@@ -1188,7 +1229,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
           <Grid container spacing={1.5} sx={{ width: { xs: '100%', md: 320 }, m: 0 }}>
             <Grid item xs={6}>
-              <MetricCard label="Created" value={enquiry.createdAt ? new Date(enquiry.createdAt.seconds * 1000).toLocaleDateString() : '—'} />
+              <MetricCard label="Created" value={formatEnquiryDate(enquiry.createdAt)} />
             </Grid>
             <Grid item xs={6}>
               <MetricCard label="Visits" value={String(visits.length)} accent="#0ea5e9" />
@@ -2482,7 +2523,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                 <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2.25, display: 'flex', justifyContent: 'space-between', bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.94) : 'rgba(255,255,255,0.8)') }}>
                   <Typography variant="body2" color="text.secondary">Last Updated</Typography>
                   <Typography variant="body1" sx={{ fontWeight: 700 }}>
-                    {enquiry.updatedAt ? new Date(enquiry.updatedAt.seconds * 1000).toLocaleDateString() : 'Never'}
+                    {formatEnquiryDate(enquiry.updatedAt, 'Never')}
                   </Typography>
                 </Paper>
               </Stack>
