@@ -38,6 +38,7 @@ import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryIn
 import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
 import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
+import { getCanonicalInvoiceNumberForEnquiryVisit } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import { logActivity, computeChanges } from '@/lib/activityLogger';
 import {
   collectSaleVisitIndicesVoidedByReturns,
@@ -351,15 +352,18 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
             collection(db, 'sales'),
             where('enquiryId', '==', resolvedParams.id),
             where('enquiryVisitIndex', '==', visitIndex),
-            limit(1)
+            limit(25)
           )
         );
-        const existingSaleDoc = existing.empty ? null : existing.docs[0];
+        const canonical = await getCanonicalInvoiceNumberForEnquiryVisit(db, resolvedParams.id, visitIndex);
+        const existingSaleDoc = existing.empty
+          ? null
+          : (existing.docs.find((saleDoc) => saleDoc.id === canonical.saleId) ?? existing.docs[0]);
         const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
         const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
           db,
           existingVisitInvoice,
-          existingSalesInvoice: existingSaleDoc?.data()?.invoiceNumber,
+          existingSalesInvoice: canonical.invoiceNumber || existingSaleDoc?.data()?.invoiceNumber,
           priorVisitInvoice: oldVisits?.[visitIndex]?.invoiceNumber,
           currentSaleId: existingSaleDoc?.id,
         });

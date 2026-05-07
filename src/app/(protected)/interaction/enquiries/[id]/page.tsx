@@ -91,6 +91,7 @@ import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/ut
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
+import { getCanonicalInvoiceNumberForEnquiryVisit } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import {
   ENQUIRY_STATUS_OPTIONS,
   getEnquiryStatusMeta,
@@ -735,18 +736,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       return existing;
     }
     if (resolvedParams?.id) {
-      const existingSalesSnap = await getDocs(
-        query(
-          collection(db, 'sales'),
-          where('enquiryId', '==', resolvedParams.id),
-          where('enquiryVisitIndex', '==', visitIndex),
-          limit(1)
-        )
-      );
-      if (!existingSalesSnap.empty) {
-        const fromSales = normalizeInvoiceNumberString(existingSalesSnap.docs[0].data()?.invoiceNumber);
-        if (saleHasBillableInvoiceNumber(fromSales)) return fromSales;
-      }
+      const fromCanonicalSale = await getCanonicalInvoiceNumberForEnquiryVisit(db, resolvedParams.id, visitIndex);
+      if (saleHasBillableInvoiceNumber(fromCanonicalSale.invoiceNumber)) return fromCanonicalSale.invoiceNumber;
     }
     throw new Error('Invoice number is missing for this visit');
   };

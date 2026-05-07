@@ -115,6 +115,7 @@ import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import type { AccountingExportOptions } from '@/lib/sales-invoicing/accountingExport';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
+import { syncEnquiryVisitInvoiceNumberFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 
 // ─── Types ───
 
@@ -569,6 +570,19 @@ export default function SalesInvoicingPageInner() {
         ...auditPatch,
         updatedAt: serverTimestamp(),
       });
+      if (
+        saleToSave.source === 'enquiry' &&
+        typeof saleToSave.enquiryId === 'string' &&
+        saleToSave.enquiryId &&
+        typeof saleToSave.enquiryVisitIndex === 'number'
+      ) {
+        await syncEnquiryVisitInvoiceNumberFromSale({
+          db,
+          enquiryId: saleToSave.enquiryId,
+          visitIndex: saleToSave.enquiryVisitIndex,
+          invoiceNumber: inv,
+        });
+      }
       setSales((prev) =>
         prev.map((s) => (s.id === saleToSave.id ? { ...saleToSave, updatedAt: Timestamp.now() } : s))
       );
@@ -587,6 +601,19 @@ export default function SalesInvoicingPageInner() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      if (
+        saleToSave.source === 'enquiry' &&
+        typeof saleToSave.enquiryId === 'string' &&
+        saleToSave.enquiryId &&
+        typeof saleToSave.enquiryVisitIndex === 'number'
+      ) {
+        await syncEnquiryVisitInvoiceNumberFromSale({
+          db,
+          enquiryId: saleToSave.enquiryId,
+          visitIndex: saleToSave.enquiryVisitIndex,
+          invoiceNumber: inv,
+        });
+      }
       setSales((prev) => [
         { ...saleToSave, id: docRef.id, createdAt: Timestamp.now(), updatedAt: Timestamp.now() },
         ...prev,
