@@ -64,7 +64,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { collection, getDocs, getDoc, query, orderBy, updateDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
-import { format, parseISO, isWithinInterval } from 'date-fns';
+import { addHours, endOfDay, format, isWithinInterval, parseISO, startOfDay } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLogger';
 import { getEnquiryStatusMeta, type EnquiryStatusChipColor } from '@/utils/enquiryStatus';
@@ -80,8 +80,10 @@ import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquir
 interface FollowUp {
   id: string;
   date: string;
+  dateTime?: string;
   remarks: string;
   nextFollowUpDate: string;
+  nextFollowUpDateTime?: string;
   callerName: string;
   createdAt?: {
     seconds: number;
@@ -147,9 +149,11 @@ interface TelecallingRecord {
   totalFollowUpsOnEnquiry: number;
   followUpId: string;
   followUpDate: string;
+  followUpDateTime?: string;
   telecaller: string;
   remarks: string;
   nextFollowUpDate: string;
+  nextFollowUpDateTime?: string;
   createdAt: Date;
   /** Logged call vs date-only from enquiry patient section */
   recordSource?: 'followup_log' | 'patient_info';
@@ -214,6 +218,51 @@ function normalizeYmd(raw: string | undefined): string {
   return raw.trim().slice(0, 10);
 }
 
+function toDateInputValue(value: Date): string {
+  return format(value, 'yyyy-MM-dd');
+}
+
+function toDateTimeInputValue(value: Date): string {
+  return format(value, "yyyy-MM-dd'T'HH:mm");
+}
+
+function parseDateSafe(raw: string | undefined): Date | null {
+  if (!raw || typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (!t) return null;
+  const parsed = new Date(t);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  try {
+    const p = parseISO(t);
+    return Number.isNaN(p.getTime()) ? null : p;
+  } catch {
+    return null;
+  }
+}
+
+function pickFollowUpDateTime(followUp: FollowUp): Date | null {
+  return parseDateSafe(followUp.dateTime) || parseDateSafe(followUp.date);
+}
+
+function pickNextFollowUpDateTime(followUp: FollowUp): Date | null {
+  return parseDateSafe(followUp.nextFollowUpDateTime) || parseDateSafe(followUp.nextFollowUpDate);
+}
+
+function pickRecordFollowUpDateTime(record: TelecallingRecord): Date | null {
+  return parseDateSafe(record.followUpDateTime) || parseDateSafe(record.followUpDate);
+}
+
+function pickRecordNextFollowUpDateTime(record: TelecallingRecord): Date | null {
+  return parseDateSafe(record.nextFollowUpDateTime) || parseDateSafe(record.nextFollowUpDate);
+}
+
+const REMARK_PRESETS = [
+  'Patient cut the call',
+  'Patient not interested',
+  'Call back later',
+  'No response',
+] as const;
+
 function firestoreTimeToDate(data: Enquiry): Date {
   const u = data.updatedAt;
   const c = data.createdAt;
@@ -243,10 +292,13 @@ export default function TelecallingRecordsPage() {
   const [telecallerDialogOptions, setTelecallerDialogOptions] = useState<string[]>([]);
   const [newFollowUp, setNewFollowUp] = useState({
     date: '',
+    dateTime: '',
     remarks: '',
     nextFollowUpDate: '',
+    nextFollowUpDateTime: '',
     callerName: '',
   });
+  const [selectedRemarkPreset, setSelectedRemarkPreset] = useState('');
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false,
     message: '',
@@ -320,7 +372,8 @@ export default function TelecallingRecordsPage() {
   useEffect(() => {
     if (!logEnquiryId) return;
     const snap = enquiryById[logEnquiryId] as Enquiry | undefined;
-    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const now = new Date();
+    const nextWeek = addHours(now, 24 * 7);
     const options = getAllActiveStaffDisplayNames(staffList, [
       ...collectTelecallerExtrasFromEnquiry(snap ?? null),
       userProfile?.displayName,
@@ -331,11 +384,14 @@ export default function TelecallingRecordsPage() {
       enquiryTelecaller: snap?.telecaller,
     });
     setNewFollowUp({
-      date: new Date().toISOString().split('T')[0],
+      date: toDateInputValue(now),
+      dateTime: toDateTimeInputValue(now),
       remarks: '',
-      nextFollowUpDate: nextWeek,
+      nextFollowUpDate: toDateInputValue(nextWeek),
+      nextFollowUpDateTime: toDateTimeInputValue(nextWeek),
       callerName,
     });
+    setSelectedRemarkPreset('');
   }, [logEnquiryId, staffList, enquiryById, userProfile?.displayName]);
 
   // Fetch data
@@ -408,7 +464,7 @@ export default function TelecallingRecordsPage() {
             enquiryData.followUps.forEach((followUp, index) => {
               try {
                 // Handle different timestamp formats
-                let createdAtDate = new Date();
+                let createdAtDate = pickFollowUpDateTime(followUp) || new Date();
                 if (followUp.createdAt) {
                   if (typeof followUp.createdAt === 'object' && 'seconds' in followUp.createdAt) {
                     createdAtDate = new Date(followUp.createdAt.seconds * 1000);
@@ -428,11 +484,13 @@ export default function TelecallingRecordsPage() {
                   ...rowContext,
                   followUpId: followUp.id || `followup_${index}`,
                   followUpDate: followUp.date || '',
+                  followUpDateTime: followUp.dateTime || '',
                   telecaller:
                     (followUp.callerName || enquiryData.telecaller || enquiryData.assignedTo || 'Unknown').trim() ||
                     'Unknown',
                   remarks: followUp.remarks || '',
                   nextFollowUpDate: followUp.nextFollowUpDate || '',
+                  nextFollowUpDateTime: followUp.nextFollowUpDateTime || '',
                   createdAt: createdAtDate,
                   recordSource: 'followup_log',
                 };
@@ -463,9 +521,11 @@ export default function TelecallingRecordsPage() {
                 totalFollowUpsOnEnquiry: totalFu,
                 followUpId: 'patient_followup_info',
                 followUpDate: '',
+                followUpDateTime: '',
                 telecaller: (enquiryData.telecaller || enquiryData.assignedTo || 'Unassigned').trim() || 'Unassigned',
                 remarks: 'Follow-up date from patient information (enquiry form). No call logged yet.',
                 nextFollowUpDate: patientFollowYmd,
+                nextFollowUpDateTime: patientFollowYmd,
                 createdAt: createdAtDate,
                 recordSource: 'patient_info',
               });
@@ -574,16 +634,12 @@ export default function TelecallingRecordsPage() {
       const dateRange = getDateRange(quickFilter);
       if (dateRange) {
         filtered = filtered.filter(record => {
-          try {
-            const recordDate = parseISO(dateRange.type === 'followUp' ? record.followUpDate : record.nextFollowUpDate);
-            const startOfDay = new Date(dateRange.from);
-            startOfDay.setHours(0, 0, 0, 0);
-            const endOfDay = new Date(dateRange.to);
-            endOfDay.setHours(23, 59, 59, 999);
-            return isWithinInterval(recordDate, { start: startOfDay, end: endOfDay });
-          } catch {
-            return false;
-          }
+          const recordDate =
+            dateRange.type === 'followUp'
+              ? pickRecordFollowUpDateTime(record)
+              : pickRecordNextFollowUpDateTime(record);
+          if (!recordDate) return false;
+          return isWithinInterval(recordDate, { start: startOfDay(dateRange.from), end: endOfDay(dateRange.to) });
         });
       }
     }
@@ -632,38 +688,35 @@ export default function TelecallingRecordsPage() {
     // Follow-up date range filter (only if not using quick filter)
     if (!quickFilter && (followUpDateFrom || followUpDateTo)) {
       filtered = filtered.filter(record => {
-        try {
-          const recordDate = parseISO(record.followUpDate);
-          if (followUpDateFrom && followUpDateTo) {
-            return isWithinInterval(recordDate, { start: followUpDateFrom, end: followUpDateTo });
-          } else if (followUpDateFrom) {
-            return recordDate >= followUpDateFrom;
-          } else if (followUpDateTo) {
-            return recordDate <= followUpDateTo;
-          }
-          return true;
-        } catch {
-          return true;
+        const recordDate = pickRecordFollowUpDateTime(record);
+        if (!recordDate) return true;
+        if (followUpDateFrom && followUpDateTo) {
+          return isWithinInterval(recordDate, { start: startOfDay(followUpDateFrom), end: endOfDay(followUpDateTo) });
+        } else if (followUpDateFrom) {
+          return recordDate >= startOfDay(followUpDateFrom);
+        } else if (followUpDateTo) {
+          return recordDate <= endOfDay(followUpDateTo);
         }
+        return true;
       });
     }
 
     // Next follow-up date range filter (only if not using quick filter)
     if (!quickFilter && (nextFollowUpDateFrom || nextFollowUpDateTo)) {
       filtered = filtered.filter(record => {
-        try {
-          const recordDate = parseISO(record.nextFollowUpDate);
-          if (nextFollowUpDateFrom && nextFollowUpDateTo) {
-            return isWithinInterval(recordDate, { start: nextFollowUpDateFrom, end: nextFollowUpDateTo });
-          } else if (nextFollowUpDateFrom) {
-            return recordDate >= nextFollowUpDateFrom;
-          } else if (nextFollowUpDateTo) {
-            return recordDate <= nextFollowUpDateTo;
-          }
-          return true;
-        } catch {
-          return true;
+        const recordDate = pickRecordNextFollowUpDateTime(record);
+        if (!recordDate) return true;
+        if (nextFollowUpDateFrom && nextFollowUpDateTo) {
+          return isWithinInterval(recordDate, {
+            start: startOfDay(nextFollowUpDateFrom),
+            end: endOfDay(nextFollowUpDateTo),
+          });
+        } else if (nextFollowUpDateFrom) {
+          return recordDate >= startOfDay(nextFollowUpDateFrom);
+        } else if (nextFollowUpDateTo) {
+          return recordDate <= endOfDay(nextFollowUpDateTo);
         }
+        return true;
       });
     }
 
@@ -711,6 +764,10 @@ export default function TelecallingRecordsPage() {
       const now = new Date();
       const followUpData = {
         ...newFollowUp,
+        date: newFollowUp.dateTime ? newFollowUp.dateTime.slice(0, 10) : newFollowUp.date,
+        nextFollowUpDate: newFollowUp.nextFollowUpDateTime
+          ? newFollowUp.nextFollowUpDateTime.slice(0, 10)
+          : newFollowUp.nextFollowUpDate,
         id:
           typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
             ? crypto.randomUUID()
@@ -742,9 +799,11 @@ export default function TelecallingRecordsPage() {
         totalFollowUpsOnEnquiry: updated.length,
         followUpId: followUpData.id,
         followUpDate: followUpData.date || '',
+        followUpDateTime: followUpData.dateTime || '',
         telecaller: (followUpData.callerName || data.telecaller || data.assignedTo || 'Unknown').trim() || 'Unknown',
         remarks: followUpData.remarks || '',
         nextFollowUpDate: followUpData.nextFollowUpDate || '',
+        nextFollowUpDateTime: followUpData.nextFollowUpDateTime || '',
         createdAt: now,
         recordSource: 'followup_log',
       };
@@ -781,8 +840,11 @@ export default function TelecallingRecordsPage() {
             after: {
               callerName: newFollowUp.callerName,
               date: newFollowUp.date,
+              dateTime: newFollowUp.dateTime,
               remarks: newFollowUp.remarks,
               nextFollowUpDate: newFollowUp.nextFollowUpDate,
+              nextFollowUpDateTime: newFollowUp.nextFollowUpDateTime,
+              remarkPreset: selectedRemarkPreset || null,
             },
           },
         },
@@ -790,6 +852,8 @@ export default function TelecallingRecordsPage() {
           callerName: newFollowUp.callerName,
           remarks: newFollowUp.remarks,
           nextFollowUpDate: newFollowUp.nextFollowUpDate,
+          nextFollowUpDateTime: newFollowUp.nextFollowUpDateTime,
+          remarkPreset: selectedRemarkPreset || null,
         },
       }, user);
       setSnackbar({ open: true, message: 'Call logged successfully', severity: 'success' });
@@ -821,8 +885,8 @@ export default function TelecallingRecordsPage() {
 
   const formatFollowUpDateCell = (value: string | undefined) => {
     if (!value) return '—';
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+    const d = parseDateSafe(value);
+    return d ? format(d, 'dd MMM yyyy HH:mm') : '—';
   };
 
   // Quick filter options
@@ -842,11 +906,9 @@ export default function TelecallingRecordsPage() {
   // Format date
   const formatDate = (dateString: string) => {
     if (!dateString || !String(dateString).trim()) return '—';
-    try {
-      return format(parseISO(dateString), 'dd MMM yyyy');
-    } catch {
-      return dateString;
-    }
+    const parsed = parseDateSafe(dateString);
+    if (!parsed) return dateString;
+    return format(parsed, 'dd MMM yyyy HH:mm');
   };
 
   // Format datetime
@@ -856,6 +918,20 @@ export default function TelecallingRecordsPage() {
 
   // Paginated records
   const paginatedRecords = filteredRecords.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+  const dueTodayCount = useMemo(() => {
+    const now = new Date();
+    return filteredRecords.filter((r) => {
+      const nextDate = pickRecordNextFollowUpDateTime(r);
+      return nextDate ? isWithinInterval(nextDate, { start: startOfDay(now), end: endOfDay(now) }) : false;
+    }).length;
+  }, [filteredRecords]);
+  const overdueCount = useMemo(() => {
+    const now = new Date();
+    return filteredRecords.filter((r) => {
+      const nextDate = pickRecordNextFollowUpDateTime(r);
+      return nextDate ? nextDate < now : false;
+    }).length;
+  }, [filteredRecords]);
 
   if (loading) {
     return (
@@ -986,13 +1062,7 @@ export default function TelecallingRecordsPage() {
                   </Avatar>
                   <Box>
                     <Typography variant="h4" component="div">
-                      {filteredRecords.filter(r => {
-                        try {
-                          const nextDate = parseISO(r.nextFollowUpDate);
-                          const today = new Date();
-                          return nextDate.toDateString() === today.toDateString();
-                        } catch { return false; }
-                      }).length}
+                      {dueTodayCount}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Due Today
@@ -1011,13 +1081,7 @@ export default function TelecallingRecordsPage() {
                   </Avatar>
                   <Box>
                     <Typography variant="h4" component="div">
-                      {filteredRecords.filter(r => {
-                        try {
-                          const nextDate = parseISO(r.nextFollowUpDate);
-                          const today = new Date();
-                          return nextDate < today;
-                        } catch { return false; }
-                      }).length}
+                      {overdueCount}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Overdue
@@ -1342,7 +1406,7 @@ export default function TelecallingRecordsPage() {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <CalendarIcon fontSize="small" color="action" />
                         <Typography variant="body2">
-                          {formatDate(record.followUpDate)}
+                          {formatDate(record.followUpDateTime || record.followUpDate)}
                         </Typography>
                       </Box>
                     </TableCell>
@@ -1377,16 +1441,17 @@ export default function TelecallingRecordsPage() {
                         <Typography 
                           variant="body2"
                           color={(() => {
-                            try {
-                              const nextDate = parseISO(record.nextFollowUpDate);
-                              const today = new Date();
-                              if (nextDate.toDateString() === today.toDateString()) return 'success.main';
-                              if (nextDate < today) return 'error.main';
-                              return 'text.primary';
-                            } catch { return 'text.primary'; }
+                            const nextDate = pickRecordNextFollowUpDateTime(record);
+                            if (!nextDate) return 'text.primary';
+                            const now = new Date();
+                            if (isWithinInterval(nextDate, { start: startOfDay(now), end: endOfDay(now) })) {
+                              return 'success.main';
+                            }
+                            if (nextDate < now) return 'error.main';
+                            return 'text.primary';
                           })()}
                         >
-                          {formatDate(record.nextFollowUpDate)}
+                          {formatDate(record.nextFollowUpDateTime || record.nextFollowUpDate)}
                         </Typography>
                       </Box>
                     </TableCell>
@@ -1703,23 +1768,66 @@ export default function TelecallingRecordsPage() {
               </Stack>
             ) : null}
             <TextField
-              label="Call date"
-              type="date"
-              value={newFollowUp.date}
-              onChange={(e) => setNewFollowUp((s) => ({ ...s, date: e.target.value }))}
+              label="Call date & time"
+              type="datetime-local"
+              value={newFollowUp.dateTime}
+              onChange={(e) =>
+                setNewFollowUp((s) => ({
+                  ...s,
+                  dateTime: e.target.value,
+                  date: e.target.value ? e.target.value.slice(0, 10) : s.date,
+                }))
+              }
               InputLabelProps={{ shrink: true }}
               fullWidth
               disabled={addFollowUpSaving}
             />
             <TextField
-              label="Next follow-up"
-              type="date"
-              value={newFollowUp.nextFollowUpDate}
-              onChange={(e) => setNewFollowUp((s) => ({ ...s, nextFollowUpDate: e.target.value }))}
+              label="Next follow-up date & time"
+              type="datetime-local"
+              value={newFollowUp.nextFollowUpDateTime}
+              onChange={(e) =>
+                setNewFollowUp((s) => ({
+                  ...s,
+                  nextFollowUpDateTime: e.target.value,
+                  nextFollowUpDate: e.target.value ? e.target.value.slice(0, 10) : s.nextFollowUpDate,
+                }))
+              }
               InputLabelProps={{ shrink: true }}
               fullWidth
               disabled={addFollowUpSaving}
             />
+            <FormControl fullWidth disabled={addFollowUpSaving}>
+              <InputLabel>Outcome preset</InputLabel>
+              <Select
+                label="Outcome preset"
+                value={selectedRemarkPreset}
+                onChange={(e) => {
+                  const preset = String(e.target.value);
+                  setSelectedRemarkPreset(preset);
+                  setNewFollowUp((s) => {
+                    if (!preset) return { ...s, remarks: '' };
+                    if (preset === 'Patient cut the call') {
+                      const autoNext = toDateTimeInputValue(addHours(new Date(), 1));
+                      return {
+                        ...s,
+                        remarks: preset,
+                        nextFollowUpDateTime: autoNext,
+                        nextFollowUpDate: autoNext.slice(0, 10),
+                      };
+                    }
+                    return { ...s, remarks: preset };
+                  });
+                }}
+              >
+                <MenuItem value="">Custom remarks</MenuItem>
+                {REMARK_PRESETS.map((preset) => (
+                  <MenuItem key={preset} value={preset}>
+                    {preset}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             {telecallerDialogOptions.length > 0 ? (
               <FormControl fullWidth disabled={addFollowUpSaving}>
                 <InputLabel>Caller</InputLabel>
@@ -1747,7 +1855,13 @@ export default function TelecallingRecordsPage() {
             <TextField
               label="Remarks"
               value={newFollowUp.remarks}
-              onChange={(e) => setNewFollowUp((s) => ({ ...s, remarks: e.target.value }))}
+              onChange={(e) => {
+                const value = e.target.value;
+                setNewFollowUp((s) => ({ ...s, remarks: value }));
+                if (selectedRemarkPreset && value !== selectedRemarkPreset) {
+                  setSelectedRemarkPreset('');
+                }
+              }}
               fullWidth
               multiline
               minRows={3}
@@ -1762,7 +1876,7 @@ export default function TelecallingRecordsPage() {
           <Button
             variant="contained"
             onClick={() => void handleSaveFollowUpFromTelecalling()}
-            disabled={addFollowUpSaving || !newFollowUp.callerName.trim() || !newFollowUp.date}
+            disabled={addFollowUpSaving || !newFollowUp.callerName.trim() || !newFollowUp.dateTime}
           >
             {addFollowUpSaving ? 'Saving…' : 'Save call'}
           </Button>
