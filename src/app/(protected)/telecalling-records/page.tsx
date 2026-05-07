@@ -58,6 +58,7 @@ import {
   Visibility as PreviewIcon,
   Add as AddIcon,
   OpenInNew as OpenInNewIcon,
+  WhatsApp as WhatsAppIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
@@ -65,7 +66,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { collection, getDocs, getDoc, query, orderBy, updateDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
-import { addHours, endOfDay, format, isWithinInterval, parseISO, startOfDay } from 'date-fns';
+import { addHours, addMinutes, endOfDay, format, isWithinInterval, parseISO, startOfDay } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLogger';
 import { getEnquiryStatusMeta, type EnquiryStatusChipColor } from '@/utils/enquiryStatus';
@@ -157,7 +158,9 @@ interface TelecallingRecord {
   nextFollowUpDateTime?: string;
   createdAt: Date;
   /** Logged call vs date-only from enquiry patient section */
-  recordSource?: 'followup_log' | 'patient_info';
+  recordSource?: 'followup_log' | 'patient_info' | 'appointment_due';
+  /** True when this enquiry already has a call logged today. */
+  hasCallLoggedToday?: boolean;
 }
 
 function refList(ref: Enquiry['reference']): string[] {
@@ -219,6 +222,14 @@ function normalizeYmd(raw: string | undefined): string {
   return raw.trim().slice(0, 10);
 }
 
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 function toDateInputValue(value: Date): string {
   return format(value, 'yyyy-MM-dd');
 }
@@ -240,6 +251,26 @@ function isSameDayValue(a: Date, b: Date): boolean {
 function normalizeNextFollowUpDefault(nextValue: Date, callValue: Date): Date {
   if (isSameDayValue(nextValue, callValue)) return nextValue;
   return atTenAm(nextValue);
+}
+
+function isNotInterestedEnquiry(
+  statusLabel: string,
+  enquiryData: Enquiry
+): boolean {
+  const statusNorm = String(statusLabel || '').trim().toLowerCase();
+  const legacyStatusNorm = String(enquiryData.status || '').trim().toLowerCase();
+  const leadOutcomeNorm = String(enquiryData.leadOutcome || '').trim().toLowerCase();
+  return (
+    statusNorm.includes('not interested') ||
+    legacyStatusNorm.includes('not interested') ||
+    leadOutcomeNorm.includes('not interested')
+  );
+}
+
+function toWhatsAppHref(phone: string | undefined): string | null {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return null;
+  return `https://wa.me/${digits}`;
 }
 
 function parseDateSafe(raw: string | undefined): Date | null {
@@ -270,6 +301,24 @@ function pickRecordFollowUpDateTime(record: TelecallingRecord): Date | null {
 
 function pickRecordNextFollowUpDateTime(record: TelecallingRecord): Date | null {
   return parseDateSafe(record.nextFollowUpDateTime) || parseDateSafe(record.nextFollowUpDate);
+}
+
+function readVisitDateTime(visit: unknown): Date | null {
+  if (!visit || typeof visit !== 'object') return null;
+  const v = visit as Record<string, unknown>;
+  const candidates = ['visitDate', 'date', 'appointmentDate', 'start', 'scheduledAt', 'bookingDate'];
+  for (const key of candidates) {
+    const d = parseDateSafe(typeof v[key] === 'string' ? (v[key] as string) : undefined);
+    if (d) return d;
+  }
+  return null;
+}
+
+function isCancelledVisit(visit: unknown): boolean {
+  if (!visit || typeof visit !== 'object') return false;
+  const v = visit as Record<string, unknown>;
+  const status = String(v.status || v.visitStatus || '').toLowerCase();
+  return status.includes('cancel');
 }
 
 const REMARK_PRESETS = [
@@ -456,8 +505,17 @@ export default function TelecallingRecordsPage() {
           nextSnapshots[enquiryId] = rawForStatus;
 
           const statusMeta = getEnquiryStatusMeta(rawForStatus);
+          if (isNotInterestedEnquiry(statusMeta.label, enquiryData)) {
+            return;
+          }
           const referenceList = refList(enquiryData.reference);
-          const totalFu = Array.isArray(enquiryData.followUps) ? enquiryData.followUps.length : 0;
+          const followList = Array.isArray(enquiryData.followUps) ? enquiryData.followUps : [];
+          const totalFu = followList.length;
+          const now = new Date();
+          const hasCallLoggedToday = followList.some((fu) => {
+            const callTime = pickFollowUpDateTime(fu);
+            return callTime ? isSameLocalDay(callTime, now) : false;
+          });
           const centerId = (enquiryData.visitingCenter || enquiryData.center || '').trim();
           const centerLabel = centerId ? resolveCenterDisplay(centerId, centerMap) : undefined;
           const subjectLine =
@@ -474,10 +532,11 @@ export default function TelecallingRecordsPage() {
             centerId: centerId || undefined,
             centerLabel,
             totalFollowUpsOnEnquiry: totalFu,
+            hasCallLoggedToday,
           };
 
-          if (enquiryData.followUps && Array.isArray(enquiryData.followUps) && enquiryData.followUps.length > 0) {
-            enquiryData.followUps.forEach((followUp, index) => {
+          if (followList.length > 0) {
+            followList.forEach((followUp, index) => {
               try {
                 // Handle different timestamp formats
                 let createdAtDate = pickFollowUpDateTime(followUp) || new Date();
@@ -521,7 +580,6 @@ export default function TelecallingRecordsPage() {
           /** Patient information "Follow-up Date" — show in telecalling when no follow-up row already uses that next date. */
           const patientFollowYmd = normalizeYmd(enquiryData.followUpDate);
           if (patientFollowYmd) {
-            const followList = Array.isArray(enquiryData.followUps) ? enquiryData.followUps : [];
             const alreadyCovered = followList.some((fu) => normalizeYmd(fu.nextFollowUpDate) === patientFollowYmd);
             if (!alreadyCovered) {
               const createdAtDate = firestoreTimeToDate(enquiryData);
@@ -547,13 +605,66 @@ export default function TelecallingRecordsPage() {
               });
             }
           }
+
+          const schedules = Array.isArray(enquiryData.visitSchedules) ? enquiryData.visitSchedules : [];
+          schedules.forEach((visit, index) => {
+            if (isCancelledVisit(visit)) return;
+            const appointmentAt = readVisitDateTime(visit);
+            if (!appointmentAt) return;
+            const dueAt = addMinutes(appointmentAt, -30);
+            const dueIso = toDateTimeInputValue(dueAt);
+            const alreadyCoveredByFollowUp = followList.some((fu) => {
+              const next = pickNextFollowUpDateTime(fu);
+              return next ? Math.abs(next.getTime() - dueAt.getTime()) < 60 * 1000 : false;
+            });
+            if (alreadyCoveredByFollowUp) return;
+            allRecords.push({
+              id: `${enquiryId}_appointment_due_${index}`,
+              enquiryId,
+              enquiryName: enquiryData.name || 'Unknown',
+              enquiryPhone: enquiryData.phone || '',
+              enquiryEmail: enquiryData.email || '',
+              enquirySubject: subjectLine,
+              assignedTo: enquiryData.assignedTo || '',
+              ...rowContext,
+              followUpId: `appointment_due_${index}`,
+              followUpDate: '',
+              followUpDateTime: '',
+              telecaller: (enquiryData.telecaller || enquiryData.assignedTo || 'Unassigned').trim() || 'Unassigned',
+              remarks: 'Appointment reminder call due 30 minutes before scheduled appointment.',
+              nextFollowUpDate: toDateInputValue(dueAt),
+              nextFollowUpDateTime: dueIso,
+              createdAt: dueAt,
+              recordSource: 'appointment_due',
+            });
+          });
         } catch (docError) {
           console.error(`Error processing enquiry document ${docSnap.id}:`, docError);
         }
       });
 
-      // Sort by created date (most recent first)
-      allRecords.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      // Sort: today's pending due calls first, then by due time, then recency.
+      const today = new Date();
+      const startToday = startOfDay(today);
+      const endToday = endOfDay(today);
+      const priority = (record: TelecallingRecord): number => {
+        const next = pickRecordNextFollowUpDateTime(record);
+        if (!next) return 1;
+        const isDueToday = isWithinInterval(next, { start: startToday, end: endToday });
+        if (isDueToday && !record.hasCallLoggedToday) return 0;
+        return 1;
+      };
+      allRecords.sort((a, b) => {
+        const pa = priority(a);
+        const pb = priority(b);
+        if (pa !== pb) return pa - pb;
+        if (pa === 0 && pb === 0) {
+          const ta = pickRecordNextFollowUpDateTime(a)?.getTime() || 0;
+          const tb = pickRecordNextFollowUpDateTime(b)?.getTime() || 0;
+          return ta - tb;
+        }
+        return b.createdAt.getTime() - a.createdAt.getTime();
+      });
 
       setEnquiryById(nextSnapshots);
       setRecords(allRecords);
@@ -655,7 +766,10 @@ export default function TelecallingRecordsPage() {
               ? pickRecordFollowUpDateTime(record)
               : pickRecordNextFollowUpDateTime(record);
           if (!recordDate) return false;
-          return isWithinInterval(recordDate, { start: startOfDay(dateRange.from), end: endOfDay(dateRange.to) });
+          const inRange = isWithinInterval(recordDate, { start: startOfDay(dateRange.from), end: endOfDay(dateRange.to) });
+          if (!inRange) return false;
+          if (quickFilter === 'due_today' && record.hasCallLoggedToday) return false;
+          return true;
         });
       }
     }
@@ -972,23 +1086,24 @@ export default function TelecallingRecordsPage() {
             `linear-gradient(165deg, ${theme.palette.grey[50]} 0%, ${alpha(theme.palette.primary.main, 0.06)} 40%, ${theme.palette.background.default} 100%)`,
         }}
       >
-      <Container maxWidth="xl" sx={{ pt: 4, pb: 4 }}>
+      <Container maxWidth="xl" sx={{ pt: 2, pb: 2 }}>
         {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2, flexWrap: 'wrap', gap: 1.5 }}>
           <Box>
             <Typography variant="overline" sx={{ color: 'primary.main', fontWeight: 700, letterSpacing: 1.2 }}>
               Operations
             </Typography>
-            <Typography variant="h4" component="h1" fontWeight={800} sx={{ letterSpacing: -0.5 }}>
+            <Typography variant="h5" component="h1" fontWeight={800} sx={{ letterSpacing: -0.4 }}>
               Telecalling Records
             </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 560, mt: 0.5 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 560, mt: 0.5 }}>
               Follow-up history with patient context, references, journey status, quick profile preview, and inline call logging
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Button
               variant="outlined"
+              size="small"
               startIcon={<RefreshIcon />}
               onClick={fetchTelecallingRecords}
             >
@@ -996,6 +1111,7 @@ export default function TelecallingRecordsPage() {
             </Button>
             <Button
               variant="outlined"
+              size="small"
               startIcon={<ExportIcon />}
               onClick={() => {
                 // TODO: Implement export functionality
@@ -1030,19 +1146,19 @@ export default function TelecallingRecordsPage() {
         )}
 
         {/* Summary Cards */}
-        <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Grid container spacing={1.5} sx={{ mb: 2 }}>
           <Grid item xs={12} sm={6} md={3}>
-            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
-              <CardContent>
+            <Card elevation={0} sx={{ borderRadius: 2, border: 1, borderColor: 'divider', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }}>
+              <CardContent sx={{ py: 1.2, '&:last-child': { pb: 1.2 } }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'primary.main' }}>
                     <PhoneIcon />
                   </Avatar>
                   <Box>
-                    <Typography variant="h4" component="div">
+                    <Typography variant="h6" component="div">
                       {filteredRecords.length}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="caption" color="text.secondary">
                       Total Calls
                     </Typography>
                   </Box>
@@ -1051,17 +1167,17 @@ export default function TelecallingRecordsPage() {
             </Card>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
-              <CardContent>
+            <Card elevation={0} sx={{ borderRadius: 2, border: 1, borderColor: 'divider', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }}>
+              <CardContent sx={{ py: 1.2, '&:last-child': { pb: 1.2 } }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'secondary.main' }}>
                     <PersonIcon />
                   </Avatar>
                   <Box>
-                    <Typography variant="h4" component="div">
+                    <Typography variant="h6" component="div">
                       {uniqueTelecallers.length}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="caption" color="text.secondary">
                       Active Telecallers
                     </Typography>
                   </Box>
@@ -1070,17 +1186,17 @@ export default function TelecallingRecordsPage() {
             </Card>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
-              <CardContent>
+            <Card elevation={0} sx={{ borderRadius: 2, border: 1, borderColor: 'divider', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }}>
+              <CardContent sx={{ py: 1.2, '&:last-child': { pb: 1.2 } }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'success.main' }}>
                     <CalendarIcon />
                   </Avatar>
                   <Box>
-                    <Typography variant="h4" component="div">
+                    <Typography variant="h6" component="div">
                       {dueTodayCount}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="caption" color="text.secondary">
                       Due Today
                     </Typography>
                   </Box>
@@ -1089,17 +1205,17 @@ export default function TelecallingRecordsPage() {
             </Card>
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
-            <Card elevation={0} sx={{ borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
-              <CardContent>
+            <Card elevation={0} sx={{ borderRadius: 2, border: 1, borderColor: 'divider', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }}>
+              <CardContent sx={{ py: 1.2, '&:last-child': { pb: 1.2 } }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Avatar sx={{ bgcolor: 'warning.main' }}>
                     <ScheduleIcon />
                   </Avatar>
                   <Box>
-                    <Typography variant="h4" component="div">
+                    <Typography variant="h6" component="div">
                       {overdueCount}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography variant="caption" color="text.secondary">
                       Overdue
                     </Typography>
                   </Box>
@@ -1110,8 +1226,8 @@ export default function TelecallingRecordsPage() {
         </Grid>
 
         {/* Quick Filters */}
-        <Paper sx={{ p: 2, mb: 2, borderRadius: 3, border: 1, borderColor: 'divider' }}>
-          <Typography variant="h6" sx={{ mb: 2 }} fontWeight={700}>
+        <Paper sx={{ p: 1.5, mb: 1.5, borderRadius: 2, border: 1, borderColor: 'divider' }}>
+          <Typography variant="subtitle1" sx={{ mb: 1.5 }} fontWeight={700}>
             Quick Filters
           </Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
@@ -1121,6 +1237,7 @@ export default function TelecallingRecordsPage() {
                 label={option.label}
                 color={quickFilter === option.value ? (option.color as ChipProps['color']) : 'default'}
                 variant={quickFilter === option.value ? 'filled' : 'outlined'}
+                size="small"
                 onClick={() => {
                   setQuickFilter(option.value);
                   // Clear manual date filters when using quick filter
@@ -1147,13 +1264,14 @@ export default function TelecallingRecordsPage() {
         </Paper>
 
         {/* Advanced Filters */}
-        <Paper sx={{ p: 2, mb: 3, borderRadius: 3, border: 1, borderColor: 'divider' }}>
+        <Paper sx={{ p: 1.5, mb: 2, borderRadius: 2, border: 1, borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6" fontWeight={700}>
+            <Typography variant="subtitle1" fontWeight={700}>
               Advanced Filters
             </Typography>
             <Box sx={{ display: 'flex', gap: 1 }}>
               <Button
+                size="small"
                 size="small"
                 onClick={clearFilters}
                 disabled={
@@ -1180,6 +1298,7 @@ export default function TelecallingRecordsPage() {
           <TextField
             fullWidth
             variant="outlined"
+            size="small"
             placeholder="Search patient, phone, reference, journey status, telecaller, remarks, center…"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -1202,6 +1321,7 @@ export default function TelecallingRecordsPage() {
                     value={selectedTelecaller}
                     onChange={(e) => setSelectedTelecaller(e.target.value)}
                     label="Telecaller"
+                    size="small"
                   >
                     <MenuItem value="">All Telecallers</MenuItem>
                     {uniqueTelecallers.map((telecaller) => (
@@ -1220,6 +1340,7 @@ export default function TelecallingRecordsPage() {
                     value={selectedCenter}
                     onChange={(e) => setSelectedCenter(e.target.value)}
                     label="Center"
+                    size="small"
                   >
                     <MenuItem value="">All Centers</MenuItem>
                     {uniqueCenterIds.map((cid) => (
@@ -1239,6 +1360,7 @@ export default function TelecallingRecordsPage() {
                     value={selectedReferences}
                     onChange={(e) => setSelectedReferences(typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value)}
                     input={<OutlinedInput label="Reference" />}
+                    size="small"
                     renderValue={(selected) =>
                       selected.length === 0 ? (
                         'All References'
@@ -1268,6 +1390,7 @@ export default function TelecallingRecordsPage() {
                     value={selectedJourneys}
                     onChange={(e) => setSelectedJourneys(typeof e.target.value === 'string' ? e.target.value.split(',') : e.target.value)}
                     input={<OutlinedInput label="Journey" />}
+                    size="small"
                     renderValue={(selected) =>
                       selected.length === 0 ? (
                         'All Journeys'
@@ -1296,7 +1419,7 @@ export default function TelecallingRecordsPage() {
                   label="Follow-up Date From"
                   value={followUpDateFrom}
                   onChange={(newValue) => setFollowUpDateFrom(newValue)}
-                  slotProps={{ textField: { fullWidth: true, size: 'medium' } }}
+                  slotProps={{ textField: { fullWidth: true, size: 'small' } }}
                 />
               </Grid>
 
@@ -1305,7 +1428,7 @@ export default function TelecallingRecordsPage() {
                   label="Follow-up Date To"
                   value={followUpDateTo}
                   onChange={(newValue) => setFollowUpDateTo(newValue)}
-                  slotProps={{ textField: { fullWidth: true, size: 'medium' } }}
+                  slotProps={{ textField: { fullWidth: true, size: 'small' } }}
                 />
               </Grid>
 
@@ -1314,7 +1437,7 @@ export default function TelecallingRecordsPage() {
                   label="Next Follow-up From"
                   value={nextFollowUpDateFrom}
                   onChange={(newValue) => setNextFollowUpDateFrom(newValue)}
-                  slotProps={{ textField: { fullWidth: true, size: 'medium' } }}
+                  slotProps={{ textField: { fullWidth: true, size: 'small' } }}
                 />
               </Grid>
 
@@ -1323,7 +1446,7 @@ export default function TelecallingRecordsPage() {
                   label="Next Follow-up To"
                   value={nextFollowUpDateTo}
                   onChange={(newValue) => setNextFollowUpDateTo(newValue)}
-                  slotProps={{ textField: { fullWidth: true, size: 'medium' } }}
+                  slotProps={{ textField: { fullWidth: true, size: 'small' } }}
                 />
               </Grid>
             </Grid>
@@ -1331,9 +1454,9 @@ export default function TelecallingRecordsPage() {
         </Paper>
 
         {/* Results Table */}
-        <Paper sx={{ width: '100%', overflow: 'hidden', borderRadius: 3, border: 1, borderColor: 'divider', boxShadow: '0 12px 40px rgba(15,23,42,0.06)' }}>
+        <Paper sx={{ width: '100%', overflow: 'hidden', borderRadius: 2, border: 1, borderColor: 'divider', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }}>
           <TableContainer sx={{ maxHeight: '70vh' }}>
-            <Table stickyHeader size="small">
+            <Table stickyHeader size="small" sx={{ '& .MuiTableCell-root': { py: 0.8, px: 1, fontSize: '0.78rem' } }}>
               <TableHead>
                 <TableRow>
                   <TableCell sx={{ fontWeight: 700 }}>Patient</TableCell>
@@ -1374,6 +1497,8 @@ export default function TelecallingRecordsPage() {
                           </Typography>
                           {record.recordSource === 'patient_info' ? (
                             <Chip size="small" label="Patient info follow-up" color="info" variant="outlined" />
+                          ) : record.recordSource === 'appointment_due' ? (
+                            <Chip size="small" label="Appointment due call" color="warning" variant="outlined" />
                           ) : null}
                           <Chip
                             size="small"
@@ -1510,6 +1635,21 @@ export default function TelecallingRecordsPage() {
                             <OpenInNewIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
+                        {toWhatsAppHref(record.enquiryPhone) ? (
+                          <Tooltip title="Open WhatsApp chat">
+                            <IconButton
+                              size="small"
+                              component="a"
+                              href={toWhatsAppHref(record.enquiryPhone) as string}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label="Open WhatsApp"
+                              sx={{ color: '#25D366' }}
+                            >
+                              <WhatsAppIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        ) : null}
                       </Stack>
                     </TableCell>
                   </TableRow>

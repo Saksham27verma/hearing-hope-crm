@@ -31,6 +31,7 @@ import {
   Refresh as RefreshIcon,
   EventAvailable as EventAvailableIcon,
   BookmarkAdded as BookmarkAddedIcon,
+  Phone as PhoneIcon,
 } from '@mui/icons-material';
 import { collection, getDocs, query, orderBy, limit, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
@@ -80,6 +81,26 @@ function getLocalDayBounds() {
   const end = new Date();
   end.setHours(23, 59, 59, 999);
   return { start, end };
+}
+
+function parseFollowUpDateTime(value: unknown): number | null {
+  if (!value || typeof value !== 'string') return null;
+  const t = value.trim();
+  if (!t) return null;
+  const d = new Date(t);
+  const ms = d.getTime();
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function isNotInterestedRow(row: Record<string, unknown>): boolean {
+  const status = String(row.status || '').toLowerCase();
+  const leadOutcome = String(row.leadOutcome || '').toLowerCase();
+  const journey = String(row.journeyStatusOverride || '').toLowerCase();
+  return (
+    status.includes('not interested') ||
+    leadOutcome.includes('not interested') ||
+    journey.includes('not interested')
+  );
 }
 
 function getTimeOfDayKey(): 'morning' | 'afternoon' | 'evening' {
@@ -341,6 +362,7 @@ export default function DashboardPage() {
   const [todaysTransfers, setTodaysTransfers] = useState<any[]>([]);
   const [todaysAppointments, setTodaysAppointments] = useState<any[]>([]);
   const [todaysBookingAdvances, setTodaysBookingAdvances] = useState<any[]>([]);
+  const [todaysDueCalls, setTodaysDueCalls] = useState<any[]>([]);
   /** Audiologist-only pending audiogram list (reuses enquiry state name in that branch). */
   const [recentEnquiries, setRecentEnquiries] = useState<any[]>([]);
   /** Bumps child insights when user hits Refresh (see AdminDashboardInsights). */
@@ -475,6 +497,56 @@ export default function DashboardPage() {
         .sort((a, b) => (tsToMs(b.createdAt) || 0) - (tsToMs(a.createdAt) || 0))
         .slice(0, 12);
 
+      const todaysDueCallsData = enquiriesSnapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown> & { id: string }))
+        .filter((row) => enquiryMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
+        .filter((row) => !isNotInterestedRow(row))
+        .map((row) => {
+          const followUps = Array.isArray(row.followUps) ? row.followUps : [];
+          const dueItems = followUps
+            .map((fu) => {
+              const f = fu as Record<string, unknown>;
+              const dueMs =
+                parseFollowUpDateTime(f.nextFollowUpDateTime) ||
+                parseFollowUpDateTime(f.nextFollowUpDate);
+              return {
+                dueMs,
+                callerName: String(f.callerName || '').trim(),
+                remarks: String(f.remarks || '').trim(),
+              };
+            })
+            .filter((item) => item.dueMs != null && inLocalDay(item.dueMs));
+
+          if (dueItems.length === 0) return null;
+
+          const calledToday = followUps.some((fu) => {
+            const f = fu as Record<string, unknown>;
+            const callMs = parseFollowUpDateTime(f.dateTime) || parseFollowUpDateTime(f.date);
+            return inLocalDay(callMs);
+          });
+          if (calledToday) return null;
+
+          dueItems.sort((a, b) => (a.dueMs || 0) - (b.dueMs || 0));
+          const firstDue = dueItems[0];
+          return {
+            id: row.id,
+            name: String(row.name || '—'),
+            phone: String(row.phone || ''),
+            telecaller: String(row.telecaller || row.assignedTo || firstDue.callerName || '—'),
+            dueMs: firstDue.dueMs,
+            dueAt: firstDue.dueMs ? new Date(firstDue.dueMs).toLocaleString('en-IN', {
+              day: '2-digit',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            }) : '—',
+            remarks: firstDue.remarks || '',
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => ((a as { dueMs?: number }).dueMs || 0) - ((b as { dueMs?: number }).dueMs || 0))
+        .slice(0, 12);
+
       const todaysTransfersData = transfersSnapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown> & { id: string }))
         .filter((row) => stockTransferMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
@@ -575,6 +647,7 @@ export default function DashboardPage() {
       setTodaysTransfers(todaysTransfersData);
       setTodaysAppointments(todaysAppointmentsData);
       setTodaysBookingAdvances(todaysBookingAdvancesData);
+      setTodaysDueCalls(todaysDueCallsData);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -1379,6 +1452,91 @@ export default function DashboardPage() {
                     <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
                       <Typography variant="body2" color="text.secondary" sx={pulseBodyTypographySx}>
                         No appointments today
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+
+        {/* Today's due calls */}
+        <Paper elevation={0} sx={pulseCardSx}>
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <PhoneIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+              <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'text.primary' }}>
+                Today&apos;s due calls
+              </Typography>
+            </Box>
+            <Tooltip title="Open telecalling records">
+              <IconButton
+                size="small"
+                onClick={() => router.push('/telecalling-records?quickFilter=due_today')}
+                sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
+                aria-label="Open due calls"
+              >
+                <ArrowForwardIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <TableContainer sx={pulseTableContainerSx}>
+            <Table size="small" sx={{ tableLayout: 'fixed' }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '32%' }}>Due at</TableCell>
+                  <TableCell sx={pulseHeadCellSx}>Patient</TableCell>
+                  <TableCell sx={{ ...pulseHeadCellSx, width: '26%' }}>Caller</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {todaysDueCalls.length > 0 ? (
+                  todaysDueCalls.map((row: any) => (
+                    <TableRow
+                      key={row.id}
+                      onClick={() => openInNewTab(`/interaction/enquiries/${row.id}`)}
+                      sx={pulseRowSx}
+                    >
+                      <TableCell>
+                        <Box component="span" sx={pulsePillSx}>
+                          {row.dueAt || '—'}
+                        </Box>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={row.name || '—'} placement="top-start">
+                          <Typography fontWeight={500} noWrap sx={pulseBodyTypographySx}>
+                            {row.name || '—'}
+                          </Typography>
+                        </Tooltip>
+                        <Typography color="text.secondary" noWrap sx={{ ...pulseBodyTypographySx, fontSize: '0.7rem' }}>
+                          {row.phone || 'No phone'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip title={row.telecaller || '—'} placement="top-start">
+                          <Typography color="text.secondary" noWrap sx={pulseBodyTypographySx}>
+                            {row.telecaller || '—'}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={3} align="center" sx={{ py: 3 }}>
+                      <Typography variant="body2" color="text.secondary" sx={pulseBodyTypographySx}>
+                        No due calls pending for today
                       </Typography>
                     </TableCell>
                   </TableRow>
