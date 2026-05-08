@@ -137,6 +137,8 @@ export function isAccessoryInventoryItem(item: {
   productName?: string;
   productHasSerialNumber?: boolean;
 }): boolean {
+  // Never allow hearing-aid rows in accessory picker.
+  if (isHearingAidType(item.type)) return false;
   if (item.isSerialTracked) {
     if (isChargerProductType(item.type) || productNameSuggestsCharger(item.productName)) return true;
     if (serialRowIsDeviceInventory(item)) return false;

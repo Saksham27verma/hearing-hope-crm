@@ -493,6 +493,7 @@ interface Visit {
   returnOriginalSaleVisitId: string;
   returnNotes: string;
   accessoryName: string;
+  accessorySerialNumber: string;
   accessoryDetails: string;
   accessoryFOC: boolean;
   accessoryAmount: number;
@@ -2098,6 +2099,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 (mergedVisit as { exchangeCreditAmount?: number }).exchangeCreditAmount
             ) || 0,
           accessoryName: nestedAccessoryDetails.accessoryName || mergedVisit.accessoryName || '',
+          accessorySerialNumber:
+            nestedAccessoryDetails.accessorySerialNumber ||
+            (typeof mergedVisit.accessorySerialNumber === 'string' ? mergedVisit.accessorySerialNumber : '') ||
+            '',
           accessoryDetails:
             nestedAccessoryDetails.accessoryDetails ||
             (typeof mergedVisit.accessoryDetails === 'string' ? mergedVisit.accessoryDetails : '') ||
@@ -2237,8 +2242,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         const master = products.find((p) => p.id === item.productId);
         const name = master?.name || item.productName;
         const isFree = master?.mrp === 0 || master?.isFreeOfCost;
+        const selectedAccessorySerial =
+          item.serialNumbers && item.serialNumbers.length > 0
+            ? item.serialNumbers.join(', ')
+            : String(item.serialNumber || '').trim();
         updateVisitFields(activeVisit, {
           accessoryName: name,
+          accessorySerialNumber: selectedAccessorySerial,
           accessoryFOC: !!isFree,
           accessoryAmount: isFree ? 0 : roundInrRupee(item.mrp || master?.mrp || 0),
           accessoryQuantity: 1,
@@ -2580,6 +2590,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       returnOriginalSaleVisitId: '',
       returnNotes: '',
       accessoryName: '',
+      accessorySerialNumber: '',
       accessoryDetails: '',
       accessoryFOC: false,
       accessoryAmount: 0,
@@ -3438,6 +3449,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         }),
         accessoryDetails: removeUndefined({
           accessoryName: visit.accessoryName,
+          accessorySerialNumber: visit.accessorySerialNumber,
           accessoryDetails: visit.accessoryDetails,
           accessoryFOC: visit.accessoryFOC,
           accessoryAmount: visit.accessoryAmount,
@@ -7560,6 +7572,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       updatedVisits[activeVisit] = {
                                         ...updatedVisits[activeVisit],
                                         accessoryName: '',
+                                        accessorySerialNumber: '',
                                         accessoryAmount: 0,
                                         accessoryFOC: false,
                                       };
@@ -7583,6 +7596,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       updatedVisits[activeVisit] = {
                                         ...updatedVisits[activeVisit],
                                         accessoryName: '',
+                                        accessorySerialNumber: '',
                                         accessoryAmount: 0,
                                         accessoryFOC: false
                                       };
@@ -7607,6 +7621,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       updatedVisits[activeVisit] = {
                                         ...currentVisitData,
                                         accessoryName: selectedValue,
+                                        accessorySerialNumber: '',
                                         accessoryFOC: isFreeProduct,
                                         accessoryAmount: isFreeProduct ? 0 : (selectedAccessory.mrp || 0)
                                       };
@@ -7621,6 +7636,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       updatedVisits[activeVisit] = {
                                         ...currentVisitData,
                                         accessoryName: selectedValue,
+                                        accessorySerialNumber: '',
                                         accessoryAmount: 0,
                                         accessoryFOC: false
                                       };
@@ -7836,6 +7852,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
                                       {accessoryName}
                                     </Typography>
+                                    {visit?.accessorySerialNumber?.trim() && (
+                                      <Chip
+                                        label={`S/N: ${visit.accessorySerialNumber}`}
+                                        size="small"
+                                        color="info"
+                                        variant="outlined"
+                                        sx={{ mt: 1 }}
+                                      />
+                                    )}
                                     {products.find(p => p.name === accessoryName && isAccessoryCatalogProductType(p)) && (
                                       <Chip 
                                         label="From Product Catalog" 
