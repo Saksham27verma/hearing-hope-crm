@@ -66,7 +66,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { collection, getDocs, getDoc, query, orderBy, updateDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
-import { addHours, addMinutes, endOfDay, format, isWithinInterval, parseISO, startOfDay } from 'date-fns';
+import { addHours, addMinutes, endOfDay, format, isWithinInterval, parse, parseISO, startOfDay } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLogger';
 import { getEnquiryStatusMeta, type EnquiryStatusChipColor } from '@/utils/enquiryStatus';
@@ -277,14 +277,27 @@ function parseDateSafe(raw: string | undefined): Date | null {
   if (!raw || typeof raw !== 'string') return null;
   const t = raw.trim();
   if (!t) return null;
-  const parsed = new Date(t);
-  if (!Number.isNaN(parsed.getTime())) return parsed;
+
+  // Prefer date-fns parsing to avoid browser-dependent UTC shifts for strings like `YYYY-MM-DDTHH:mm`.
   try {
+    // `datetime-local` value (no timezone).
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) {
+      const d = parse(t.slice(0, 16), "yyyy-MM-dd'T'HH:mm", new Date());
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+    // Date-only (YYYY-MM-DD) should be treated as local day.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+      const d = parse(t, 'yyyy-MM-dd', new Date());
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
     const p = parseISO(t);
-    return Number.isNaN(p.getTime()) ? null : p;
+    if (!Number.isNaN(p.getTime())) return p;
   } catch {
-    return null;
+    // fall through
   }
+
+  const fallback = new Date(t);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
 }
 
 function pickFollowUpDateTime(followUp: FollowUp): Date | null {
