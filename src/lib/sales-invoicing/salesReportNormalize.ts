@@ -6,6 +6,7 @@
 
 import type { Timestamp } from 'firebase/firestore';
 import type { SaleRecord, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
+import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 export type NormalizedSale = {
   rowId: string;
@@ -150,9 +151,7 @@ function tsToDate(t: Timestamp | undefined): Date {
 }
 
 export function saleGrandTotalRecord(s: SaleRecord): number {
-  const g = s.grandTotal;
-  if (typeof g === 'number' && !Number.isNaN(g) && g > 0) return g;
-  return (s.totalAmount || 0) + (s.gstAmount || 0);
+  return saleInvoiceFaceTotal(s);
 }
 
 /** Catalog / invoice lines: prefer `products`, else legacy `items` (same as inventory sale reads). */

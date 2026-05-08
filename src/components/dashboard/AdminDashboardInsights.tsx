@@ -25,6 +25,8 @@ import { useCenterScope } from '@/hooks/useCenterScope';
 import { enquiryMatchesDataScope, saleMatchesDataScope } from '@/lib/tenant/centerScope';
 import { getEnquiryStatusMeta } from '@/utils/enquiryStatus';
 import { fetchAllCenters } from '@/utils/centerUtils';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 import {
   Bar,
   CartesianGrid,
@@ -55,9 +57,7 @@ const formatAxisInr = (n: number) => {
 };
 
 function saleGrandTotal(s: Record<string, unknown>): number {
-  const g = s.grandTotal;
-  if (typeof g === 'number' && !Number.isNaN(g) && g > 0) return g;
-  return (Number(s.totalAmount) || 0) + (Number(s.gstAmount) || 0);
+  return saleInvoiceFaceTotal(s as Pick<SaleRecord, 'totalAmount' | 'gstAmount' | 'grandTotal'>);
 }
 
 /** Same as Sales report: MRP-weighted discount on product lines. */

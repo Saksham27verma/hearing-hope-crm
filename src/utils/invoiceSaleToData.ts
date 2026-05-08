@@ -5,6 +5,7 @@ import {
   visitAccessoryToSaleAccessories,
 } from '@/lib/sales-invoicing/visitAccessoryInvoice';
 import { isProvisionalInvoiceNumber, normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
+import { resolveInvoicePdfGrandTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 /** Non-empty and not a provisional (PROV-*) placeholder — required before accountant-facing PDFs. */
 export function saleHasBillableInvoiceNumber(inv: unknown): boolean {
@@ -102,13 +103,7 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
     }, 0) || 0;
 
   const computedGrand = Math.round(subtotal + totalGST);
-  const grandTotal = Math.round(
-    typeof sale.grandTotal === 'number' && !Number.isNaN(sale.grandTotal)
-      ? sale.grandTotal
-      : typeof sale.totalAmount === 'number' && !Number.isNaN(sale.totalAmount)
-        ? Number(sale.totalAmount) + totalGST
-        : computedGrand
-  );
+  const grandTotal = resolveInvoicePdfGrandTotal(sale, computedGrand);
 
   const productRows =
     products.map((product: Record<string, unknown>, index: number) => {

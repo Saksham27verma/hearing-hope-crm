@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { isSuperAdminViewer, normalizeCenterIdsFromProfile } from '@/lib/tenant/centerScope';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -32,7 +34,9 @@ export async function POST(req: Request) {
     const centerId = centerIdRaw ? String(centerIdRaw).trim() : null;
 
     const patient = String(sale.patientName || 'Patient').trim() || 'Patient';
-    const grandTotal = Number(sale.grandTotal) || (Number(sale.totalAmount) || 0) + (Number(sale.gstAmount) || 0);
+    const grandTotal = saleInvoiceFaceTotal(
+      sale as Pick<SaleRecord, 'totalAmount' | 'gstAmount' | 'grandTotal'>
+    );
     const invoiceNumber = String(sale.invoiceNumber || '').trim();
     const money = new Intl.NumberFormat('en-IN', {
       style: 'currency',

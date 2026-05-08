@@ -1,5 +1,6 @@
 // Invoice Service - Unified API for multiple invoice providers
 import { InvoiceData } from '@/components/invoices/InvoiceTemplate';
+import { resolveInvoicePdfGrandTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 // Base interfaces
 export interface InvoiceProvider {
@@ -591,12 +592,8 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
   const productGst = (sale.products || []).reduce((sum: number, p: any) => sum + (p.gstAmount || 0), 0);
   const totalGST = typeof sale.gstAmount === 'number' ? sale.gstAmount : productGst + manualGst;
 
-  const grandTotal =
-    typeof sale.grandTotal === 'number' && !Number.isNaN(sale.grandTotal)
-      ? sale.grandTotal
-      : typeof sale.totalAmount === 'number' && !Number.isNaN(sale.totalAmount)
-        ? sale.totalAmount + totalGST
-        : subtotal + totalGST;
+  const lineComputed = subtotal + totalGST;
+  const grandTotal = resolveInvoicePdfGrandTotal(sale, lineComputed);
 
   let dueStr = '';
   if (sale.dueDate?.toDate) {

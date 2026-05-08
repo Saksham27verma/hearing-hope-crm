@@ -1,4 +1,5 @@
 import type { PatientPaymentLine, SaleRecord, UnifiedInvoiceRow } from './types';
+import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 export interface AccountingExportOptions {
   organizationName?: string;
@@ -170,7 +171,7 @@ export function buildAccountingLedgerDataset(opts: AccountingExportOptions): Acc
     if (voided) cancelledCount += 1;
     else {
       activeCount += 1;
-      const g = num(s.grandTotal) || num(s.totalAmount) + num(s.gstAmount);
+      const g = saleInvoiceFaceTotal(s);
       grandTotalActive += g;
       totalTaxableActive += num(s.totalAmount);
       totalGstActive += num(s.gstAmount);
@@ -204,7 +205,7 @@ export function buildAccountingLedgerDataset(opts: AccountingExportOptions): Acc
       Payment_Mode_on_invoice: payMethod,
       Subtotal_before_GST_INR: formatInrPlain(num(s.totalAmount)),
       GST_INR: formatInrPlain(num(s.gstAmount)),
-      Grand_Total_INR: formatInrPlain(num(s.grandTotal) || num(s.totalAmount) + num(s.gstAmount)),
+      Grand_Total_INR: formatInrPlain(saleInvoiceFaceTotal(s)),
       Product_and_service_summary: productSummaryFromSale(s),
       Patient_payments_recorded: paymentLinesSummary(pays),
       Notes: str(s.notes),

@@ -1,12 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
 import type { DerivedEnquirySale, PaymentStatus, SaleRecord, UnifiedInvoiceRow } from './types';
+import { saleInvoiceFaceTotal } from './saleInvoiceFaceTotal';
 import { timestampToMs } from './timestamps';
-
-function saleGrandTotal(s: SaleRecord): number {
-  const g = s.grandTotal;
-  if (typeof g === 'number' && !Number.isNaN(g)) return g;
-  return (s.totalAmount || 0) + (s.gstAmount || 0);
-}
 
 function effectivePaymentStatus(s: SaleRecord): PaymentStatus {
   const ps = s.paymentStatus;
@@ -68,7 +63,7 @@ export function buildUnifiedInvoiceRows(sales: SaleRecord[], derived: DerivedEnq
         clientName: s.patientName || '—',
         clientPhone: s.phone,
         linkedEnquiryRef: s.enquiryId || s.visitorId || null,
-        total: saleGrandTotal(s),
+        total: saleInvoiceFaceTotal(s),
         statusLabel: 'Cancelled',
         statusVariant: 'cancelled',
         isCancelled: true,
@@ -87,7 +82,7 @@ export function buildUnifiedInvoiceRows(sales: SaleRecord[], derived: DerivedEnq
       clientName: s.patientName || '—',
       clientPhone: s.phone,
       linkedEnquiryRef: s.enquiryId || s.visitorId || null,
-      total: saleGrandTotal(s),
+      total: saleInvoiceFaceTotal(s),
       statusLabel: label,
       statusVariant: variant,
       isCancelled: false,

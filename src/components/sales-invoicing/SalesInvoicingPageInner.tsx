@@ -116,6 +116,7 @@ import { useFieldOptions } from '@/hooks/useFieldOptions';
 import type { AccountingExportOptions } from '@/lib/sales-invoicing/accountingExport';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { syncEnquiryVisitInvoiceNumberFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
+import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 // ─── Types ───
 
@@ -187,6 +188,8 @@ interface Sale {
   cancelledAt?: Timestamp;
   cancelledByUid?: string;
   cancelReason?: string;
+  /** Trade-in credit (₹); stored `grandTotal` is net payable while lines + GST are gross */
+  exchangeCreditInr?: number;
 }
 
 interface Center {
@@ -1600,8 +1603,26 @@ export default function SalesInvoicingPageInner() {
                   </Card>
                   <Card variant="outlined" sx={{ flex: '1 1 180px', borderRadius: 2, borderColor: 'success.light', bgcolor: alpha(theme.palette.success.main, 0.03) }}>
                     <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-                      <Typography variant="caption" color="success.main">Grand Total</Typography>
-                      <Typography variant="h5" fontWeight={700} color="success.dark">{formatCurrency(currentSale.grandTotal)}</Typography>
+                      <Typography variant="caption" color="success.main">Grand Total (invoice)</Typography>
+                      <Typography variant="h5" fontWeight={700} color="success.dark">
+                        {formatCurrency(saleInvoiceFaceTotal(currentSale))}
+                      </Typography>
+                      {(currentSale.exchangeCreditInr || 0) > 0 && (
+                        <Box sx={{ mt: 1.25, pt: 1, borderTop: '1px dashed', borderColor: 'divider' }}>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Exchange / trade-in credit
+                          </Typography>
+                          <Typography variant="body2" fontWeight={600} color="warning.dark">
+                            −{formatCurrency(currentSale.exchangeCreditInr || 0)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.75 }}>
+                            Net payable
+                          </Typography>
+                          <Typography variant="subtitle1" fontWeight={700}>
+                            {formatCurrency(currentSale.grandTotal)}
+                          </Typography>
+                        </Box>
+                      )}
                     </CardContent>
                   </Card>
                 </Box>
