@@ -1,6 +1,21 @@
 import type { PatientPaymentLine, UnifiedInvoiceRow } from './types';
 
 /**
+ * Net amount still owed for a hearing-aid sale after trade-in / exchange credit.
+ * Matches `sales` sync (`resync-enquiry-sales`, enquiry edit upsert): credit is capped at invoice grand total.
+ */
+export function netPayableAfterHearingAidExchange(visit: Record<string, unknown>): number {
+  const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
+  const gstAmount = Number(visit.taxAmount) || 0;
+  const baseGrand = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+  const exchangeCredit = Math.min(
+    Math.max(0, Number(visit.exchangeCreditAmount) || 0),
+    baseGrand
+  );
+  return Math.max(0, Math.round(baseGrand - exchangeCredit));
+}
+
+/**
  * Normalize payments from an enquiry Firestore document (`paymentRecords` + legacy `payments`),
  * matching patient profile semantics (merge parallel `payments` row by id for staff-submitted ref/remarks).
  */

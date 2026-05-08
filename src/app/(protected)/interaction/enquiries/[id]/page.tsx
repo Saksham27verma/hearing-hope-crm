@@ -113,6 +113,7 @@ import {
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
+import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiryPayments';
 import { formatPtaTestDateForDisplay } from '@/lib/ptaIntegration';
 import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator';
 
@@ -803,7 +804,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       if (visit.hearingAidBooked && !visit.hearingAidSale) {
         total += getBookingTotal(visit);
       } else if (visit.hearingAidSale || visit.purchaseFromTrial) {
-        total += Number(visit.salesAfterTax) || 0;
+        total += netPayableAfterHearingAidExchange(visit as Record<string, unknown>);
       }
       if (visit.accessory && !visit.accessoryFOC) {
         total += (Number(visit.accessoryAmount) || 0) * (Number(visit.accessoryQuantity) || 1);
@@ -854,6 +855,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       return getBookingTotal(visit) || visit.bookingAdvanceAmount || visit.hearingAidPrice;
     }
     if (visit.hearingAidSale || visit.purchaseFromTrial) {
+      if (Number(visit.salesAfterTax) > 0 || Number(visit.exchangeCreditAmount) > 0) {
+        return netPayableAfterHearingAidExchange(visit as Record<string, unknown>);
+      }
       return visit.salesAfterTax || visit.hearingAidPrice;
     }
     const homeCharges =

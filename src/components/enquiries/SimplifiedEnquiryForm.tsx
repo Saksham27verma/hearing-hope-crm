@@ -37,6 +37,7 @@ import {
 import { formatPtaTestDateForDisplay, type ExternalPtaReportLink } from '@/lib/ptaIntegration';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
+import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiryPayments';
 import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
@@ -2862,8 +2863,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           total +=
             (Number(visit.bookingSellingPrice) || 0) * (Number(visit.bookingQuantity) || 1);
         }
-      } else if (visit.hearingAidSale && visit.products) {
-        total += visit.salesAfterTax || 0;
+      } else if ((visit.hearingAidSale || visit.purchaseFromTrial) && visit.products) {
+        total += netPayableAfterHearingAidExchange(visit as unknown as Record<string, unknown>);
       }
 
       if (visit.accessory && !visit.accessoryFOC) {
@@ -2941,11 +2942,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           amount: bookingNetDue,
           description: `Booked device x ${Number(visit.bookingQuantity) || 1}${bookingSd > 0 ? ' (after trial security adjustment)' : ''}`
         });
-      } else if (visit.hearingAidSale && visit.salesAfterTax > 0) {
+      } else if ((visit.hearingAidSale || visit.purchaseFromTrial) && visit.salesAfterTax > 0) {
         const saleSd = getSaleHomeTrialSecurityCredit(visits, visitIndex);
         const saleAdv = getBookingAdvanceCreditForSale(visits, visitIndex);
-        const saleNet = Math.max((visit.salesAfterTax || 0) - saleSd - saleAdv, 0);
+        const afterExchange = netPayableAfterHearingAidExchange(
+          visit as unknown as Record<string, unknown>
+        );
+        const saleNet = Math.max(afterExchange - saleSd - saleAdv, 0);
         const creditParts: string[] = [];
+        if (Number(visit.exchangeCreditAmount) > 0) creditParts.push('exchange credit');
         if (saleSd > 0) creditParts.push('trial security');
         if (saleAdv > 0) creditParts.push('booking advance');
         const creditNote =
