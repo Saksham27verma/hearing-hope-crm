@@ -130,7 +130,7 @@ export function isHearingDeviceInventoryItem(item: {
   return false;
 }
 
-/** Accessory service stock: consumables + bulk (non-serial) chargers — excludes device serial rows. */
+/** Accessory service stock: consumables + chargers (including serial-tracked chargers). */
 export function isAccessoryInventoryItem(item: {
   type?: string;
   isSerialTracked?: boolean;
@@ -138,6 +138,7 @@ export function isAccessoryInventoryItem(item: {
   productHasSerialNumber?: boolean;
 }): boolean {
   if (item.isSerialTracked) {
+    if (isChargerProductType(item.type) || productNameSuggestsCharger(item.productName)) return true;
     if (serialRowIsDeviceInventory(item)) return false;
     return isConsumableAccessoryType(item.type);
   }

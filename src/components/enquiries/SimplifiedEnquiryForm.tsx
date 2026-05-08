@@ -115,7 +115,7 @@ function isAccessoryServiceProductType(type: string | undefined): boolean {
   return !!type && ACCESSORY_SERVICE_PRODUCT_TYPES.includes(type);
 }
 
-/** Catalog picker for accessory visit: excludes serial-tracked chargers (those use device inventory). */
+/** Catalog picker for accessory visit: includes chargers (serial and non-serial) for direct accessory sales. */
 function isAccessoryCatalogProductType(p: Product): boolean {
   if (!isAccessoryServiceProductType(p.type)) return false;
   if (p.type === 'Charger' && p.hasSerialNumber) return false;
