@@ -161,6 +161,10 @@ interface TelecallingRecord {
   recordSource?: 'followup_log' | 'patient_info' | 'appointment_due';
   /** True when this enquiry already has a call logged today. */
   hasCallLoggedToday?: boolean;
+  /** True only when this due reminder is still pending (no call logged after due time). */
+  isDuePending?: boolean;
+  /** Enquiry is completed/sold and should not remain in due buckets. */
+  isSoldJourney?: boolean;
 }
 
 function refList(ref: Enquiry['reference']): string[] {
@@ -280,16 +284,32 @@ function parseDateSafe(raw: string | undefined): Date | null {
 
   // Prefer date-fns parsing to avoid browser-dependent UTC shifts for strings like `YYYY-MM-DDTHH:mm`.
   try {
-    // `datetime-local` value (no timezone).
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) {
-      const d = parse(t.slice(0, 16), "yyyy-MM-dd'T'HH:mm", new Date());
+    // ISO 8601 instant: `...Z` or `...+05:30` — e.g. appointments `start: toISOString()`.
+    // MUST run before the naive `T` branch, or `2026-05-08T11:30:00.000Z` is misread as local 11:30.
+    const hasTzInstant =
+      /[zZ]$/.test(t) ||
+      /T[^+-zZ]*[+-]\d{2}:?\d{2}$/.test(t) ||
+      /T[^+-zZ]*[+-]\d{4}$/.test(t);
+    if (hasTzInstant) {
+      const p = parseISO(t);
+      if (!Number.isNaN(p.getTime())) return p;
+    }
+
+    // Naive local date-time (no Z / offset): from `datetime-local` or stored business-local values.
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t) && !hasTzInstant) {
+      const slice = t.length >= 16 ? t.slice(0, 16) : t;
+      const d = parse(slice, "yyyy-MM-dd'T'HH:mm", new Date());
       return Number.isNaN(d.getTime()) ? null : d;
     }
-    // Date-only (YYYY-MM-DD) should be treated as local day.
+
+    // Date-only (YYYY-MM-DD): keep a business-friendly default time (10:00 local)
+    // so due calls don't appear at midnight/23:30 artifacts.
     if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
       const d = parse(t, 'yyyy-MM-dd', new Date());
+      d.setHours(10, 0, 0, 0);
       return Number.isNaN(d.getTime()) ? null : d;
     }
+
     const p = parseISO(t);
     if (!Number.isNaN(p.getTime())) return p;
   } catch {
@@ -316,9 +336,21 @@ function pickRecordNextFollowUpDateTime(record: TelecallingRecord): Date | null 
   return parseDateSafe(record.nextFollowUpDateTime) || parseDateSafe(record.nextFollowUpDate);
 }
 
+function isLoggedCallRecord(record: TelecallingRecord): boolean {
+  return record.recordSource === 'followup_log';
+}
+
 function readVisitDateTime(visit: unknown): Date | null {
   if (!visit || typeof visit !== 'object') return null;
   const v = visit as Record<string, unknown>;
+  const visitDateRaw = typeof v.visitDate === 'string' ? v.visitDate.trim() : '';
+  const visitTimeRaw = typeof v.visitTime === 'string' ? v.visitTime.trim() : '';
+  if (visitDateRaw) {
+    // Prefer explicit visitDate+visitTime from enquiry schedule.
+    const hhmm = /^\d{2}:\d{2}$/.test(visitTimeRaw) ? visitTimeRaw : '10:00';
+    const combined = parseDateSafe(`${visitDateRaw}T${hhmm}`);
+    if (combined) return combined;
+  }
   const candidates = ['visitDate', 'date', 'appointmentDate', 'start', 'scheduledAt', 'bookingDate'];
   for (const key of candidates) {
     const d = parseDateSafe(typeof v[key] === 'string' ? (v[key] as string) : undefined);
@@ -332,6 +364,76 @@ function isCancelledVisit(visit: unknown): boolean {
   const v = visit as Record<string, unknown>;
   const status = String(v.status || v.visitStatus || '').toLowerCase();
   return status.includes('cancel');
+}
+
+function hasCallAfterDue(followUps: FollowUp[], dueAt: Date): boolean {
+  return followUps.some((fu) => {
+    const callTime = pickFollowUpDateTime(fu);
+    if (!callTime) return false;
+    return callTime.getTime() >= dueAt.getTime();
+  });
+}
+
+function readAppointmentDateTime(appointment: unknown): Date | null {
+  if (!appointment || typeof appointment !== 'object') return null;
+  const a = appointment as Record<string, unknown>;
+
+  const normalizeTime = (raw: string): string | null => {
+    const t = raw.trim();
+    if (!t) return null;
+    if (/^\d{2}:\d{2}$/.test(t)) return t;
+    const m = t.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+    if (!m) return null;
+    let hh = Number(m[1]);
+    const mm = Number(m[2]);
+    const meridian = m[3].toUpperCase();
+    if (Number.isNaN(hh) || Number.isNaN(mm) || hh < 1 || hh > 12 || mm < 0 || mm > 59) return null;
+    if (meridian === 'AM') {
+      if (hh === 12) hh = 0;
+    } else if (hh !== 12) {
+      hh += 12;
+    }
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  };
+
+  // Scheduler saves canonical instant as `start` (ISO string from Date.toISOString()).
+  const startRaw = typeof a.start === 'string' ? a.start.trim() : '';
+  if (startRaw) {
+    const d = parseDateSafe(startRaw);
+    if (d) return d;
+  }
+
+  const dateRaw =
+    typeof a.appointmentDate === 'string'
+      ? a.appointmentDate.trim()
+      : typeof a.date === 'string'
+        ? a.date.trim()
+        : '';
+  const timeRaw =
+    typeof a.appointmentTime === 'string'
+      ? a.appointmentTime.trim()
+      : typeof a.time === 'string'
+        ? a.time.trim()
+        : '';
+
+  if (dateRaw) {
+    const hhmm = normalizeTime(timeRaw || '') || '10:00';
+    return parseDateSafe(`${dateRaw}T${hhmm}`);
+  }
+
+  return null;
+}
+
+function isCancelledAppointment(appointment: unknown): boolean {
+  if (!appointment || typeof appointment !== 'object') return false;
+  const a = appointment as Record<string, unknown>;
+  const status = String(a.status || '').toLowerCase();
+  return status.includes('cancel');
+}
+
+function isSoldJourneyLabel(label: string | undefined): boolean {
+  const t = String(label || '').trim().toLowerCase();
+  return t === 'sold' || t.includes('sold');
 }
 
 const REMARK_PRESETS = [
@@ -389,6 +491,7 @@ export default function TelecallingRecordsPage() {
   const [selectedCenter, setSelectedCenter] = useState('');
   const [selectedReferences, setSelectedReferences] = useState<string[]>([]);
   const [selectedJourneys, setSelectedJourneys] = useState<string[]>([]);
+  const [selectedFollowUpSource, setSelectedFollowUpSource] = useState('');
   const [followUpDateFrom, setFollowUpDateFrom] = useState<Date | null>(null);
   const [followUpDateTo, setFollowUpDateTo] = useState<Date | null>(null);
   const [nextFollowUpDateFrom, setNextFollowUpDateFrom] = useState<Date | null>(null);
@@ -493,7 +596,9 @@ export default function TelecallingRecordsPage() {
       setCenterIdToName(centerMap);
 
       const enquiriesRef = collection(db, 'enquiries');
+      const appointmentsRef = collection(db, 'appointments');
       let enquiriesSnapshot;
+      let appointmentsSnapshot;
       
       try {
         // Try with orderBy first
@@ -504,11 +609,22 @@ export default function TelecallingRecordsPage() {
         // Fallback to simple query without ordering
         enquiriesSnapshot = await getDocs(enquiriesRef);
       }
+      appointmentsSnapshot = await getDocs(appointmentsRef);
 
       // console.log(`Found ${enquiriesSnapshot.docs.length} enquiries`);
 
       const allRecords: TelecallingRecord[] = [];
       const nextSnapshots: Record<string, Record<string, unknown>> = {};
+      const appointmentsByEnquiryId = new Map<string, Record<string, unknown>[]>();
+
+      appointmentsSnapshot.forEach((aptDoc) => {
+        const data = aptDoc.data() as Record<string, unknown>;
+        const enquiryId = String(data.enquiryId || '').trim();
+        if (!enquiryId) return;
+        const list = appointmentsByEnquiryId.get(enquiryId) || [];
+        list.push({ id: aptDoc.id, ...data });
+        appointmentsByEnquiryId.set(enquiryId, list);
+      });
 
       enquiriesSnapshot.forEach((docSnap) => {
         try {
@@ -529,6 +645,7 @@ export default function TelecallingRecordsPage() {
             const callTime = pickFollowUpDateTime(fu);
             return callTime ? isSameLocalDay(callTime, now) : false;
           });
+          const soldJourney = isSoldJourneyLabel(statusMeta.label);
           const centerId = (enquiryData.visitingCenter || enquiryData.center || '').trim();
           const centerLabel = centerId ? resolveCenterDisplay(centerId, centerMap) : undefined;
           const subjectLine =
@@ -546,6 +663,7 @@ export default function TelecallingRecordsPage() {
             centerLabel,
             totalFollowUpsOnEnquiry: totalFu,
             hasCallLoggedToday,
+            isSoldJourney: soldJourney,
           };
 
           if (followList.length > 0) {
@@ -581,6 +699,12 @@ export default function TelecallingRecordsPage() {
                   nextFollowUpDateTime: followUp.nextFollowUpDateTime || '',
                   createdAt: createdAtDate,
                   recordSource: 'followup_log',
+                  isDuePending: (() => {
+                    if (soldJourney) return false;
+                    const dueAt = pickNextFollowUpDateTime(followUp);
+                    if (!dueAt) return false;
+                    return !hasCallAfterDue(followList, dueAt);
+                  })(),
                 };
 
                 allRecords.push(record);
@@ -615,6 +739,9 @@ export default function TelecallingRecordsPage() {
                 nextFollowUpDateTime: patientFollowYmd,
                 createdAt: createdAtDate,
                 recordSource: 'patient_info',
+                isDuePending: soldJourney
+                  ? false
+                  : !hasCallAfterDue(followList, parseDateSafe(patientFollowYmd) || createdAtDate),
               });
             }
           }
@@ -649,6 +776,41 @@ export default function TelecallingRecordsPage() {
               nextFollowUpDateTime: dueIso,
               createdAt: dueAt,
               recordSource: 'appointment_due',
+              isDuePending: soldJourney ? false : !hasCallAfterDue(followList, dueAt),
+            });
+          });
+
+          const linkedAppointments = appointmentsByEnquiryId.get(enquiryId) || [];
+          linkedAppointments.forEach((appointment, index) => {
+            if (isCancelledAppointment(appointment)) return;
+            const appointmentAt = readAppointmentDateTime(appointment);
+            if (!appointmentAt) return;
+            const dueAt = addMinutes(appointmentAt, -30);
+            const dueIso = toDateTimeInputValue(dueAt);
+            const alreadyCoveredByFollowUp = followList.some((fu) => {
+              const next = pickNextFollowUpDateTime(fu);
+              return next ? Math.abs(next.getTime() - dueAt.getTime()) < 60 * 1000 : false;
+            });
+            if (alreadyCoveredByFollowUp) return;
+            allRecords.push({
+              id: `${enquiryId}_appointment_collection_due_${String(appointment.id || index)}`,
+              enquiryId,
+              enquiryName: enquiryData.name || 'Unknown',
+              enquiryPhone: enquiryData.phone || '',
+              enquiryEmail: enquiryData.email || '',
+              enquirySubject: subjectLine,
+              assignedTo: enquiryData.assignedTo || '',
+              ...rowContext,
+              followUpId: `appointment_collection_due_${String(appointment.id || index)}`,
+              followUpDate: '',
+              followUpDateTime: '',
+              telecaller: (enquiryData.telecaller || enquiryData.assignedTo || 'Unassigned').trim() || 'Unassigned',
+              remarks: 'Appointment reminder call due 30 minutes before scheduled appointment.',
+              nextFollowUpDate: toDateInputValue(dueAt),
+              nextFollowUpDateTime: dueIso,
+              createdAt: dueAt,
+              recordSource: 'appointment_due',
+              isDuePending: soldJourney ? false : !hasCallAfterDue(followList, dueAt),
             });
           });
         } catch (docError) {
@@ -661,6 +823,7 @@ export default function TelecallingRecordsPage() {
       const startToday = startOfDay(today);
       const endToday = endOfDay(today);
       const priority = (record: TelecallingRecord): number => {
+        if (!record.isDuePending) return 1;
         const next = pickRecordNextFollowUpDateTime(record);
         if (!next) return 1;
         const isDueToday = isWithinInterval(next, { start: startToday, end: endToday });
@@ -695,9 +858,15 @@ export default function TelecallingRecordsPage() {
 
   // Get unique telecallers
   const uniqueTelecallers = useMemo(() => {
-    const telecallers = [...new Set(records.map(record => record.telecaller).filter(Boolean))];
+    const telecallers = [
+      ...new Set(records.filter(isLoggedCallRecord).map((record) => record.telecaller).filter(Boolean)),
+    ];
     return telecallers.sort();
   }, [records]);
+  const loggedCallCount = useMemo(
+    () => filteredRecords.filter((record) => isLoggedCallRecord(record)).length,
+    [filteredRecords]
+  );
   const uniqueReferences = useMemo(() => {
     const refs = new Set<string>();
     records.forEach((record) => {
@@ -774,6 +943,7 @@ export default function TelecallingRecordsPage() {
       const dateRange = getDateRange(quickFilter);
       if (dateRange) {
         filtered = filtered.filter(record => {
+          if (dateRange.type === 'nextFollowUp' && !record.isDuePending) return false;
           const recordDate =
             dateRange.type === 'followUp'
               ? pickRecordFollowUpDateTime(record)
@@ -827,6 +997,16 @@ export default function TelecallingRecordsPage() {
       const selected = new Set(selectedJourneys.map((j) => j.toLowerCase()));
       filtered = filtered.filter((record) => selected.has(String(record.journeyLabel || '').toLowerCase()));
     }
+    if (selectedFollowUpSource) {
+      filtered = filtered.filter((record) => {
+        if (selectedFollowUpSource === 'appointment_reminder') return record.recordSource === 'appointment_due';
+        if (selectedFollowUpSource === 'patient_info_reminder') return record.recordSource === 'patient_info';
+        if (selectedFollowUpSource === 'other_followups') {
+          return record.recordSource !== 'appointment_due' && record.recordSource !== 'patient_info';
+        }
+        return true;
+      });
+    }
 
     // Follow-up date range filter (only if not using quick filter)
     if (!quickFilter && (followUpDateFrom || followUpDateTo)) {
@@ -865,7 +1045,7 @@ export default function TelecallingRecordsPage() {
 
     setFilteredRecords(filtered);
     setPage(0); // Reset to first page when filters change
-  }, [records, searchTerm, selectedTelecaller, selectedCenter, selectedReferences, selectedJourneys, quickFilter, followUpDateFrom, followUpDateTo, nextFollowUpDateFrom, nextFollowUpDateTo]);
+  }, [records, searchTerm, selectedTelecaller, selectedCenter, selectedReferences, selectedJourneys, selectedFollowUpSource, quickFilter, followUpDateFrom, followUpDateTo, nextFollowUpDateFrom, nextFollowUpDateTo]);
 
   // Clear all filters
   const clearFilters = () => {
@@ -874,6 +1054,7 @@ export default function TelecallingRecordsPage() {
     setSelectedCenter('');
     setSelectedReferences([]);
     setSelectedJourneys([]);
+    setSelectedFollowUpSource('');
     setQuickFilter('');
     setFollowUpDateFrom(null);
     setFollowUpDateTo(null);
@@ -1064,6 +1245,7 @@ export default function TelecallingRecordsPage() {
   const dueTodayCount = useMemo(() => {
     const now = new Date();
     return filteredRecords.filter((r) => {
+      if (!r.isDuePending) return false;
       const nextDate = pickRecordNextFollowUpDateTime(r);
       return nextDate ? isWithinInterval(nextDate, { start: startOfDay(now), end: endOfDay(now) }) : false;
     }).length;
@@ -1071,6 +1253,7 @@ export default function TelecallingRecordsPage() {
   const overdueCount = useMemo(() => {
     const now = new Date();
     return filteredRecords.filter((r) => {
+      if (!r.isDuePending) return false;
       const nextDate = pickRecordNextFollowUpDateTime(r);
       return nextDate ? nextDate < now : false;
     }).length;
@@ -1169,10 +1352,10 @@ export default function TelecallingRecordsPage() {
                   </Avatar>
                   <Box>
                     <Typography variant="h6" component="div">
-                      {filteredRecords.length}
+                      {loggedCallCount}
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
-                      Total Calls
+                      Calls Logged
                     </Typography>
                   </Box>
                 </Box>
@@ -1293,6 +1476,7 @@ export default function TelecallingRecordsPage() {
                   !selectedCenter &&
                   selectedReferences.length === 0 &&
                   selectedJourneys.length === 0 &&
+                  !selectedFollowUpSource &&
                   !quickFilter &&
                   !followUpDateFrom &&
                   !followUpDateTo &&
@@ -1397,6 +1581,23 @@ export default function TelecallingRecordsPage() {
 
               <Grid item xs={12} sm={6} md={3}>
                 <FormControl fullWidth>
+                  <InputLabel>Follow-up Type</InputLabel>
+                  <Select
+                    value={selectedFollowUpSource}
+                    onChange={(e) => setSelectedFollowUpSource(e.target.value)}
+                    label="Follow-up Type"
+                    size="small"
+                  >
+                    <MenuItem value="">All Types</MenuItem>
+                    <MenuItem value="appointment_reminder">Appointment Reminder Only</MenuItem>
+                    <MenuItem value="patient_info_reminder">Patient Info Follow-up Only</MenuItem>
+                    <MenuItem value="other_followups">Other Follow-ups (excluding both reminders)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={3}>
+                <FormControl fullWidth>
                   <InputLabel>Journey</InputLabel>
                   <Select
                     multiple
@@ -1469,17 +1670,30 @@ export default function TelecallingRecordsPage() {
         {/* Results Table */}
         <Paper sx={{ width: '100%', overflow: 'hidden', borderRadius: 2, border: 1, borderColor: 'divider', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }}>
           <TableContainer sx={{ maxHeight: '70vh' }}>
-            <Table stickyHeader size="small" sx={{ '& .MuiTableCell-root': { py: 0.8, px: 1, fontSize: '0.78rem' } }}>
+            <Table
+              stickyHeader
+              size="small"
+              sx={{
+                tableLayout: 'fixed',
+                '& .MuiTableCell-root': {
+                  py: 0.8,
+                  px: 1,
+                  fontSize: '0.78rem',
+                  whiteSpace: 'normal',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
+                  verticalAlign: 'top',
+                },
+              }}
+            >
               <TableHead>
                 <TableRow>
                   <TableCell sx={{ fontWeight: 700 }}>Patient</TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>Reference</TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>Journey</TableCell>
+                  <TableCell sx={{ fontWeight: 700, width: 130 }}>Reference</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Follow-up Date</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Telecaller</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Remarks</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Next Follow-up</TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>Created At</TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700 }}>Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -1502,8 +1716,13 @@ export default function TelecallingRecordsPage() {
                         : undefined
                     }
                   >
-                    <TableCell>
+                    <TableCell sx={{ width: 220 }}>
                       <Box>
+                        <Box sx={{ mb: 0.5 }}>
+                          <Tooltip title={record.journeySource === 'manual' ? 'Manual status from CRM' : 'Derived from enquiry journey'}>
+                            <Chip size="small" label={record.journeyLabel} color={chipColor(record.journeyChipColor)} />
+                          </Tooltip>
+                        </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
                             {record.enquiryName}
@@ -1515,33 +1734,33 @@ export default function TelecallingRecordsPage() {
                           ) : null}
                           <Chip
                             size="small"
-                            label={`${record.totalFollowUpsOnEnquiry} calls`}
+                            label={`${record.totalFollowUpsOnEnquiry} calls logged`}
                             variant="outlined"
                           />
                           {record.hotEnquiry ? <HotEnquiryBadgeChip /> : null}
                         </Box>
-                        <Typography variant="body2" color="text.secondary">
+                        <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'normal' }}>
                           {record.enquiryPhone}
                         </Typography>
                         {record.enquiryEmail && (
-                          <Typography variant="body2" color="text.secondary">
+                          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'normal' }}>
                             {record.enquiryEmail}
                           </Typography>
                         )}
                         {record.centerLabel ? (
-                          <Typography variant="caption" color="text.secondary" display="block">
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ whiteSpace: 'normal' }}>
                             Center: {record.centerLabel}
                           </Typography>
                         ) : null}
                         {record.enquirySubject && (
-                          <Typography variant="caption" color="text.secondary" display="block">
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ whiteSpace: 'normal' }}>
                             {record.enquirySubject}
                           </Typography>
                         )}
                       </Box>
                     </TableCell>
-                    <TableCell>
-                      <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ maxWidth: 220 }}>
+                    <TableCell sx={{ width: 120 }}>
+                      <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ maxWidth: 110 }}>
                         {record.referenceList.length === 0 ? (
                           <Typography variant="caption" color="text.secondary">—</Typography>
                         ) : (
@@ -1550,11 +1769,6 @@ export default function TelecallingRecordsPage() {
                           ))
                         )}
                       </Stack>
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip title={record.journeySource === 'manual' ? 'Manual status from CRM' : 'Derived from enquiry journey'}>
-                        <Chip size="small" label={record.journeyLabel} color={chipColor(record.journeyChipColor)} />
-                      </Tooltip>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1569,22 +1783,14 @@ export default function TelecallingRecordsPage() {
                         <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
                           {(record.telecaller || '?').charAt(0).toUpperCase()}
                         </Avatar>
-                        <Typography variant="body2">
+                        <Typography variant="body2" sx={{ whiteSpace: 'normal' }}>
                           {record.telecaller}
                         </Typography>
                       </Box>
                     </TableCell>
                     <TableCell>
                       <Tooltip title={record.remarks} arrow>
-                        <Typography 
-                          variant="body2" 
-                          sx={{ 
-                            maxWidth: 200, 
-                            overflow: 'hidden', 
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
-                          }}
-                        >
+                        <Typography variant="body2" sx={{ whiteSpace: 'normal', maxWidth: '100%' }}>
                           {record.remarks}
                         </Typography>
                       </Tooltip>
@@ -1595,6 +1801,7 @@ export default function TelecallingRecordsPage() {
                         <Typography 
                           variant="body2"
                           color={(() => {
+                            if (!record.isDuePending) return 'text.primary';
                             const nextDate = pickRecordNextFollowUpDateTime(record);
                             if (!nextDate) return 'text.primary';
                             const now = new Date();
@@ -1608,11 +1815,6 @@ export default function TelecallingRecordsPage() {
                           {formatDate(record.nextFollowUpDateTime || record.nextFollowUpDate)}
                         </Typography>
                       </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {formatDateTime(record.createdAt)}
-                      </Typography>
                     </TableCell>
                     <TableCell align="right">
                       <Stack direction="row" spacing={0.5} justifyContent="flex-end" flexWrap="wrap">
