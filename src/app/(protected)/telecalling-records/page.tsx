@@ -274,7 +274,14 @@ function isNotInterestedEnquiry(
 function toWhatsAppHref(phone: string | undefined): string | null {
   const digits = String(phone || '').replace(/\D/g, '');
   if (!digits) return null;
-  return `https://wa.me/${digits}`;
+  // Enquiries store 10-digit local numbers; wa.me needs country code without leading +
+  let waDigits = digits;
+  if (digits.length === 10) {
+    waDigits = `91${digits}`;
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    waDigits = `91${digits.slice(1)}`;
+  }
+  return `https://wa.me/${waDigits}`;
 }
 
 function parseDateSafe(raw: string | undefined): Date | null {

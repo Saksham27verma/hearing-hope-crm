@@ -118,6 +118,11 @@ import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOp
 import { useAuth } from '@/context/AuthContext';
 import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
 import { logActivity, computeChanges } from '@/lib/activityLogger';
+import {
+  composeEnquiryAddress,
+  normalizeEnquiryAddressText,
+  normalizeEnquiryPincode,
+} from '@/utils/enquiryAddress';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import { enquiryMatchesDataScope } from '@/lib/tenant/centerScope';
 import {
@@ -188,6 +193,9 @@ interface Enquiry {
   phone?: string;
   email?: string;
   address?: string;
+  /** Wizard/local only — combined into `address` on save */
+  addressState?: string;
+  addressPincode?: string;
   subject?: string;
   status?: string;
   /** Manual journey chip override; null/omit = derive from latest visit */
@@ -882,6 +890,8 @@ export default function EnquiriesPage() {
     phone: '',
     email: '',
     address: '',
+    addressState: '',
+    addressPincode: '',
     reference: '',
     subject: '',
     message: '',
@@ -2335,6 +2345,8 @@ export default function EnquiriesPage() {
       phone: '',
       email: '',
       address: '',
+      addressState: '',
+      addressPincode: '',
       subject: '',
       message: '',
       status: 'open',
@@ -3013,9 +3025,15 @@ export default function EnquiriesPage() {
         });
       }
     } else {
+      let nextVal: string = value as string;
+      if (name === 'address' || name === 'addressState') {
+        nextVal = normalizeEnquiryAddressText(nextVal);
+      } else if (name === 'addressPincode') {
+        nextVal = normalizeEnquiryPincode(nextVal);
+      }
       setNewEnquiry({
         ...newEnquiry,
-        [name]: value
+        [name]: nextVal
       });
     }
   };
@@ -4360,7 +4378,38 @@ export default function EnquiriesPage() {
       });
       return;
     }
-    
+
+    if (!String(newEnquiry.address || '').trim()) {
+      setAlert({
+        open: true,
+        message: 'Please enter address (street, area, and city).',
+        severity: 'error',
+      });
+      return;
+    }
+    if (String(newEnquiry.addressState || '').trim().length < 2) {
+      setAlert({
+        open: true,
+        message: 'Please enter the state name.',
+        severity: 'error',
+      });
+      return;
+    }
+    if (!/^\d{6}$/.test(normalizeEnquiryPincode(newEnquiry.addressPincode || ''))) {
+      setAlert({
+        open: true,
+        message: 'Please enter a valid 6-digit PIN code.',
+        severity: 'error',
+      });
+      return;
+    }
+
+    const composedWizardAddress = composeEnquiryAddress(
+      newEnquiry.address || '',
+      newEnquiry.addressState || '',
+      newEnquiry.addressPincode || '',
+    );
+
     console.log('Validation passed, setting loading to true'); // Debug log
     setLoading(true);
     
@@ -4370,7 +4419,7 @@ export default function EnquiriesPage() {
         customerName: newEnquiry.customerName || '',
         phone: newEnquiry.phone,
         email: newEnquiry.email || '',
-        address: newEnquiry.address || '',
+        address: composedWizardAddress,
         reference: newEnquiry.reference,
         assignedTo: newEnquiry.assignedTo || '',
         telecaller: newEnquiry.telecaller || '',
@@ -4560,13 +4609,37 @@ export default function EnquiriesPage() {
               <Grid item xs={12}>
                 <TextField
                   fullWidth
-                  label="Address"
+                  label="Address (street, area, city)"
                   name="address"
                   value={newEnquiry.address || ''}
                   onChange={handleInputChange}
                   multiline
                   rows={2}
                   variant="outlined"
+                  helperText="Text is saved in CAPITAL LETTERS. Add state and PIN below."
+                  sx={{ mb: 2 }}
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="State"
+                  name="addressState"
+                  value={newEnquiry.addressState || ''}
+                  onChange={handleInputChange}
+                  variant="outlined"
+                  sx={{ mb: 2 }}
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="PIN code"
+                  name="addressPincode"
+                  value={newEnquiry.addressPincode || ''}
+                  onChange={handleInputChange}
+                  variant="outlined"
+                  inputProps={{ maxLength: 6, inputMode: 'numeric', autoComplete: 'postal-code' }}
                   sx={{ mb: 2 }}
                 />
               </Grid>
@@ -5068,7 +5141,14 @@ export default function EnquiriesPage() {
                       <Typography variant="body2"><strong>Phone:</strong> {newEnquiry.phone || 'Not provided'}</Typography>
                     )}
                     <Typography variant="body2"><strong>Email:</strong> {newEnquiry.email || 'Not provided'}</Typography>
-                    <Typography variant="body2"><strong>Address:</strong> {newEnquiry.address || 'Not provided'}</Typography>
+                    <Typography variant="body2">
+                      <strong>Address:</strong>{' '}
+                      {composeEnquiryAddress(
+                        newEnquiry.address || '',
+                        newEnquiry.addressState || '',
+                        newEnquiry.addressPincode || '',
+                      ) || 'Not provided'}
+                    </Typography>
                     <Typography variant="body2"><strong>Center:</strong> {newEnquiry.visitingCenter || 'Main Center'}</Typography>
                     <Typography variant="body2"><strong>Subject:</strong> {newEnquiry.subject || 'Not provided'}</Typography>
                   </Box>
@@ -5728,15 +5808,37 @@ export default function EnquiriesPage() {
                     <Grid item xs={12}>
                     <TextField
                         fullWidth
-                      label="Address"
+                      label="Address (street, area, city)"
                         name="address"
                       value={newEnquiry.address || ''}
                       onChange={handleInputChange}
                         multiline
                         rows={2}
                       variant="outlined"
+                      helperText="Text is saved in CAPITAL LETTERS. Add state and PIN below."
                     />
                   </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="State"
+                        name="addressState"
+                        value={newEnquiry.addressState || ''}
+                        onChange={handleInputChange}
+                        variant="outlined"
+                      />
+                    </Grid>
+                    <Grid item xs={12} md={6}>
+                      <TextField
+                        fullWidth
+                        label="PIN code"
+                        name="addressPincode"
+                        value={newEnquiry.addressPincode || ''}
+                        onChange={handleInputChange}
+                        variant="outlined"
+                        inputProps={{ maxLength: 6, inputMode: 'numeric', autoComplete: 'postal-code' }}
+                      />
+                    </Grid>
                     
                   <Grid item xs={12} md={6}>
                     <FormControl fullWidth>
@@ -6579,10 +6681,20 @@ export default function EnquiriesPage() {
                   <Typography variant="body1" fontWeight="medium">{newEnquiry.telecaller || 'Not assigned'}</Typography>
                 </Grid>
                 
-                {newEnquiry.address && (
+                {composeEnquiryAddress(
+                  newEnquiry.address || '',
+                  newEnquiry.addressState || '',
+                  newEnquiry.addressPincode || '',
+                ) && (
                   <Grid item xs={12}>
                     <Typography variant="body2" color="text.secondary">Address</Typography>
-                    <Typography variant="body1" fontWeight="medium">{newEnquiry.address}</Typography>
+                    <Typography variant="body1" fontWeight="medium">
+                      {composeEnquiryAddress(
+                        newEnquiry.address || '',
+                        newEnquiry.addressState || '',
+                        newEnquiry.addressPincode || '',
+                      )}
+                    </Typography>
                   </Grid>
                 )}
                 {newEnquiry.message && (

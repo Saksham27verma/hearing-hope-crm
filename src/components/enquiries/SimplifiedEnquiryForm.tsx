@@ -37,6 +37,12 @@ import {
 import { formatPtaTestDateForDisplay, type ExternalPtaReportLink } from '@/lib/ptaIntegration';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
+import {
+  composeEnquiryAddress,
+  normalizeEnquiryAddressText,
+  normalizeEnquiryPincode,
+  parseEnquiryAddressStored,
+} from '@/utils/enquiryAddress';
 import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiryPayments';
 import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
@@ -761,7 +767,9 @@ interface FormData {
   customerGstNumber: string;
   phone: string;
   email: string;
-  address: string;
+  addressLine: string;
+  addressState: string;
+  addressPincode: string;
   reference: string[];
   // Quick scheduling before first call
   followUpDate: string;
@@ -1072,7 +1080,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       customerGstNumber: '',
       phone: '',
       email: '',
-      address: '',
+      addressLine: '',
+      addressState: '',
+      addressPincode: '',
       reference: [],
       followUpDate: '',
       assignedTo: '',
@@ -2156,6 +2166,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           };
         });
 
+        const parsedAddr = parseEnquiryAddressStored(enquiry.address || '');
         reset({
           name: enquiry.name || '',
           customerName: enquiry.customerName || '',
@@ -2163,7 +2174,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             enquiry.customerGstNumber || enquiry.customerGSTNumber || enquiry.customerGSTIN || '',
           phone: enquiry.phone || '',
           email: enquiry.email || '',
-          address: enquiry.address || '',
+          addressLine: parsedAddr.line,
+          addressState: parsedAddr.state,
+          addressPincode: parsedAddr.pincode,
           reference: Array.isArray(enquiry.reference)
             ? enquiry.reference
             : (enquiry.reference ? [enquiry.reference] : []),
@@ -3241,11 +3254,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const submitLoading = isSubmitting || formSubmitting;
 
   const onFormSubmit = async (data: FormData) => {
+    const { addressLine, addressState, addressPincode, ...dataRest } = data;
     const totalDue = calculateTotalDue();
     const totalPaid = calculateTotalPaid();
     const outstanding = calculateOutstanding();
 
-    const visitsForSave = data.visits.map((visit) => {
+    const visitsForSave = dataRest.visits.map((visit) => {
       const items = visit.salesReturnItems;
       if (visit.salesReturn && Array.isArray(items) && items.length > 0) {
         return {
@@ -3256,7 +3270,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       return visit;
     });
 
-    const normalizedPaymentRecords = (data.payments || []).map((payment) => ({
+    const normalizedPaymentRecords = (dataRest.payments || []).map((payment) => ({
       id: payment.id,
       paymentType:
         payment.paymentFor === 'hearing_test' ? 'hearing_aid_test' :
@@ -3285,8 +3299,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     }));
 
     const formattedData = {
-      ...data,
-      leadOutcome: (data.leadOutcome || '').trim() || null,
+      ...dataRest,
+      address: composeEnquiryAddress(addressLine, addressState, addressPincode),
+      leadOutcome: (dataRest.leadOutcome || '').trim() || null,
       visits: visitsForSave,
       followUps,
       status: 'active',
@@ -3700,16 +3715,84 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   </Grid>
                   <Grid item xs={12}>
                     <Controller
-                      name="address"
+                      name="addressLine"
                       control={control}
+                      rules={{
+                        validate: (v) =>
+                          String(v || '').trim().length > 0 || 'Enter street, area, and city',
+                      }}
                       render={({ field }) => (
                         <TextField
                           {...field}
                           fullWidth
-                          label="Address"
+                          label="Address (street, area, city)"
+                          required
                           disabled={isAudiologist}
+                          error={!!errors.addressLine}
+                          helperText={
+                            errors.addressLine?.message ||
+                            'All address text is saved in CAPITAL LETTERS.'
+                          }
                           multiline
                           rows={2}
+                          value={field.value || ''}
+                          onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
+                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Controller
+                      name="addressState"
+                      control={control}
+                      rules={{
+                        validate: (v) =>
+                          String(v || '').trim().length >= 2 || 'Enter state name',
+                      }}
+                      render={({ field }) => (
+                        <TextField
+                          {...field}
+                          fullWidth
+                          label="State"
+                          required
+                          disabled={isAudiologist}
+                          error={!!errors.addressState}
+                          helperText={errors.addressState?.message}
+                          value={field.value || ''}
+                          onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
+                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        />
+                      )}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Controller
+                      name="addressPincode"
+                      control={control}
+                      rules={{
+                        validate: (v) =>
+                          /^\d{6}$/.test(normalizeEnquiryPincode(String(v || ''))) ||
+                          'Enter 6-digit PIN code',
+                      }}
+                      render={({ field }) => (
+                        <TextField
+                          {...field}
+                          fullWidth
+                          label="PIN code"
+                          required
+                          disabled={isAudiologist}
+                          error={!!errors.addressPincode}
+                          helperText={errors.addressPincode?.message}
+                          value={field.value || ''}
+                          onChange={(e) => field.onChange(normalizeEnquiryPincode(e.target.value))}
+                          InputProps={{
+                            inputProps: {
+                              maxLength: 6,
+                              inputMode: 'numeric',
+                              autoComplete: 'postal-code',
+                            },
+                          }}
                           sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
                         />
                       )}
@@ -8933,7 +9016,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 <Grid item xs={12}>
                   <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), borderRadius: 2 }}>
                     <Typography variant="body2" color="text.secondary">Address</Typography>
-                    <Typography variant="body1" sx={{ fontWeight: 500 }}>{watch('address') || 'Not provided'}</Typography>
+                    <Typography variant="body1" sx={{ fontWeight: 500 }}>
+                      {composeEnquiryAddress(
+                        watch('addressLine'),
+                        watch('addressState'),
+                        watch('addressPincode'),
+                      ) || 'Not provided'}
+                    </Typography>
                   </Box>
                 </Grid>
                 {watch('hotEnquiry') && (
