@@ -900,7 +900,14 @@ export default function SalesInvoicingPageInner() {
     }
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
-    setPrintInvoiceData(convertSaleToInvoiceData(raw));
+    const saleWithPaymentMode = { ...raw } as Record<string, unknown>;
+    if (!saleWithPaymentMode.paymentMethod && row.patientPayments?.length) {
+      const uniqueModes = [...new Set(
+        row.patientPayments.map((p) => p.mode).filter((m) => m && m !== '—')
+      )];
+      if (uniqueModes.length) saleWithPaymentMode.paymentMethod = uniqueModes.join(', ');
+    }
+    setPrintInvoiceData(convertSaleToInvoiceData(saleWithPaymentMode));
     setPrintModalOpen(true);
   }, []);
 
@@ -911,7 +918,14 @@ export default function SalesInvoicingPageInner() {
     }
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
-    setInvoiceSale(raw);
+    const saleWithPaymentMode = { ...raw } as Record<string, unknown>;
+    if (!saleWithPaymentMode.paymentMethod && row.patientPayments?.length) {
+      const uniqueModes = [...new Set(
+        row.patientPayments.map((p) => p.mode).filter((m) => m && m !== '—')
+      )];
+      if (uniqueModes.length) saleWithPaymentMode.paymentMethod = uniqueModes.join(', ');
+    }
+    setInvoiceSale(saleWithPaymentMode);
     setInvoiceOpen(true);
   }, []);
 

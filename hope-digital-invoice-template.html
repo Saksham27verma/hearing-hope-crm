@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    @page {
+      size: A4 portrait;
+      margin: 12mm;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      color: #1a202c;
+      margin: 0;
+      padding: 0;
+      line-height: 1.3;
+      background: #fff;
+    }
+
+    .invoice-container {
+      width: 100%;
+      max-width: 740px;
+      margin: 0 auto;
+    }
+
+    .brand-red { color: #a80000; }
+    .text-light { color: #4a5568; font-size: 11px; }
+
+    .header-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+    }
+
+    .company-name {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+      color: #a80000;
+      text-transform: uppercase;
+    }
+
+    .doc-type-label {
+      font-size: 24px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #a9a9a9;
+      text-align: right;
+    }
+
+    .top-info-grid {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+    }
+
+    .top-info-grid td { vertical-align: top; }
+
+    .bill-to-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #a80000;
+      margin-bottom: 2px;
+      text-transform: uppercase;
+    }
+
+    .item-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+      table-layout: fixed;
+    }
+
+    .item-table th {
+      background: #f8fafc;
+      border-top: 1.5px solid #a80000;
+      border-bottom: 1.5px solid #a80000;
+      padding: 8px;
+      text-align: left;
+      font-size: 9px;
+      text-transform: uppercase;
+      color: #4a5568;
+    }
+
+    .item-table td {
+      padding: 10px 8px;
+      border-bottom: 1px solid #edf2f7;
+      font-size: 11px;
+      vertical-align: top;
+      word-break: break-word;
+    }
+
+    .product-title {
+      font-weight: 700;
+      color: #000;
+      margin-bottom: 1px;
+      line-height: 1.3;
+    }
+
+    .product-meta {
+      font-size: 10px;
+      color: #718096;
+      line-height: 1.0;
+      white-space: pre-wrap;
+    }
+
+    .text-right { text-align: right !important; }
+    .text-center { text-align: center !important; }
+
+    .totals-table {
+      width: 280px;
+      border-collapse: collapse;
+      margin-left: auto;
+      margin-top: 5px;
+    }
+
+    .totals-table td {
+      padding: 4px 8px;
+      font-size: 11px;
+      text-align: right;
+    }
+
+    .net-total-row {
+      border-top: 1px solid #a80000;
+      border-bottom: 1px solid #a80000;
+      font-weight: 700;
+      font-size: 15px !important;
+      color: #a80000;
+    }
+
+    .terms-section {
+      margin-top: 15px;
+      border-top: 1px solid #edf2f7;
+      padding-top: 10px;
+    }
+
+    .section-title {
+      font-size: 9px;
+      font-weight: 700;
+      color: #1a202c;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+
+    .terms-list {
+      font-size: 9px;
+      color: #4a5568;
+      padding-left: 15px;
+      margin: 0 0 15px 0;
+    }
+
+    .terms-list li { margin-bottom: 3px; }
+
+    .footer-bottom {
+      width: 100%;
+      margin-top: 10px;
+    }
+
+    .declaration-text {
+      font-size: 10px;
+      color: #4a5568;
+      font-style: italic;
+      margin-bottom: 20px;
+      line-height: 1.4;
+    }
+
+    .signature-wrapper {
+      text-align: right;
+      float: right;
+      min-width: 220px;
+    }
+
+    .for-company {
+      font-size: 11px;
+      font-weight: 700;
+      color: #1a202c;
+      margin-bottom: 5px;
+    }
+
+    .sig-image {
+      display: block;
+      margin-left: auto;
+      width: 140px;
+      max-height: 56px;
+      object-fit: contain;
+      height: auto;
+    }
+
+    .sig-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #000;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 4px;
+      margin-top: 4px;
+      display: inline-block;
+      width: 100%;
+    }
+
+    .branch-footer {
+      clear: both;
+      margin-top: 40px;
+      text-align: center;
+      font-size: 8px;
+      color: #a0aec0;
+      line-height: 1.4;
+      border-top: 1px dashed #e2e8f0;
+      padding-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice-container">
+    <table class="header-table">
+      <tr>
+        <td width="60%">
+          <img src="{{LOGO_1775027410788}}" style="width: 150px; margin-bottom: -3px;" alt="Logo" /><br />
+          <h1 class="company-name">Hope Digital Innovations Pvt Ltd</h1>
+          <div class="text-light">
+            G-14, Ground Floor, King Mall, Rohini, Delhi - 110085<br />
+            <strong>GSTIN:</strong> 07AAHCH3320A1Z9 | <strong>Contact:</strong> +91 97118 71168
+          </div>
+        </td>
+        <td width="40%" class="doc-type-label" valign="top">TAX INVOICE</td>
+      </tr>
+    </table>
+
+    <table class="top-info-grid">
+      <tr>
+        <td width="60%">
+          <div class="bill-to-label">Bill To:</div>
+          <div style="font-size: 14px; font-weight: 700;">{{CUSTOMER_NAME}}</div>
+          <div class="text-light" style="margin-top: 2px;">
+            {{CUSTOMER_ADDRESS}}<br />
+            <strong>Phone:</strong> {{CUSTOMER_PHONE}} | <strong>GSTIN:</strong> {{CUSTOMER_GSTIN}}
+          </div>
+        </td>
+        <td width="40%" style="text-align: right;">
+          <div style="font-size: 12px; line-height: 1.6;">
+            <strong>Invoice Date:</strong> {{INVOICE_DATE}}<br />
+            <strong>Invoice No:</strong> {{INVOICE_NUMBER}}<br />
+            <strong>Mode of Payment:</strong> {{PAYMENT_MODE}}
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <table class="item-table">
+      <thead>
+        <tr>
+          <th width="40%">Description &amp; Specification</th>
+          <th width="10%">HSN</th>
+          <th width="7%" class="text-center">Qty</th>
+          <th width="14%" class="text-right">Price</th>
+          <th width="14%" class="text-right">GST Amount</th>
+          <th width="15%" class="text-right">Total Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ITEMS_PLACEHOLDER}}
+      </tbody>
+    </table>
+
+    <table class="totals-table">
+      <tr>
+        <td style="color: #718096;">Gross Total:</td>
+        <td>{{SUBTOTAL}}</td>
+      </tr>
+      <tr>
+        <td style="color: #718096;">GST Total:</td>
+        <td>{{TAX_AMOUNT}}</td>
+      </tr>
+      <tr class="net-total-row">
+        <td>Net Payable:</td>
+        <td>{{TOTAL}}</td>
+      </tr>
+    </table>
+
+    <div class="terms-section">
+      <div class="section-title">Terms &amp; Conditions:</div>
+      <ul class="terms-list">
+        <li><strong>Final Sale:</strong> Products once sold and fitted are strictly non-returnable and non-exchangeable.</li>
+        <li><strong>Warranty Validity:</strong> All warranties are effective from the <strong>Date of Invoice</strong>.</li>
+        <li><strong>Warranty Scope:</strong> Applicable only for manufacturer defects per official manufacturer policy. Physical/Liquid damage is not covered.</li>
+        <li>Interest @24% P.a will be charged if payment is delayed beyond 15 days.</li>
+        <li>Subject to Delhi Jurisdiction only.</li>
+      </ul>
+
+      <div class="footer-bottom">
+        <div class="section-title">Declaration:</div>
+        <div class="declaration-text">
+          We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.
+        </div>
+
+        <div class="signature-wrapper">
+          <div class="for-company">for, Hope Digital Innovations Pvt Ltd</div>
+          <img src="{{SIGNATURE_1775027921505}}" class="sig-image" alt="Signature" />
+          <div class="sig-label">Authorized Signatory</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="branch-footer">
+      ROHINI • GREEN PARK • INDIRAPURAM • GHAZIABAD (SANJAY NAGAR)<br />
+      <strong>WEB:</strong> www.hearinghope.in | <strong>HELPLINE:</strong> +91 97118 71168
+      <div style="margin-top: 6px; color: #000; text-transform: uppercase; letter-spacing: 2px;">
+        This is a computer generated invoice and requires no physical signature
+      </div>
+    </div>
+  </div>
+</body>
+</html>

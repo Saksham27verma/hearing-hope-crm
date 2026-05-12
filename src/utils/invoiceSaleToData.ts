@@ -6,6 +6,7 @@ import {
 } from '@/lib/sales-invoicing/visitAccessoryInvoice';
 import { isProvisionalInvoiceNumber, normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { resolveInvoicePdfGrandTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import { extractPatientPaymentsFromEnquiryDoc } from '@/lib/sales-invoicing/enquiryPayments';
 
 /** Non-empty and not a provisional (PROV-*) placeholder — required before accountant-facing PDFs. */
 export function saleHasBillableInvoiceNumber(inv: unknown): boolean {
@@ -30,6 +31,17 @@ export function enquiryVisitToInvoiceSalePayload(
     visit?.invoiceNumber ?? visit?.salesInvoiceNumber ?? enquiry?.invoiceNumber ?? ''
   );
   const invoiceNumber = saleHasBillableInvoiceNumber(invoiceNumberFromRecord) ? invoiceNumberFromRecord : '';
+
+  const paymentLines = extractPatientPaymentsFromEnquiryDoc(enquiry);
+  const uniqueModes = [
+    ...new Set(
+      paymentLines
+        .map((l) => l.mode)
+        .filter((m) => m && m !== '—')
+    ),
+  ];
+  const paymentMethod = uniqueModes.join(', ');
+
   return {
     products: visit?.products || [],
     accessories,
@@ -44,6 +56,7 @@ export function enquiryVisitToInvoiceSalePayload(
       enquiry?.customerGstNumber || enquiry?.customerGSTIN || enquiry?.customerGSTNumber || '',
     saleDate: visit?.purchaseDate || visit?.visitDate || visit?.date || new Date().toISOString().slice(0, 10),
     invoiceNumber,
+    paymentMethod,
     notes: visit?.saleNotes || visit?.notes || '',
   };
 }
