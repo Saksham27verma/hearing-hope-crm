@@ -7,7 +7,10 @@ const PRIMARY_ORANGE = '#EE6417';
 const PRIMARY_GREEN = '#3aa986';
 
 const sharedTypography = {
+  /** Matches `layout.tsx` / `--font-inter` from next/font */
   fontFamily: [
+    'var(--font-inter)',
+    'Inter',
     '-apple-system',
     'BlinkMacSystemFont',
     '"Segoe UI"',
@@ -43,14 +46,14 @@ export function createAppTheme(mode: AppColorMode) {
       ...(mode === 'light'
         ? {
             background: {
-              default: '#fafafa',
+              default: '#f8fafc',
               paper: '#ffffff',
             },
             text: {
               primary: '#0f172a',
               secondary: 'rgba(15, 23, 42, 0.65)',
             },
-            divider: alpha('#0f172a', 0.08),
+            divider: '#e2e8f0',
           }
         : {
             background: {
@@ -145,14 +148,16 @@ export function createAppTheme(mode: AppColorMode) {
               borderRadius: 8,
             },
             '& .MuiOutlinedInput-root': {
-              transition: 'border-color 0.2s ease, background-color 0.2s ease',
+              transition:
+                'border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease',
               '& fieldset': {
+                borderWidth: '1px',
                 borderColor:
-                  theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.15)' : alpha(theme.palette.common.white, 0.16),
+                  theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.12)' : alpha(theme.palette.common.white, 0.14),
               },
               '&:hover fieldset': {
                 borderColor:
-                  theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.25)' : alpha(theme.palette.common.white, 0.24),
+                  theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.2)' : alpha(theme.palette.common.white, 0.22),
               },
             },
           }),
@@ -160,12 +165,31 @@ export function createAppTheme(mode: AppColorMode) {
       },
       MuiOutlinedInput: {
         styleOverrides: {
-          root: {
+          root: ({ theme }) => ({
             borderRadius: 8,
-            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-              borderWidth: 2,
+            '& fieldset': {
+              borderWidth: '1px',
             },
-          },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+              borderWidth: '1px',
+            },
+            '&.Mui-focused': {
+              boxShadow: `0 0 0 3px ${alpha(theme.palette.primary.main, theme.palette.mode === 'light' ? 0.18 : 0.28)}`,
+            },
+            '&.Mui-error.Mui-focused': {
+              boxShadow: `0 0 0 3px ${alpha(theme.palette.error.main, theme.palette.mode === 'light' ? 0.16 : 0.28)}`,
+            },
+          }),
+        },
+      },
+      MuiFormHelperText: {
+        styleOverrides: {
+          root: ({ theme }) => ({
+            fontSize: '0.75rem',
+            lineHeight: 1.45,
+            marginTop: 6,
+            color: theme.palette.text.secondary,
+          }),
         },
       },
       MuiInputLabel: {
@@ -200,7 +224,7 @@ export function createAppTheme(mode: AppColorMode) {
           }),
           outlined: ({ theme }) => ({
             borderColor:
-              theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.08)' : alpha(theme.palette.common.white, 0.12),
+              theme.palette.mode === 'light' ? '#e2e8f0' : alpha(theme.palette.common.white, 0.12),
           }),
         },
       },

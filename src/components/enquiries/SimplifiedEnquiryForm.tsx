@@ -47,10 +47,11 @@ import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiry
 import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
+import { EnquiryFormDatePicker, EnquiryFormDatePickerProvider } from './EnquiryFormDatePicker';
 import {
   TextField, Button, Typography, Box, Paper,
   FormControl, InputLabel, Select, MenuItem,
-  Card, CardContent, Divider, Stepper, Step, StepLabel,
+  Card, CardContent, Divider,
   Grid as MuiGrid, IconButton, FormHelperText, Alert, Autocomplete,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Tabs, Tab, Chip, InputAdornment, Switch, FormControlLabel,
@@ -59,6 +60,7 @@ import {
   List, ListItem, ListItemButton, ListItemText, ListSubheader, Badge, Link as MuiLink
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import { User, Phone, MapPin, UsersRound, ClipboardList, Pencil, CalendarDays, ChevronDown } from 'lucide-react';
 import {
   Close as CloseIcon,
   Save as SaveIcon,
@@ -70,9 +72,6 @@ import {
   Visibility as VisibilityIcon,
   Edit as EditIcon,
   CurrencyRupee as RupeeIcon,
-  DateRange as DateRangeIcon,
-  Person as PersonIcon,
-  Phone as PhoneIcon,
   LocalHospital as MedicalIcon,
   Event as EventIcon,
   Check as CheckIcon,
@@ -90,6 +89,297 @@ import {
 
 // Custom Grid wrapper
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
+
+/** Shared enquiry field chrome: ~8px radius, consistent single-line height, subtle placeholders. */
+const enquiryFormFieldSx = {
+  '& .MuiOutlinedInput-root': {
+    borderRadius: '8px',
+    minWidth: 0,
+    maxWidth: '100%',
+    bgcolor: (t: any) => (t.palette.mode === 'light' ? '#ffffff' : alpha(t.palette.common.black, 0.15)),
+  },
+  '& .MuiOutlinedInput-input': {
+    fontSize: '0.875rem',
+    '&:not(textarea)': {
+      py: 0.75,
+      minHeight: 40,
+      boxSizing: 'border-box' as const,
+    },
+  },
+  '& .MuiOutlinedInput-inputMultiline': {
+    py: 1.125,
+    minHeight: 72,
+    lineHeight: 1.45,
+  },
+  '& .MuiOutlinedInput-input::placeholder': {
+    color: 'text.disabled',
+    opacity: 1,
+  },
+  '& textarea::placeholder': {
+    color: 'text.disabled',
+    opacity: 1,
+  },
+  '& textarea.MuiOutlinedInput-input': {
+    overflowWrap: 'anywhere',
+    wordBreak: 'break-word',
+  },
+} as const;
+
+/** Section surfaces — slate border, soft shadow (light). */
+const enquirySectionCardSx = {
+  mb: 4,
+  borderRadius: '8px',
+  border: '1px solid',
+  borderColor: (t: any) => (t.palette.mode === 'light' ? '#e2e8f0' : t.palette.divider),
+  bgcolor: 'background.paper',
+  boxShadow: (t: any) =>
+    t.palette.mode === 'light'
+      ? '0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.05)'
+      : 'none',
+} as const;
+
+const enquiryGroupTitleSx = {
+  letterSpacing: '0.06em',
+  fontWeight: 600,
+  fontSize: '0.6875rem',
+  color: 'text.disabled',
+  textTransform: 'uppercase' as const,
+  display: 'block',
+  mb: 1.5,
+};
+
+/** Outlined selects with external labels — hide notch gap for a clean rectangle. */
+const enquirySelectFieldSx = {
+  borderRadius: '8px',
+  '& fieldset > legend': { width: 0, padding: 0, height: 0 },
+  '& .MuiOutlinedInput-root': {
+    minHeight: 40,
+    alignItems: 'center',
+  },
+  '& .MuiSelect-select': {
+    py: 0.75,
+    px: 1.25,
+    minHeight: 40,
+    display: 'flex',
+    alignItems: 'center',
+    fontSize: '0.875rem',
+    lineHeight: 1.25,
+  },
+  '& .MuiOutlinedInput-notchedOutline': {
+    borderColor: (t: any) => (t.palette.mode === 'light' ? '#e2e8f0' : alpha(t.palette.common.white, 0.14)),
+  },
+  '&:hover .MuiOutlinedInput-notchedOutline': {
+    borderColor: (t: any) => (t.palette.mode === 'light' ? '#cbd5e1' : alpha(t.palette.common.white, 0.22)),
+  },
+  '& .MuiSelect-icon': {
+    color: 'text.secondary',
+    right: 10,
+    top: '50%',
+    transform: 'translateY(-50%)',
+  },
+} as const;
+
+/** Reference multi-select: wrapped value + aligned trigger when chips stack. */
+const enquiryReferenceSelectSx = [
+  enquirySelectFieldSx,
+  {
+    '& .MuiOutlinedInput-root': {
+      alignItems: 'flex-start',
+      minHeight: 40,
+      minWidth: 0,
+      py: 0.5,
+    },
+    // Win over MuiSelectInput’s default nowrap + ellipsis for multi chips
+    '&& .MuiSelect-select': {
+      alignItems: 'flex-start',
+      whiteSpace: 'normal',
+      overflow: 'visible',
+      textOverflow: 'clip',
+      minHeight: 'auto',
+      py: 0.75,
+      flexWrap: 'wrap',
+    },
+  },
+] as const;
+
+function enquirySelectPaperProps(maxHeight: number) {
+  return {
+    elevation: 0,
+    sx: {
+      maxHeight: `min(${maxHeight}px, 55vh)`,
+      overflowY: 'auto',
+      overflowX: 'hidden',
+      borderRadius: '8px',
+      mt: 0.5,
+      border: '1px solid',
+      borderColor: 'divider',
+      boxShadow: (t: any) =>
+        t.palette.mode === 'light'
+          ? '0 4px 20px rgba(15, 23, 42, 0.1)'
+          : '0 8px 28px rgba(0, 0, 0, 0.5)',
+      py: 0.5,
+      '& .MuiMenuItem-root': {
+        fontSize: '0.875rem',
+        minHeight: 40,
+        py: 1,
+        px: 1.25,
+        mx: 0.5,
+        my: 0.125,
+        borderRadius: '6px',
+        whiteSpace: 'normal',
+        wordBreak: 'break-word',
+        alignItems: 'center',
+        '&:hover': { bgcolor: 'action.hover' },
+        '&.Mui-selected': {
+          bgcolor: (t: any) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.18 : 0.08),
+        },
+        '&.Mui-selected:hover': {
+          bgcolor: (t: any) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.24 : 0.12),
+        },
+      },
+    },
+  };
+}
+
+function EnquiryFieldLabel({
+  htmlFor,
+  children,
+  required,
+  endAdornment,
+}: {
+  htmlFor: string;
+  children: React.ReactNode;
+  required?: boolean;
+  endAdornment?: React.ReactNode;
+}) {
+  const labelTypography = (
+    <Typography
+      component="label"
+      htmlFor={htmlFor}
+      variant="caption"
+      sx={{
+        display: 'block',
+        mb: endAdornment ? 0 : 0.5,
+        fontWeight: 600,
+        fontSize: '0.75rem',
+        letterSpacing: '0.02em',
+        color: 'text.secondary',
+        flex: endAdornment ? 1 : undefined,
+        minWidth: 0,
+      }}
+    >
+      {children}
+      {required ? (
+        <Box component="span" sx={{ color: 'error.main', fontWeight: 600, ml: 0.25 }} aria-hidden>
+          *
+        </Box>
+      ) : null}
+    </Typography>
+  );
+
+  if (!endAdornment) {
+    return labelTypography;
+  }
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 0.5,
+        mb: 0.5,
+      }}
+    >
+      {labelTypography}
+      {endAdornment}
+    </Box>
+  );
+}
+
+const EnquirySelectChevron = React.forwardRef<SVGSVGElement, { className?: string }>(
+  function EnquirySelectChevron({ className }, ref) {
+    return (
+      <ChevronDown
+        ref={ref}
+        className={className}
+        size={18}
+        strokeWidth={1.75}
+        aria-hidden
+        style={{ pointerEvents: 'none', color: 'inherit' }}
+      />
+    );
+  }
+);
+
+function EnquiryFormStepProgress({
+  activeStep,
+  labels,
+}: {
+  activeStep: number;
+  labels: readonly string[];
+}) {
+  const n = Math.max(labels.length, 1);
+  const pct = ((activeStep + 1) / n) * 100;
+  return (
+    <Stack spacing={1}>
+      <Box
+        sx={{
+          height: 3,
+          borderRadius: 999,
+          bgcolor: 'divider',
+          overflow: 'hidden',
+        }}
+      >
+        <Box
+          sx={{
+            height: '100%',
+            width: `${pct}%`,
+            bgcolor: 'primary.main',
+            borderRadius: 999,
+            transition: 'width 0.28s ease',
+          }}
+        />
+      </Box>
+      <Stack direction="row" justifyContent="space-between" spacing={1}>
+        {labels.map((label, i) => (
+          <Typography
+            key={label}
+            variant="caption"
+            sx={{
+              flex: 1,
+              textAlign: i === 0 ? 'left' : 'right',
+              fontWeight: i === activeStep ? 600 : 500,
+              color: i === activeStep ? 'text.primary' : 'text.disabled',
+              lineHeight: 1.35,
+              fontSize: '0.7rem',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical' as const,
+              overflow: 'hidden',
+            }}
+          >
+            {label}
+          </Typography>
+        ))}
+      </Stack>
+    </Stack>
+  );
+}
+
+const enquiryAdminEditIconSx = (opts?: { top?: number; right?: number; size?: number }) => ({
+  position: 'absolute' as const,
+  top: opts?.top ?? 8,
+  right: opts?.right ?? 8,
+  width: opts?.size ?? 24,
+  height: opts?.size ?? 24,
+  zIndex: 1,
+  bgcolor: (t: any) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+  color: 'primary.main',
+  '&:hover': {
+    bgcolor: (t: any) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+  },
+});
 
 // Product interface (matching the products module)
 interface Product {
@@ -799,6 +1089,8 @@ interface Props {
   enquiry?: any;
   isEditMode?: boolean;
   fullPage?: boolean;
+  /** When true (new/edit routes), use a slim header so the page layout owns the main title. */
+  embeddedInPage?: boolean;
   isSubmitting?: boolean;
 }
 
@@ -809,6 +1101,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   enquiry,
   isEditMode = false,
   fullPage = true, // Always full page now
+  embeddedInPage = false,
   isSubmitting = false
 }) => {
   const { userProfile, user } = useAuth();
@@ -3530,118 +3823,164 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   }
 
   return (
+    <EnquiryFormDatePickerProvider>
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', bgcolor: 'background.default' }}>
-      {/* Header */}
-      <Paper elevation={2} sx={{ 
-        bgcolor: 'primary.main', 
-        color: 'white', 
-        p: 3,
-        borderRadius: 0
-      }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <AssignmentIcon sx={{ fontSize: 32 }} />
-            <Box>
-              <Typography variant="h4" sx={{ fontWeight: 700 }}>
-                {isEditMode ? 'Edit Enquiry' : 'Create New Enquiry'}
-              </Typography>
-              <Typography variant="h6" sx={{ opacity: 0.9, fontWeight: 400 }}>
-                {stepTitles[step]}
-              </Typography>
-            </Box>
-          </Box>
-          <Button
-            onClick={onClose}
-            variant="outlined"
-            sx={{ 
-              color: 'white',
-              borderColor: 'white',
-              '&:hover': { 
-                bgcolor: 'rgba(255,255,255,0.1)',
-                borderColor: 'white'
-              }
+      <Paper
+        elevation={0}
+        sx={{
+          borderBottom: 1,
+          borderColor: 'divider',
+          bgcolor: 'background.paper',
+          borderRadius: 0,
+        }}
+      >
+        <Box sx={{ px: { xs: 2, sm: 3 }, pt: 2, pb: 2 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 2,
+              flexWrap: 'wrap',
             }}
-            startIcon={<CloseIcon />}
           >
-            Close
-          </Button>
+            <Stack spacing={1.25} sx={{ flex: 1, minWidth: 0, maxWidth: { sm: 'min(100%, 640px)' } }}>
+              {!embeddedInPage && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <AssignmentIcon sx={{ color: 'text.secondary', fontSize: 22 }} />
+                  <Typography variant="subtitle1" fontWeight={700} color="text.primary">
+                    {isEditMode ? 'Edit Enquiry' : 'Create New Enquiry'}
+                  </Typography>
+                </Stack>
+              )}
+              <EnquiryFormStepProgress activeStep={step} labels={stepTitles} />
+            </Stack>
+            <Button
+              onClick={onClose}
+              variant="outlined"
+              color="inherit"
+              startIcon={<CloseIcon />}
+              sx={{
+                borderColor: 'divider',
+                color: 'text.secondary',
+                flexShrink: 0,
+                '&:hover': {
+                  borderColor: 'text.secondary',
+                  bgcolor: (t) => alpha(t.palette.text.primary, 0.06),
+                },
+              }}
+            >
+              Close
+            </Button>
+          </Box>
         </Box>
       </Paper>
 
-      {/* Stepper */}
-      <Paper elevation={1} sx={{ p: 3, borderRadius: 0 }}>
-        <Stepper activeStep={step} alternativeLabel>
-          {stepTitles.map((label) => (
-            <Step key={label}>
-              <StepLabel 
-                sx={{
-                  '& .MuiStepLabel-label': {
-                    fontSize: '1rem',
-                    fontWeight: 500
-                  }
-                }}
-              >
-                {label}
-              </StepLabel>
-            </Step>
-          ))}
-        </Stepper>
-      </Paper>
-
       {/* Content */}
-      <Box sx={{ flex: 1, overflow: 'auto', p: 4 }}>
+      <Box sx={{ flex: 1, overflow: 'auto', p: embeddedInPage ? { xs: 2, sm: 3 } : 4 }}>
         {step === 0 && (
           <Box sx={{ maxWidth: '1200px', mx: 'auto' }}>
             {/* Basic Information */}
-            <Card elevation={2} sx={{ mb: 4, borderRadius: 2 }}>
-              <CardContent sx={{ p: 4 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                  <PersonIcon sx={{ color: 'primary.main', fontSize: 28 }} />
-                  <Typography variant="h5" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                    Patient Information
-                  </Typography>
+            <Paper elevation={0} sx={enquirySectionCardSx}>
+              <Box sx={{ p: { xs: 2, sm: 3 } }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 1.5,
+                    mb: 3,
+                    pb: 2,
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: 36,
+                      height: 36,
+                      borderRadius: 1,
+                      flexShrink: 0,
+                      bgcolor: (t) => (t.palette.mode === 'light' ? '#f1f5f9' : alpha(t.palette.common.white, 0.08)),
+                      color: 'text.secondary',
+                    }}
+                  >
+                    <User size={18} strokeWidth={1.5} aria-hidden />
+                  </Box>
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'text.primary', lineHeight: 1.3 }}>
+                      Patient information
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                      Identity, location, assignment, and lead context for this enquiry.
+                    </Typography>
+                  </Box>
                 </Box>
-                
-                      <Grid container spacing={3}>
-                  <Grid item xs={12} md={6}>
+
+                <Grid container spacing={2} sx={{ width: '100%', '& > .MuiGrid-item': { minWidth: 0 } }}>
+                  {/* —— Contact —— */}
+                  <Grid item xs={12}>
+                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.5 }}>
+                      <User size={14} strokeWidth={1.5} aria-hidden style={{ opacity: 0.7 }} />
+                      <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 0 }}>
+                        Contact
+                      </Typography>
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={12} md={isAudiologist ? 4 : 3}>
                     <Controller
                       name="name"
                       control={control}
                       rules={{ required: 'Name is required' }}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Full Name"
-                          required
-                          error={!!errors.name}
-                          helperText={errors.name?.message}
-                          variant="outlined"
-                          disabled={isAudiologist}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-name" required>
+                            Full name
+                          </EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-name"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="Patient full name"
+                            error={!!errors.name}
+                            helperText={errors.name?.message}
+                            variant="outlined"
+                            disabled={isAudiologist}
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12} md={isAudiologist ? 4 : 3}>
                     <Controller
                       name="customerName"
                       control={control}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Customer Name"
-                          variant="outlined"
-                          disabled={isAudiologist}
-                          helperText="Use when payer/decision-maker differs from patient."
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-customer-name">Customer / payer name</EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-customer-name"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="If different from patient"
+                            variant="outlined"
+                            disabled={isAudiologist}
+                            helperText="Use when payer or decision-maker differs from patient."
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
                   {!isAudiologist && (
-                    <Grid item xs={12} md={6}>
+                    <Grid item xs={12} md={3}>
                       <Controller
                         name="phone"
                         control={control}
@@ -3652,67 +3991,100 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             'Contact phone must be exactly 10 letters or digits',
                         }}
                         render={({ field }) => (
-                          <TextField
-                            {...field}
-                            fullWidth
-                            label="Phone Number"
-                            required
-                            error={!!errors.phone}
-                            helperText={errors.phone?.message}
-                            value={field.value || ''}
-                            onChange={(e) => field.onChange(normalizeEnquiryPhone(e.target.value))}
-                            InputProps={{
-                              startAdornment: (
-                                <InputAdornment position="start">
-                                  <PhoneIcon color="action" />
-                                </InputAdornment>
-                              ),
-                              inputProps: {
-                                maxLength: 10,
-                                inputMode: 'text',
-                                autoComplete: 'tel',
-                              },
-                            }}
-                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                          />
+                          <Box>
+                            <EnquiryFieldLabel htmlFor="enquiry-phone" required>
+                              Phone number
+                            </EnquiryFieldLabel>
+                            <TextField
+                              {...field}
+                              id="enquiry-phone"
+                              fullWidth
+                              size="small"
+                              hiddenLabel
+                              placeholder="10-digit mobile"
+                              error={!!errors.phone}
+                              helperText={errors.phone?.message}
+                              value={field.value || ''}
+                              onChange={(e) => field.onChange(normalizeEnquiryPhone(e.target.value))}
+                              InputProps={{
+                                startAdornment: (
+                                  <InputAdornment position="start">
+                                    <Box sx={{ display: 'flex', color: 'text.disabled', mr: -0.25 }}>
+                                      <Phone size={18} strokeWidth={1.5} aria-hidden />
+                                    </Box>
+                                  </InputAdornment>
+                                ),
+                                inputProps: {
+                                  maxLength: 10,
+                                  inputMode: 'text',
+                                  autoComplete: 'tel',
+                                },
+                              }}
+                              sx={enquiryFormFieldSx}
+                            />
+                          </Box>
                         )}
                       />
                     </Grid>
                   )}
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12} md={isAudiologist ? 4 : 3}>
                     <Controller
                       name="email"
                       control={control}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Email"
-                          type="email"
-                          disabled={isAudiologist}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-email">Email</EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-email"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="name@example.com"
+                            type="email"
+                            disabled={isAudiologist}
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
+                  </Grid>
+
+                  {/* —— Location & tax —— */}
+                  <Grid item xs={12} sx={{ mt: 1 }}>
+                    <Divider sx={{ borderColor: 'divider', mb: 1 }} />
+                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.5 }}>
+                      <MapPin size={14} strokeWidth={1.5} aria-hidden style={{ opacity: 0.7 }} />
+                      <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 0 }}>
+                        Location &amp; tax
+                      </Typography>
+                    </Stack>
                   </Grid>
                   <Grid item xs={12} md={6}>
                     <Controller
                       name="customerGstNumber"
                       control={control}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Customer GST Number"
-                          disabled={isAudiologist}
-                          value={(field.value || '').toUpperCase()}
-                          onChange={(e) => field.onChange((e.target.value || '').toUpperCase())}
-                          helperText="Optional - used for tax invoice GSTIN."
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-gst">Customer GST number</EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-gst"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="Optional — 15 characters"
+                            disabled={isAudiologist}
+                            value={(field.value || '').toUpperCase()}
+                            onChange={(e) => field.onChange((e.target.value || '').toUpperCase())}
+                            helperText="Used on tax invoices when provided."
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
+
                   <Grid item xs={12}>
                     <Controller
                       name="addressLine"
@@ -3722,27 +4094,36 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           String(v || '').trim().length > 0 || 'Enter street, area, and city',
                       }}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Address (street, area, city)"
-                          required
-                          disabled={isAudiologist}
-                          error={!!errors.addressLine}
-                          helperText={
-                            errors.addressLine?.message ||
-                            'All address text is saved in CAPITAL LETTERS.'
-                          }
-                          multiline
-                          rows={2}
-                          value={field.value || ''}
-                          onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-address" required>
+                            Address (street, area, city)
+                          </EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-address"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="Building, street, area, city"
+                            required
+                            disabled={isAudiologist}
+                            error={!!errors.addressLine}
+                            helperText={
+                              errors.addressLine?.message ||
+                              'Saved in CAPITAL LETTERS. Keep one clear block — state and PIN use the fields below.'
+                            }
+                            multiline
+                            minRows={2}
+                            maxRows={4}
+                            value={field.value || ''}
+                            onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12} sm={6} md={6}>
                     <Controller
                       name="addressState"
                       control={control}
@@ -3751,22 +4132,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           String(v || '').trim().length >= 2 || 'Enter state name',
                       }}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="State"
-                          required
-                          disabled={isAudiologist}
-                          error={!!errors.addressState}
-                          helperText={errors.addressState?.message}
-                          value={field.value || ''}
-                          onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-state" required>
+                            State
+                          </EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-state"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="State / UT"
+                            required
+                            disabled={isAudiologist}
+                            error={!!errors.addressState}
+                            helperText={errors.addressState?.message}
+                            value={field.value || ''}
+                            onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12} sm={6} md={6}>
                     <Controller
                       name="addressPincode"
                       control={control}
@@ -3776,29 +4165,48 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           'Enter 6-digit PIN code',
                       }}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="PIN code"
-                          required
-                          disabled={isAudiologist}
-                          error={!!errors.addressPincode}
-                          helperText={errors.addressPincode?.message}
-                          value={field.value || ''}
-                          onChange={(e) => field.onChange(normalizeEnquiryPincode(e.target.value))}
-                          InputProps={{
-                            inputProps: {
-                              maxLength: 6,
-                              inputMode: 'numeric',
-                              autoComplete: 'postal-code',
-                            },
-                          }}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-pin" required>
+                            PIN code
+                          </EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-pin"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="6 digits"
+                            required
+                            disabled={isAudiologist}
+                            error={!!errors.addressPincode}
+                            helperText={errors.addressPincode?.message}
+                            value={field.value || ''}
+                            onChange={(e) => field.onChange(normalizeEnquiryPincode(e.target.value))}
+                            InputProps={{
+                              inputProps: {
+                                maxLength: 6,
+                                inputMode: 'numeric',
+                                autoComplete: 'postal-code',
+                              },
+                            }}
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} md={6}>
+
+                  {/* —— Assignment —— */}
+                  <Grid item xs={12} sx={{ mt: 1 }}>
+                    <Divider sx={{ borderColor: 'divider', mb: 1 }} />
+                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.5 }}>
+                      <UsersRound size={14} strokeWidth={1.5} aria-hidden style={{ opacity: 0.7 }} />
+                      <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 0 }}>
+                        Assignment
+                      </Typography>
+                    </Stack>
+                  </Grid>
+                  <Grid item xs={12} md={3}>
                     <Controller
                       name="reference"
                       control={control}
@@ -3807,12 +4215,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           (Array.isArray(v) && v.length > 0) || 'Select at least one reference',
                       }}
                       render={({ field }) => (
-                        <FormControl fullWidth required error={!!errors.reference}>
-                          <InputLabel id="reference-label">Reference</InputLabel>
+                        <FormControl fullWidth required size="small" error={!!errors.reference}>
+                          <EnquiryFieldLabel htmlFor="enquiry-reference" required>
+                            Reference
+                          </EnquiryFieldLabel>
                           <Select
                             {...field}
-                            labelId="reference-label"
-                            label="Reference Source"
+                            id="enquiry-reference"
+                            label=""
+                            displayEmpty
                             multiple
                             value={field.value || []}
                             onChange={(event) => {
@@ -3822,27 +4233,69 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               );
                             }}
                             disabled={isAudiologist}
-                            sx={{ borderRadius: 2, minWidth: '200px' }}
-                            renderValue={(selected) => (
-                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                {(selected as string[]).map((value) => (
-                                  <Chip
-                                    key={value}
-                                    label={
-                                      referenceFieldOptions.find((o) => o.optionValue === value)?.optionLabel ?? value
-                                    }
-                                    size="small"
-                                    sx={{ borderRadius: 1 }}
-                                  />
-                                ))}
-                              </Box>
-                            )}
-                            MenuProps={{
-                              PaperProps: {
-                                style: {
-                                  maxHeight: 320
-                                }
+                            sx={enquiryReferenceSelectSx}
+                            IconComponent={EnquirySelectChevron}
+                            renderValue={(selected) => {
+                              const arr = selected as string[];
+                              if (!arr?.length) {
+                                return (
+                                  <Typography
+                                    component="span"
+                                    variant="body2"
+                                    sx={{ color: 'text.disabled', fontSize: '0.875rem', fontWeight: 400 }}
+                                  >
+                                    Select reference sources…
+                                  </Typography>
+                                );
                               }
+                              return (
+                                <Box
+                                  sx={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    gap: 0.5,
+                                    minWidth: 0,
+                                    width: '100%',
+                                    alignItems: 'center',
+                                    py: 0.25,
+                                  }}
+                                >
+                                  {arr.map((value) => (
+                                    <Chip
+                                      key={value}
+                                      label={
+                                        referenceFieldOptions.find((o) => o.optionValue === value)?.optionLabel ?? value
+                                      }
+                                      size="small"
+                                      sx={{
+                                        borderRadius: 1,
+                                        height: 'auto',
+                                        minHeight: 22,
+                                        maxWidth: '100%',
+                                        fontSize: '0.75rem',
+                                        '& .MuiChip-label': {
+                                          whiteSpace: 'normal',
+                                          overflowWrap: 'anywhere',
+                                          py: 0.25,
+                                        },
+                                      }}
+                                    />
+                                  ))}
+                                </Box>
+                              );
+                            }}
+                            MenuProps={{
+                              disableAutoFocusItem: true,
+                              PaperProps: enquirySelectPaperProps(360),
+                              MenuListProps: {
+                                sx: {
+                                  maxHeight: 'min(360px, 55vh)',
+                                  overflowY: 'auto',
+                                  py: 0.5,
+                                },
+                              },
+                              anchorOrigin: { vertical: 'bottom', horizontal: 'left' },
+                              transformOrigin: { vertical: 'top', horizontal: 'left' },
                             }}
                           >
                             {referenceFieldOptions.map((option) => (
@@ -3862,139 +4315,183 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12} md={3}>
                     <Controller
                       name="followUpDate"
                       control={control}
-                      render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Follow-up Date"
-                          type="date"
-                          disabled={isAudiologist}
-                          helperText="Optional — set a follow-up date even before calling."
-                          InputLabelProps={{ shrink: true }}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                      render={({ field: { onBlur, onChange, value, ref, name } }) => (
+                        <Box sx={{ minWidth: 0, width: '100%' }}>
+                          <EnquiryFieldLabel htmlFor="enquiry-followup">Follow-up date</EnquiryFieldLabel>
+                          <EnquiryFormDatePicker
+                            id="enquiry-followup"
+                            name={name}
+                            inputRef={ref}
+                            onBlur={onBlur}
+                            hiddenLabel
+                            value={value || ''}
+                            onChange={onChange}
+                            disabled={isAudiologist}
+                            helperText="Optional — schedule before the first call."
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} md={6}>
-                    <Box sx={{ position: 'relative' }}>
-                      <Controller
-                        name="assignedTo"
-                        control={control}
-                        render={({ field }) => (
-                          <FormControl fullWidth>
-                            <InputLabel id="assigned-to-label">Assigned To</InputLabel>
-                            <Select
-                              {...field}
-                              labelId="assigned-to-label"
-                              label="Assigned To"
-                              value={field.value ?? ''}
-                              onChange={(e) => field.onChange(e.target.value)}
-                              disabled={isAudiologist}
-                              sx={{ borderRadius: 2, minWidth: '200px' }}
-                              MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
-                                PaperProps: {
-                                  style: {
-                                    maxHeight: 300
-                                  }
-                                }
-                              })}
-                            >
-                              {getStaffOptionsForField('assignedTo').map(option => (
-                                <MenuItem key={option} value={option}>
-                                  {option}
-                                </MenuItem>
-                              ))}
-                            </Select>
-                          </FormControl>
-                        )}
-                      />
-                      {isAdmin && (
-                        <IconButton
-                          onClick={() => {
-                            setCurrentField('assignedTo');
-                            setStaffManagementOpen(true);
-                          }}
-                          sx={{
-                            position: 'absolute',
-                            top: 8,
-                            right: 8,
-                            bgcolor: '#ff6b35',
-                            color: 'white',
-                            '&:hover': { bgcolor: '#e55a2b' },
-                            width: '24px',
-                            height: '24px',
-                            zIndex: 1
-                          }}
-                          size="small"
-                          title="Edit Assigned To Categories (Admin Only)"
-                        >
-                          <EditIcon sx={{ fontSize: '14px' }} />
-                        </IconButton>
+                  <Grid item xs={12} md={3}>
+                    <Controller
+                      name="assignedTo"
+                      control={control}
+                      render={({ field }) => (
+                        <FormControl fullWidth size="small">
+                          <EnquiryFieldLabel
+                            htmlFor="enquiry-assigned"
+                            endAdornment={
+                              isAdmin ? (
+                                <IconButton
+                                  size="small"
+                                  aria-label="Edit assigned-to role options"
+                                  onClick={() => {
+                                    setCurrentField('assignedTo');
+                                    setStaffManagementOpen(true);
+                                  }}
+                                  sx={{
+                                    p: 0.35,
+                                    color: 'text.secondary',
+                                    borderRadius: 1,
+                                    '&:hover': {
+                                      color: 'primary.main',
+                                      bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
+                                    },
+                                  }}
+                                  title="Edit Assigned To Categories (Admin Only)"
+                                >
+                                  <Pencil size={14} strokeWidth={1.75} aria-hidden />
+                                </IconButton>
+                              ) : undefined
+                            }
+                          >
+                            Assigned to
+                          </EnquiryFieldLabel>
+                          <Select
+                            {...field}
+                            id="enquiry-assigned"
+                            label=""
+                            displayEmpty
+                            value={field.value ?? ''}
+                            onChange={(e) => field.onChange(e.target.value)}
+                            disabled={isAudiologist}
+                            sx={enquirySelectFieldSx}
+                            IconComponent={EnquirySelectChevron}
+                            renderValue={(v) =>
+                              v ? (
+                                String(v)
+                              ) : (
+                                <Typography
+                                  component="span"
+                                  variant="body2"
+                                  sx={{ color: 'text.disabled', fontSize: '0.875rem', fontWeight: 400 }}
+                                >
+                                  Select staff…
+                                </Typography>
+                              )
+                            }
+                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
+                              PaperProps: enquirySelectPaperProps(300),
+                            })}
+                          >
+                            {getStaffOptionsForField('assignedTo').map((option) => (
+                              <MenuItem key={option} value={option}>
+                                {option}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
                       )}
-                    </Box>
+                    />
                   </Grid>
-                  <Grid item xs={12} md={6}>
-                    <Box sx={{ position: 'relative' }}>
-                      <Controller
-                        name="telecaller"
-                        control={control}
-                        render={({ field }) => (
-                          <FormControl fullWidth>
-                            <InputLabel id="telecaller-label">Telecaller</InputLabel>
-                            <Select
-                              {...field}
-                              labelId="telecaller-label"
-                              label="Telecaller"
-                              value={field.value ?? ''}
-                              onChange={(e) => field.onChange(e.target.value)}
-                              disabled={isAudiologist}
-                              sx={{ borderRadius: 2, minWidth: '200px' }}
-                              MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
-                                PaperProps: {
-                                  style: {
-                                    maxHeight: 300
-                                  }
-                                }
-                              })}
-                            >
-                              {getStaffOptionsForField('telecaller').map(option => (
-                                <MenuItem key={option} value={option}>
-                                  {option}
-                                </MenuItem>
-                              ))}
-                            </Select>
-                          </FormControl>
-                        )}
-                      />
-                      {isAdmin && (
-                        <IconButton
-                          onClick={() => {
-                            setCurrentField('telecaller');
-                            setStaffManagementOpen(true);
-                          }}
-                          sx={{
-                            position: 'absolute',
-                            top: 8,
-                            right: 8,
-                            bgcolor: '#ff6b35',
-                            color: 'white',
-                            '&:hover': { bgcolor: '#e55a2b' },
-                            width: '24px',
-                            height: '24px',
-                            zIndex: 1
-                          }}
-                          size="small"
-                          title="Edit Telecaller Categories (Admin Only)"
-                        >
-                          <EditIcon sx={{ fontSize: '14px' }} />
-                        </IconButton>
+                  <Grid item xs={12} md={3}>
+                    <Controller
+                      name="telecaller"
+                      control={control}
+                      render={({ field }) => (
+                        <FormControl fullWidth size="small">
+                          <EnquiryFieldLabel
+                            htmlFor="enquiry-telecaller"
+                            endAdornment={
+                              isAdmin ? (
+                                <IconButton
+                                  size="small"
+                                  aria-label="Edit telecaller role options"
+                                  onClick={() => {
+                                    setCurrentField('telecaller');
+                                    setStaffManagementOpen(true);
+                                  }}
+                                  sx={{
+                                    p: 0.35,
+                                    color: 'text.secondary',
+                                    borderRadius: 1,
+                                    '&:hover': {
+                                      color: 'primary.main',
+                                      bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
+                                    },
+                                  }}
+                                  title="Edit Telecaller Categories (Admin Only)"
+                                >
+                                  <Pencil size={14} strokeWidth={1.75} aria-hidden />
+                                </IconButton>
+                              ) : undefined
+                            }
+                          >
+                            Telecaller
+                          </EnquiryFieldLabel>
+                          <Select
+                            {...field}
+                            id="enquiry-telecaller"
+                            label=""
+                            displayEmpty
+                            value={field.value ?? ''}
+                            onChange={(e) => field.onChange(e.target.value)}
+                            disabled={isAudiologist}
+                            sx={enquirySelectFieldSx}
+                            IconComponent={EnquirySelectChevron}
+                            renderValue={(v) =>
+                              v ? (
+                                String(v)
+                              ) : (
+                                <Typography
+                                  component="span"
+                                  variant="body2"
+                                  sx={{ color: 'text.disabled', fontSize: '0.875rem', fontWeight: 400 }}
+                                >
+                                  Select telecaller…
+                                </Typography>
+                              )
+                            }
+                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
+                              PaperProps: enquirySelectPaperProps(300),
+                            })}
+                          >
+                            {getStaffOptionsForField('telecaller').map((option) => (
+                              <MenuItem key={option} value={option}>
+                                {option}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
                       )}
-                    </Box>
+                    />
+                  </Grid>
+
+                  {/* —— Center & lead —— */}
+                  <Grid item xs={12} sx={{ mt: 1 }}>
+                    <Divider sx={{ borderColor: 'divider', mb: 1 }} />
+                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.5 }}>
+                      <ClipboardList size={14} strokeWidth={1.5} aria-hidden style={{ opacity: 0.7 }} />
+                      <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 0 }}>
+                        Center &amp; lead
+                      </Typography>
+                    </Stack>
                   </Grid>
                   <Grid item xs={12} md={6}>
                     <Controller
@@ -4005,33 +4502,45 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           (v != null && String(v).trim() !== '') || 'Center is required',
                       }}
                       render={({ field }) => (
-                        <FormControl fullWidth error={!!errors.center} required>
-                          <InputLabel id="center-label">Center</InputLabel>
+                        <FormControl fullWidth error={!!errors.center} required size="small">
+                          <EnquiryFieldLabel htmlFor="enquiry-center" required>
+                            Center
+                          </EnquiryFieldLabel>
                           <Select
                             {...field}
-                            labelId="center-label"
-                            label="Center"
+                            id="enquiry-center"
+                            label=""
+                            displayEmpty
                             value={field.value ?? ''}
                             onChange={(e) => field.onChange(e.target.value)}
                             disabled={isAudiologist}
-                            sx={{ borderRadius: 2, minWidth: '200px' }}
-                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
-                              PaperProps: {
-                                style: {
-                                  maxHeight: 300
-                                }
+                            sx={enquirySelectFieldSx}
+                            IconComponent={EnquirySelectChevron}
+                            renderValue={(id) => {
+                              if (!id) {
+                                return (
+                                  <Typography
+                                    component="span"
+                                    variant="body2"
+                                    sx={{ color: 'text.disabled', fontSize: '0.875rem', fontWeight: 400 }}
+                                  >
+                                    Select center…
+                                  </Typography>
+                                );
                               }
+                              return centers.find((c) => c.id === id)?.name ?? String(id);
+                            }}
+                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
+                              PaperProps: enquirySelectPaperProps(300),
                             })}
                           >
-                            {centers.map(center => (
+                            {centers.map((center) => (
                               <MenuItem key={center.id} value={center.id}>
                                 {center.name}
                               </MenuItem>
                             ))}
                           </Select>
-                          {errors.center && (
-                            <FormHelperText>{errors.center.message}</FormHelperText>
-                          )}
+                          {errors.center && <FormHelperText>{errors.center.message}</FormHelperText>}
                         </FormControl>
                       )}
                     />
@@ -4041,16 +4550,43 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       name="leadOutcome"
                       control={control}
                       render={({ field }) => (
-                        <FormControl fullWidth disabled={isAudiologist}>
-                          <InputLabel id="lead-outcome-label">Lead outcome</InputLabel>
+                        <FormControl fullWidth disabled={isAudiologist} size="small">
+                          <EnquiryFieldLabel htmlFor="enquiry-lead-outcome">Lead outcome</EnquiryFieldLabel>
                           <Select
                             {...field}
-                            labelId="lead-outcome-label"
-                            label="Lead outcome"
+                            id="enquiry-lead-outcome"
+                            label=""
+                            displayEmpty
                             value={field.value ?? ''}
                             onChange={(e) => field.onChange(e.target.value)}
-                            sx={{ borderRadius: 2 }}
-                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), undefined)}
+                            sx={enquirySelectFieldSx}
+                            IconComponent={EnquirySelectChevron}
+                            renderValue={(val) => {
+                              const opt = LEAD_OUTCOME_OPTIONS.find((o) => String(o.value) === String(val ?? ''));
+                              if (!opt) {
+                                return (
+                                  <Typography
+                                    component="span"
+                                    variant="body2"
+                                    sx={{ color: 'text.disabled', fontSize: '0.875rem', fontWeight: 400 }}
+                                  >
+                                    Select lead outcome…
+                                  </Typography>
+                                );
+                              }
+                              return (
+                                <Typography
+                                  component="span"
+                                  variant="body2"
+                                  sx={{ fontSize: '0.875rem', fontWeight: 500, color: 'text.primary' }}
+                                >
+                                  {opt.label}
+                                </Typography>
+                              );
+                            }}
+                            MenuProps={mergeMenuPropsForReselectClear(field.value, () => field.onChange(''), {
+                              PaperProps: enquirySelectPaperProps(360),
+                            })}
                           >
                             {LEAD_OUTCOME_OPTIONS.map((opt) => (
                               <MenuItem key={opt.value || 'none'} value={opt.value}>
@@ -4058,28 +4594,36 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </MenuItem>
                             ))}
                           </Select>
-                          <FormHelperText>
-                            If they bought devices elsewhere, tag updates accordingly (booking or sale
-                            here overrides this).
+                          <FormHelperText sx={{ mt: 0.75 }}>
+                            If they bought devices elsewhere, tag accordingly (booking or sale here overrides this).
                           </FormHelperText>
                         </FormControl>
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12}>
+
+                  {/* —— Notes —— */}
+                  <Grid item xs={12} sx={{ mt: 0.5 }}>
                     <Controller
                       name="message"
                       control={control}
                       render={({ field }) => (
-                        <TextField
-                          {...field}
-                          fullWidth
-                          label="Message/Notes"
-                          multiline
-                          rows={3}
-                          disabled={isAudiologist}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        />
+                        <Box>
+                          <EnquiryFieldLabel htmlFor="enquiry-message">Message / notes</EnquiryFieldLabel>
+                          <TextField
+                            {...field}
+                            id="enquiry-message"
+                            fullWidth
+                            size="small"
+                            hiddenLabel
+                            placeholder="Context, objections, next steps…"
+                            multiline
+                            minRows={3}
+                            maxRows={8}
+                            disabled={isAudiologist}
+                            sx={enquiryFormFieldSx}
+                          />
+                        </Box>
                       )}
                     />
                   </Grid>
@@ -4093,13 +4637,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             ml: 0,
                             mr: 0,
                             p: 2,
-                            borderRadius: 2,
+                            borderRadius: '8px',
                             border: '1px solid',
                             borderColor: field.value ? 'warning.main' : 'divider',
                             bgcolor: (t) =>
                               field.value
-                                ? alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.12 : 0.08)
-                                : alpha(t.palette.action.hover, t.palette.mode === 'dark' ? 0.08 : 0.04),
+                                ? alpha(t.palette.warning.main, t.palette.mode === 'dark' ? 0.12 : 0.06)
+                                : (t.palette.mode === 'light' ? '#f8fafc' : alpha(t.palette.common.white, 0.04)),
                             alignItems: 'flex-start',
                           }}
                           control={
@@ -4108,15 +4652,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               onChange={(_, c) => field.onChange(c)}
                               color="warning"
                               disabled={isAudiologist}
+                              size="small"
                             />
                           }
                           label={
                             <Box>
-                              <Typography variant="subtitle2" fontWeight={700}>
+                              <Typography variant="subtitle2" fontWeight={600} color="text.primary">
                                 Hot enquiry
                               </Typography>
-                              <Typography variant="caption" color="text.secondary" display="block">
-                                Mark as a priority lead — stands out in the enquiries list and patient profile.
+                              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
+                                Priority lead — highlighted in enquiry lists and patient profile.
                               </Typography>
                             </Box>
                           }
@@ -4125,26 +4670,43 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     />
                   </Grid>
                 </Grid>
-              </CardContent>
-            </Card>
-
-
+              </Box>
+            </Paper>
 
             {/* Visits Section */}
-            <Card elevation={2} sx={{ mb: 4, borderRadius: 2 }}>
-              <CardContent sx={{ p: 4 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <DateRangeIcon sx={{ color: 'secondary.main', fontSize: 28 }} />
-                    <Typography variant="h5" sx={{ fontWeight: 600, color: 'secondary.main' }}>
-                      Visit Details
-                    </Typography>
+            <Paper elevation={0} sx={enquirySectionCardSx}>
+              <Box sx={{ p: { xs: 2, sm: 3 } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 36,
+                        height: 36,
+                        borderRadius: 1,
+                        flexShrink: 0,
+                        bgcolor: (t) => (t.palette.mode === 'light' ? '#f1f5f9' : alpha(t.palette.common.white, 0.08)),
+                        color: 'text.secondary',
+                      }}
+                    >
+                      <CalendarDays size={18} strokeWidth={1.5} aria-hidden />
+                    </Box>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'text.primary', lineHeight: 1.3 }}>
+                        Visit details
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                        Visits, services, and line items for this enquiry
+                      </Typography>
+                    </Box>
                   </Box>
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}
                     onClick={addVisit}
-                    sx={{ borderRadius: 2 }}
+                    sx={{ borderRadius: 2, flexShrink: 0 }}
                   >
                     Add Visit
                   </Button>
@@ -4223,7 +4785,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     borderStyle: 'dashed',
                     mb: 3
                   }}>
-                    <DateRangeIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
+                    <Box sx={{ display: 'flex', color: 'text.disabled', mb: 2, justifyContent: 'center' }}>
+                      <CalendarDays size={48} strokeWidth={1.25} aria-hidden />
+                    </Box>
                     <Typography variant="h6" color="text.secondary" gutterBottom>
                       No visits scheduled yet
                     </Typography>
@@ -4247,15 +4811,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     {/* Visit Basic Info */}
                     <Grid container spacing={3} sx={{ mb: 4 }}>
                       <Grid item xs={12} md={3}>
-                        <TextField
-                          fullWidth
+                        <EnquiryFormDatePicker
                           label="Visit Date"
-                          type="date"
                           value={currentVisit.visitDate}
-                          onChange={(e) => updateVisit(activeVisit, 'visitDate', e.target.value)}
+                          onChange={(v) => updateVisit(activeVisit, 'visitDate', v)}
                           disabled={isAudiologist}
-                          InputLabelProps={{ shrink: true }}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          sx={enquiryFormFieldSx}
                         />
                       </Grid>
                       <Grid item xs={12} md={3}>
@@ -4267,7 +4828,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           onChange={(e) => updateVisit(activeVisit, 'visitTime', e.target.value)}
                           disabled={isAudiologist}
                           InputLabelProps={{ shrink: true }}
-                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          sx={enquiryFormFieldSx}
                         />
                       </Grid>
                       <Grid item xs={12} md={3}>
@@ -4318,7 +4879,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             disabled={isAudiologist}
                             inputProps={{ min: 0, step: 1 }}
                             InputLabelProps={{ shrink: true }}
-                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                            sx={enquiryFormFieldSx}
                             helperText="Home visit fee (travel / consultation)"
                           />
                         </Grid>
@@ -4736,17 +5297,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       setCurrentField('testBy');
                                       setStaffManagementOpen(true);
                                     }}
-                                    sx={{
-                                      position: 'absolute',
-                                      top: 6,
-                                      right: 6,
-                                      bgcolor: '#ff6b35',
-                                      color: 'white',
-                                      '&:hover': { bgcolor: '#e55a2b' },
-                                      width: '20px',
-                                      height: '20px',
-                                      zIndex: 1
-                                    }}
+                                    sx={enquiryAdminEditIconSx({ top: 6, right: 6, size: 20 })}
                                     size="small"
                                     title="Edit Test Done By Categories (Admin Only)"
                                   >
@@ -4775,7 +5326,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 rows={3}
                                 value={currentVisit.testResults}
                                 onChange={(e) => updateVisit(activeVisit, 'testResults', e.target.value)}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
@@ -4787,7 +5338,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 value={currentVisit.recommendations}
                                 onChange={(e) => updateVisit(activeVisit, 'recommendations', e.target.value)}
                                 disabled={isAudiologist}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                           </Grid>
@@ -4996,17 +5547,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       setCurrentField('testBy');
                                       setStaffManagementOpen(true);
                                     }}
-                                    sx={{
-                                      position: 'absolute',
-                                      top: 6,
-                                      right: 6,
-                                      bgcolor: '#ff6b35',
-                                      color: 'white',
-                                      '&:hover': { bgcolor: '#e55a2b' },
-                                      width: '20px',
-                                      height: '20px',
-                                      zIndex: 1,
-                                    }}
+                                    sx={enquiryAdminEditIconSx({ top: 6, right: 6, size: 20 })}
                                     size="small"
                                     title="Edit staff categories (Admin Only)"
                                   >
@@ -5681,32 +6222,28 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               />
                             </Grid>
                             <Grid item xs={12} md={3}>
-                              <TextField
-                                fullWidth
+                              <EnquiryFormDatePicker
                                 label="Trial Start Date"
-                                type="date"
                                 value={currentVisit.trialStartDate}
-                                    onChange={(e) => {
-                                      updateVisit(activeVisit, 'trialStartDate', e.target.value);
-                                      
-                                      // Auto-calculate end date
-                                      if (e.target.value && currentVisit.trialDuration > 0) {
-                                        const startDate = new Date(e.target.value);
-                                        const endDate = new Date(startDate.getTime() + (currentVisit.trialDuration * 24 * 60 * 60 * 1000));
-                                        updateVisit(activeVisit, 'trialEndDate', endDate.toISOString().split('T')[0]);
-                                      }
-                                    }}
-                                InputLabelProps={{ shrink: true }}
+                                onChange={(v) => {
+                                  updateVisit(activeVisit, 'trialStartDate', v);
+                                  if (v && currentVisit.trialDuration > 0) {
+                                    const startDate = new Date(v);
+                                    const endDate = new Date(
+                                      startDate.getTime() + currentVisit.trialDuration * 24 * 60 * 60 * 1000
+                                    );
+                                    updateVisit(activeVisit, 'trialEndDate', endDate.toISOString().split('T')[0]);
+                                  }
+                                }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
-                                <Grid item xs={12} md={2}>
-                              <TextField
-                                fullWidth
+                            <Grid item xs={12} md={2}>
+                              <EnquiryFormDatePicker
                                 label="Trial End Date"
-                                type="date"
                                 value={currentVisit.trialEndDate}
-                                onChange={(e) => updateVisit(activeVisit, 'trialEndDate', e.target.value)}
-                                InputLabelProps={{ shrink: true }}
+                                onChange={(v) => updateVisit(activeVisit, 'trialEndDate', v)}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                               </>
@@ -5826,13 +6363,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   />
                                 </Grid>
                                 <Grid item xs={12} md={3}>
-                                  <TextField
-                                    fullWidth
+                                  <EnquiryFormDatePicker
                                     label="Refund Date"
-                                    type="date"
                                     value={currentVisit.trialRefundDate || ''}
-                                    onChange={(e) => updateVisit(activeVisit, 'trialRefundDate', e.target.value)}
-                                    InputLabelProps={{ shrink: true }}
+                                    onChange={(v) => updateVisit(activeVisit, 'trialRefundDate', v)}
+                                    sx={enquiryFormFieldSx}
                                   />
                                 </Grid>
                               </>
@@ -5894,13 +6429,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
-                              <TextField
-                                fullWidth
+                              <EnquiryFormDatePicker
                                 label="Booking Date"
-                                type="date"
                                 value={currentVisit.bookingDate || currentVisit.visitDate}
-                                onChange={(e) => updateVisit(activeVisit, 'bookingDate', e.target.value)}
-                                InputLabelProps={{ shrink: true }}
+                                onChange={(v) => updateVisit(activeVisit, 'bookingDate', v)}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
@@ -6187,17 +6720,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         setCurrentField('sales');
                                         setStaffManagementOpen(true);
                                       }}
-                                      sx={{
-                                        position: 'absolute',
-                                        top: 4,
-                                        right: 4,
-                                        bgcolor: '#ff6b35',
-                                        color: 'white',
-                                        '&:hover': { bgcolor: '#e55a2b' },
-                                        width: '20px',
-                                        height: '20px',
-                                        zIndex: 1
-                                      }}
+                                      sx={enquiryAdminEditIconSx({ top: 4, right: 4, size: 20 })}
                                       size="small"
                                       title="Edit Who Sold Categories (Admin Only)"
                                     >
@@ -6425,7 +6948,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 label="Hearing Aid Type"
                                 value={currentVisit.hearingAidType}
                                 onChange={(e) => updateVisit(activeVisit, 'hearingAidType', e.target.value)}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={3}>
@@ -6434,7 +6957,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 label="Brand"
                                 value={currentVisit.hearingAidBrand}
                                 onChange={(e) => updateVisit(activeVisit, 'hearingAidBrand', e.target.value)}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={3}>
@@ -6547,40 +7070,34 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         updateVisit(activeVisit, 'trialEndDate', endDate.toISOString().split('T')[0]);
                                       }
                                     }}
-                                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                    sx={enquiryFormFieldSx}
                                   />
                                 </Grid>
                                 <Grid item xs={12} md={4}>
-                                  <TextField
-                                    fullWidth
+                                  <EnquiryFormDatePicker
                                     label="Trial Start Date"
-                                    type="date"
                                     value={currentVisit.trialStartDate}
-                                    onChange={(e) => {
-                                      updateVisit(activeVisit, 'trialStartDate', e.target.value);
-                                      
-                                      // Auto-calculate end date
-                                      if (e.target.value && currentVisit.trialDuration > 0) {
-                                        const startDate = new Date(e.target.value);
-                                        const endDate = new Date(startDate.getTime() + (currentVisit.trialDuration * 24 * 60 * 60 * 1000));
+                                    onChange={(v) => {
+                                      updateVisit(activeVisit, 'trialStartDate', v);
+                                      if (v && currentVisit.trialDuration > 0) {
+                                        const startDate = new Date(v);
+                                        const endDate = new Date(
+                                          startDate.getTime() + currentVisit.trialDuration * 24 * 60 * 60 * 1000
+                                        );
                                         updateVisit(activeVisit, 'trialEndDate', endDate.toISOString().split('T')[0]);
                                       }
                                     }}
-                                    InputLabelProps={{ shrink: true }}
-                                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                    sx={enquiryFormFieldSx}
                                   />
                                 </Grid>
                                 <Grid item xs={12} md={4}>
-                                  <TextField
-                                    fullWidth
+                                  <EnquiryFormDatePicker
                                     label="Trial End Date"
-                                    type="date"
                                     value={currentVisit.trialEndDate}
-                                    onChange={(e) => updateVisit(activeVisit, 'trialEndDate', e.target.value)}
-                                    InputLabelProps={{ shrink: true }}
-                                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                                      />
-                                    </Grid>
+                                    onChange={(v) => updateVisit(activeVisit, 'trialEndDate', v)}
+                                    sx={enquiryFormFieldSx}
+                                  />
+                                </Grid>
                                   </>
                                 )}
 
@@ -6632,7 +7149,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         ),
                                       }}
                                       helperText="Record collection in Payments & Billing (payment mode, reference, remarks)."
-                                      sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                      sx={enquiryFormFieldSx}
                                     />
                                   </Grid>
                                 )}
@@ -6646,7 +7163,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     rows={3}
                                     value={currentVisit.trialNotes}
                                     onChange={(e) => updateVisit(activeVisit, 'trialNotes', e.target.value)}
-                                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                    sx={enquiryFormFieldSx}
                                   />
                                 </Grid>
                               </Grid>
@@ -6712,18 +7229,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         </InputAdornment>
                                       ),
                                     }}
-                                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                    sx={enquiryFormFieldSx}
                                   />
                                 </Grid>
                                 <Grid item xs={12} md={6}>
-                                  <TextField
-                                    fullWidth
+                                  <EnquiryFormDatePicker
                                     label="Booking Date"
-                                    type="date"
                                     value={currentVisit.bookingDate}
-                                    onChange={(e) => updateVisit(activeVisit, 'bookingDate', e.target.value)}
-                                    InputLabelProps={{ shrink: true }}
-                                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                    onChange={(v) => updateVisit(activeVisit, 'bookingDate', v)}
+                                    sx={enquiryFormFieldSx}
                                   />
                                 </Grid>
                               </Grid>
@@ -7349,7 +7863,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         placeholder={
                                           previousSales.length ? 'Choose one or more serial numbers' : ''
                                         }
-                                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                        sx={enquiryFormFieldSx}
                                       />
                                     )}
                                     renderOption={(props, sale) => (
@@ -7412,7 +7926,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                               returnSerialNumber: linesToLegacyReturnSerialString(next),
                                             });
                                           }}
-                                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                          sx={enquiryFormFieldSx}
                                         />
                                       </Grid>
                                       <Grid item xs={12} sm={5}>
@@ -7427,7 +7941,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                             updateVisitFields(activeVisit, { salesReturnItems: next });
                                           }}
                                           placeholder="e.g. Pure Charge&Go AX"
-                                          sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                          sx={enquiryFormFieldSx}
                                         />
                                       </Grid>
                                       <Grid item xs={12} sm={2}>
@@ -7543,7 +8057,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 multiline
                                 rows={2}
                                 placeholder="Specify reason for return (e.g., Not satisfied, technical issues, etc.)"
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
 
@@ -7562,7 +8076,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     </InputAdornment>
                                   ),
                                 }}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                                 helperText="Penalty charges for return (if any)"
                               />
                             </Grid>
@@ -7582,7 +8096,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     </InputAdornment>
                                   ),
                                 }}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                                 helperText="Final refund amount after penalty"
                               />
                             </Grid>
@@ -7597,7 +8111,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 multiline
                                 rows={3}
                                 placeholder="Additional notes about the return process"
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                           </Grid>
@@ -7795,7 +8309,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   };
                                   setValue('visits', updatedVisits);
                                 }}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={3}>
@@ -7864,7 +8378,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   setValue('visits', updatedVisits);
                                 }}
                                 inputProps={{ min: 1 }}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
@@ -7903,7 +8417,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   ),
                                 }}
                                 sx={{ 
-                                  '& .MuiOutlinedInput-root': { borderRadius: 2 },
+                                  ...enquiryFormFieldSx,
                                   '& .MuiInputBase-input': {
                                     color: (() => {
                                       const visits = getValues('visits');
@@ -8003,18 +8517,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 onChange={(e) => updateVisit(activeVisit, 'programmingReason', e.target.value)}
                                 multiline
                                 rows={2}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
-                              <TextField
-                                fullWidth
+                              <EnquiryFormDatePicker
                                 label="Date of Hearing Aid Purchase"
-                                type="date"
                                 value={currentVisit.hearingAidPurchaseDate}
-                                onChange={(e) => updateVisit(activeVisit, 'hearingAidPurchaseDate', e.target.value)}
-                                InputLabelProps={{ shrink: true }}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                onChange={(v) => updateVisit(activeVisit, 'hearingAidPurchaseDate', v)}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
@@ -8024,7 +8535,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 placeholder="e.g., Signia Pure 312 7X"
                                 value={currentVisit.hearingAidName}
                                 onChange={(e) => updateVisit(activeVisit, 'hearingAidName', e.target.value)}
-                                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                             <Grid item xs={12} md={6}>
@@ -8057,11 +8568,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     setStaffManagementOpen(true);
                                   }}
                                   sx={{
-                                    bgcolor: '#ff6b35',
-                                    color: 'white',
-                                    '&:hover': { bgcolor: '#e55a2b' },
+                                    bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                                    color: 'primary.main',
+                                    '&:hover': {
+                                      bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+                                    },
                                     minWidth: '32px',
-                                    height: '32px'
+                                    height: '32px',
                                   }}
                                   title="Edit Programming Done By Options"
                                   size="small"
@@ -8097,7 +8610,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                    ),
                                  }}
                                  helperText="Enter programming service charge"
-                                 sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                 sx={enquiryFormFieldSx}
                                />
                              </Grid>
                           </Grid>
@@ -8299,7 +8812,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   }}
                                   multiline
                                   rows={3}
-                                  sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                                  sx={enquiryFormFieldSx}
                                 />
                               </Grid>
                             </Grid>
@@ -8318,8 +8831,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     )}
                   </Box>
                 )}
-              </CardContent>
-            </Card>
+              </Box>
+            </Paper>
 
             {/* Follow-ups */}
             <Card elevation={2} sx={{ mb: 4, borderRadius: 2 }}>
@@ -8345,16 +8858,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   {/* All Fields in One Row */}
                   <Grid container spacing={2} sx={{ mb: 3 }}>
                     <Grid item xs={12} md={2}>
-                      <TextField
-                        fullWidth
+                      <EnquiryFormDatePicker
                         label="Follow-up Date *"
-                        type="date"
                         value={currentFollowUp.date}
-                        onChange={(e) => handleFollowUpChange('date', e.target.value)}
-                        InputLabelProps={{ shrink: true }}
-                        size="small"
+                        onChange={(v) => handleFollowUpChange('date', v)}
                         required
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        sx={enquiryFormFieldSx}
                       />
                     </Grid>
                     <Grid item xs={12} md={2.5}>
@@ -8387,11 +8896,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             setStaffManagementOpen(true);
                           }}
                           sx={{
-                            bgcolor: '#ff6b35',
-                            color: 'white',
-                            '&:hover': { bgcolor: '#e55a2b' },
+                            bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                            color: 'primary.main',
+                            '&:hover': {
+                              bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+                            },
                             minWidth: '28px',
-                            height: '28px'
+                            height: '28px',
                           }}
                           title="Edit Call Done By Options"
                           size="small"
@@ -8410,27 +8921,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         multiline
                         minRows={1}
                         maxRows={4}
-                        sx={{ 
-                          '& .MuiOutlinedInput-root': { 
-                            borderRadius: 2,
-                            alignItems: 'flex-start'
+                        sx={[
+                          enquiryFormFieldSx,
+                          {
+                            '& .MuiOutlinedInput-root': {
+                              alignItems: 'flex-start',
+                            },
+                            '& .MuiInputBase-input': {
+                              resize: 'none',
+                            },
                           },
-                          '& .MuiInputBase-input': {
-                            resize: 'none'
-                          }
-                        }}
+                        ]}
                       />
                     </Grid>
                     <Grid item xs={12} md={2}>
-                      <TextField
-                        fullWidth
+                      <EnquiryFormDatePicker
                         label="Next Follow-up Date"
-                        type="date"
                         value={currentFollowUp.nextFollowUpDate}
-                        onChange={(e) => handleFollowUpChange('nextFollowUpDate', e.target.value)}
-                        InputLabelProps={{ shrink: true }}
-                        size="small"
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        onChange={(v) => handleFollowUpChange('nextFollowUpDate', v)}
+                        sx={enquiryFormFieldSx}
                       />
                     </Grid>
                   </Grid>
@@ -8685,15 +9194,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                   {/* Second Row - Payment Details */}
                   <Grid container spacing={2} alignItems="end">
                     <Grid item xs={12} md={2}>
-                      <TextField
-                        fullWidth
+                      <EnquiryFormDatePicker
                         label="Payment Date"
-                        type="date"
                         value={currentPayment.paymentDate}
-                        onChange={(e) => setCurrentPayment(prev => ({ ...prev, paymentDate: e.target.value }))}
-                        InputLabelProps={{ shrink: true }}
-                        size="small"
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        onChange={(v) => setCurrentPayment((prev) => ({ ...prev, paymentDate: v }))}
+                        sx={enquiryFormFieldSx}
                       />
                     </Grid>
                     <Grid item xs={12} md={2}>
@@ -8723,7 +9228,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             : 'Auto-filled from service'
                         }
                         size="small"
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        sx={enquiryFormFieldSx}
                       />
                     </Grid>
                     <Grid item xs={12} md={2}>
@@ -8756,7 +9261,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           'Reference'
                         }
                         size="small"
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        sx={enquiryFormFieldSx}
                       />
                     </Grid>
                     <Grid item xs={12} md={3}>
@@ -8767,7 +9272,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         onChange={(e) => setCurrentPayment(prev => ({ ...prev, remarks: e.target.value }))}
                         placeholder="Additional notes..."
                         size="small"
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                        sx={enquiryFormFieldSx}
                       />
                     </Grid>
                     <Grid item xs={12} md={1}>
@@ -9506,7 +10011,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       </Box>
 
       {/* Footer Actions */}
-      <Paper elevation={3} sx={{ p: 3, borderRadius: 0 }}>
+      <Paper
+        elevation={embeddedInPage ? 0 : 3}
+        sx={{
+          p: embeddedInPage ? 2.5 : 3,
+          borderRadius: 0,
+          borderTop: embeddedInPage ? 1 : 0,
+          borderColor: 'divider',
+          bgcolor: 'background.paper',
+        }}
+      >
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: '1200px', mx: 'auto' }}>
           <Button
             onClick={() => setStep(0)}
@@ -9635,7 +10149,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     </InputAdornment>
                   ),
                 }}
-                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2, bgcolor: 'background.paper' } }}
+                sx={{ ...enquiryFormFieldSx, '& .MuiOutlinedInput-root': { borderRadius: 12, bgcolor: 'background.paper' } }}
               />
               {isCatalogSearchPending && (
                 <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
@@ -9951,7 +10465,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle sx={{ bgcolor: '#ff6b35', color: 'white', py: 2 }}>
+        <DialogTitle
+          sx={{
+            bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.85 : 1),
+            color: 'primary.contrastText',
+            py: 2,
+          }}
+        >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <EditIcon />
             <Typography variant="h6">
@@ -9996,9 +10516,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         setSelectedRoles(newSelectedRoles);
                       }}
                       sx={{
-                        color: '#ff6b35',
+                        color: 'primary.main',
                         '&.Mui-checked': {
-                          color: '#ff6b35',
+                          color: 'primary.main',
                         },
                       }}
                     />
@@ -10015,11 +10535,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         <Chip 
                           size="small" 
                           label="Selected" 
-                          sx={{ 
-                            bgcolor: '#ff6b35', 
-                            color: 'white',
+                          sx={{
+                            bgcolor: 'primary.main',
+                            color: 'primary.contrastText',
                             fontSize: '0.7rem',
-                            height: '20px'
+                            height: '20px',
                           }} 
                         />
                       )}
@@ -10039,10 +10559,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     key={role}
                     label={role}
                     size="small"
-                    sx={{ 
-                      bgcolor: '#ff6b35', 
-                      color: 'white',
-                      fontSize: '0.75rem'
+                    sx={{
+                      bgcolor: 'primary.main',
+                      color: 'primary.contrastText',
+                      fontSize: '0.75rem',
                     }}
                     onDelete={() => {
                       const newSelectedRoles = { ...selectedRoles };
@@ -10091,10 +10611,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
               setStaffManagementOpen(false);
             }}
             variant="contained"
-            sx={{
-              bgcolor: '#ff6b35',
-              '&:hover': { bgcolor: '#e55a2b' }
-            }}
+            color="primary"
           >
             Save Changes
           </Button>
@@ -10112,6 +10629,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         />
       )}
     </Box>
+    </EnquiryFormDatePickerProvider>
   );
 };
 

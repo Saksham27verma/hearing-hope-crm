@@ -565,7 +565,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       {/* Header with Breadcrumbs */}
-      <Box sx={{ bgcolor: 'white', borderBottom: 1, borderColor: 'divider', px: 3, py: 2 }}>
+      <Box sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider', px: 3, py: 2.5 }}>
         <Breadcrumbs aria-label="breadcrumb" sx={{ mb: 2 }}>
           <Link 
             color="inherit" 
@@ -615,18 +615,11 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
             </Typography>
           </Box>
           
-          <Button 
-            variant="outlined" 
+          <Button
+            variant="outlined"
+            color="primary"
             startIcon={<ArrowBackIcon />}
             onClick={handleCancel}
-            sx={{ 
-              borderColor: '#f57c00', 
-              color: '#f57c00', 
-              '&:hover': { 
-                borderColor: '#e65100', 
-                backgroundColor: 'rgba(245, 124, 0, 0.04)' 
-              } 
-            }}
           >
             Back to Details
           </Button>
@@ -643,6 +636,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           isEditMode={true}
           isSubmitting={saving}
           fullPage={true}
+          embeddedInPage={true}
         />
       </Box>
     </Box>
