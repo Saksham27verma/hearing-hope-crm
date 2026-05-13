@@ -4,11 +4,12 @@ import * as React from 'react';
 import { Box } from '@mui/material';
 import { alpha, type SxProps, type Theme } from '@mui/material/styles';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import type { PickersActionBarAction } from '@mui/x-date-pickers/PickersActionBar';
-import { format, isValid, parseISO } from 'date-fns';
-import { CalendarDays } from 'lucide-react';
+import { format, isValid, parse, parseISO } from 'date-fns';
+import { CalendarClock, CalendarDays } from 'lucide-react';
 
 /** Stored enquiry / visit dates use `yyyy-MM-dd` strings; the date adapter uses `Date | null`. */
 export function parseEnquiryDateString(value: string | null | undefined): Date | null {
@@ -18,6 +19,17 @@ export function parseEnquiryDateString(value: string | null | undefined): Date |
   const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : raw;
   const d = parseISO(iso);
   return isValid(d) ? d : null;
+}
+
+/** Stored follow-up / telecalling values: `yyyy-MM-dd'T'HH:mm` (local, no TZ) or date-only fallback. */
+export function parseEnquiryDateTimeString(value: string | null | undefined): Date | null {
+  if (value == null || String(value).trim() === '') return null;
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+    const d = parse(raw, "yyyy-MM-dd'T'HH:mm", new Date());
+    return isValid(d) ? d : null;
+  }
+  return parseEnquiryDateString(raw.length >= 10 ? raw.slice(0, 10) : raw);
 }
 
 const enquiryDatePickerPopperSlotProps = {
@@ -214,6 +226,71 @@ export function EnquiryFormDatePicker({
           InputLabelProps: hiddenLabel ? undefined : { shrink: true },
           sx: sx ? ([enquiryDatePickerFieldSx, sx] as SxProps<Theme>) : enquiryDatePickerFieldSx,
         },
+      }}
+    />
+  );
+}
+
+export type EnquiryFormDateTimePickerProps = {
+  label?: string;
+  /** `yyyy-MM-dd'T'HH:mm` (local) or empty */
+  value: string;
+  onChange: (yyyyMmDdTHhMm: string) => void;
+  disabled?: boolean;
+  required?: boolean;
+  size?: 'small' | 'medium';
+  fullWidth?: boolean;
+  helperText?: string;
+  sx?: SxProps<Theme>;
+};
+
+/** Date + time picker aligned with telecalling records (`yyyy-MM-dd'T'HH:mm`). */
+export function EnquiryFormDateTimePicker({
+  label,
+  value,
+  onChange,
+  disabled = false,
+  required = false,
+  size = 'small',
+  fullWidth = true,
+  helperText,
+  sx,
+}: EnquiryFormDateTimePickerProps) {
+  return (
+    <DateTimePicker
+      format="dd MMM yyyy, HH:mm"
+      ampm={false}
+      label={label}
+      value={parseEnquiryDateTimeString(value)}
+      onChange={(d) => onChange(d && isValid(d) ? format(d, "yyyy-MM-dd'T'HH:mm") : '')}
+      disabled={disabled}
+      closeOnSelect={false}
+      slotProps={{
+        ...enquiryDatePickerPopperSlotProps,
+        textField: {
+          size,
+          fullWidth,
+          required,
+          helperText,
+          InputLabelProps: { shrink: true },
+          sx: sx ? ([enquiryDatePickerFieldSx, sx] as SxProps<Theme>) : enquiryDatePickerFieldSx,
+        },
+      }}
+      slots={{
+        openPickerIcon: () => (
+          <Box
+            component="span"
+            sx={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'text.secondary',
+              mr: -0.25,
+            }}
+          >
+            <CalendarClock size={18} strokeWidth={1.5} aria-hidden />
+          </Box>
+        ),
       }}
     />
   );

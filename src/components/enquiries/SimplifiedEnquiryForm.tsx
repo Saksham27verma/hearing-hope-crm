@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { collection, doc, getDoc, getDocs, orderBy, query, setDoc, where } from 'firebase/firestore';
+import { format, isValid, parse } from 'date-fns';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
@@ -47,18 +48,19 @@ import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiry
 import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
-import { EnquiryFormDatePicker, EnquiryFormDatePickerProvider } from './EnquiryFormDatePicker';
+import { EnquiryFormDatePicker, EnquiryFormDatePickerProvider, EnquiryFormDateTimePicker } from './EnquiryFormDatePicker';
 import {
   TextField, Button, Typography, Box, Paper,
   FormControl, InputLabel, Select, MenuItem,
   Card, CardContent, Divider,
   Grid as MuiGrid, IconButton, FormHelperText, Alert, Autocomplete,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableFooter,
   Tabs, Tab, Chip, InputAdornment, Switch, FormControlLabel,
   ToggleButton, ToggleButtonGroup,
   Dialog, DialogTitle, DialogContent, DialogActions, Avatar, Stack, Checkbox, Radio,
   List, ListItem, ListItemButton, ListItemText, ListSubheader, Badge, Link as MuiLink
 } from '@mui/material';
+import type { SwitchProps } from '@mui/material/Switch';
 import { alpha } from '@mui/material/styles';
 import { User, Phone, MapPin, UsersRound, ClipboardList, Pencil, CalendarDays, ChevronDown } from 'lucide-react';
 import {
@@ -147,6 +149,222 @@ const enquiryGroupTitleSx = {
   display: 'block',
   mb: 1.5,
 };
+
+/** Equal-width columns for Patient information rows (stable widths vs. helper text). */
+const enquiryPatientFieldRowSx = {
+  display: 'grid',
+  width: '100%',
+  columnGap: 2,
+  rowGap: 2,
+  alignItems: 'start',
+  '& > *': { minWidth: 0 },
+} as const;
+
+/**
+ * Visit service tile — compact row, switch on the right.
+ * Hover: never use `alpha(action.hover, 1)` — MUI's hover is already low-alpha black; coefficient 1 → solid black.
+ */
+function visitServiceRowSx(active: boolean) {
+  return (t: any) => {
+    const isLight = t.palette.mode === 'light';
+    const rail = alpha(t.palette.divider, isLight ? 0.75 : 0.55);
+    const inactiveBg = isLight ? alpha(t.palette.text.primary, 0.03) : alpha(t.palette.common.white, 0.04);
+    const hoverInactive = isLight ? alpha(t.palette.text.primary, 0.055) : alpha(t.palette.common.white, 0.08);
+    return {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 1,
+      py: 0.625,
+      px: 1,
+      minHeight: 44,
+      borderRadius: '10px',
+      border: '1px solid',
+      borderColor: active ? alpha(t.palette.primary.main, 0.38) : rail,
+      bgcolor: active
+        ? alpha(t.palette.primary.main, isLight ? 0.07 : 0.14)
+        : inactiveBg,
+      transition: 'border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease',
+      '&:hover': {
+        borderColor: active ? alpha(t.palette.primary.main, 0.52) : alpha(t.palette.text.primary, isLight ? 0.14 : 0.22),
+        bgcolor: active
+          ? alpha(t.palette.primary.main, isLight ? 0.1 : 0.18)
+          : hoverInactive,
+        boxShadow: isLight
+          ? `0 2px 8px ${alpha(t.palette.common.black, 0.06)}`
+          : `0 2px 12px ${alpha(t.palette.common.black, 0.4)}`,
+      },
+    };
+  };
+}
+
+type VisitServiceToggleRowProps = {
+  active: boolean;
+  title: string;
+  hint: string;
+} & Omit<SwitchProps, 'size' | 'color'>;
+
+function VisitServiceToggleRow({ active, title, hint, ...switchRest }: VisitServiceToggleRowProps) {
+  return (
+    <Box sx={visitServiceRowSx(active)}>
+      <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-start', gap: 1, pr: 0.5 }}>
+        <Box
+          component="span"
+          aria-hidden
+          sx={(t) => ({
+            width: 3,
+            flexShrink: 0,
+            mt: '3px',
+            minHeight: 22,
+            borderRadius: '2px',
+            bgcolor: active ? 'primary.main' : alpha(t.palette.text.primary, 0.14),
+            transition: 'background-color 0.15s ease',
+          })}
+        />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            component="div"
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              lineHeight: 1.3,
+              fontSize: '0.8125rem',
+              color: 'text.primary',
+              letterSpacing: '-0.01em',
+            }}
+          >
+            {title}
+          </Typography>
+          <Typography
+            component="div"
+            variant="caption"
+            sx={{
+              display: 'block',
+              mt: 0.25,
+              lineHeight: 1.28,
+              fontSize: '0.6875rem',
+              color: 'text.secondary',
+            }}
+          >
+            {hint}
+          </Typography>
+        </Box>
+      </Box>
+      <Switch {...switchRest} size="small" color="primary" sx={visitServiceSwitchSx} />
+    </Box>
+  );
+}
+
+/** Dense row switch — rely on `size="small"`; avoid custom translate (MUI handles thumb). */
+const visitServiceSwitchSx = {
+  flexShrink: 0,
+  m: 0,
+  '& .MuiSwitch-switchBase': { p: 0.4 },
+};
+
+type VisitServiceDetailAccent = 'primary' | 'secondary' | 'info' | 'warning' | 'error' | 'success';
+
+function visitServiceAccentColor(t: any, accent: VisitServiceDetailAccent): string {
+  return (t.palette[accent]?.main as string) || t.palette.primary.main;
+}
+
+function visitServiceDetailShellSx(accent: VisitServiceDetailAccent) {
+  return (t: any) => {
+    const c = visitServiceAccentColor(t, accent);
+    const light = t.palette.mode === 'light';
+    return {
+      mb: 2.5,
+      borderRadius: '10px',
+      border: '1px solid',
+      borderColor: light ? alpha(c, 0.28) : alpha(c, 0.42),
+      bgcolor: light ? alpha(c, 0.045) : alpha(c, 0.1),
+      boxShadow: light ? '0 1px 3px rgba(15, 23, 42, 0.05)' : 'none',
+      overflow: 'hidden',
+    };
+  };
+}
+
+/** Service detail blocks under visit toggles — replaces flat `*.50` Cards. */
+function VisitServiceDetailPanel({
+  accent,
+  icon,
+  title,
+  subtitle,
+  headerRight,
+  children,
+}: {
+  accent: VisitServiceDetailAccent;
+  icon: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  headerRight?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Box sx={visitServiceDetailShellSx(accent)}>
+      <Box
+        sx={(t: any) => ({
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 1.5,
+          flexWrap: 'wrap',
+          px: 2,
+          py: 1.5,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          bgcolor: alpha(visitServiceAccentColor(t, accent), t.palette.mode === 'light' ? 0.08 : 0.14),
+        })}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1.25,
+            minWidth: 0,
+            flex: headerRight ? '1 1 220px' : '1 1 auto',
+          }}
+        >
+          <Box
+            sx={(t: any) => ({
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 40,
+              height: 40,
+              flexShrink: 0,
+              borderRadius: '10px',
+              bgcolor: alpha(visitServiceAccentColor(t, accent), t.palette.mode === 'light' ? 0.16 : 0.24),
+              color: visitServiceAccentColor(t, accent),
+            })}
+          >
+            {icon}
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              component="div"
+              variant="subtitle1"
+              sx={{ fontWeight: 600, color: 'text.primary', lineHeight: 1.35, letterSpacing: '-0.015em' }}
+            >
+              {title}
+            </Typography>
+            {subtitle ? (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 0.25, fontSize: '0.8125rem', lineHeight: 1.45, maxWidth: 720 }}
+              >
+                {subtitle}
+              </Typography>
+            ) : null}
+          </Box>
+        </Box>
+        {headerRight ? <Box sx={{ flexShrink: 0 }}>{headerRight}</Box> : null}
+      </Box>
+      <Box sx={{ px: 2, py: 2 }}>{children}</Box>
+    </Box>
+  );
+}
 
 /** Outlined selects with external labels — hide notch gap for a clean rectangle. */
 const enquirySelectFieldSx = {
@@ -537,11 +755,38 @@ const HEARING_AID_SALE_WARRANTY_OPTIONS = [
 const roundDiscountPercent = (value: number) =>
   Math.round(Math.max(0, Math.min(100, Number(value) || 0)) * 100) / 100;
 
+/** Display `yyyy-MM-dd'T'HH:mm` or date-only legacy for follow-ups / telecalling parity. */
+function formatEnquiryFollowUpWhen(dateTime: string | undefined, fallbackYmd: string): string {
+  const dt = dateTime?.trim();
+  if (dt && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dt)) {
+    const d = parse(dt, "yyyy-MM-dd'T'HH:mm", new Date());
+    if (isValid(d)) return format(d, 'dd MMM yyyy · HH:mm');
+  }
+  const y = String(fallbackYmd || '').trim();
+  return y || '—';
+}
+
+function newFollowUpDraft() {
+  const now = new Date();
+  const dt = format(now, "yyyy-MM-dd'T'HH:mm");
+  return {
+    date: format(now, 'yyyy-MM-dd'),
+    dateTime: dt,
+    remarks: '',
+    nextFollowUpDate: '',
+    nextFollowUpDateTime: '',
+    callerName: '',
+  };
+}
+
 interface FollowUp {
   id: string;
   date: string;
+  /** Local wall time, same contract as telecalling (`yyyy-MM-dd'T'HH:mm`). */
+  dateTime?: string;
   remarks: string;
   nextFollowUpDate: string;
+  nextFollowUpDateTime?: string;
   callerName: string;
 }
 
@@ -1138,12 +1383,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     resolve: (v: 'cancel' | { override: EnquiryJourneyStatus | null }) => void;
   } | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
-  const [currentFollowUp, setCurrentFollowUp] = useState({
-    date: new Date().toISOString().split('T')[0],
-    remarks: '',
-    nextFollowUpDate: '',
-    callerName: ''
-  });
+  const [currentFollowUp, setCurrentFollowUp] = useState(newFollowUpDraft);
   
   // Staff management states
   const [staffManagementOpen, setStaffManagementOpen] = useState(false);
@@ -2493,12 +2733,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         setActiveVisit(-1);
       }
       setStep(0);
-      setCurrentFollowUp({
-        date: new Date().toISOString().split('T')[0],
-        remarks: '',
-        nextFollowUpDate: '',
-        callerName: ''
-      });
+      setCurrentFollowUp(newFollowUpDraft());
       setCurrentPayment({
         paymentDate: new Date().toISOString().split('T')[0],
         amount: 0,
@@ -3088,41 +3323,70 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
   // Handle follow-up changes
   const handleFollowUpChange = (field: string, value: string) => {
-    setCurrentFollowUp(prev => ({ ...prev, [field]: value }));
+    setCurrentFollowUp((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === 'dateTime') {
+        next.date = value ? value.slice(0, 10) : '';
+      }
+      if (field === 'nextFollowUpDateTime') {
+        next.nextFollowUpDate = value ? value.slice(0, 10) : '';
+      }
+      return next;
+    });
+  };
+
+  const applyNextFollowUpSuggestion = (suggestion: { date: string; dateTime: string }) => {
+    setCurrentFollowUp((prev) => ({
+      ...prev,
+      nextFollowUpDate: suggestion.date,
+      nextFollowUpDateTime: suggestion.dateTime,
+    }));
   };
 
   const addFollowUp = () => {
-    // Enhanced validation - require date, caller name, and at least one meaningful field
-    const isValid = currentFollowUp.date.trim() && 
-                   currentFollowUp.callerName.trim() && 
-                   (currentFollowUp.remarks.trim() || currentFollowUp.nextFollowUpDate.trim());
-    
+    const callDt =
+      currentFollowUp.dateTime?.trim() ||
+      (currentFollowUp.date?.trim() ? `${currentFollowUp.date.trim()}T10:00` : '');
+    const nextRaw = currentFollowUp.nextFollowUpDateTime?.trim() || '';
+    const nextYmd = currentFollowUp.nextFollowUpDate?.trim() || '';
+    const nextDt = nextRaw || (nextYmd ? `${nextYmd}T10:00` : '');
+
+    const isValid =
+      callDt &&
+      currentFollowUp.callerName.trim() &&
+      (currentFollowUp.remarks.trim() || nextDt || nextYmd);
+
     if (isValid) {
       const newFollowUp: FollowUp = {
         id: Date.now().toString(),
-        ...currentFollowUp
+        ...currentFollowUp,
+        dateTime: callDt,
+        date: callDt.slice(0, 10),
+        nextFollowUpDateTime: nextDt || undefined,
+        nextFollowUpDate: nextDt ? nextDt.slice(0, 10) : nextYmd,
       };
-      setFollowUps(prev => [...prev, newFollowUp]);
-      setCurrentFollowUp({
-        date: new Date().toISOString().split('T')[0],
-        remarks: '',
-        nextFollowUpDate: '',
-        callerName: ''
-      });
+      setFollowUps((prev) => [...prev, newFollowUp]);
+      setCurrentFollowUp(newFollowUpDraft());
     } else {
-      // Show validation error
-      alert('Please fill in the date, caller name, and either remarks or next follow-up date.');
+      alert(
+        'Please set call date & time, select who called, and add remarks and/or a next follow-up date & time.'
+      );
     }
   };
 
   const getNextFollowUpSuggestions = () => {
     const today = new Date();
+    const mk = (days: number) => {
+      const d = new Date(today.getTime() + days * 24 * 60 * 60 * 1000);
+      const ymd = format(d, 'yyyy-MM-dd');
+      return { date: ymd, dateTime: `${ymd}T10:00` };
+    };
     return [
-      { label: 'Tomorrow', date: new Date(today.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { label: 'In 3 days', date: new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { label: 'Next week', date: new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { label: 'In 2 weeks', date: new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] },
-      { label: 'Next month', date: new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }
+      { label: 'Tomorrow', ...mk(1) },
+      { label: 'In 3 days', ...mk(3) },
+      { label: 'Next week', ...mk(7) },
+      { label: 'In 2 weeks', ...mk(14) },
+      { label: 'Next month', ...mk(30) },
     ];
   };
 
@@ -3929,12 +4193,24 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Typography>
                     </Stack>
                   </Grid>
-                  <Grid item xs={12} md={isAudiologist ? 4 : 3}>
-                    <Controller
-                      name="name"
-                      control={control}
-                      rules={{ required: 'Name is required' }}
-                      render={({ field }) => (
+                  <Grid item xs={12}>
+                    <Box
+                      sx={{
+                        ...enquiryPatientFieldRowSx,
+                        gridTemplateColumns: {
+                          xs: 'minmax(0, 1fr)',
+                          sm: 'repeat(2, minmax(0, 1fr))',
+                          md: isAudiologist
+                            ? 'repeat(3, minmax(0, 1fr))'
+                            : 'repeat(4, minmax(0, 1fr))',
+                        },
+                      }}
+                    >
+                      <Controller
+                        name="name"
+                        control={control}
+                        rules={{ required: 'Name is required' }}
+                        render={({ field }) => (
                         <Box>
                           <EnquiryFieldLabel htmlFor="enquiry-name" required>
                             Full name
@@ -3955,8 +4231,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </Box>
                       )}
                     />
-                  </Grid>
-                  <Grid item xs={12} md={isAudiologist ? 4 : 3}>
                     <Controller
                       name="customerName"
                       control={control}
@@ -3978,9 +4252,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </Box>
                       )}
                     />
-                  </Grid>
                   {!isAudiologist && (
-                    <Grid item xs={12} md={3}>
                       <Controller
                         name="phone"
                         control={control}
@@ -4025,9 +4297,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           </Box>
                         )}
                       />
-                    </Grid>
                   )}
-                  <Grid item xs={12} md={isAudiologist ? 4 : 3}>
                     <Controller
                       name="email"
                       control={control}
@@ -4048,6 +4318,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </Box>
                       )}
                     />
+                    </Box>
                   </Grid>
 
                   {/* —— Location & tax —— */}
@@ -4060,31 +4331,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Typography>
                     </Stack>
                   </Grid>
-                  <Grid item xs={12} md={6}>
-                    <Controller
-                      name="customerGstNumber"
-                      control={control}
-                      render={({ field }) => (
-                        <Box>
-                          <EnquiryFieldLabel htmlFor="enquiry-gst">Customer GST number</EnquiryFieldLabel>
-                          <TextField
-                            {...field}
-                            id="enquiry-gst"
-                            fullWidth
-                            size="small"
-                            hiddenLabel
-                            placeholder="Optional — 15 characters"
-                            disabled={isAudiologist}
-                            value={(field.value || '').toUpperCase()}
-                            onChange={(e) => field.onChange((e.target.value || '').toUpperCase())}
-                            helperText="Used on tax invoices when provided."
-                            sx={enquiryFormFieldSx}
-                          />
-                        </Box>
-                      )}
-                    />
-                  </Grid>
-
                   <Grid item xs={12}>
                     <Controller
                       name="addressLine"
@@ -4110,7 +4356,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             error={!!errors.addressLine}
                             helperText={
                               errors.addressLine?.message ||
-                              'Saved in CAPITAL LETTERS. Keep one clear block — state and PIN use the fields below.'
+                              'Saved in CAPITAL LETTERS. Keep one clear block — state, PIN, and GST use the row below.'
                             }
                             multiline
                             minRows={2}
@@ -4123,77 +4369,108 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       )}
                     />
                   </Grid>
-                  <Grid item xs={12} sm={6} md={6}>
-                    <Controller
-                      name="addressState"
-                      control={control}
-                      rules={{
-                        validate: (v) =>
-                          String(v || '').trim().length >= 2 || 'Enter state name',
+                  <Grid item xs={12}>
+                    <Box
+                      sx={{
+                        ...enquiryPatientFieldRowSx,
+                        gridTemplateColumns: {
+                          xs: 'minmax(0, 1fr)',
+                          sm: 'repeat(2, minmax(0, 1fr))',
+                          md: 'repeat(3, minmax(0, 1fr))',
+                        },
                       }}
-                      render={({ field }) => (
-                        <Box>
-                          <EnquiryFieldLabel htmlFor="enquiry-state" required>
-                            State
-                          </EnquiryFieldLabel>
-                          <TextField
-                            {...field}
-                            id="enquiry-state"
-                            fullWidth
-                            size="small"
-                            hiddenLabel
-                            placeholder="State / UT"
-                            required
-                            disabled={isAudiologist}
-                            error={!!errors.addressState}
-                            helperText={errors.addressState?.message}
-                            value={field.value || ''}
-                            onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
-                            sx={enquiryFormFieldSx}
-                          />
-                        </Box>
-                      )}
-                    />
-                  </Grid>
-                  <Grid item xs={12} sm={6} md={6}>
-                    <Controller
-                      name="addressPincode"
-                      control={control}
-                      rules={{
-                        validate: (v) =>
-                          /^\d{6}$/.test(normalizeEnquiryPincode(String(v || ''))) ||
-                          'Enter 6-digit PIN code',
-                      }}
-                      render={({ field }) => (
-                        <Box>
-                          <EnquiryFieldLabel htmlFor="enquiry-pin" required>
-                            PIN code
-                          </EnquiryFieldLabel>
-                          <TextField
-                            {...field}
-                            id="enquiry-pin"
-                            fullWidth
-                            size="small"
-                            hiddenLabel
-                            placeholder="6 digits"
-                            required
-                            disabled={isAudiologist}
-                            error={!!errors.addressPincode}
-                            helperText={errors.addressPincode?.message}
-                            value={field.value || ''}
-                            onChange={(e) => field.onChange(normalizeEnquiryPincode(e.target.value))}
-                            InputProps={{
-                              inputProps: {
-                                maxLength: 6,
-                                inputMode: 'numeric',
-                                autoComplete: 'postal-code',
-                              },
-                            }}
-                            sx={enquiryFormFieldSx}
-                          />
-                        </Box>
-                      )}
-                    />
+                    >
+                      <Controller
+                        name="addressState"
+                        control={control}
+                        rules={{
+                          validate: (v) =>
+                            String(v || '').trim().length >= 2 || 'Enter state name',
+                        }}
+                        render={({ field }) => (
+                          <Box>
+                            <EnquiryFieldLabel htmlFor="enquiry-state" required>
+                              State
+                            </EnquiryFieldLabel>
+                            <TextField
+                              {...field}
+                              id="enquiry-state"
+                              fullWidth
+                              size="small"
+                              hiddenLabel
+                              placeholder="State / UT"
+                              required
+                              disabled={isAudiologist}
+                              error={!!errors.addressState}
+                              helperText={errors.addressState?.message}
+                              value={field.value || ''}
+                              onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
+                              sx={enquiryFormFieldSx}
+                            />
+                          </Box>
+                        )}
+                      />
+                      <Controller
+                        name="addressPincode"
+                        control={control}
+                        rules={{
+                          validate: (v) =>
+                            /^\d{6}$/.test(normalizeEnquiryPincode(String(v || ''))) ||
+                            'Enter 6-digit PIN code',
+                        }}
+                        render={({ field }) => (
+                          <Box>
+                            <EnquiryFieldLabel htmlFor="enquiry-pin" required>
+                              PIN code
+                            </EnquiryFieldLabel>
+                            <TextField
+                              {...field}
+                              id="enquiry-pin"
+                              fullWidth
+                              size="small"
+                              hiddenLabel
+                              placeholder="6 digits"
+                              required
+                              disabled={isAudiologist}
+                              error={!!errors.addressPincode}
+                              helperText={errors.addressPincode?.message}
+                              value={field.value || ''}
+                              onChange={(e) => field.onChange(normalizeEnquiryPincode(e.target.value))}
+                              InputProps={{
+                                inputProps: {
+                                  maxLength: 6,
+                                  inputMode: 'numeric',
+                                  autoComplete: 'postal-code',
+                                },
+                              }}
+                              sx={enquiryFormFieldSx}
+                            />
+                          </Box>
+                        )}
+                      />
+                      <Controller
+                        name="customerGstNumber"
+                        control={control}
+                        render={({ field }) => (
+                          <Box>
+                            <EnquiryFieldLabel htmlFor="enquiry-gst">Customer GST number</EnquiryFieldLabel>
+                            <TextField
+                              {...field}
+                              id="enquiry-gst"
+                              fullWidth
+                              size="small"
+                              hiddenLabel
+                              placeholder="Optional — 15 characters"
+                              disabled={isAudiologist}
+                              value={(field.value || '').toUpperCase()}
+                              onChange={(e) => field.onChange((e.target.value || '').toUpperCase())}
+                              helperText="Used on tax invoices when provided."
+                              sx={enquiryFormFieldSx}
+                            />
+                          </Box>
+                        )}
+                      />
+                    </Box>
                   </Grid>
 
                   {/* —— Assignment —— */}
@@ -4206,7 +4483,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Typography>
                     </Stack>
                   </Grid>
-                  <Grid item xs={12} md={3}>
+                  <Grid item xs={12}>
+                    <Box
+                      sx={{
+                        ...enquiryPatientFieldRowSx,
+                        gridTemplateColumns: {
+                          xs: 'minmax(0, 1fr)',
+                          sm: 'repeat(2, minmax(0, 1fr))',
+                          md: 'repeat(4, minmax(0, 1fr))',
+                        },
+                      }}
+                    >
                     <Controller
                       name="reference"
                       control={control}
@@ -4314,8 +4601,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </FormControl>
                       )}
                     />
-                  </Grid>
-                  <Grid item xs={12} md={3}>
                     <Controller
                       name="followUpDate"
                       control={control}
@@ -4337,8 +4622,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </Box>
                       )}
                     />
-                  </Grid>
-                  <Grid item xs={12} md={3}>
                     <Controller
                       name="assignedTo"
                       control={control}
@@ -4409,8 +4692,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </FormControl>
                       )}
                     />
-                  </Grid>
-                  <Grid item xs={12} md={3}>
                     <Controller
                       name="telecaller"
                       control={control}
@@ -4481,6 +4762,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </FormControl>
                       )}
                     />
+                    </Box>
                   </Grid>
 
                   {/* —— Center & lead —— */}
@@ -4493,7 +4775,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Typography>
                     </Stack>
                   </Grid>
-                  <Grid item xs={12} md={6}>
+                  <Grid item xs={12}>
+                    <Box
+                      sx={{
+                        ...enquiryPatientFieldRowSx,
+                        gridTemplateColumns: {
+                          xs: 'minmax(0, 1fr)',
+                          md: 'repeat(2, minmax(0, 1fr))',
+                        },
+                      }}
+                    >
                     <Controller
                       name="center"
                       control={control}
@@ -4544,8 +4835,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </FormControl>
                       )}
                     />
-                  </Grid>
-                  <Grid item xs={12} md={6}>
                     <Controller
                       name="leadOutcome"
                       control={control}
@@ -4600,6 +4889,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </FormControl>
                       )}
                     />
+                    </Box>
                   </Grid>
 
                   {/* —— Notes —— */}
@@ -4676,8 +4966,20 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             {/* Visits Section */}
             <Paper elevation={0} sx={enquirySectionCardSx}>
               <Box sx={{ p: { xs: 2, sm: 3 } }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3, flexWrap: 'wrap', gap: 2 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    mb: 2.5,
+                    flexWrap: 'wrap',
+                    gap: 2,
+                    pb: 2,
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, minWidth: 0 }}>
                     <Box
                       sx={{
                         display: 'flex',
@@ -4706,20 +5008,48 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     variant="contained"
                     startIcon={<AddIcon />}
                     onClick={addVisit}
-                    sx={{ borderRadius: 2, flexShrink: 0 }}
+                    sx={{
+                      borderRadius: '8px',
+                      flexShrink: 0,
+                      textTransform: 'none',
+                      fontWeight: 600,
+                      px: 2,
+                    }}
                   >
-                    Add Visit
+                    Add visit
                   </Button>
                 </Box>
 
                 {/* Visit Tabs */}
                 {watchedVisits.length > 0 && (
-                  <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+                  <Box
+                    sx={{
+                      borderBottom: 1,
+                      borderColor: 'divider',
+                      mb: 2.5,
+                      bgcolor: (t) => (t.palette.mode === 'light' ? alpha(t.palette.grey[50], 0.6) : alpha(t.palette.common.white, 0.03)),
+                      borderRadius: '8px 8px 0 0',
+                      px: 0.5,
+                    }}
+                  >
                     <Tabs
                       value={activeVisit < 0 ? 0 : activeVisit}
                       onChange={(_, newValue) => setActiveVisit(newValue)}
                       variant="scrollable"
                       scrollButtons="auto"
+                      sx={{
+                        minHeight: 48,
+                        '& .MuiTabs-indicator': { height: 3, borderRadius: '3px 3px 0 0' },
+                        '& .MuiTab-root': {
+                          textTransform: 'none',
+                          minHeight: 48,
+                          borderRadius: '8px 8px 0 0',
+                          fontWeight: 500,
+                          fontSize: '0.875rem',
+                          color: 'text.secondary',
+                          '&.Mui-selected': { color: 'text.primary', fontWeight: 700 },
+                        },
+                      }}
                     >
                       {watchedVisits.map((visit, index) => (
                         <Tab 
@@ -4730,11 +5060,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 Visit {index + 1}
                               </Typography>
                               {visit.visitDate && (
-                                <Chip 
-                                  label={visit.visitDate} 
-                                  size="small" 
-                                  color="primary" 
-                                  variant="outlined" 
+                                <Chip
+                                  label={visit.visitDate}
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{
+                                    borderRadius: 1,
+                                    height: 22,
+                                    fontSize: '0.75rem',
+                                    fontWeight: 500,
+                                    borderColor: 'divider',
+                                  }}
                                 />
                               )}
                               {watchedVisits.length > 0 && (
@@ -4749,16 +5085,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
-                                    width: 24,
-                                    height: 24,
-                                    borderRadius: '50%',
+                                    width: 28,
+                                    height: 28,
+                                    borderRadius: 1,
                                     cursor: 'pointer',
                                     color: 'error.main',
                                     '&:hover': {
-                                      backgroundColor: 'error.light',
-                                      color: 'error.contrastText'
+                                      backgroundColor: (t) => alpha(t.palette.error.main, 0.08),
+                                      color: 'error.dark',
                                     },
-                                    transition: 'all 0.2s'
+                                    transition: 'background-color 0.15s, color 0.15s',
                                   }}
                                 >
                                   <DeleteIcon fontSize="small" />
@@ -4779,7 +5115,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     textAlign: 'center', 
                     py: 8, 
                     bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), 
-                    borderRadius: 2,
+                    borderRadius: '8px',
                     border: 1,
                     borderColor: 'divider',
                     borderStyle: 'dashed',
@@ -4798,9 +5134,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       variant="contained"
                       startIcon={<AddIcon />}
                       onClick={addVisit}
-                      sx={{ borderRadius: 2 }}
+                      sx={{ borderRadius: '8px', textTransform: 'none', fontWeight: 600, px: 2 }}
                     >
-                      Add First Visit
+                      Add first visit
                     </Button>
                   </Box>
                 )}
@@ -4809,325 +5145,293 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 {currentVisit && (
                   <Box>
                     {/* Visit Basic Info */}
-                    <Grid container spacing={3} sx={{ mb: 4 }}>
-                      <Grid item xs={12} md={3}>
-                        <EnquiryFormDatePicker
-                          label="Visit Date"
-                          value={currentVisit.visitDate}
-                          onChange={(v) => updateVisit(activeVisit, 'visitDate', v)}
-                          disabled={isAudiologist}
-                          sx={enquiryFormFieldSx}
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <TextField
-                          fullWidth
-                          label="Visit Time"
-                          type="time"
-                          value={currentVisit.visitTime}
-                          onChange={(e) => updateVisit(activeVisit, 'visitTime', e.target.value)}
-                          disabled={isAudiologist}
-                          InputLabelProps={{ shrink: true }}
-                          sx={enquiryFormFieldSx}
-                        />
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <FormControl fullWidth>
-                          <InputLabel>Visit Type</InputLabel>
-                          <Select 
-                            value={currentVisit.visitType}
-                            onChange={(e) => {
-                              const v = e.target.value as 'center' | 'home';
-                              if (v === 'center') {
-                                updateVisitFields(activeVisit, {
-                                  visitType: 'center',
-                                  homeVisitCharges: 0,
-                                });
-                              } else {
-                                updateVisit(activeVisit, 'visitType', v);
-                              }
-                            }}
-                            label="Visit Type"
+                    <Grid container spacing={2} sx={{ mb: 2.5, width: '100%', '& > .MuiGrid-item': { minWidth: 0 } }}>
+                      <Grid item xs={12}>
+                        <Box
+                          sx={{
+                            ...enquiryPatientFieldRowSx,
+                            '& > *': { minWidth: 0, maxWidth: '100%', width: '100%' },
+                            gridTemplateColumns: {
+                              xs: 'minmax(0, 1fr)',
+                              sm: 'repeat(2, minmax(0, 1fr))',
+                              md:
+                                currentVisit.visitType === 'home'
+                                  ? 'repeat(4, minmax(0, 1fr))'
+                                  : 'repeat(3, minmax(0, 1fr))',
+                            },
+                          }}
+                        >
+                          <Box sx={{ minWidth: 0, width: '100%' }}>
+                          <EnquiryFormDatePicker
+                            label="Visit date"
+                            value={currentVisit.visitDate}
+                            onChange={(v) => updateVisit(activeVisit, 'visitDate', v)}
                             disabled={isAudiologist}
-                            sx={{ borderRadius: 2, minWidth: '200px' }}
-                          >
-                            {visitLocationOpts.map((o) => (
-                              <MenuItem key={o.optionValue} value={o.optionValue}>
-                                {o.optionLabel}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
-                      </Grid>
-                      {currentVisit.visitType === 'home' && (
-                        <Grid item xs={12} md={3}>
-                          <TextField
-                            fullWidth
-                            label="Visit Charges (₹)"
-                            type="number"
-                            value={currentVisit.homeVisitCharges || ''}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              const n =
-                                raw === '' ? 0 : Math.max(0, Number(raw));
-                              updateVisit(
-                                activeVisit,
-                                'homeVisitCharges',
-                                Number.isFinite(n) ? n : 0
-                              );
-                            }}
-                            disabled={isAudiologist}
-                            inputProps={{ min: 0, step: 1 }}
-                            InputLabelProps={{ shrink: true }}
                             sx={enquiryFormFieldSx}
-                            helperText="Home visit fee (travel / consultation)"
                           />
-                        </Grid>
-                      )}
-                      <Grid item xs={12} md={6}>
-                        <Box sx={{ display: 'flex', gap: 2, height: '100%', alignItems: 'center', flexWrap: 'wrap' }}>
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.hearingTest}
+                          </Box>
+                          <Box sx={{ minWidth: 0, width: '100%' }}>
+                            <EnquiryFieldLabel htmlFor={`visit-time-${currentVisit.id}`}>Visit time</EnquiryFieldLabel>
+                            <TextField
+                              id={`visit-time-${currentVisit.id}`}
+                              fullWidth
+                              size="small"
+                              hiddenLabel
+                              type="time"
+                              value={currentVisit.visitTime}
+                              onChange={(e) => updateVisit(activeVisit, 'visitTime', e.target.value)}
+                              disabled={isAudiologist}
+                              sx={enquiryFormFieldSx}
+                            />
+                          </Box>
+                          <Box sx={{ minWidth: 0, width: '100%' }}>
+                            <EnquiryFieldLabel htmlFor={`visit-type-${currentVisit.id}`}>Visit type</EnquiryFieldLabel>
+                            <FormControl fullWidth size="small" sx={{ minWidth: 0 }}>
+                              <Select
+                                id={`visit-type-${currentVisit.id}`}
+                                label=""
+                                displayEmpty
+                                value={currentVisit.visitType}
                                 onChange={(e) => {
-                                  const on = e.target.checked;
-                                  if (!on) {
+                                  const v = e.target.value as 'center' | 'home';
+                                  if (v === 'center') {
                                     updateVisitFields(activeVisit, {
-                                      hearingTest: false,
-                                      hearingTestEntries: [],
-                                      testType: '',
-                                      testPrice: 0,
+                                      visitType: 'center',
+                                      homeVisitCharges: 0,
                                     });
                                   } else {
-                                    updateVisit(activeVisit, 'hearingTest', true);
+                                    updateVisit(activeVisit, 'visitType', v);
                                   }
                                 }}
                                 disabled={isAudiologist}
-                                color="primary"
-                              />
-                            }
-                            label="Hearing Test"
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.entService}
+                                sx={enquirySelectFieldSx}
+                                IconComponent={EnquirySelectChevron}
+                                MenuProps={{ PaperProps: enquirySelectPaperProps(280) }}
+                              >
+                                {visitLocationOpts.map((o) => (
+                                  <MenuItem key={o.optionValue} value={o.optionValue}>
+                                    {o.optionLabel}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                            </FormControl>
+                          </Box>
+                          {currentVisit.visitType === 'home' && (
+                            <Box sx={{ minWidth: 0, width: '100%' }}>
+                              <EnquiryFieldLabel htmlFor={`visit-charges-${currentVisit.id}`}>
+                                Visit charges (₹)
+                              </EnquiryFieldLabel>
+                              <TextField
+                                id={`visit-charges-${currentVisit.id}`}
+                                fullWidth
+                                size="small"
+                                hiddenLabel
+                                type="number"
+                                value={currentVisit.homeVisitCharges || ''}
                                 onChange={(e) => {
-                                  const on = e.target.checked;
-                                  if (!on) {
-                                    updateVisitFields(activeVisit, {
-                                      entService: false,
-                                      entProcedureEntries: [],
-                                      entProcedureDoneBy: '',
-                                      entServicePrice: 0,
-                                    });
-                                  } else {
-                                    updateVisit(activeVisit, 'entService', true);
-                                  }
+                                  const raw = e.target.value;
+                                  const n = raw === '' ? 0 : Math.max(0, Number(raw));
+                                  updateVisit(
+                                    activeVisit,
+                                    'homeVisitCharges',
+                                    Number.isFinite(n) ? n : 0
+                                  );
                                 }}
                                 disabled={isAudiologist}
-                                color="secondary"
+                                inputProps={{ min: 0, step: 1 }}
+                                sx={enquiryFormFieldSx}
+                                helperText="Home visit fee (travel / consultation)"
                               />
-                            }
-                            label="ENT service"
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.hearingAidTrial}
-                                onChange={(e) => {
-                                  const checked = e.target.checked;
-                                  updateVisit(activeVisit, 'hearingAidTrial', checked);
-                                  if (checked) {
-                                    const visit = getValues('visits')[activeVisit];
-                                    const catalogIds = (visit?.products || [])
-                                      .filter(
-                                        (p) =>
-                                          p.productId &&
-                                          hearingAidProducts.some((hp) => hp.id === p.productId)
-                                      )
-                                      .map((p) => p.productId as string);
-                                    if (catalogIds.length > 1) {
-                                      applyCatalogHearingAidSelection(activeVisit, catalogIds.slice(0, 1));
-                                    }
-                                  }
-                                }}
-                                disabled={isAudiologist}
-                                color="info"
-                              />
-                            }
-                            label={
-                              <Box>
-                                <Typography variant="body2" component="span">
-                                  Hearing Aid Trial
-                                </Typography>
-                                <Typography
-                                  variant="caption"
-                                  display="block"
-                                  color="text.secondary"
-                                  sx={{ lineHeight: 1.2 }}
-                                >
-                                  Try one model · single device from catalog
-                                </Typography>
-                              </Box>
-                            }
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.hearingAidBooked}
-                                onChange={(e) => {
-                                  const checked = e.target.checked;
-                                  updateVisit(activeVisit, 'hearingAidBooked', checked);
-                                  if (checked) {
-                                    const visit = getValues('visits')[activeVisit];
-                                    const catalogIds = (visit?.products || [])
-                                      .filter(
-                                        (p) =>
-                                          p.productId &&
-                                          hearingAidProducts.some((hp) => hp.id === p.productId)
-                                      )
-                                      .map((p) => p.productId as string);
-                                    if (catalogIds.length > 1) {
-                                      applyCatalogHearingAidSelection(activeVisit, catalogIds.slice(0, 1));
-                                    }
-                                  }
-                                }}
-                                disabled={isAudiologist}
-                                color="warning"
-                              />
-                            }
-                            label={
-                              <Box>
-                                <Typography variant="body2" component="span">
-                                  Hearing Aid Booked
-                                </Typography>
-                                <Typography
-                                  variant="caption"
-                                  display="block"
-                                  color="text.secondary"
-                                  sx={{ lineHeight: 1.2 }}
-                                >
-                                  One catalog model · quantity in booking details
-                                </Typography>
-                              </Box>
-                            }
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.hearingAidSale}
-                                onChange={(e) => updateVisit(activeVisit, 'hearingAidSale', e.target.checked)}
-                                disabled={isAudiologist}
-                                color="success"
-                              />
-                            }
-                            label={
-                              <Box>
-                                <Typography variant="body2" component="span">
-                                  Hearing Aid Sale
-                                </Typography>
-                                <Typography
-                                  variant="caption"
-                                  display="block"
-                                  color="text.secondary"
-                                  sx={{ lineHeight: 1.2 }}
-                                >
-                                  Inventory: qty or one row per serial · same model allowed
-                                </Typography>
-                              </Box>
-                            }
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.salesReturn}
-                                onChange={(e) => {
-                                  const on = e.target.checked;
-                                  if (!on) {
-                                    updateVisit(activeVisit, 'salesReturn', false);
-                                    return;
-                                  }
-                                  const v = getValues('visits')[activeVisit];
-                                  const existing = [...(v.salesReturnItems || [])];
-                                  const legacy = String(v.returnSerialNumber || '').trim();
-                                  if (existing.length === 0 && legacy) {
-                                    const migrated = legacySerialsToLines(legacy, v.hearingAidModel || '');
-                                    updateVisitFields(activeVisit, {
-                                      salesReturn: true,
-                                      salesReturnItems: migrated,
-                                      returnSerialNumber: linesToLegacyReturnSerialString(migrated),
-                                    });
-                                  } else {
-                                    updateVisit(activeVisit, 'salesReturn', true);
-                                  }
-                                }}
-                                disabled={isAudiologist}
-                                color="error"
-                              />
-                            }
-                            label="Sales Return"
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.accessory}
-                                onChange={(e) => updateVisit(activeVisit, 'accessory', e.target.checked)}
-                                disabled={isAudiologist}
-                                color="success"
-                              />
-                            }
-                            label="Accessory"
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.programming}
-                                onChange={(e) => updateVisit(activeVisit, 'programming', e.target.checked)}
-                                disabled={isAudiologist}
-                                color="warning"
-                              />
-                            }
-                            label="Programming"
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.repair}
-                                onChange={(e) => updateVisit(activeVisit, 'repair', e.target.checked)}
-                                disabled={isAudiologist}
-                                color="error"
-                              />
-                            }
-                            label="Repair"
-                          />
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={currentVisit.counselling}
-                                onChange={(e) => updateVisit(activeVisit, 'counselling', e.target.checked)}
-                                disabled={isAudiologist}
-                                color="info"
-                              />
-                            }
-                            label="Counselling"
-                          />
+                            </Box>
+                          )}
                         </Box>
                       </Grid>
                     </Grid>
 
+                    <Box sx={{ mb: 2.5 }}>
+                      <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 1 }}>
+                        Visit services
+                      </Typography>
+                      <Box
+                        sx={{
+                          display: 'grid',
+                          width: '100%',
+                          gap: { xs: 0.75, sm: 1 },
+                          gridTemplateColumns: {
+                            xs: 'minmax(0, 1fr)',
+                            sm: 'repeat(2, minmax(0, 1fr))',
+                            lg: 'repeat(3, minmax(0, 1fr))',
+                          },
+                          '& > *': { minWidth: 0 },
+                        }}
+                      >
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.hearingTest}
+                          title="Hearing test"
+                          hint="Audiometry & pricing lines"
+                          checked={currentVisit.hearingTest}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            if (!on) {
+                              updateVisitFields(activeVisit, {
+                                hearingTest: false,
+                                hearingTestEntries: [],
+                                testType: '',
+                                testPrice: 0,
+                              });
+                            } else {
+                              updateVisit(activeVisit, 'hearingTest', true);
+                            }
+                          }}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.entService}
+                          title="ENT service"
+                          hint="Procedures & tariff lines"
+                          checked={currentVisit.entService}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            if (!on) {
+                              updateVisitFields(activeVisit, {
+                                entService: false,
+                                entProcedureEntries: [],
+                                entProcedureDoneBy: '',
+                                entServicePrice: 0,
+                              });
+                            } else {
+                              updateVisit(activeVisit, 'entService', true);
+                            }
+                          }}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.hearingAidTrial}
+                          title="Hearing aid trial"
+                          hint="One catalog model · single device"
+                          checked={currentVisit.hearingAidTrial}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            updateVisit(activeVisit, 'hearingAidTrial', checked);
+                            if (checked) {
+                              const visit = getValues('visits')[activeVisit];
+                              const catalogIds = (visit?.products || [])
+                                .filter(
+                                  (p) =>
+                                    p.productId &&
+                                    hearingAidProducts.some((hp) => hp.id === p.productId)
+                                )
+                                .map((p) => p.productId as string);
+                              if (catalogIds.length > 1) {
+                                applyCatalogHearingAidSelection(activeVisit, catalogIds.slice(0, 1));
+                              }
+                            }
+                          }}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.hearingAidBooked}
+                          title="Hearing aid booked"
+                          hint="One model · qty in booking block"
+                          checked={currentVisit.hearingAidBooked}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            updateVisit(activeVisit, 'hearingAidBooked', checked);
+                            if (checked) {
+                              const visit = getValues('visits')[activeVisit];
+                              const catalogIds = (visit?.products || [])
+                                .filter(
+                                  (p) =>
+                                    p.productId &&
+                                    hearingAidProducts.some((hp) => hp.id === p.productId)
+                                )
+                                .map((p) => p.productId as string);
+                              if (catalogIds.length > 1) {
+                                applyCatalogHearingAidSelection(activeVisit, catalogIds.slice(0, 1));
+                              }
+                            }
+                          }}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.hearingAidSale}
+                          title="Hearing aid sale"
+                          hint="Inventory · qty or one row per serial"
+                          checked={currentVisit.hearingAidSale}
+                          onChange={(e) => updateVisit(activeVisit, 'hearingAidSale', e.target.checked)}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.salesReturn}
+                          title="Sales return"
+                          hint="Serial lines & refund workflow"
+                          checked={currentVisit.salesReturn}
+                          onChange={(e) => {
+                            const on = e.target.checked;
+                            if (!on) {
+                              updateVisit(activeVisit, 'salesReturn', false);
+                              return;
+                            }
+                            const v = getValues('visits')[activeVisit];
+                            const existing = [...(v.salesReturnItems || [])];
+                            const legacy = String(v.returnSerialNumber || '').trim();
+                            if (existing.length === 0 && legacy) {
+                              const migrated = legacySerialsToLines(legacy, v.hearingAidModel || '');
+                              updateVisitFields(activeVisit, {
+                                salesReturn: true,
+                                salesReturnItems: migrated,
+                                returnSerialNumber: linesToLegacyReturnSerialString(migrated),
+                              });
+                            } else {
+                              updateVisit(activeVisit, 'salesReturn', true);
+                            }
+                          }}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.accessory}
+                          title="Accessory"
+                          hint="Non-HA catalog or ad-hoc line"
+                          checked={currentVisit.accessory}
+                          onChange={(e) => updateVisit(activeVisit, 'accessory', e.target.checked)}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.programming}
+                          title="Programming"
+                          hint="Fine-tuning & device notes"
+                          checked={currentVisit.programming}
+                          onChange={(e) => updateVisit(activeVisit, 'programming', e.target.checked)}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.repair}
+                          title="Repair"
+                          hint="Service & charges for this visit"
+                          checked={currentVisit.repair}
+                          onChange={(e) => updateVisit(activeVisit, 'repair', e.target.checked)}
+                          disabled={isAudiologist}
+                        />
+                        <VisitServiceToggleRow
+                          active={!!currentVisit.counselling}
+                          title="Counselling"
+                          hint="Session notes & follow-up context"
+                          checked={currentVisit.counselling}
+                          onChange={(e) => updateVisit(activeVisit, 'counselling', e.target.checked)}
+                          disabled={isAudiologist}
+                        />
+                      </Box>
+                    </Box>
+
                     {/* Hearing Test Details */}
                     {currentVisit.hearingTest && (
-                      <Card sx={{ mb: 4, bgcolor: 'primary.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                            <MedicalIcon sx={{ color: 'primary.main' }} />
-                            <Typography variant="h6" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                              Hearing Test Details
-                            </Typography>
-                          </Box>
-                          <Grid container spacing={3}>
+                      <VisitServiceDetailPanel
+                        accent="primary"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="Hearing test"
+                        subtitle="Tests performed this visit, results, recommendations, and PTA link."
+                      >
+                          <Grid container spacing={2}>
                             <Grid item xs={12}>
                               <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
                                 Tests performed (this visit)
@@ -5323,7 +5627,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 fullWidth
                                 label="Test Results"
                                 multiline
-                                rows={3}
+                                rows={2}
                                 value={currentVisit.testResults}
                                 onChange={(e) => updateVisit(activeVisit, 'testResults', e.target.value)}
                                 sx={enquiryFormFieldSx}
@@ -5334,7 +5638,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 fullWidth
                                 label="Recommendations"
                                 multiline
-                                rows={3}
+                                rows={2}
                                 value={currentVisit.recommendations}
                                 onChange={(e) => updateVisit(activeVisit, 'recommendations', e.target.value)}
                                 disabled={isAudiologist}
@@ -5343,8 +5647,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Grid>
                           </Grid>
 
-                          {/* Pure Tone Audiogram — not shown in this form (create or edit); use PTA link + patient profile */}
-                          <Alert severity="info" sx={{ mt: 2 }} icon={false}>
+                          <Alert severity="info" sx={{ mt: 2, borderRadius: '8px' }} icon={false}>
                             <Typography variant="body2">
                               Audiogram charts are not shown here so the form stays compact. Link a PTA report below; after saving,
                               open the patient profile to view charts.
@@ -5368,20 +5671,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               !['admin', 'staff', 'audiologist'].includes(userProfile.role)
                             }
                           />
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {currentVisit.entService && (
-                      <Card sx={{ mb: 4, bgcolor: 'secondary.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                            <MedicalIcon sx={{ color: 'secondary.main' }} />
-                            <Typography variant="h6" sx={{ fontWeight: 600, color: 'secondary.main' }}>
-                              ENT service (billable procedures)
-                            </Typography>
-                          </Box>
-                          <Grid container spacing={3}>
+                      <VisitServiceDetailPanel
+                        accent="secondary"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="ENT service"
+                        subtitle="Billable procedures, pricing lines, and who performed them."
+                      >
+                          <Grid container spacing={2}>
                             <Grid item xs={12}>
                               <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
                                 Procedures (this visit)
@@ -5569,36 +5869,54 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Grid>
                             )}
                           </Grid>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Hearing aid journey + device blocks (trial vs booking are visually separate) */}
                     {showHearingAidJourneyBlock && (
-                      <Card
-                        sx={{
-                          mb: 3,
-                          borderRadius: 2,
-                          border: 1,
-                          borderColor: 'divider',
-                          bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]),
-                          boxShadow: 'none',
-                        }}
+                      <Box
+                        sx={[
+                          enquirySectionCardSx,
+                          {
+                            mb: 2.5,
+                            p: 0,
+                            overflow: 'hidden',
+                          },
+                        ]}
                       >
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
-                            <TimelineIcon sx={{ color: 'text.secondary', mt: 0.25 }} />
-                            <Box>
-                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                                Device journey
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                Link this visit to a prior trial or booking, or copy device details in one tap.
-                              </Typography>
-                            </Box>
+                        <Box
+                          sx={{
+                            px: 2,
+                            py: 1.5,
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 1.25,
+                          }}
+                        >
+                          <TimelineIcon sx={{ color: 'text.secondary', fontSize: 22, mt: 0.15 }} />
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', lineHeight: 1.35 }}>
+                              Device journey
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', mt: 0.25 }}>
+                              Link this visit to a prior trial or booking, or copy device details in one tap.
+                            </Typography>
                           </Box>
+                        </Box>
 
-                          <Box sx={{ mb: 0, p: 2, bgcolor: 'background.paper', borderRadius: 2, border: 1, borderColor: 'divider' }}>
+                        <Box sx={{ px: 2, py: 2 }}>
+                          <Box
+                            sx={(t) => ({
+                              mb: 0,
+                              p: 1.75,
+                              bgcolor: 'background.paper',
+                              borderRadius: '8px',
+                              border: '1px solid',
+                              borderColor: t.palette.mode === 'light' ? alpha(t.palette.text.primary, 0.08) : 'divider',
+                            })}
+                          >
                             <Typography variant="subtitle2" sx={{ mb: 2, color: 'text.secondary', fontWeight: 600 }}>
                               Continue from a previous visit
                             </Typography>
@@ -5746,40 +6064,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Button>
                             )}
                           </Box>
-                        </CardContent>
-                      </Card>
+                        </Box>
+                      </Box>
                     )}
 
                     {showLockedDeviceCard && (
-                      <Card
-                        sx={{
-                          mb: 4,
-                          borderRadius: 2,
-                          border: 2,
-                          borderColor: 'info.main',
-                          bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]),
-                          backgroundImage: (theme) =>
-                            `linear-gradient(135deg, ${theme.palette.info.light}14 0%, transparent 55%)`,
-                        }}
+                      <VisitServiceDetailPanel
+                        accent="info"
+                        icon={<LockOutlinedIcon sx={{ fontSize: 22 }} />}
+                        title="Device locked to trial"
+                        subtitle="This booking continues the trial device. Change the model under Trial (or turn off booking from trial) if you need a different catalog selection."
                       >
-                        <CardContent sx={{ p: 3 }}>
-                          <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }}>
-                            <LockOutlinedIcon sx={{ color: 'info.main', fontSize: 32 }} />
-                            <Box>
-                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'info.dark' }}>
-                                Device locked to trial
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                This booking continues the trial device. Change the model under Trial (or turn off
-                                &quot;booking from trial&quot;) if you need a different catalog selection.
-                              </Typography>
-                            </Box>
-                          </Stack>
-                          <Box sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 2, border: 1, borderColor: 'divider' }}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
-                              Trial device in use
-                            </Typography>
-                            <Grid container spacing={2}>
+                        <Box
+                          sx={(t) => ({
+                            p: 1.75,
+                            borderRadius: '8px',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            bgcolor: t.palette.mode === 'light' ? alpha(t.palette.common.black, 0.02) : alpha(t.palette.common.white, 0.04),
+                          })}
+                        >
+                          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.25, color: 'text.primary' }}>
+                            Trial device in use
+                          </Typography>
+                          <Grid container spacing={2}>
                               <Grid item xs={12} md={4}>
                                 <Typography variant="caption" color="text.secondary">
                                   Brand / model
@@ -5805,45 +6113,26 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 </Typography>
                               </Grid>
                             </Grid>
-                          </Box>
-                        </CardContent>
-                      </Card>
+                        </Box>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {showTrialDeviceCard && (
-                      <Card
-                        sx={{
-                          mb: 4,
-                          borderRadius: 2,
-                          border: 2,
-                          borderColor: 'info.light',
-                          bgcolor: '#e8f4fc',
-                          boxShadow: (theme) => `0 8px 24px ${theme.palette.info.main}18`,
-                        }}
+                      <VisitServiceDetailPanel
+                        accent="info"
+                        icon={<ScienceOutlinedIcon sx={{ fontSize: 22 }} />}
+                        title="Trial hearing aid"
+                        subtitle="Pick one catalog model. The dialog keeps brand, model, and MRP (per unit) in sync."
                       >
-                        <CardContent sx={{ p: 3 }}>
-                          <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }}>
-                            <ScienceOutlinedIcon sx={{ color: 'info.main', fontSize: 32 }} />
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'info.dark' }}>
-                                Trial hearing aid
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                Pick exactly one catalog model for this trial. The dialog uses a single-choice layout
-                                and keeps brand, model, and MRP (per unit) in sync.
-                              </Typography>
-                            </Box>
-                          </Stack>
-
                           <Box
-                            sx={{
-                              mb: 3,
-                              p: 2,
+                            sx={(t) => ({
+                              mb: 2,
+                              p: 1.75,
                               bgcolor: 'background.paper',
-                              borderRadius: 2,
-                              border: 1,
-                              borderColor: 'info.light',
-                            }}
+                              borderRadius: '8px',
+                              border: '1px solid',
+                              borderColor: t.palette.mode === 'light' ? alpha(t.palette.info.main, 0.22) : 'divider',
+                            })}
                           >
                             <Typography variant="subtitle2" sx={{ mb: 0.5, color: 'info.dark', fontWeight: 600 }}>
                               Catalog — trial device
@@ -5906,10 +6195,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Stack>
                           </Box>
 
-                          <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'info.dark' }}>
+                          <Typography variant="subtitle2" sx={{ mb: 1.25, fontWeight: 600, color: 'text.primary' }}>
                             Trial device details
                           </Typography>
-                          <Grid container spacing={3}>
+                          <Grid container spacing={2}>
                             <Grid item xs={12} md={3}>
                               <TextField
                                 fullWidth
@@ -5977,45 +6266,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               />
                             </Grid>
                           </Grid>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {showBookingDeviceCard && (
-                      <Card
-                        sx={{
-                          mb: 4,
-                          borderRadius: 2,
-                          border: 2,
-                          borderColor: 'warning.main',
-                          bgcolor: (t) =>
-                            t.palette.mode === 'dark' ? alpha(t.palette.warning.main, 0.14) : '#fffaf0',
-                          boxShadow: (theme) => `0 8px 24px ${theme.palette.warning.main}22`,
-                        }}
+                      <VisitServiceDetailPanel
+                        accent="warning"
+                        icon={<BookmarkAddedIcon sx={{ fontSize: 22 }} />}
+                        title="Booking — hearing aid"
+                        subtitle="One catalog model. MRP is per unit — use booking quantity and selling price in Booking details for totals."
                       >
-                        <CardContent sx={{ p: 3 }}>
-                          <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }}>
-                            <BookmarkAddedIcon sx={{ color: 'warning.dark', fontSize: 32 }} />
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="h6" sx={{ fontWeight: 700, color: 'warning.dark' }}>
-                                Booking — hearing aid
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                One catalog model for this booking. MRP is per unit — use booking quantity and selling
-                                price (per unit) in Booking details for totals.
-                              </Typography>
-                            </Box>
-                          </Stack>
-
                           <Box
-                            sx={{
-                              mb: 3,
-                              p: 2,
+                            sx={(t) => ({
+                              mb: 2,
+                              p: 1.75,
                               bgcolor: 'background.paper',
-                              borderRadius: 2,
-                              border: 1,
-                              borderColor: 'warning.light',
-                            }}
+                              borderRadius: '8px',
+                              border: '1px solid',
+                              borderColor: t.palette.mode === 'light' ? alpha(t.palette.warning.main, 0.28) : 'divider',
+                            })}
                           >
                             <Typography variant="subtitle2" sx={{ mb: 0.5, color: 'warning.dark', fontWeight: 600 }}>
                               Catalog — booked model
@@ -6078,10 +6347,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </Stack>
                           </Box>
 
-                          <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'warning.dark' }}>
+                          <Typography variant="subtitle2" sx={{ mb: 1.25, fontWeight: 600, color: 'text.primary' }}>
                             Booked device (per unit)
                           </Typography>
-                          <Grid container spacing={3}>
+                          <Grid container spacing={2}>
                             <Grid item xs={12} md={3}>
                               <TextField
                                 fullWidth
@@ -6149,22 +6418,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               />
                             </Grid>
                           </Grid>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Hearing Aid Trial Section */}
                     {currentVisit.hearingAidTrial && (
-                      <Card sx={{ mb: 4, bgcolor: '#f0f8ff', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                            <MedicalIcon sx={{ color: 'info.main' }} />
-                            <Typography variant="h6" sx={{ fontWeight: 600, color: 'info.main' }}>
-                              Trial Specific Details
-                            </Typography>
-                          </Box>
-                          
-                          <Grid container spacing={3}>
+                      <VisitServiceDetailPanel
+                        accent="info"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="Hearing aid trial"
+                        subtitle="Trial type, dates, home deposit, result, and notes."
+                      >
+                          <Grid container spacing={2}>
                             <Grid item xs={12} md={4}>
                               <FormControl fullWidth>
                                 <InputLabel>Trial Type</InputLabel>
@@ -6277,11 +6542,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             {/* Display Selected Hearing Aid Details for Home Trials */}
                             {currentVisit.trialHearingAidType === 'home' && currentVisit.trialSerialNumber && (
                               <Grid item xs={12}>
-                                <Card sx={{ bgcolor: '#e8f5e8', border: '1px solid #4caf50' }}>
-                                  <CardContent sx={{ p: 2 }}>
-                                    <Typography variant="subtitle2" color="success.main" gutterBottom>
-                                      Selected Hearing Aid for Trial:
-                                    </Typography>
+                                <Box
+                                  sx={(t) => ({
+                                    p: 1.75,
+                                    borderRadius: '8px',
+                                    border: '1px solid',
+                                    borderColor: alpha(t.palette.success.main, t.palette.mode === 'light' ? 0.35 : 0.45),
+                                    bgcolor: alpha(t.palette.success.main, t.palette.mode === 'light' ? 0.06 : 0.12),
+                                  })}
+                                >
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.primary', mb: 1 }}>
+                                    Selected device for trial
+                                  </Typography>
                                     <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                                       <Box>
                                         <Typography variant="body2" color="text.secondary">Serial Number:</Typography>
@@ -6300,8 +6572,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         </Box>
                                       )}
                                     </Box>
-                                  </CardContent>
-                                </Card>
+                                </Box>
                               </Grid>
                             )}
 
@@ -6379,43 +6650,33 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 fullWidth
                                 label="Trial Notes"
                                 multiline
-                                rows={3}
+                                rows={2}
                                 value={currentVisit.trialNotes}
                                 onChange={(e) => updateVisit(activeVisit, 'trialNotes', e.target.value)}
+                                sx={enquiryFormFieldSx}
                               />
                             </Grid>
                           </Grid>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Hearing Aid Booked Section (only when booking and not sale) */}
                     {currentVisit.hearingAidBooked && !currentVisit.hearingAidSale && (
-                      <Card
-                        sx={{
-                          mb: 4,
-                          bgcolor: (t) =>
-                            t.palette.mode === 'dark' ? alpha(t.palette.warning.main, 0.12) : '#fffbf0',
-                          borderRadius: 2,
-                        }}
+                      <VisitServiceDetailPanel
+                        accent="warning"
+                        icon={<BookmarkAddedIcon sx={{ fontSize: 22 }} />}
+                        title="Booking details"
+                        subtitle="Advance, selling price per unit, quantity, and balance after credits."
                       >
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                            <MedicalIcon sx={{ color: 'warning.main' }} />
-                            <Typography variant="h6" sx={{ fontWeight: 600, color: 'warning.main' }}>
-                              Booking Specific Details
-                            </Typography>
-                          </Box>
-
                           {trialOn && bookingOn && (
-                            <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
+                            <Alert severity="info" sx={{ mb: 2, borderRadius: '8px' }}>
                               Hearing aid model and catalog selection for this visit are managed in the{' '}
-                              <strong>Trial hearing aid</strong> section above. Use this card for amounts, dates, and
+                              <strong>Trial hearing aid</strong> section above. Use this section for amounts, dates, and
                               booking workflow only.
                             </Alert>
                           )}
                           
-                          <Grid container spacing={3}>
+                          <Grid container spacing={2}>
                             <Grid item xs={12} md={6}>
                               <TextField
                                 fullWidth
@@ -6501,21 +6762,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Box>
                             </Grid>
                           </Grid>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Hearing Aid Sale Section */}
                     {currentVisit.hearingAidSale && (
-                      <Card sx={{ mb: 4, bgcolor: 'secondary.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-                            <MedicalIcon sx={{ color: 'secondary.main' }} />
-                            <Typography variant="h6" sx={{ fontWeight: 600, color: 'secondary.main' }}>
-                              Hearing Aid Details
-                            </Typography>
-                          </Box>
-
+                      <VisitServiceDetailPanel
+                        accent="secondary"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="Hearing aid sale"
+                        subtitle="Products, GST, exchange credit, and invoice totals for this visit."
+                      >
                           {/* Credits toward sale: trial security + booking advance (total due = sale only when booking was superseded). */}
                           {(() => {
                             const advBook = findLinkedPriorBookingVisitWithAdvance(watchedVisits, activeVisit);
@@ -7765,27 +8022,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Table>
                             </TableContainer>
                           )}
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Sales Return Section */}
                     {currentVisit.salesReturn && (
-                      <Card sx={{ mb: 4, bgcolor: 'error.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <AssignmentReturnIcon sx={{ color: 'error.main' }} />
-                              <Typography variant="h6" sx={{ fontWeight: 600, color: 'error.main' }}>
-                                Sales Return Details
-                              </Typography>
-                            </Box>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                              💡 Return previously sold hearing aids with proper tracking
-                            </Typography>
-                          </Box>
-                          
-                          <Grid container spacing={3}>
+                      <VisitServiceDetailPanel
+                        accent="error"
+                        icon={<AssignmentReturnIcon sx={{ fontSize: 22 }} />}
+                        title="Sales return"
+                        subtitle="Serial lines, refunds, and return notes for devices sold from this enquiry."
+                      >
+                          <Grid container spacing={2}>
                             {/* Serial Number Selection Mode Toggle */}
                             <Grid item xs={12}>
                               <Box sx={{ mb: 2 }}>
@@ -8115,27 +8363,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               />
                             </Grid>
                           </Grid>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Accessory Details */}
                     {currentVisit.accessory && (
-                      <Card sx={{ mb: 4, bgcolor: 'success.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <MedicalIcon sx={{ color: 'success.main' }} />
-                              <Typography variant="h6" sx={{ fontWeight: 600, color: 'success.main' }}>
-                                Accessory Details
-                              </Typography>
-                  </Box>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                              💡 Select from available accessory products
-                            </Typography>
-                          </Box>
-                          
-                          <Grid container spacing={3}>
+                      <VisitServiceDetailPanel
+                        accent="success"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="Accessory"
+                        subtitle="Pick from stock or enter ad-hoc lines, quantity, and pricing."
+                      >
+                          <Grid container spacing={2}>
                             <Grid item xs={12} md={6}>
                               <Stack spacing={1.5}>
                                 <Button
@@ -8487,27 +8726,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Box>
                             );
                           })()}
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Programming Details */}
                     {currentVisit.programming && (
-                      <Card sx={{ mb: 4, bgcolor: 'warning.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <MedicalIcon sx={{ color: 'warning.main' }} />
-                              <Typography variant="h6" sx={{ fontWeight: 600, color: 'warning.main' }}>
-                                Programming Details
-                              </Typography>
-                            </Box>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                              🔧 Hearing aid programming and configuration
-                            </Typography>
-                          </Box>
-
-                          <Grid container spacing={3}>
+                      <VisitServiceDetailPanel
+                        accent="warning"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="Programming"
+                        subtitle="Reason, device context, warranty, technician, and charges."
+                      >
+                          <Grid container spacing={2}>
                             <Grid item xs={12} md={6}>
                               <TextField
                                 fullWidth
@@ -8661,93 +8891,69 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               </Box>
                             );
                           })()}
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Repair Details */}
                     {currentVisit.repair && (
-                      <Card sx={{ mb: 4, bgcolor: 'error.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <MedicalIcon sx={{ color: 'error.main' }} />
-                              <Typography variant="h6" sx={{ fontWeight: 600, color: 'error.main' }}>
-                                Repair Service
-                              </Typography>
-                            </Box>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                              🔧 Hearing aid repair and maintenance
+                      <VisitServiceDetailPanel
+                        accent="error"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="Repair"
+                        subtitle="Recorded on this visit. Open the repair workspace for device tracking."
+                      >
+                          <Box
+                            sx={(t) => ({
+                              p: 2,
+                              bgcolor: t.palette.mode === 'light' ? alpha(t.palette.text.primary, 0.02) : alpha(t.palette.common.white, 0.04),
+                              borderRadius: '8px',
+                              border: '1px solid',
+                              borderColor: 'divider',
+                              textAlign: 'center',
+                            })}
+                          >
+                            <Typography variant="subtitle1" sx={{ mb: 1.5, fontWeight: 600, color: 'text.primary' }}>
+                              Repair visit recorded
+                            </Typography>
+                            <Typography variant="body1" sx={{ mb: 2.5, color: 'text.secondary', maxWidth: 520, mx: 'auto' }}>
+                              Use the Hearing Hope repair workspace to manage repair details and status.
+                            </Typography>
+                            <Button
+                              variant="contained"
+                              color="error"
+                              size="medium"
+                              startIcon={<ArrowForwardIcon />}
+                              onClick={() => window.open('https://repair-tracking-system-hope.vercel.app/', '_blank')}
+                              sx={{
+                                borderRadius: '8px',
+                                px: 3,
+                                py: 1.25,
+                                textTransform: 'none',
+                                fontWeight: 600,
+                              }}
+                            >
+                              Open repair tracking
+                            </Button>
+                            <Typography variant="body2" sx={{ mt: 2, color: 'text.secondary', fontSize: '0.8125rem' }}>
+                              Patient: {watch('name')}
+                              {!isAudiologist && ` · Phone: ${watch('phone')}`}
                             </Typography>
                           </Box>
-
-                          <Box sx={{ 
-                            p: 3, 
-                            bgcolor: 'background.paper', 
-                            borderRadius: 2, 
-                            border: 1, 
-                            borderColor: 'error.200',
-                            textAlign: 'center'
-                          }}>
-                            <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, color: 'error.main' }}>
-                              Repair Visit Recorded
-                            </Typography>
-                                                         <Typography variant="body1" sx={{ mb: 3, color: 'text.secondary' }}>
-                               This visit has been recorded as a repair service. Use our Hearing Hope Repair Tracking 
-                               system to manage repair details and track repair status.
-                             </Typography>
-                                                         <Button
-                               variant="contained"
-                               color="error"
-                               size="large"
-                               startIcon={<RupeeIcon />}
-                               onClick={() => window.open('https://repair-tracking-system-hope.vercel.app/', '_blank')}
-                               sx={{ 
-                                 borderRadius: 2, 
-                                 px: 4, 
-                                 py: 1.5,
-                                 fontSize: '1rem',
-                                 fontWeight: 600
-                               }}
-                             >
-                               Open Repair Tracking System
-                             </Button>
-                            <Typography variant="body2" sx={{ mt: 2, color: 'text.secondary', fontSize: '0.85rem' }}>
-                              Patient: {watch('name')}{!isAudiologist && ` | Phone: ${watch('phone')}`}
-                            </Typography>
-                          </Box>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
 
                     {/* Counselling Details */}
                     {currentVisit.counselling && (
-                      <Card sx={{ mb: 4, bgcolor: 'info.50', borderRadius: 2 }}>
-                        <CardContent sx={{ p: 3 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                              <MedicalIcon sx={{ color: 'info.main' }} />
-                              <Typography variant="h6" sx={{ fontWeight: 600, color: 'info.main' }}>
-                                Counselling & Speech Therapy
-                              </Typography>
-                            </Box>
-                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                              💬 Patient counselling and therapy services
+                      <VisitServiceDetailPanel
+                        accent="info"
+                        icon={<MedicalIcon sx={{ fontSize: 22 }} />}
+                        title="Counselling & speech therapy"
+                        subtitle="Session type, clinician, notes, and a quick summary preview."
+                      >
+                            <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 1.25 }}>
+                              Session
                             </Typography>
-                          </Box>
-
-                          <Box sx={{ 
-                            p: 3, 
-                            bgcolor: 'background.paper', 
-                            borderRadius: 2, 
-                            border: 1, 
-                            borderColor: 'info.200'
-                          }}>
-                            <Typography variant="h6" sx={{ mb: 3, fontWeight: 600, color: 'info.main' }}>
-                              Session Details
-                            </Typography>
-                            
-                            <Grid container spacing={3}>
+                            <Grid container spacing={2}>
                               <Grid item xs={12} md={6}>
                                 <FormControl fullWidth>
                                   <InputLabel>Session Type</InputLabel>
@@ -8794,7 +9000,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   >
                                     {getStaffOptionsForField('testBy').map(option => (
                                       <MenuItem key={option} value={option}>
-                                        👤 {option}
+                                        {option}
                                       </MenuItem>
                                     ))}
                                   </Select>
@@ -8811,23 +9017,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     updateVisit(activeVisit, 'visitNotes', prefix + e.target.value);
                                   }}
                                   multiline
-                                  rows={3}
+                                  rows={2}
                                   sx={enquiryFormFieldSx}
                                 />
                               </Grid>
                             </Grid>
 
-                            <Box sx={{ mt: 3, p: 2, bgcolor: 'info.50', borderRadius: 2 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 500, color: 'info.main', mb: 1 }}>
-                                📋 Session Summary:
+                            <Box
+                              sx={(t) => ({
+                                mt: 2,
+                                p: 1.75,
+                                borderRadius: '8px',
+                                border: '1px solid',
+                                borderColor: alpha(t.palette.info.main, t.palette.mode === 'light' ? 0.22 : 0.35),
+                                bgcolor: alpha(t.palette.info.main, t.palette.mode === 'light' ? 0.05 : 0.1),
+                              })}
+                            >
+                              <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                Summary
                               </Typography>
-                              <Typography variant="body2" color="text.secondary">
+                              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
                                 {currentVisit.visitNotes || 'No session details recorded yet'}
                               </Typography>
                             </Box>
-                          </Box>
-                        </CardContent>
-                      </Card>
+                      </VisitServiceDetailPanel>
                     )}
                   </Box>
                 )}
@@ -8835,308 +9048,335 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             </Paper>
 
             {/* Follow-ups */}
-            <Card elevation={2} sx={{ mb: 4, borderRadius: 2 }}>
-              <CardContent sx={{ p: 4 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <EventIcon sx={{ color: 'success.main', fontSize: 28 }} />
-                    <Typography variant="h5" sx={{ fontWeight: 600, color: 'success.main' }}>
-                      Follow-ups & Communications
-                </Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                    📞 Track all patient communications and schedule follow-ups
-                  </Typography>
-                </Box>
-                
-                {/* Enhanced Add Follow-up Form */}
-                <Card sx={{ p: 4, mb: 4, bgcolor: 'success.50', borderRadius: 2, border: 1, borderColor: 'success.200' }}>
-                  <Typography variant="h6" sx={{ mb: 3, fontWeight: 600, color: 'success.main' }}>
-                    Record New Follow-up
-                  </Typography>
-                  
-                  {/* All Fields in One Row */}
-                  <Grid container spacing={2} sx={{ mb: 3 }}>
-                    <Grid item xs={12} md={2}>
-                      <EnquiryFormDatePicker
-                        label="Follow-up Date *"
-                        value={currentFollowUp.date}
-                        onChange={(v) => handleFollowUpChange('date', v)}
-                        required
-                        sx={enquiryFormFieldSx}
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={2.5}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <FormControl fullWidth size="small" required sx={{ minWidth: 200 }}>
-                          <InputLabel>Call Done By *</InputLabel>
-                          <Select
-                            value={currentFollowUp.callerName}
-                            onChange={(e) =>
-                              handleFollowUpChange('callerName', e.target.value)
-                            }
-                            label="Call Done By *"
-                            sx={{ borderRadius: 2 }}
-                            MenuProps={mergeMenuPropsForReselectClear(
-                              currentFollowUp.callerName,
-                              () => handleFollowUpChange('callerName', ''),
-                              undefined
-                            )}
-                          >
-                            {getStaffOptionsForField('telecaller').map(option => (
-                              <MenuItem key={option} value={option}>
-                                👤 {option}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
-                        <IconButton
-                          onClick={() => {
-                            setCurrentField('telecaller');
-                            setStaffManagementOpen(true);
-                          }}
-                          sx={{
-                            bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
-                            color: 'primary.main',
-                            '&:hover': {
-                              bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
-                            },
-                            minWidth: '28px',
-                            height: '28px',
-                          }}
-                          title="Edit Call Done By Options"
-                          size="small"
-                        >
-                          <EditIcon sx={{ fontSize: '16px' }} />
-                        </IconButton>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={12} md={5.5}>
-                      <TextField
-                        fullWidth
-                        label="Remarks/Notes"
-                        placeholder="What was discussed? Any important notes..."
-                        value={currentFollowUp.remarks}
-                        onChange={(e) => handleFollowUpChange('remarks', e.target.value)}
-                        multiline
-                        minRows={1}
-                        maxRows={4}
-                        sx={[
-                          enquiryFormFieldSx,
-                          {
-                            '& .MuiOutlinedInput-root': {
-                              alignItems: 'flex-start',
-                            },
-                            '& .MuiInputBase-input': {
-                              resize: 'none',
-                            },
-                          },
-                        ]}
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={2}>
-                      <EnquiryFormDatePicker
-                        label="Next Follow-up Date"
-                        value={currentFollowUp.nextFollowUpDate}
-                        onChange={(v) => handleFollowUpChange('nextFollowUpDate', v)}
-                        sx={enquiryFormFieldSx}
-                      />
-                    </Grid>
-                  </Grid>
-
-                  {/* Quick Date Suggestions */}
-                  <Box sx={{ mb: 3 }}>
-                    <Typography variant="body2" sx={{ mb: 1, fontWeight: 500, color: 'success.main' }}>
-                      💡 Quick Next Follow-up Options:
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      {getNextFollowUpSuggestions().map((suggestion) => (
-                        <Chip
-                          key={suggestion.label}
-                          label={suggestion.label}
-                          variant="outlined"
-                          size="small"
-                          clickable
-                          onClick={() => handleFollowUpChange('nextFollowUpDate', suggestion.date)}
-                          color={currentFollowUp.nextFollowUpDate === suggestion.date ? 'success' : 'default'}
-                          sx={{ cursor: 'pointer' }}
-                        />
-                      ))}
+            <VisitServiceDetailPanel
+              accent="success"
+              icon={<EventIcon sx={{ fontSize: 22 }} />}
+              title="Follow-ups & communications"
+              subtitle="Log each touchpoint, who called, and when to follow up next."
+            >
+                <Box
+                  sx={(t) => ({
+                    mb: 2.5,
+                    p: { xs: 1.75, sm: 2.25 },
+                    borderRadius: '12px',
+                    border: '1px solid',
+                    borderColor: alpha(t.palette.success.main, t.palette.mode === 'light' ? 0.28 : 0.4),
+                    bgcolor: alpha(t.palette.success.main, t.palette.mode === 'light' ? 0.035 : 0.1),
+                    boxShadow:
+                      t.palette.mode === 'light'
+                        ? '0 1px 0 rgba(255,255,255,0.7) inset, 0 8px 24px rgba(15, 23, 42, 0.04)'
+                        : 'none',
+                  })}
+                >
+                  <Stack spacing={2}>
+                    <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+                      <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 0 }}>
+                        New follow-up
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500 }}>
+                        Same date and time format as telecalling records
+                      </Typography>
                     </Box>
-                  </Box>
 
-                  {/* Add Button */}
-                  <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <Button 
-                        variant="contained" 
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={6}>
+                        <EnquiryFormDateTimePicker
+                          label="Call date & time *"
+                          value={currentFollowUp.dateTime}
+                          onChange={(v) => handleFollowUpChange('dateTime', v)}
+                          required
+                          helperText="When this call happened"
+                          sx={enquiryFormFieldSx}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={6}>
+                        <EnquiryFormDateTimePicker
+                          label="Next follow-up date & time"
+                          value={currentFollowUp.nextFollowUpDateTime}
+                          onChange={(v) => handleFollowUpChange('nextFollowUpDateTime', v)}
+                          helperText="Optional — schedule the next touchpoint"
+                          sx={enquiryFormFieldSx}
+                        />
+                      </Grid>
+                      <Grid item xs={12}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <FormControl fullWidth size="small" required sx={{ minWidth: 200, flex: '1 1 240px' }}>
+                            <InputLabel>Call done by *</InputLabel>
+                            <Select
+                              value={currentFollowUp.callerName}
+                              onChange={(e) => handleFollowUpChange('callerName', e.target.value)}
+                              label="Call done by *"
+                              sx={{ borderRadius: 2 }}
+                              MenuProps={mergeMenuPropsForReselectClear(
+                                currentFollowUp.callerName,
+                                () => handleFollowUpChange('callerName', ''),
+                                undefined
+                              )}
+                            >
+                              {getStaffOptionsForField('telecaller').map((option) => (
+                                <MenuItem key={option} value={option}>
+                                  {option}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                          <IconButton
+                            onClick={() => {
+                              setCurrentField('telecaller');
+                              setStaffManagementOpen(true);
+                            }}
+                            sx={{
+                              bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.22 : 0.12),
+                              color: 'primary.main',
+                              '&:hover': {
+                                bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === 'dark' ? 0.32 : 0.2),
+                              },
+                              width: 40,
+                              height: 40,
+                            }}
+                            title="Edit call done by options"
+                            size="small"
+                          >
+                            <EditIcon sx={{ fontSize: '18px' }} />
+                          </IconButton>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12}>
+                        <TextField
+                          fullWidth
+                          label="Remarks / notes"
+                          placeholder="What was discussed? Outcomes, objections, promises…"
+                          value={currentFollowUp.remarks}
+                          onChange={(e) => handleFollowUpChange('remarks', e.target.value)}
+                          multiline
+                          minRows={2}
+                          maxRows={5}
+                          sx={[
+                            enquiryFormFieldSx,
+                            {
+                              '& .MuiOutlinedInput-root': { alignItems: 'flex-start' },
+                              '& .MuiInputBase-input': { resize: 'none' },
+                            },
+                          ]}
+                        />
+                      </Grid>
+                    </Grid>
+
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', display: 'block', mb: 1 }}>
+                        Quick next follow-up
+                      </Typography>
+                      <Stack direction="row" flexWrap="wrap" gap={1} useFlexGap>
+                        {getNextFollowUpSuggestions().map((suggestion) => (
+                          <Chip
+                            key={suggestion.label}
+                            label={suggestion.label}
+                            variant={currentFollowUp.nextFollowUpDateTime === suggestion.dateTime ? 'filled' : 'outlined'}
+                            size="small"
+                            clickable
+                            onClick={() => applyNextFollowUpSuggestion(suggestion)}
+                            color={currentFollowUp.nextFollowUpDateTime === suggestion.dateTime ? 'success' : 'default'}
+                            sx={{ cursor: 'pointer', fontWeight: 600, borderRadius: '999px' }}
+                          />
+                        ))}
+                      </Stack>
+                    </Box>
+
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', pt: 0.5 }}>
+                      <Button
+                        variant="contained"
                         onClick={addFollowUp}
                         startIcon={<AddIcon />}
-                      size="medium"
-                      sx={{ borderRadius: 2, px: 4 }}
-                      disabled={!currentFollowUp.date.trim() || !currentFollowUp.callerName.trim() || (!currentFollowUp.remarks.trim() && !currentFollowUp.nextFollowUpDate.trim())}
+                        size="medium"
+                        sx={{ borderRadius: '10px', px: 3, py: 1, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}
+                        disabled={
+                          !currentFollowUp.dateTime?.trim() ||
+                          !currentFollowUp.callerName.trim() ||
+                          (!currentFollowUp.remarks.trim() &&
+                            !currentFollowUp.nextFollowUpDateTime?.trim() &&
+                            !currentFollowUp.nextFollowUpDate?.trim())
+                        }
                       >
-                      Add Follow-up
+                        Add follow-up
                       </Button>
-                  </Box>
-                </Card>
+                    </Box>
+                  </Stack>
+                </Box>
 
-                {/* Follow-ups List */}
                 {followUps.length > 0 ? (
                       <Box>
-                    <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, color: 'text.primary' }}>
-                      Follow-up History ({followUps.length})
+                    <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 1.5 }}>
+                      History ({followUps.length})
                         </Typography>
                     {followUps.map((followUp, index) => {
                       return (
-                         <Card 
+                         <Box 
                            key={followUp.id} 
-                           sx={{ 
-                             p: 3, 
-                             mb: 2, 
-                             borderRadius: 2, 
-                             border: 1, 
-                             borderColor: 'info.200',
-                             bgcolor: 'background.paper'
-                           }}
+                           sx={(t) => ({
+                             p: 2,
+                             mb: 1.5,
+                             borderRadius: '10px',
+                             border: '1px solid',
+                             borderColor: 'divider',
+                             bgcolor: 'background.paper',
+                             transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+                             '&:hover': {
+                               borderColor: alpha(t.palette.primary.main, 0.35),
+                               boxShadow: t.palette.mode === 'light' ? '0 2px 8px rgba(15, 23, 42, 0.06)' : 'none',
+                             },
+                           })}
                          >
                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                             <Box sx={{ flex: 1 }}>
-                               {/* Header */}
-                               <Typography variant="h6" sx={{ fontWeight: 600, color: 'primary.main', mb: 2 }}>
-                                 📞 {followUp.date} - {followUp.callerName}
-                        </Typography>
-                              
-                              {/* Content */}
+                             <Box sx={{ flex: 1, minWidth: 0 }}>
+                             <Typography variant="overline" sx={{ fontWeight: 700, color: 'success.main', letterSpacing: '0.08em' }}>
+                               Call logged
+                             </Typography>
+                             <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'text.primary', mt: 0.25, mb: 0.5 }}>
+                               {formatEnquiryFollowUpWhen(followUp.dateTime, followUp.date)}
+                             </Typography>
+                             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mb: followUp.remarks ? 1.25 : 0 }}>
+                               {followUp.callerName}
+                             </Typography>
+
                               {followUp.remarks && (
-                                <Typography variant="body1" sx={{ color: 'text.secondary', mb: 2, lineHeight: 1.6 }}>
-                                  💬 {followUp.remarks}
+                                <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5, lineHeight: 1.6 }}>
+                                  {followUp.remarks}
                                 </Typography>
                               )}
-                              
-                              {/* Next Follow-up */}
-                        {followUp.nextFollowUpDate && (
+
+                        {(followUp.nextFollowUpDateTime || followUp.nextFollowUpDate) && (
                           <Chip
-                                  label={`📅 Next: ${followUp.nextFollowUpDate}`}
+                                  label={`Next · ${formatEnquiryFollowUpWhen(followUp.nextFollowUpDateTime, followUp.nextFollowUpDate)}`}
                                   color="info"
                             variant="outlined"
                             size="small"
+                            sx={{ borderRadius: '999px', fontWeight: 600 }}
                           />
                         )}
                       </Box>
                             
-                            {/* Actions */}
-                            <Box sx={{ ml: 2 }}>
+                            <Box sx={{ ml: 1.5, flexShrink: 0 }}>
                               <IconButton 
                                 onClick={() => removeFollowUp(index)} 
                                 color="error"
-                                title="Delete Follow-up"
-                                sx={{ '&:hover': { bgcolor: 'error.100' } }}
+                                title="Delete follow-up"
+                                size="small"
+                                sx={{ '&:hover': { bgcolor: 'error.50' } }}
                               >
-                        <DeleteIcon />
+                        <DeleteIcon fontSize="small" />
                       </IconButton>
                             </Box>
                     </Box>
-                  </Card>
+                  </Box>
                       );
                     })}
                   </Box>
                 ) : (
                   <Box sx={{ 
                     textAlign: 'center', 
-                    py: 6, 
-                    bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : t.palette.grey[50]), 
-                    borderRadius: 2,
-                    border: 1,
+                    py: 5, 
+                    px: 2,
+                    bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : alpha(t.palette.text.primary, 0.03)), 
+                    borderRadius: '10px',
+                    border: '1px dashed',
                     borderColor: 'divider',
-                    borderStyle: 'dashed'
                   }}>
-                    <EventIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 2 }} />
-                    <Typography variant="h6" color="text.secondary" gutterBottom>
-                      No follow-ups recorded yet
+                    <EventIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1.5, opacity: 0.75 }} />
+                    <Typography variant="subtitle1" color="text.secondary" sx={{ fontWeight: 600 }} gutterBottom>
+                      No follow-ups yet
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Add your first follow-up to track patient communications
+                      Add the first entry with the form above.
                     </Typography>
                   </Box>
                 )}
-              </CardContent>
-            </Card>
+            </VisitServiceDetailPanel>
 
             {/* Payments Section */}
-            <Card elevation={2} sx={{ mb: 4, borderRadius: 2 }}>
-              <CardContent sx={{ p: 4 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <RupeeIcon sx={{ color: 'info.main', fontSize: 28 }} />
-                    <Typography variant="h5" sx={{ fontWeight: 600, color: 'info.main' }}>
-                      Payments & Billing
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
-                    💰 Auto-calculated from services and products
+            <VisitServiceDetailPanel
+              accent="info"
+              icon={<RupeeIcon sx={{ fontSize: 22 }} />}
+              title="Payments & billing"
+              subtitle="Totals follow visits and products; record money in, refunds, and references."
+            >
+                <Box
+                  sx={(t) => ({
+                    mb: 2.5,
+                    p: { xs: 1.75, sm: 2.25 },
+                    borderRadius: '12px',
+                    border: '1px solid',
+                    borderColor: alpha(t.palette.info.main, t.palette.mode === 'light' ? 0.25 : 0.45),
+                    bgcolor: alpha(t.palette.info.main, t.palette.mode === 'light' ? 0.04 : 0.12),
+                    boxShadow:
+                      t.palette.mode === 'light'
+                        ? '0 1px 0 rgba(255,255,255,0.65) inset, 0 10px 28px rgba(15, 23, 42, 0.05)'
+                        : 'none',
+                  })}
+                >
+                  <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 2 }}>
+                    Summary
                   </Typography>
+                  <Grid container spacing={1.5}>
+                    {[
+                      { label: 'Total due', value: formatCurrency(calculateTotalDue()), color: 'info.main' as const },
+                      { label: 'Money in', value: formatCurrency(calculateTotalIncoming()), color: 'success.main' as const },
+                      { label: 'Money out (refunds)', value: formatCurrency(calculateTotalOutgoing()), color: 'error.main' as const },
+                      { label: 'Net collected', value: formatCurrency(calculateTotalPaid()), color: 'primary.main' as const, caption: `Outstanding ${formatCurrency(calculateOutstanding())}` },
+                    ].map((stat) => (
+                      <Grid item xs={6} md={3} key={stat.label}>
+                        <Box
+                          sx={(t) => ({
+                            height: '100%',
+                            textAlign: 'center',
+                            py: 1.75,
+                            px: 1,
+                            borderRadius: '10px',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            bgcolor: t.palette.mode === 'light' ? alpha(t.palette.common.white, 0.72) : alpha(t.palette.common.white, 0.04),
+                          })}
+                        >
+                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                            {stat.label}
+                          </Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 800, color: stat.color, mt: 0.75, lineHeight: 1.2 }}>
+                            {stat.value}
+                          </Typography>
+                          {stat.caption ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                              {stat.caption}
+                            </Typography>
+                          ) : null}
+                        </Box>
+                      </Grid>
+                    ))}
+                    <Grid item xs={12}>
+                      <Box sx={{ display: 'flex', justifyContent: 'center', pt: 0.5 }}>
+                        <Chip
+                          label={calculateOutstanding() <= 0 ? 'Fully paid' : 'Balance pending'}
+                          color={calculateOutstanding() <= 0 ? 'success' : 'warning'}
+                          variant="filled"
+                          sx={{ fontWeight: 700, borderRadius: '999px', px: 1 }}
+                        />
+                      </Box>
+                    </Grid>
+                  </Grid>
                 </Box>
 
-                {/* Payment Summary */}
-                <Card sx={{ mb: 4, bgcolor: 'info.50', borderRadius: 2 }}>
-                  <CardContent sx={{ p: 3 }}>
-                    <Typography variant="h6" sx={{ mb: 3, fontWeight: 600, color: 'info.main' }}>
-                      Payment Summary
-                    </Typography>
-                    <Grid container spacing={3}>
-                      <Grid item xs={12} md={3}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <Typography variant="body2" color="text.secondary">Total Due</Typography>
-                          <Typography variant="h5" sx={{ fontWeight: 700, color: 'info.main' }}>
-                            {formatCurrency(calculateTotalDue())}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <Typography variant="body2" color="text.secondary">Money In</Typography>
-                          <Typography variant="h5" sx={{ fontWeight: 700, color: 'success.main' }}>
-                            {formatCurrency(calculateTotalIncoming())}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <Typography variant="body2" color="text.secondary">Money Out (Refunds)</Typography>
-                          <Typography variant="h5" sx={{ fontWeight: 700, color: 'error.main' }}>
-                            {formatCurrency(calculateTotalOutgoing())}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={3}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <Typography variant="body2" color="text.secondary">Net Collected</Typography>
-                          <Typography variant="h5" sx={{ fontWeight: 700, color: 'primary.main' }}>
-                            {formatCurrency(calculateTotalPaid())}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Outstanding: {formatCurrency(calculateOutstanding())}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12}>
-                        <Box sx={{ textAlign: 'center', mt: -1 }}>
-                          <Chip 
-                            label={calculateOutstanding() <= 0 ? 'Fully Paid' : 'Pending'} 
-                            color={calculateOutstanding() <= 0 ? 'success' : 'warning'}
-                            variant="filled"
-                            sx={{ fontWeight: 600 }}
-                          />
-                        </Box>
-                      </Grid>
-                    </Grid>
-                  </CardContent>
-                </Card>
-
-                {/* Add Payment Form */}
-                <Card sx={{ p: 3, mb: 3, bgcolor: 'background.paper', borderRadius: 2, border: 1, borderColor: 'divider' }}>
-                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                    Record New Payment
+                <Box
+                  sx={(t) => ({
+                    mb: 2,
+                    p: { xs: 1.75, sm: 2.25 },
+                    borderRadius: '12px',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    bgcolor: t.palette.mode === 'light' ? alpha(t.palette.common.black, 0.02) : alpha(t.palette.common.white, 0.04),
+                    boxShadow:
+                      t.palette.mode === 'light' ? '0 8px 24px rgba(15, 23, 42, 0.04)' : 'none',
+                  })}
+                >
+                  <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 2 }}>
+                    Record payment
                   </Typography>
                   
                   {/* First Row - Payment Purpose */}
@@ -9264,7 +9504,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         sx={enquiryFormFieldSx}
                       />
                     </Grid>
-                    <Grid item xs={12} md={3}>
+                    <Grid item xs={12} md={2}>
                       <TextField
                         fullWidth
                         label="Remarks"
@@ -9275,26 +9515,35 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         sx={enquiryFormFieldSx}
                       />
                     </Grid>
-                    <Grid item xs={12} md={1}>
+                    <Grid item xs={12} md={2}>
                       <Button
                         fullWidth
                         variant="contained"
                         onClick={addPayment}
                         startIcon={<AddIcon />}
-                        size="small"
+                        size="medium"
                         disabled={currentPayment.amount <= 0}
-                        sx={{ borderRadius: 2, minHeight: 40 }}
+                        sx={{ borderRadius: '10px', minHeight: 42, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}
                       >
-                        Add
+                        Add payment
                       </Button>
                     </Grid>
                   </Grid>
 
                   {/* Quick Payment Suggestions */}
                   {calculateTotalDue() > 0 && (
-                    <Box sx={{ mt: 2, p: 2, bgcolor: 'info.50', borderRadius: 2 }}>
-                      <Typography variant="body2" sx={{ mb: 1, fontWeight: 500, color: 'info.main' }}>
-                        💡 Quick Payment Options:
+                    <Box
+                      sx={(t) => ({
+                        mt: 2,
+                        p: 1.75,
+                        borderRadius: '8px',
+                        border: '1px solid',
+                        borderColor: alpha(t.palette.info.main, t.palette.mode === 'light' ? 0.2 : 0.35),
+                        bgcolor: alpha(t.palette.info.main, t.palette.mode === 'light' ? 0.04 : 0.1),
+                      })}
+                    >
+                      <Typography component="h4" sx={{ ...enquiryGroupTitleSx, mb: 1 }}>
+                        Quick payment options
                       </Typography>
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                         {getAvailablePaymentOptions()
@@ -9333,24 +9582,43 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       </Box>
                     </Box>
                   )}
-                </Card>
+                </Box>
 
                 {/* Payments Table */}
                 {(() => {
                   const payments = getValues('payments');
                   return payments.length > 0 ? (
-                    <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-                      <Table>
+                    <Box>
+                    <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 1.25 }}>
+                      Payment ledger
+                    </Typography>
+                    <TableContainer
+                      component={Paper}
+                      elevation={0}
+                      sx={(t) => ({
+                        borderRadius: '10px',
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        overflow: 'hidden',
+                        bgcolor: 'background.paper',
+                        boxShadow: t.palette.mode === 'light' ? '0 1px 3px rgba(15, 23, 42, 0.05)' : 'none',
+                      })}
+                    >
+                      <Table size="small">
                                                  <TableHead>
-                           <TableRow sx={{ bgcolor: 'info.100' }}>
-                             <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
-                             <TableCell sx={{ fontWeight: 600 }}>Payment For</TableCell>
-                             <TableCell sx={{ fontWeight: 600 }}>Direction</TableCell>
-                             <TableCell sx={{ fontWeight: 600 }}>Amount</TableCell>
-                             <TableCell sx={{ fontWeight: 600 }}>Payment Mode</TableCell>
-                             <TableCell sx={{ fontWeight: 600 }}>Reference</TableCell>
-                             <TableCell sx={{ fontWeight: 600 }}>Remarks</TableCell>
-                             <TableCell sx={{ fontWeight: 600 }}>Actions</TableCell>
+                           <TableRow
+                             sx={(t) => ({
+                               bgcolor: alpha(t.palette.primary.main, t.palette.mode === 'light' ? 0.06 : 0.14),
+                             })}
+                           >
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Date</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Payment For</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Direction</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Amount</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Payment Mode</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Reference</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Remarks</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Actions</TableCell>
                            </TableRow>
                          </TableHead>
                          <TableBody>
@@ -9432,28 +9700,46 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                              );
                            })}
                         </TableBody>
-                                                 <TableHead>
-                           <TableRow sx={{ bgcolor: 'success.50' }}>
-                             <TableCell sx={{ fontWeight: 700 }}>Net Collected</TableCell>
-                             <TableCell></TableCell>
-                             <TableCell></TableCell>
-                             <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>
+                                                 <TableFooter>
+                           <TableRow
+                             sx={(t) => ({
+                               bgcolor: alpha(t.palette.success.main, t.palette.mode === 'light' ? 0.08 : 0.12),
+                             })}
+                           >
+                             <TableCell sx={{ fontWeight: 700, py: 1.25 }}>Net collected</TableCell>
+                             <TableCell sx={{ py: 1.25 }} />
+                             <TableCell sx={{ py: 1.25 }} />
+                             <TableCell sx={{ fontWeight: 700, py: 1.25, color: 'primary.main' }}>
                                {formatCurrency(calculateTotalPaid())}
                              </TableCell>
-                             <TableCell colSpan={4}></TableCell>
+                             <TableCell colSpan={4} sx={{ py: 1.25 }} />
                            </TableRow>
-                         </TableHead>
+                         </TableFooter>
                       </Table>
                     </TableContainer>
+                    </Box>
                   ) : (
-                    <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
-                      <Typography variant="h6">No payments recorded yet</Typography>
-                      <Typography variant="body2">Add a payment above to get started</Typography>
+                    <Box
+                      sx={(t) => ({
+                        textAlign: 'center',
+                        py: 4,
+                        px: 2,
+                        borderRadius: '10px',
+                        border: '1px dashed',
+                        borderColor: 'divider',
+                        color: 'text.secondary',
+                        bgcolor: alpha(t.palette.text.primary, t.palette.mode === 'light' ? 0.02 : 0.06),
+                      })}
+                    >
+                      <RupeeIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1.5, opacity: 0.7 }} />
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                        No payments yet
+                      </Typography>
+                      <Typography variant="body2">Add a payment using the form above.</Typography>
                     </Box>
                   );
                 })()}
-              </CardContent>
-            </Card>
+            </VisitServiceDetailPanel>
           </Box>
         )}
 
@@ -9843,46 +10129,50 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
             {followUps.length > 0 && (
               <Card elevation={3} sx={{ p: 4, mb: 4, borderRadius: 3 }}>
-                <Typography variant="h5" sx={{ mb: 3, fontWeight: 600, color: 'success.main' }}>
-                  📞 Follow-ups & Communications ({followUps.length})
+                <Typography variant="h5" sx={{ mb: 0.5, fontWeight: 700, color: 'success.main' }}>
+                  Follow-ups and communications
                 </Typography>
-                                 {followUps.map((followUp, index) => {
-                   return (
-                     <Box 
-                       key={followUp.id} 
-                       sx={{ 
-                         mb: index < followUps.length - 1 ? 3 : 0, 
-                         p: 3, 
-                         bgcolor: 'info.50', 
-                         borderRadius: 2, 
-                         border: 1, 
-                         borderColor: 'info.200'
-                       }}
-                     >
-                       {/* Header */}
-                       <Typography variant="h6" sx={{ fontWeight: 600, color: 'primary.main', mb: 2 }}>
-                         📞 {followUp.date} - {followUp.callerName}
-                    </Typography>
-                      
-                      {/* Content */}
-                      {followUp.remarks && (
-                        <Typography variant="body1" sx={{ mt: 1, mb: 2 }}>
-                          💬 {followUp.remarks}
-                    </Typography>
-                      )}
-                      
-                      {/* Next follow-up */}
-                    {followUp.nextFollowUpDate && (
-                      <Chip
-                          label={`📅 Next: ${followUp.nextFollowUpDate}`}
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  {followUps.length} {followUps.length === 1 ? 'entry' : 'entries'} on file
+                </Typography>
+                <Stack spacing={2}>
+                  {followUps.map((followUp) => (
+                    <Box
+                      key={followUp.id}
+                      sx={(t) => ({
+                        p: 2.5,
+                        borderRadius: '12px',
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        bgcolor: t.palette.mode === 'light' ? alpha(t.palette.success.main, 0.04) : alpha(t.palette.success.main, 0.1),
+                      })}
+                    >
+                      <Typography variant="overline" sx={{ fontWeight: 800, color: 'success.main', letterSpacing: '0.08em' }}>
+                        Call
+                      </Typography>
+                      <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary', mt: 0.25 }}>
+                        {formatEnquiryFollowUpWhen(followUp.dateTime, followUp.date)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mb: followUp.remarks ? 1.5 : 0 }}>
+                        {followUp.callerName}
+                      </Typography>
+                      {followUp.remarks ? (
+                        <Typography variant="body2" sx={{ color: 'text.secondary', lineHeight: 1.65, mb: 1.5 }}>
+                          {followUp.remarks}
+                        </Typography>
+                      ) : null}
+                      {(followUp.nextFollowUpDateTime || followUp.nextFollowUpDate) && (
+                        <Chip
+                          label={`Next · ${formatEnquiryFollowUpWhen(followUp.nextFollowUpDateTime, followUp.nextFollowUpDate)}`}
                           color="info"
-                        variant="outlined"
-                        size="small"
-                      />
-                    )}
-                  </Box>
-                  );
-                })}
+                          variant="outlined"
+                          size="small"
+                          sx={{ borderRadius: '999px', fontWeight: 600 }}
+                        />
+                      )}
+                    </Box>
+                  ))}
+                </Stack>
               </Card>
             )}
 
@@ -9895,50 +10185,59 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
               return (
                 <Card elevation={3} sx={{ p: 4, borderRadius: 3 }}>
-                  <Typography variant="h5" sx={{ mb: 3, fontWeight: 600, color: 'info.main' }}>
-                    Payment Summary
+                  <Typography variant="h5" sx={{ mb: 0.5, fontWeight: 700, color: 'info.main' }}>
+                    Payment summary
                   </Typography>
-                  
-                  {/* Financial Overview */}
-                  <Grid container spacing={3} sx={{ mb: 3 }}>
-                    <Grid item xs={12} md={3}>
-                      <Box sx={{ p: 2, bgcolor: 'info.50', borderRadius: 2, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">Total Amount</Typography>
-                        <Typography variant="h6" sx={{ fontWeight: 600, color: 'info.main' }}>
-                          {formatCurrency(totalDue)}
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={12} md={3}>
-                      <Box sx={{ p: 2, bgcolor: 'success.50', borderRadius: 2, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">Money In</Typography>
-                        <Typography variant="h6" sx={{ fontWeight: 600, color: 'success.main' }}>
-                          {formatCurrency(calculateTotalIncoming())}
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={12} md={3}>
-                      <Box sx={{ p: 2, bgcolor: 'error.50', borderRadius: 2, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">Money Out (Refunds)</Typography>
-                        <Typography variant="h6" sx={{ fontWeight: 600, color: 'error.main' }}>
-                          {formatCurrency(calculateTotalOutgoing())}
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={12} md={3}>
-                      <Box sx={{ p: 2, bgcolor: 'grey.100', borderRadius: 2, textAlign: 'center' }}>
-                        <Typography variant="body2" color="text.secondary">Net Collected</Typography>
-                        <Typography variant="h6" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                          {formatCurrency(totalPaid)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                          Outstanding: {formatCurrency(outstanding)}
-                        </Typography>
-                        <Chip 
-                          label={outstanding <= 0 ? 'Fully Paid' : 'Pending'} 
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                    Ledger totals before you submit
+                  </Typography>
+
+                  <Grid container spacing={1.5} sx={{ mb: 3 }}>
+                    {[
+                      { label: 'Total amount', value: formatCurrency(totalDue), color: 'info.main' as const },
+                      { label: 'Money in', value: formatCurrency(calculateTotalIncoming()), color: 'success.main' as const },
+                      { label: 'Money out (refunds)', value: formatCurrency(calculateTotalOutgoing()), color: 'error.main' as const },
+                      {
+                        label: 'Net collected',
+                        value: formatCurrency(totalPaid),
+                        color: 'primary.main' as const,
+                        caption: `Outstanding ${formatCurrency(outstanding)}`,
+                      },
+                    ].map((stat) => (
+                      <Grid item xs={6} md={3} key={stat.label}>
+                        <Box
+                          sx={(t) => ({
+                            height: '100%',
+                            textAlign: 'center',
+                            py: 1.75,
+                            px: 1,
+                            borderRadius: '12px',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            bgcolor: t.palette.mode === 'light' ? alpha(t.palette.common.white, 0.85) : alpha(t.palette.common.white, 0.05),
+                          })}
+                        >
+                          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                            {stat.label}
+                          </Typography>
+                          <Typography variant="h6" sx={{ fontWeight: 800, color: stat.color, mt: 0.75, lineHeight: 1.2 }}>
+                            {stat.value}
+                          </Typography>
+                          {stat.caption ? (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                              {stat.caption}
+                            </Typography>
+                          ) : null}
+                        </Box>
+                      </Grid>
+                    ))}
+                    <Grid item xs={12}>
+                      <Box sx={{ display: 'flex', justifyContent: 'center', pt: 0.5 }}>
+                        <Chip
+                          label={outstanding <= 0 ? 'Fully paid' : 'Balance pending'}
                           color={outstanding <= 0 ? 'success' : 'warning'}
                           variant="filled"
-                          sx={{ fontWeight: 600, mt: 1 }}
+                          sx={{ fontWeight: 700, borderRadius: '999px', px: 1 }}
                         />
                       </Box>
                     </Grid>
