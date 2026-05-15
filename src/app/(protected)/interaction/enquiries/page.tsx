@@ -120,7 +120,7 @@ import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProp
 import { logActivity, computeChanges } from '@/lib/activityLogger';
 import {
   composeEnquiryAddress,
-  normalizeEnquiryAddressText,
+  normalizeEnquiryAddressTextInput,
   normalizeEnquiryPincode,
 } from '@/utils/enquiryAddress';
 import { useCenterScope } from '@/hooks/useCenterScope';
@@ -3027,7 +3027,7 @@ export default function EnquiriesPage() {
     } else {
       let nextVal: string = value as string;
       if (name === 'address' || name === 'addressState') {
-        nextVal = normalizeEnquiryAddressText(nextVal);
+        nextVal = normalizeEnquiryAddressTextInput(nextVal);
       } else if (name === 'addressPincode') {
         nextVal = normalizeEnquiryPincode(nextVal);
       }

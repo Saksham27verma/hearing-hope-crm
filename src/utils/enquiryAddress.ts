@@ -3,11 +3,16 @@
  * "LINE, STATE - PINCODE" for storage in `address`.
  */
 
-export function normalizeEnquiryAddressText(s: string): string {
+/** Uppercase + single spaces; no trim — safe while typing (trim would eat the trailing space before the next word). */
+export function normalizeEnquiryAddressTextInput(s: string): string {
   return String(s || '')
     .toUpperCase()
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/\s+/g, ' ');
+}
+
+/** Final normalization for storage / parsing (trim edges). */
+export function normalizeEnquiryAddressText(s: string): string {
+  return normalizeEnquiryAddressTextInput(s).trim();
 }
 
 export function normalizeEnquiryPincode(s: string): string {

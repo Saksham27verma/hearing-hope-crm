@@ -40,7 +40,7 @@ import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
 import {
   composeEnquiryAddress,
-  normalizeEnquiryAddressText,
+  normalizeEnquiryAddressTextInput,
   normalizeEnquiryPincode,
   parseEnquiryAddressStored,
 } from '@/utils/enquiryAddress';
@@ -4362,7 +4362,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             minRows={2}
                             maxRows={4}
                             value={field.value || ''}
-                            onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
+                            onChange={(e) => field.onChange(normalizeEnquiryAddressTextInput(e.target.value))}
                             sx={enquiryFormFieldSx}
                           />
                         </Box>
@@ -4404,7 +4404,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               error={!!errors.addressState}
                               helperText={errors.addressState?.message}
                               value={field.value || ''}
-                              onChange={(e) => field.onChange(normalizeEnquiryAddressText(e.target.value))}
+                              onChange={(e) => field.onChange(normalizeEnquiryAddressTextInput(e.target.value))}
                               sx={enquiryFormFieldSx}
                             />
                           </Box>
