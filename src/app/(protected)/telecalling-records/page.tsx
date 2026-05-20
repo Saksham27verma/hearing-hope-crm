@@ -78,20 +78,16 @@ import {
   type StaffRecord,
 } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
-
-interface FollowUp {
-  id: string;
-  date: string;
-  dateTime?: string;
-  remarks: string;
-  nextFollowUpDate: string;
-  nextFollowUpDateTime?: string;
-  callerName: string;
-  createdAt?: {
-    seconds: number;
-    nanoseconds: number;
-  };
-}
+import {
+  hasCallAfterDue,
+  isNotInterestedEnquiry,
+  isSoldJourneyLabel,
+  normalizeYmd,
+  parseDateSafe,
+  pickFollowUpDateTime,
+  pickNextFollowUpDateTime,
+  type FollowUp,
+} from '@/lib/telecalling/telecallingAnalytics';
 
 interface Enquiry {
   id?: string;
@@ -221,11 +217,6 @@ function PreviewDetailRow({ label, value }: { label: string; value: string | und
   );
 }
 
-function normalizeYmd(raw: string | undefined): string {
-  if (!raw || typeof raw !== 'string') return '';
-  return raw.trim().slice(0, 10);
-}
-
 function isSameLocalDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -257,20 +248,6 @@ function normalizeNextFollowUpDefault(nextValue: Date, callValue: Date): Date {
   return atTenAm(nextValue);
 }
 
-function isNotInterestedEnquiry(
-  statusLabel: string,
-  enquiryData: Enquiry
-): boolean {
-  const statusNorm = String(statusLabel || '').trim().toLowerCase();
-  const legacyStatusNorm = String(enquiryData.status || '').trim().toLowerCase();
-  const leadOutcomeNorm = String(enquiryData.leadOutcome || '').trim().toLowerCase();
-  return (
-    statusNorm.includes('not interested') ||
-    legacyStatusNorm.includes('not interested') ||
-    leadOutcomeNorm.includes('not interested')
-  );
-}
-
 function toWhatsAppHref(phone: string | undefined): string | null {
   const digits = String(phone || '').replace(/\D/g, '');
   if (!digits) return null;
@@ -282,57 +259,6 @@ function toWhatsAppHref(phone: string | undefined): string | null {
     waDigits = `91${digits.slice(1)}`;
   }
   return `https://wa.me/${waDigits}`;
-}
-
-function parseDateSafe(raw: string | undefined): Date | null {
-  if (!raw || typeof raw !== 'string') return null;
-  const t = raw.trim();
-  if (!t) return null;
-
-  // Prefer date-fns parsing to avoid browser-dependent UTC shifts for strings like `YYYY-MM-DDTHH:mm`.
-  try {
-    // ISO 8601 instant: `...Z` or `...+05:30` — e.g. appointments `start: toISOString()`.
-    // MUST run before the naive `T` branch, or `2026-05-08T11:30:00.000Z` is misread as local 11:30.
-    const hasTzInstant =
-      /[zZ]$/.test(t) ||
-      /T[^+-zZ]*[+-]\d{2}:?\d{2}$/.test(t) ||
-      /T[^+-zZ]*[+-]\d{4}$/.test(t);
-    if (hasTzInstant) {
-      const p = parseISO(t);
-      if (!Number.isNaN(p.getTime())) return p;
-    }
-
-    // Naive local date-time (no Z / offset): from `datetime-local` or stored business-local values.
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t) && !hasTzInstant) {
-      const slice = t.length >= 16 ? t.slice(0, 16) : t;
-      const d = parse(slice, "yyyy-MM-dd'T'HH:mm", new Date());
-      return Number.isNaN(d.getTime()) ? null : d;
-    }
-
-    // Date-only (YYYY-MM-DD): keep a business-friendly default time (10:00 local)
-    // so due calls don't appear at midnight/23:30 artifacts.
-    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-      const d = parse(t, 'yyyy-MM-dd', new Date());
-      d.setHours(10, 0, 0, 0);
-      return Number.isNaN(d.getTime()) ? null : d;
-    }
-
-    const p = parseISO(t);
-    if (!Number.isNaN(p.getTime())) return p;
-  } catch {
-    // fall through
-  }
-
-  const fallback = new Date(t);
-  return Number.isNaN(fallback.getTime()) ? null : fallback;
-}
-
-function pickFollowUpDateTime(followUp: FollowUp): Date | null {
-  return parseDateSafe(followUp.dateTime) || parseDateSafe(followUp.date);
-}
-
-function pickNextFollowUpDateTime(followUp: FollowUp): Date | null {
-  return parseDateSafe(followUp.nextFollowUpDateTime) || parseDateSafe(followUp.nextFollowUpDate);
 }
 
 function pickRecordFollowUpDateTime(record: TelecallingRecord): Date | null {
@@ -371,14 +297,6 @@ function isCancelledVisit(visit: unknown): boolean {
   const v = visit as Record<string, unknown>;
   const status = String(v.status || v.visitStatus || '').toLowerCase();
   return status.includes('cancel');
-}
-
-function hasCallAfterDue(followUps: FollowUp[], dueAt: Date): boolean {
-  return followUps.some((fu) => {
-    const callTime = pickFollowUpDateTime(fu);
-    if (!callTime) return false;
-    return callTime.getTime() >= dueAt.getTime();
-  });
 }
 
 function readAppointmentDateTime(appointment: unknown): Date | null {
@@ -436,11 +354,6 @@ function isCancelledAppointment(appointment: unknown): boolean {
   const a = appointment as Record<string, unknown>;
   const status = String(a.status || '').toLowerCase();
   return status.includes('cancel');
-}
-
-function isSoldJourneyLabel(label: string | undefined): boolean {
-  const t = String(label || '').trim().toLowerCase();
-  return t === 'sold' || t.includes('sold');
 }
 
 const REMARK_PRESETS = [
@@ -641,7 +554,7 @@ export default function TelecallingRecordsPage() {
           nextSnapshots[enquiryId] = rawForStatus;
 
           const statusMeta = getEnquiryStatusMeta(rawForStatus);
-          if (isNotInterestedEnquiry(statusMeta.label, enquiryData)) {
+          if (isNotInterestedEnquiry(statusMeta.label, enquiryData as Record<string, unknown>)) {
             return;
           }
           const referenceList = refList(enquiryData.reference);

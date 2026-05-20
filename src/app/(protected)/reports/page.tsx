@@ -8,6 +8,7 @@ import {
   PendingActions as PendingActionsIcon,
   BookmarkAdded as BookmarkAddedIcon,
   Analytics as AnalyticsIcon,
+  PhoneCallback as PhoneCallbackIcon,
   MonetizationOn as ProfitIcon,
 } from '@mui/icons-material';
 
@@ -16,6 +17,7 @@ import BookedEnquiriesReportTab from '@/components/Reports/BookedEnquiriesReport
 import SalesReportsTab from '@/components/Reports/SalesReportsTab';
 import AssignToReportTab from '@/components/Reports/AssignToReportTab';
 import ExecutiveAnalysisReportTab from '@/components/Reports/ExecutiveAnalysisReportTab';
+import TelecallersAnalysisReportTab from '@/components/Reports/TelecallersAnalysisReportTab';
 import ProfitReportTab from '@/components/Reports/ProfitReportTab';
 import { useAuth } from '@/context/AuthContext';
 import { isSuperAdminViewer } from '@/lib/tenant/centerScope';
@@ -84,6 +86,12 @@ export default function ReportsPage() {
       label: 'Executive Analysis',
       icon: <AnalyticsIcon />,
       content: <ExecutiveAnalysisReportTab />,
+    },
+    {
+      key: 'telecallers-analysis',
+      label: 'Telecallers Analysis',
+      icon: <PhoneCallbackIcon />,
+      content: <TelecallersAnalysisReportTab />,
     },
     ...(showProfitTab
       ? [
