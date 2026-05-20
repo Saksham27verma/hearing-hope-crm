@@ -33,6 +33,7 @@ import { getEnquiryStatusMeta } from '@/utils/enquiryStatus';
 import { fetchAllCenters, getCenterLabel } from '@/utils/centerUtils';
 import EnquiryProfileLink from '@/components/common/EnquiryProfileLink';
 import { getBookingAdvancePaidDateForReport as getBookingAdvancePaidDate } from '@/utils/bookingAdvancePaidDate';
+import { extractBookingVisitCommercials } from '@/utils/bookingVisitDetails';
 
 const Grid = ({ children, ...props }: any) => <MuiGrid {...props}>{children}</MuiGrid>;
 
@@ -95,48 +96,6 @@ function isBookingVisit(visit: any): boolean {
   return hearingAidBooked && !hearingAidSale;
 }
 
-function extractBookingDetails(visit: any) {
-  const ha =
-    visit.hearingAidDetails && typeof visit.hearingAidDetails === 'object'
-      ? visit.hearingAidDetails
-      : {};
-  const products = Array.isArray(visit.products) ? visit.products : [];
-  const first = products[0];
-  const model =
-    String(visit.hearingAidModel || ha.quotation || first?.name || '').trim() || '—';
-  const brand = String(visit.hearingAidBrand || ha.whoSold || first?.company || '').trim() || '—';
-  const bookingDate = String(
-    visit.bookingDate || ha.bookingDate || visit.visitDate || ''
-  ).trim();
-  const bookingAdvance =
-    Number(visit.bookingAdvanceAmount ?? ha.bookingAdvanceAmount ?? 0) || 0;
-  const bookingQty = Math.max(1, Math.floor(Number(visit.bookingQuantity ?? 1)) || 1);
-  const unitSelling =
-    Number(
-      visit.bookingSellingPrice ??
-        ha.bookingSellingPrice ??
-        ha.grossSalesBeforeTax ??
-        0
-    ) || 0;
-  const unitMrpRaw = Number(
-    first?.mrp ?? visit.hearingAidPrice ?? ha.mrp ?? visit.bookingMRP ?? ha.bookingMRP ?? 0,
-  );
-  const grossMrp = Number(visit.grossMRP ?? ha.grossMRP ?? 0);
-  const unitMrp =
-    unitMrpRaw ||
-    (bookingQty > 0 && grossMrp > 0 ? grossMrp / bookingQty : grossMrp > 0 ? grossMrp : 0);
-
-  return {
-    bookingDate: bookingDate || '—',
-    brand,
-    model,
-    unitMrp,
-    bookingQty,
-    unitSelling,
-    bookingAdvance,
-  };
-}
-
 function pickLatestBookingVisit(schedules: any[]): any | null {
   const bookingVisits = schedules.filter(isBookingVisit);
   if (!bookingVisits.length) return null;
@@ -166,6 +125,8 @@ type Row = {
   unitMrp: number;
   qty: number;
   unitSelling: number;
+  /** Selling (per unit) × qty — matches enquiry form "Booking Total". */
+  bookingTotal: number;
   /** MRP × qty — weight for weighted avg discount. */
   lineMrp: number;
   /** (unit MRP − unit selling) × qty when MRP &gt; 0. */
@@ -203,13 +164,15 @@ export default function BookedEnquiriesReportTab() {
         const bv = pickLatestBookingVisit(schedules);
         if (!bv) continue;
 
-        const det = extractBookingDetails(bv);
+        const det = extractBookingVisitCommercials(bv);
         const centerId = (e.center || '').toString().trim();
         const um = Number(det.unitMrp) || 0;
         const us = Number(det.unitSelling) || 0;
         const q = Math.max(1, Math.floor(Number(det.bookingQty) || 1));
+        const bookingTotal = Number(det.bookingTotal) || us * q;
         const lineMrp = um > 0 ? um * q : 0;
-        const lineDiscountRupee = um > 0 ? Math.max(0, um - us) * q : 0;
+        const lineDiscountRupee =
+          um > 0 && bookingTotal > 0 ? Math.max(0, lineMrp - bookingTotal) : um > 0 ? Math.max(0, um - us) * q : 0;
 
         list.push({
           id: d.id,
@@ -225,6 +188,7 @@ export default function BookedEnquiriesReportTab() {
           unitMrp: det.unitMrp,
           qty: det.bookingQty,
           unitSelling: det.unitSelling,
+          bookingTotal,
           lineMrp,
           lineDiscountRupee,
           advance: det.bookingAdvance,
@@ -300,15 +264,17 @@ export default function BookedEnquiriesReportTab() {
       'Model',
       'MRP (unit)',
       'Qty',
-      'Selling price (unit)',
+      'Selling price (per unit)',
+      'Booking total',
       'Discount % vs MRP',
       'Booking advance',
       'Advance paid date',
     ];
     const out = filtered.map((r) => {
       const um = Number(r.unitMrp) || 0;
-      const us = Number(r.unitSelling) || 0;
-      const rowPct = um > 0 ? (100 * Math.max(0, um - us)) / um : '';
+      const q = Number(r.qty) || 1;
+      const total = Number(r.bookingTotal) || 0;
+      const rowPct = um > 0 && q > 0 && total > 0 ? (100 * Math.max(0, um * q - total)) / (um * q) : '';
       return [
         r.id,
         r.name,
@@ -322,6 +288,7 @@ export default function BookedEnquiriesReportTab() {
         String(r.unitMrp),
         String(r.qty),
         String(r.unitSelling),
+        String(r.bookingTotal),
         rowPct === '' ? '' : `${Number(rowPct).toFixed(1)}%`,
         String(r.advance),
         r.advancePaidDate,
@@ -332,10 +299,7 @@ export default function BookedEnquiriesReportTab() {
 
   const summary = useMemo(() => {
     const count = filtered.length;
-    const sumSelling = filtered.reduce(
-      (s, r) => s + (Number(r.unitSelling) || 0) * (Number(r.qty) || 0),
-      0,
-    );
+    const sumSelling = filtered.reduce((s, r) => s + (Number(r.bookingTotal) || 0), 0);
     const sumAdvance = filtered.reduce((s, r) => s + (Number(r.advance) || 0), 0);
     const sumLineMrp = filtered.reduce((s, r) => s + (r.lineMrp || 0), 0);
     const sumLineDiscount = filtered.reduce((s, r) => s + (r.lineDiscountRupee || 0), 0);
@@ -455,7 +419,7 @@ export default function BookedEnquiriesReportTab() {
               </Grid>
               <Grid item xs={6} sm={3}>
                 <Typography variant="caption" color="text.secondary">
-                  Total selling (qty × unit)
+                  Total booking value
                 </Typography>
                 <Typography variant="h6">{formatMoney(summary.sumSelling)}</Typography>
               </Grid>
@@ -493,8 +457,8 @@ export default function BookedEnquiriesReportTab() {
                 <TableCell align="right" sx={{ width: '5%' }}>
                   Qty
                 </TableCell>
-                <TableCell align="right" sx={{ width: '8%' }}>
-                  Selling
+                <TableCell align="right" sx={{ width: '9%' }}>
+                  Booking total
                 </TableCell>
                 <TableCell align="right" sx={{ width: '7%' }}>
                   Disc. %
@@ -534,12 +498,27 @@ export default function BookedEnquiriesReportTab() {
                       {r.qty}
                     </TableCell>
                     <TableCell align="right" sx={{ verticalAlign: 'top' }}>
-                      {formatMoney(r.unitSelling)}
+                      {r.bookingTotal > 0 ? (
+                        <>
+                          <Typography variant="body2" component="div" sx={{ fontWeight: 600 }}>
+                            {formatMoney(r.bookingTotal)}
+                          </Typography>
+                          {r.unitSelling > 0 && r.qty > 1 ? (
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              {formatMoney(r.unitSelling)} × {r.qty}
+                            </Typography>
+                          ) : null}
+                        </>
+                      ) : (
+                        '—'
+                      )}
                     </TableCell>
                     <TableCell align="right" sx={{ verticalAlign: 'top' }}>
-                      {r.unitMrp > 0
-                        ? `${((100 * Math.max(0, r.unitMrp - r.unitSelling)) / r.unitMrp).toFixed(1)}%`
-                        : '—'}
+                      {r.lineMrp > 0 && r.bookingTotal > 0
+                        ? `${((100 * Math.max(0, r.lineMrp - r.bookingTotal)) / r.lineMrp).toFixed(1)}%`
+                        : r.unitMrp > 0 && r.unitSelling > 0
+                          ? `${((100 * Math.max(0, r.unitMrp - r.unitSelling)) / r.unitMrp).toFixed(1)}%`
+                          : '—'}
                     </TableCell>
                     <TableCell align="right" sx={{ verticalAlign: 'top' }}>
                       {r.advance > 0 ? (

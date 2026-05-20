@@ -220,14 +220,24 @@
         <span class="stat-val">{{LINE_COUNT}}</span>
       </div>
       <div class="payment-stat">
-        <span class="stat-label">Total received</span>
-        <span class="stat-val stat-val-accent">{{TOTAL_PAID}}</span>
+        <span class="stat-label">Collected from patient</span>
+        <span class="stat-val">{{TOTAL_RECEIVED}}</span>
+      </div>
+      <div class="payment-stat">
+        <span class="stat-label">Refunded to patient</span>
+        <span class="stat-val" style="color: #dc2626">{{TOTAL_REFUNDED}}</span>
+      </div>
+      <div class="payment-stat">
+        <span class="stat-label">Net retained</span>
+        <span class="stat-val stat-val-accent">{{NET_PAID}}</span>
       </div>
       <div class="payment-stat">
         <span class="stat-label">Document</span>
         <span class="stat-val" style="font-size: 12px">{{DOCUMENT_NUMBER}}</span>
       </div>
     </div>
+
+    {{REFUND_SUMMARY_HTML}}
 
     <div class="ledger-shell">
       <div class="ledger-header">Payment ledger</div>

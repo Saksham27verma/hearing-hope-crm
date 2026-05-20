@@ -86,7 +86,12 @@ import {
   openPaymentAcknowledgmentPDF,
   downloadPaymentAcknowledgmentPDF,
 } from '@/utils/receiptGenerator';
-import { getEnquiryPaymentLedgerLines } from '@/utils/enquiryPaymentLedger';
+import {
+  getEnquiryPaymentLedgerLines,
+  sumEnquiryPaymentLedgerIncoming,
+  sumEnquiryPaymentLedgerNetPaid,
+  sumEnquiryPaymentLedgerOutgoing,
+} from '@/utils/enquiryPaymentLedger';
 import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
@@ -820,12 +825,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   };
 
   const totalDue = Number(enquiry?.financialSummary?.totalDue ?? calculateDerivedTotalDue());
-  // Always derive paid amount from actual payment entries, not planned booking advances.
-  const totalPaid = paymentEntries.reduce((sum: number, payment: any) => sum + (Number(payment.amount) || 0), 0);
-  const pendingAmount = Math.max(
-    0,
-    totalDue - totalPaid
-  );
+  // Net paid = money in minus refunds (matches enquiry form payment summary).
+  const totalIncoming = sumEnquiryPaymentLedgerIncoming(paymentEntries);
+  const totalRefunded = sumEnquiryPaymentLedgerOutgoing(paymentEntries);
+  const totalPaid = sumEnquiryPaymentLedgerNetPaid(paymentEntries);
+  const pendingAmount = Math.max(0, totalDue - totalPaid);
   const paymentStatus = pendingAmount <= 0 ? 'fully_paid' : totalPaid > 0 ? 'partial' : 'pending';
   const journeyStatus = useMemo(() => getEnquiryStatusMeta(enquiry), [enquiry]);
 
@@ -2388,16 +2392,31 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                 
                 <Stack spacing={1.5}>
                   <Grid container spacing={1.5}>
-                    <Grid item xs={12} sm={4}>
+                    <Grid item xs={12} sm={totalRefunded > 0 ? 3 : 4}>
                       <MetricCard label="Total Due" value={formatCurrency(totalDue) || '₹0'} accent="#2563eb" />
                     </Grid>
-                    <Grid item xs={12} sm={4}>
-                      <MetricCard label="Paid" value={formatCurrency(totalPaid) || '₹0'} accent="#0f766e" />
+                    <Grid item xs={12} sm={totalRefunded > 0 ? 3 : 4}>
+                      <MetricCard
+                        label="Paid (net)"
+                        value={formatCurrency(totalPaid) || '₹0'}
+                        accent="#0f766e"
+                      />
                     </Grid>
-                    <Grid item xs={12} sm={4}>
+                    {totalRefunded > 0 ? (
+                      <Grid item xs={12} sm={3}>
+                        <MetricCard label="Refunded" value={formatCurrency(totalRefunded) || '₹0'} accent="#dc2626" />
+                      </Grid>
+                    ) : null}
+                    <Grid item xs={12} sm={totalRefunded > 0 ? 3 : 4}>
                       <MetricCard label="Pending" value={formatCurrency(pendingAmount) || '₹0'} accent={pendingAmount > 0 ? '#dc2626' : '#16a34a'} />
                     </Grid>
                   </Grid>
+                  {totalRefunded > 0 ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ px: 0.25 }}>
+                      Collected {formatCurrency(totalIncoming)} · Refunded {formatCurrency(totalRefunded)} · Net paid{' '}
+                      {formatCurrency(totalPaid)}
+                    </Typography>
+                  ) : null}
 
                   <Paper
                     variant="outlined"
@@ -2427,7 +2446,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                     />
                   </Paper>
 
-                  {paymentEntries.map((payment: any, index: number) => (
+                  {paymentEntries.map((payment: any, index: number) => {
+                    const isRefund = Boolean(payment.isOutgoing);
+                    return (
                     <Paper
                       key={payment.id != null ? String(payment.id) : `pay-${index}`}
                       variant="outlined"
@@ -2438,13 +2459,24 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         justifyContent: 'space-between',
                         alignItems: 'flex-start',
                         gap: 2,
-                        bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.94) : 'rgba(255,255,255,0.8)'),
+                        bgcolor: (t) =>
+                          isRefund
+                            ? alpha(t.palette.error.main, t.palette.mode === 'dark' ? 0.14 : 0.06)
+                            : t.palette.mode === 'dark'
+                              ? alpha(t.palette.background.paper, 0.94)
+                              : 'rgba(255,255,255,0.8)',
+                        borderColor: (t) => (isRefund ? alpha(t.palette.error.main, 0.28) : undefined),
                       }}
                     >
                       <Box sx={{ minWidth: 0, flex: 1 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                          {payment.label}
-                        </Typography>
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            {payment.label}
+                          </Typography>
+                          {isRefund ? (
+                            <Chip label="Refund" size="small" color="error" variant="outlined" sx={{ height: 22, fontWeight: 700 }} />
+                          ) : null}
+                        </Stack>
                         <Typography variant="caption" color="text.secondary" component="div">
                           {payment.date || '—'}
                           {payment.mode ? ` · ${String(payment.mode).toUpperCase()}` : ''}
@@ -2481,12 +2513,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       </Box>
                       <Typography
                         variant="body1"
-                        sx={{ fontWeight: 800, color: '#0f766e', flexShrink: 0, alignSelf: 'center' }}
+                        sx={{
+                          fontWeight: 800,
+                          color: isRefund ? 'error.main' : '#0f766e',
+                          flexShrink: 0,
+                          alignSelf: 'center',
+                        }}
                       >
-                        ₹{(payment.amount || 0).toLocaleString()}
+                        {isRefund ? '−' : ''}₹{(payment.amount || 0).toLocaleString('en-IN')}
                       </Typography>
                     </Paper>
-                  ))}
+                    );
+                  })}
                 </Stack>
               </CardContent>
             </InfoCard>

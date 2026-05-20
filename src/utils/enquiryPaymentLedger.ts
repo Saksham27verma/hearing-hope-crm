@@ -7,12 +7,25 @@ export type EnquiryPaymentLedgerLine = {
   id: string;
   label: string;
   amount: number;
+  /** Money returned to the patient (e.g. home trial security deposit refund). */
+  isOutgoing: boolean;
   date?: string;
   mode?: string;
   actorName: string;
   referenceNumber?: string;
   remarks?: string;
 };
+
+const OUTGOING_LEGACY_PAYMENT_FOR = 'trial_home_security_deposit_refund';
+
+/** True when this payment row represents money out (refund) to the patient. */
+export function isOutgoingEnquiryPayment(
+  payment: Record<string, unknown>,
+  legacy?: Record<string, unknown>
+): boolean {
+  const legacyFor = String(legacy?.paymentFor ?? payment.paymentFor ?? '').trim();
+  return legacyFor === OUTGOING_LEGACY_PAYMENT_FOR;
+}
 
 type EnquiryLike = Record<string, unknown>;
 
@@ -143,6 +156,7 @@ export function getEnquiryPaymentLedgerLines(enquiry: EnquiryLike | null | undef
         id,
         label: resolveLabel(payment, legacy),
         amount: Number(payment.amount || 0),
+        isOutgoing: isOutgoingEnquiryPayment(payment, legacy),
         date: paymentDateString(dateRaw),
         mode,
         actorName: actorFromPayment(payment) || (legacy ? actorFromPayment(legacy) : ''),
@@ -163,6 +177,7 @@ export function getEnquiryPaymentLedgerLines(enquiry: EnquiryLike | null | undef
           labelFromLegacyPaymentFor(pf) ??
           labelFromPaymentType(String(payment.paymentType || ''), payment),
         amount: Number(payment.amount || 0),
+        isOutgoing: isOutgoingEnquiryPayment(payment),
         date: paymentDateString(payment.paymentDate),
         mode,
         actorName: actorFromPayment(payment),
@@ -181,6 +196,20 @@ export function getEnquiryPaymentLedgerLines(enquiry: EnquiryLike | null | undef
     .map(({ row }) => row);
 }
 
+export function sumEnquiryPaymentLedgerIncoming(lines: EnquiryPaymentLedgerLine[]): number {
+  return lines.reduce((s, l) => (l.isOutgoing ? s : s + (Number(l.amount) || 0)), 0);
+}
+
+export function sumEnquiryPaymentLedgerOutgoing(lines: EnquiryPaymentLedgerLine[]): number {
+  return lines.reduce((s, l) => (l.isOutgoing ? s + (Number(l.amount) || 0) : s), 0);
+}
+
+/** Net cash retained from the patient (incoming minus refunds). */
+export function sumEnquiryPaymentLedgerNetPaid(lines: EnquiryPaymentLedgerLine[]): number {
+  return sumEnquiryPaymentLedgerIncoming(lines) - sumEnquiryPaymentLedgerOutgoing(lines);
+}
+
+/** @deprecated Prefer {@link sumEnquiryPaymentLedgerNetPaid} — name kept for callers expecting net paid. */
 export function sumEnquiryPaymentLedgerAmounts(lines: EnquiryPaymentLedgerLine[]): number {
-  return lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  return sumEnquiryPaymentLedgerNetPaid(lines);
 }

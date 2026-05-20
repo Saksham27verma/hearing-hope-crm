@@ -332,9 +332,13 @@ const paymentAcknowledgmentSample = baseHtmlShell(
     <div class="card">{{PAYMENTS_TABLE_HTML}}</div>
   </div>
   <div class="hero">
-    <div class="hero-label">Total received (per ledger)</div>
-    <div class="hero-value">{{TOTAL_PAID}}</div>
+    <div class="hero-label">Net retained (after refunds)</div>
+    <div class="hero-value">{{NET_PAID}}</div>
   </div>
+  <div class="card" style="margin-top:12px;font-size:13px;color:#4A5568">
+    Collected: {{TOTAL_RECEIVED}} · Refunded to patient: {{TOTAL_REFUNDED}}
+  </div>
+  {{REFUND_SUMMARY_HTML}}
   <div class="footer">{{TERMS_TEXT}}&#10;&#10;{{FOOTER_TEXT}}</div>
 `
 );
@@ -466,6 +470,10 @@ export const DOCUMENT_TEMPLATE_META: Record<ManagedDocumentType, {
           '{{CENTER_NAME}}',
           '{{LINE_COUNT}}',
           '{{TOTAL_PAID}}',
+          '{{TOTAL_RECEIVED}}',
+          '{{TOTAL_REFUNDED}}',
+          '{{NET_PAID}}',
+          '{{REFUND_SUMMARY_HTML}}',
         ],
       },
       { title: 'Customer', tokens: ['{{PATIENT_NAME}}', '{{PATIENT_PHONE}}', '{{PATIENT_EMAIL}}', '{{PATIENT_ADDRESS}}'] },
@@ -636,7 +644,11 @@ export const getTemplatePreviewHtml = (
       PATIENT_PHONE: '+91 91234 56789',
       PATIENT_EMAIL: 'rohan@example.com',
       PATIENT_ADDRESS: '14 Green Avenue, Delhi',
-      TOTAL_PAID: 'Rs. 18,500',
+      TOTAL_PAID: 'Rs. 13,500',
+      TOTAL_RECEIVED: 'Rs. 18,500',
+      TOTAL_REFUNDED: 'Rs. 5,000',
+      NET_PAID: 'Rs. 13,500',
+      REFUND_SUMMARY_HTML: '',
       PAYMENTS_TABLE_HTML: `<table style="width:100%;border-collapse:collapse;font-size:13px">
 <thead><tr style="border-bottom:2px solid #0f766e;text-align:left;color:#0f766e">
 <th style="padding:8px 6px">Date</th><th style="padding:8px 6px">Particulars</th><th style="padding:8px 6px;text-align:right">Amount</th><th style="padding:8px 6px">Mode</th><th style="padding:8px 6px">Reference</th></tr></thead>

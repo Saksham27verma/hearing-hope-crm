@@ -3,6 +3,8 @@ import type { TrialReceiptData } from '@/components/receipts/TrialReceiptTemplat
 import {
   getEnquiryPaymentLedgerLines,
   sumEnquiryPaymentLedgerAmounts,
+  sumEnquiryPaymentLedgerIncoming,
+  sumEnquiryPaymentLedgerOutgoing,
   type EnquiryPaymentLedgerLine,
 } from '@/utils/enquiryPaymentLedger';
 
@@ -240,7 +242,10 @@ export type PaymentAcknowledgmentData = {
   patientAddress?: string;
   centerName?: string;
   lineCount: number;
+  /** Net cash retained after refunds. */
   totalPaid: number;
+  totalReceived: number;
+  totalRefunded: number;
   lines: EnquiryPaymentLedgerLine[];
   terms: string;
   footer: string;
@@ -259,6 +264,8 @@ export function buildPaymentAcknowledgmentData(
     options?.documentNumber !== undefined && String(options.documentNumber).trim() !== ''
       ? String(options.documentNumber).trim()
       : `PA-${enquiryId}`;
+  const totalReceived = sumEnquiryPaymentLedgerIncoming(lines);
+  const totalRefunded = sumEnquiryPaymentLedgerOutgoing(lines);
   const totalPaid = sumEnquiryPaymentLedgerAmounts(lines);
   return {
     ...receiptDefaultCompany,
@@ -272,6 +279,8 @@ export function buildPaymentAcknowledgmentData(
     centerName: options?.centerName,
     lineCount: lines.length,
     totalPaid,
+    totalReceived,
+    totalRefunded,
     lines,
     terms: defaultPaymentAcknowledgmentTerms,
     footer: defaultPaymentAcknowledgmentFooter,

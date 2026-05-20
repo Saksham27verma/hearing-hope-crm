@@ -120,14 +120,17 @@ export function buildBookingReceiptHtmlString(
   );
 }
 
-function buildPaymentsTableHtmlString(lines: EnquiryPaymentLedgerLine[]): string {
+function buildPaymentsTableHtmlString(lines: EnquiryPaymentLedgerLine[], companyName: string): string {
   if (lines.length === 0) {
     return '<p style="margin:0;color:#6b7280;font-size:14px">No payment entries.</p>';
   }
   const accent = '#A80000';
+  const company = formatHtmlText(companyName || 'the company');
+  const hasRefunds = lines.some((l) => l.isOutgoing);
   const head = `<thead><tr style="border-bottom:2px solid ${accent};text-align:left;color:${accent};font-weight:700">
 <th style="padding:10px 8px">Date</th>
 <th style="padding:10px 8px">Particulars</th>
+<th style="padding:10px 8px">Nature</th>
 <th style="padding:10px 8px;text-align:right">Amount</th>
 <th style="padding:10px 8px">Mode</th>
 <th style="padding:10px 8px">Reference</th>
@@ -137,21 +140,46 @@ function buildPaymentsTableHtmlString(lines: EnquiryPaymentLedgerLine[]): string
     .map((line) => {
       const date = formatHtmlText(line.date || '—');
       const label = formatHtmlText(line.label);
-      const amount = formatHtmlText(formatCurrencyForTemplate(line.amount));
+      const isRefund = line.isOutgoing;
+      const nature = isRefund
+        ? `<div style="font-weight:700;color:#dc2626;font-size:12px">Refund to patient / customer</div>
+<div style="font-size:11px;color:#7f1d1d;margin-top:3px;line-height:1.35">Amount paid back by ${company}</div>`
+        : `<div style="font-weight:600;color:#166534;font-size:12px">Payment received</div>
+<div style="font-size:11px;color:#4A5568;margin-top:3px">Collected from patient / customer</div>`;
+      const amount = formatHtmlText(
+        isRefund
+          ? `−${formatCurrencyForTemplate(line.amount)}`
+          : formatCurrencyForTemplate(line.amount)
+      );
+      const amountStyle = isRefund
+        ? 'padding:10px 8px;text-align:right;font-weight:700;color:#dc2626'
+        : 'padding:10px 8px;text-align:right;font-weight:600;color:#166534';
       const mode = formatHtmlText(line.mode ? String(line.mode) : '—');
       const ref = formatHtmlText(line.referenceNumber || '—');
-      const remarks = line.remarks ? formatHtmlText(line.remarks, true) : '—';
-      return `<tr style="border-bottom:1px solid #EDF2F7;vertical-align:top">
+      const remarksRaw = line.remarks ? formatHtmlText(line.remarks, true) : '';
+      const remarks = isRefund
+        ? remarksRaw
+          ? `${remarksRaw}<div style="margin-top:4px;font-size:11px;color:#7f1d1d">Refunded to patient / customer by ${company}.</div>`
+          : `Refunded to patient / customer by ${company}.`
+        : remarksRaw || '—';
+      const rowBg = isRefund ? 'background:#fff5f5' : '';
+      return `<tr style="border-bottom:1px solid #EDF2F7;vertical-align:top;${rowBg}">
 <td style="padding:10px 8px;white-space:nowrap">${date}</td>
-<td style="padding:10px 8px">${label}</td>
-<td style="padding:10px 8px;text-align:right;font-weight:600">${amount}</td>
+<td style="padding:10px 8px;font-weight:600">${label}</td>
+<td style="padding:10px 8px">${nature}</td>
+<td style="${amountStyle}">${amount}</td>
 <td style="padding:10px 8px">${mode}</td>
 <td style="padding:10px 8px;word-break:break-word">${ref}</td>
 <td style="padding:10px 8px;font-size:12px;color:#4A5568">${remarks}</td>
 </tr>`;
     })
     .join('');
-  return `<table style="width:100%;border-collapse:collapse;font-size:13px;color:#1A202C">${head}<tbody>${rows}</tbody></table>`;
+  const refundNote = hasRefunds
+    ? `<p style="margin:10px 0 0;font-size:11px;color:#7f1d1d;line-height:1.45">
+<strong>Refund entries</strong> show amounts returned to the patient or customer by ${company}. These reduce the net total received.
+</p>`
+    : '';
+  return `<table style="width:100%;border-collapse:collapse;font-size:13px;color:#1A202C">${head}<tbody>${rows}</tbody></table>${refundNote}`;
 }
 
 export function buildPaymentAcknowledgmentHtmlString(
@@ -162,7 +190,14 @@ export function buildPaymentAcknowledgmentHtmlString(
   const footerText = opts?.footerText ?? data.footer ?? defaultPaymentAcknowledgmentFooter;
   const termsBody = data.terms ?? defaultPaymentAcknowledgmentTerms;
   const images = mergeTemplateImagesWithDefaultLogo(template.images, opts?.logoPublicOrigin);
-  const paymentsTable = buildPaymentsTableHtmlString(data.lines);
+  const paymentsTable = buildPaymentsTableHtmlString(data.lines, data.companyName);
+  const refundSummaryHtml =
+    data.totalRefunded > 0
+      ? `<div style="margin-top:8px;padding:10px 12px;background:#fff5f5;border:1px solid #fecaca;border-radius:4px;font-size:12px;color:#7f1d1d;line-height:1.45">
+<strong>Refunds on this statement:</strong> ${formatHtmlText(formatCurrencyForTemplate(data.totalRefunded))} was refunded to the patient / customer by ${formatHtmlText(data.companyName)}.
+Net amount retained after refunds: ${formatHtmlText(formatCurrencyForTemplate(data.totalPaid))}.
+</div>`
+      : '';
   return replaceTemplateTokens(
     template.htmlContent || '',
     {
@@ -180,6 +215,10 @@ export function buildPaymentAcknowledgmentHtmlString(
       CENTER_NAME: formatHtmlText(data.centerName),
       LINE_COUNT: formatHtmlText(String(data.lineCount)),
       TOTAL_PAID: formatHtmlText(formatCurrencyForTemplate(data.totalPaid)),
+      TOTAL_RECEIVED: formatHtmlText(formatCurrencyForTemplate(data.totalReceived)),
+      TOTAL_REFUNDED: formatHtmlText(formatCurrencyForTemplate(data.totalRefunded)),
+      NET_PAID: formatHtmlText(formatCurrencyForTemplate(data.totalPaid)),
+      REFUND_SUMMARY_HTML: refundSummaryHtml,
       PAYMENTS_TABLE_HTML: paymentsTable,
       TERMS_TEXT: formatHtmlText(termsBody, true),
       FOOTER_TEXT: formatHtmlText(footerText, true),

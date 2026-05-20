@@ -24,6 +24,7 @@ import { db } from '@/firebase/config';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import { enquiryMatchesDataScope, saleMatchesDataScope } from '@/lib/tenant/centerScope';
 import { getEnquiryStatusMeta } from '@/utils/enquiryStatus';
+import { extractBookingVisitCommercials } from '@/utils/bookingVisitDetails';
 import { fetchAllCenters } from '@/utils/centerUtils';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
@@ -123,24 +124,6 @@ function isBookingVisit(visit: any): boolean {
   const hearingAidSale =
     Boolean(visit.hearingAidSale) || has('hearing_aid_sale') || has('hearing_aid');
   return hearingAidBooked && !hearingAidSale;
-}
-
-function extractBookingDetails(visit: any) {
-  const ha =
-    visit.hearingAidDetails && typeof visit.hearingAidDetails === 'object'
-      ? visit.hearingAidDetails
-      : {};
-  const bookingQty = Math.max(1, Math.floor(Number(visit.bookingQuantity ?? 1)) || 1);
-  const unitSelling =
-    Number(
-      visit.bookingSellingPrice ??
-        ha.bookingSellingPrice ??
-        ha.grossSalesBeforeTax ??
-        0
-    ) || 0;
-  const bookingAdvance =
-    Number(visit.bookingAdvanceAmount ?? ha.bookingAdvanceAmount ?? 0) || 0;
-  return { bookingQty, unitSelling, bookingAdvance };
 }
 
 function pickLatestBookingVisit(schedules: any[]): any | null {
@@ -322,9 +305,9 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
         if (!isLiveBookedEnquiry(enquiry)) return;
         const bv = pickLatestBookingVisit(getSchedules(enquiry));
         if (!bv) return;
-        const det = extractBookingDetails(bv);
+        const det = extractBookingVisitCommercials(bv);
         bookings += 1;
-        sumSelling += det.unitSelling * det.bookingQty;
+        sumSelling += det.bookingTotal;
         sumAdvance += det.bookingAdvance;
       });
 
