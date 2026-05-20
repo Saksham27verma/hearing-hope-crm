@@ -581,6 +581,76 @@ function getLastCompletedVisitDateLabel(enquiry: Enquiry): string {
 }
 
 /** Distinct services/forms opted across enquiry root + all visits + schedules */
+type EnquiryAppointmentStatus = 'scheduled' | 'completed' | 'cancelled';
+
+interface LatestEnquiryAppointment {
+  start: string;
+  status: EnquiryAppointmentStatus;
+}
+
+function getEnquiryAppointmentStatus(a: { status?: string }): EnquiryAppointmentStatus {
+  return a.status === 'completed' ? 'completed' : a.status === 'cancelled' ? 'cancelled' : 'scheduled';
+}
+
+function buildLatestAppointmentsByEnquiryId(
+  appointments: Array<{ enquiryId?: string; start?: string; status?: string }>,
+): Record<string, LatestEnquiryAppointment> {
+  const map: Record<string, LatestEnquiryAppointment> = {};
+  for (const a of appointments) {
+    const eid = a.enquiryId?.trim();
+    if (!eid || !a.start) continue;
+    const t = new Date(a.start).getTime();
+    if (Number.isNaN(t)) continue;
+    const status = getEnquiryAppointmentStatus(a);
+    const prev = map[eid];
+    if (!prev || t > new Date(prev.start).getTime()) {
+      map[eid] = { start: a.start, status };
+    }
+  }
+  return map;
+}
+
+function formatLastAppointmentDateTime(latest: LatestEnquiryAppointment | undefined): string {
+  if (!latest?.start) return '—';
+  const start = new Date(latest.start);
+  if (Number.isNaN(start.getTime())) return '—';
+  return `${start.toLocaleDateString()} · ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function appointmentStatusChipProps(st: EnquiryAppointmentStatus) {
+  return {
+    label: st === 'cancelled' ? 'Cancelled' : st === 'completed' ? 'Completed' : 'Scheduled',
+    color: (st === 'cancelled' ? 'default' : st === 'completed' ? 'success' : 'primary') as
+      | 'default'
+      | 'success'
+      | 'primary',
+    variant: (st === 'scheduled' ? 'filled' : 'outlined') as 'filled' | 'outlined',
+  };
+}
+
+const LAST_APPOINTMENT_COLUMN_KEY = 'lastAppointment';
+
+/** Ensure saved column prefs include the last-appointment column after last visit date. */
+function mergeLastAppointmentColumn(visible: string[], order: string[]): { visible: string[]; order: string[] } {
+  if (order.includes(LAST_APPOINTMENT_COLUMN_KEY)) {
+    return { visible, order };
+  }
+  const nextOrder = [...order];
+  const anchor = nextOrder.indexOf('lastVisitDate');
+  const insertAt = anchor >= 0 ? anchor + 1 : nextOrder.length - 1;
+  nextOrder.splice(Math.max(0, insertAt), 0, LAST_APPOINTMENT_COLUMN_KEY);
+  const nextVisible = visible.includes(LAST_APPOINTMENT_COLUMN_KEY)
+    ? visible
+    : (() => {
+        const v = [...visible];
+        const vAnchor = v.indexOf('lastVisitDate');
+        const vAt = vAnchor >= 0 ? vAnchor + 1 : v.length - 1;
+        v.splice(Math.max(0, vAt), 0, LAST_APPOINTMENT_COLUMN_KEY);
+        return v;
+      })();
+  return { visible: nextVisible, order: nextOrder };
+}
+
 function collectDistinctVisitServicesLabels(enquiry: Enquiry): string[] {
   const raw = new Set<string>();
   const addSlug = (x: unknown) => {
@@ -617,6 +687,7 @@ const DEFAULT_ENQUIRY_TABLE_COLUMNS: string[] = [
   'date',
   'followUpHistory',
   'lastVisitDate',
+  LAST_APPOINTMENT_COLUMN_KEY,
   'servicesOpted',
   'actions',
 ];
@@ -641,6 +712,9 @@ export default function EnquiriesPage() {
   // State with proper typing
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   const [filteredEnquiries, setFilteredEnquiries] = useState<Enquiry[]>([]);
+  const [latestAppointmentByEnquiryId, setLatestAppointmentByEnquiryId] = useState<
+    Record<string, LatestEnquiryAppointment>
+  >({});
   const [loading, setLoading] = useState<boolean>(true);
   const [centers, setCenters] = useState<any[]>([]);
   
@@ -660,6 +734,7 @@ export default function EnquiriesPage() {
     date: 130,
     followUpHistory: 260,
     lastVisitDate: 130,
+    [LAST_APPOINTMENT_COLUMN_KEY]: 200,
     servicesOpted: 220,
     actions: 150
   });
@@ -1155,10 +1230,13 @@ export default function EnquiriesPage() {
         const saved = localStorage.getItem(localStorageKey);
         if (saved) {
           const { visibleColumns: savedVisible, columnOrder: savedOrder } = JSON.parse(saved);
-          if (Array.isArray(savedVisible) && savedVisible.length > 0) {
+          if (Array.isArray(savedVisible) && savedVisible.length > 0 && Array.isArray(savedOrder) && savedOrder.length > 0) {
+            const merged = mergeLastAppointmentColumn(savedVisible, savedOrder);
+            setVisibleColumns(merged.visible);
+            setColumnOrder(merged.order);
+          } else if (Array.isArray(savedVisible) && savedVisible.length > 0) {
             setVisibleColumns(savedVisible);
-          }
-          if (Array.isArray(savedOrder) && savedOrder.length > 0) {
+          } else if (Array.isArray(savedOrder) && savedOrder.length > 0) {
             setColumnOrder(savedOrder);
           }
         }
@@ -1173,15 +1251,17 @@ export default function EnquiriesPage() {
         const data = userDoc.data();
         if (data?.enquiryColumnPreferences) {
           const { visibleColumns: fbVisible, columnOrder: fbOrder } = data.enquiryColumnPreferences;
-          if (Array.isArray(fbVisible) && fbVisible.length > 0) {
-            setVisibleColumns(fbVisible);
-            // Update localStorage with Firebase data
+          if (Array.isArray(fbVisible) && fbVisible.length > 0 && Array.isArray(fbOrder) && fbOrder.length > 0) {
+            const merged = mergeLastAppointmentColumn(fbVisible, fbOrder);
+            setVisibleColumns(merged.visible);
+            setColumnOrder(merged.order);
             localStorage.setItem(
               localStorageKey,
-              JSON.stringify({ visibleColumns: fbVisible, columnOrder: fbOrder })
+              JSON.stringify({ visibleColumns: merged.visible, columnOrder: merged.order })
             );
-          }
-          if (Array.isArray(fbOrder) && fbOrder.length > 0) {
+          } else if (Array.isArray(fbVisible) && fbVisible.length > 0) {
+            setVisibleColumns(fbVisible);
+          } else if (Array.isArray(fbOrder) && fbOrder.length > 0) {
             setColumnOrder(fbOrder);
           }
         }
@@ -1476,6 +1556,8 @@ export default function EnquiriesPage() {
         'Visit Count',
         'Call Log Count',
         'Last Date of Visit',
+        'Last Appointment',
+        'Appointment Status',
       ];
       const rows = filteredEnquiries.map((enquiry) => {
         const visits = buildVisitExportRows(enquiry);
@@ -1498,6 +1580,14 @@ export default function EnquiriesPage() {
           String(visits.length),
           String(followUps.length),
           exportLastVisitDate(enquiry),
+          (() => {
+            const latest = enquiry.id ? latestAppointmentByEnquiryId[enquiry.id] : undefined;
+            return latest ? formatLastAppointmentDateTime(latest) : '-';
+          })(),
+          (() => {
+            const latest = enquiry.id ? latestAppointmentByEnquiryId[enquiry.id] : undefined;
+            return latest ? appointmentStatusChipProps(latest.status).label : '-';
+          })(),
         ];
       });
       const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(',')).join('\n');
@@ -1811,6 +1901,20 @@ export default function EnquiriesPage() {
 
       setEnquiries(scopeFiltered);
       setFilteredEnquiries(filteredData);
+
+      try {
+        const apptQuery = query(collection(db, 'appointments'), orderBy('start', 'desc'));
+        const apptSnap = await getDocs(apptQuery);
+        const apptRows = apptSnap.docs.map((d) => ({
+          enquiryId: d.data().enquiryId as string | undefined,
+          start: d.data().start as string | undefined,
+          status: d.data().status as string | undefined,
+        }));
+        setLatestAppointmentByEnquiryId(buildLatestAppointmentsByEnquiryId(apptRows));
+      } catch (apptErr) {
+        console.error('Error fetching appointments for enquiries table:', apptErr);
+        setLatestAppointmentByEnquiryId({});
+      }
     } catch (error) {
       console.error('Error fetching enquiries:', error);
     } finally {
@@ -3343,6 +3447,11 @@ export default function EnquiriesPage() {
       category: 'History',
     },
     {
+      key: LAST_APPOINTMENT_COLUMN_KEY,
+      label: 'Last appointment',
+      category: 'History',
+    },
+    {
       key: 'servicesOpted',
       label: 'Services opted (all visits)',
       category: 'Visit',
@@ -3779,6 +3888,45 @@ export default function EnquiriesPage() {
       );
     }
 
+    if (columnKey === LAST_APPOINTMENT_COLUMN_KEY) {
+      const latest = enquiry.id ? latestAppointmentByEnquiryId[enquiry.id] : undefined;
+      const when = formatLastAppointmentDateTime(latest);
+      const chip = latest ? appointmentStatusChipProps(latest.status) : null;
+      return (
+        <TableCell key={columnKey} sx={baseCellStyles}>
+          {when === '—' ? (
+            <Typography variant="body2" sx={{ fontSize: '0.78rem', color: 'text.disabled' }}>
+              —
+            </Typography>
+          ) : (
+            <Stack spacing={0.5} sx={{ minWidth: 0 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontSize: '0.8rem',
+                  color: 'text.secondary',
+                  fontWeight: 600,
+                  whiteSpace: 'normal',
+                  lineHeight: 1.35,
+                }}
+              >
+                {when}
+              </Typography>
+              {chip ? (
+                <Chip
+                  size="small"
+                  label={chip.label}
+                  color={chip.color}
+                  variant={chip.variant}
+                  sx={{ fontWeight: 700, borderRadius: 99, width: 'fit-content' }}
+                />
+              ) : null}
+            </Stack>
+          )}
+        </TableCell>
+      );
+    }
+
     if (columnKey === 'servicesOpted') {
       const labels = collectDistinctVisitServicesLabels(enquiry);
       return (
@@ -3948,6 +4096,12 @@ export default function EnquiriesPage() {
           .join(' | ');
       case 'lastVisitDate':
         return getLastCompletedVisitDateLabel(enquiry);
+      case LAST_APPOINTMENT_COLUMN_KEY: {
+        const latest = enquiry.id ? latestAppointmentByEnquiryId[enquiry.id] : undefined;
+        if (!latest) return '—';
+        const chip = appointmentStatusChipProps(latest.status);
+        return `${formatLastAppointmentDateTime(latest)} (${chip.label})`;
+      }
       case 'servicesOpted':
         return collectDistinctVisitServicesLabels(enquiry).join(', ');
       default:
