@@ -105,7 +105,7 @@ import {
   ArrowDownward as ArrowDownwardIcon,
   LocalFireDepartment as LocalFireDepartmentIcon,
 } from '@mui/icons-material';
-import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc, getDoc, where, deleteDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc, getDoc, where, deleteDoc, arrayUnion, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { v4 as uuidv4 } from 'uuid';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
@@ -113,7 +113,11 @@ import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator'
 import EnquiryFilterSection from '@/components/enquiries/EnquiryFilterSection';
 import EnquiriesPageHeader, { headerIcons } from '@/components/enquiries/EnquiriesPageHeader';
 import EnquiriesDataTableShell from '@/components/enquiries/EnquiriesDataTableShell';
-import { getEnquiryFieldRaw } from '@/components/enquiries/enquiryFilterFieldValue';
+import {
+  getEnquiryFieldRaw,
+  evaluateVisitDateAnyFilter,
+  getVisitDatesFromEnquiry,
+} from '@/components/enquiries/enquiryFilterFieldValue';
 import { MEDICAL_SERVICE_SLUGS } from '@/components/enquiries/enquiryFormFieldOptions';
 import { useAuth } from '@/context/AuthContext';
 import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
@@ -752,15 +756,22 @@ export default function EnquiriesPage() {
   const [presetName, setPresetName] = useState<string>('');
   const [showPresetDialog, setShowPresetDialog] = useState<boolean>(false);
 
-  const persistFilterPresets = async (nextPresets: EnquiryFilterPreset[]) => {
-    if (!db || !user?.uid) return;
+  const persistFilterPresets = async (nextPresets: EnquiryFilterPreset[]): Promise<boolean> => {
+    if (!db || !user?.uid) return false;
     try {
       await updateDoc(doc(db, 'users', user.uid), {
         enquiryFilterPresets: nextPresets,
         updatedAt: Date.now(),
       });
+      return true;
     } catch (error) {
       console.error('Error saving enquiry filter presets:', error);
+      setAlert({
+        open: true,
+        message: error instanceof Error ? error.message : 'Could not save filter presets. Check your connection and permissions.',
+        severity: 'error',
+      });
+      return false;
     }
   };
 
@@ -1856,6 +1867,10 @@ export default function EnquiriesPage() {
   const applyFilterCondition = (enquiry: any, filter: any): boolean => {
     const { operator, value, dataType } = filter;
 
+    if (filter.field === 'visitDateAny') {
+      return evaluateVisitDateAnyFilter(enquiry, operator, value);
+    }
+
     let fieldValue: any;
     if (filter.field === 'paymentForAny') {
       const arr = Array.isArray(enquiry.payments) ? enquiry.payments : [];
@@ -2192,17 +2207,7 @@ export default function EnquiriesPage() {
       const from = parseDateOnly(filters.visitDateFrom);
       const to = parseDateOnly(filters.visitDateTo);
       result = result.filter(e => {
-        const visitsArr: any[] = Array.isArray((e as any).visits) ? (e as any).visits : [];
-        const schedulesArr: any[] = Array.isArray((e as any).visitSchedules) ? (e as any).visitSchedules : [];
-        const dates: Date[] = [];
-        visitsArr.forEach(v => {
-          const d = parseDateOnly(v?.visitDate || v?.date);
-          if (d) dates.push(d);
-        });
-        schedulesArr.forEach(v => {
-          const d = parseDateOnly(v?.visitDate);
-          if (d) dates.push(d);
-        });
+        const dates = getVisitDatesFromEnquiry(e);
         if (dates.length === 0) return false;
         return dates.some(d => withinDateRange(d, from, to));
       });
@@ -3163,48 +3168,82 @@ export default function EnquiriesPage() {
   };
 
   // Filter preset management
-  const saveFilterPreset = () => {
+  const saveFilterPreset = async () => {
     if (!presetName.trim()) return;
-    
+
     const newPreset = {
       id: Date.now().toString(),
-      name: presetName,
+      name: presetName.trim(),
       filters: { ...filters },
       advancedFilters: [...advancedFilters],
       advancedFiltersLogic,
     };
-    
+
     const updatedPresets = [...filterPresets, newPreset];
+    const ok = await persistFilterPresets(updatedPresets);
+    if (!ok) return;
+
     setFilterPresets(updatedPresets);
     setPresetName('');
     setShowPresetDialog(false);
     setCurrentPreset(newPreset.id);
-    void persistFilterPresets(updatedPresets);
+    setAlert({ open: true, message: 'Filter preset saved', severity: 'success' });
   };
 
   const loadFilterPreset = (presetId: string) => {
-    const preset = filterPresets.find(p => p.id === presetId);
-    if (preset) {
-      setFilters(preset.filters);
-      setAdvancedFilters(preset.advancedFilters || []);
-      setAdvancedFiltersLogic(preset.advancedFiltersLogic === 'OR' ? 'OR' : 'AND');
-      setCurrentPreset(presetId);
-      
-      // Also update legacy filter states for backward compatibility
-      setSearchTerm(preset.filters.searchTerm);
-      setStatusFilter(preset.filters.status);
-      setTypeFilter(preset.filters.enquiryType);
-      setDateFilter(preset.filters.dateFrom);
+    if (!presetId) {
+      setCurrentPreset('');
+      return;
     }
+    const preset = filterPresets.find(p => p.id === presetId);
+    if (!preset) {
+      setCurrentPreset('');
+      return;
+    }
+    setFilters(preset.filters);
+    setAdvancedFilters(preset.advancedFilters || []);
+    setAdvancedFiltersLogic(preset.advancedFiltersLogic === 'OR' ? 'OR' : 'AND');
+    setCurrentPreset(presetId);
+
+    // Also update legacy filter states for backward compatibility
+    setSearchTerm(preset.filters.searchTerm);
+    setStatusFilter(preset.filters.status);
+    setTypeFilter(preset.filters.enquiryType);
+    setDateFilter(preset.filters.dateFrom);
   };
 
-  const deleteFilterPreset = (presetId: string) => {
+  const updateCurrentFilterPreset = async () => {
+    if (!currentPreset.trim()) return;
+    const idx = filterPresets.findIndex(p => p.id === currentPreset);
+    if (idx < 0) return;
+
+    const prev = filterPresets;
+    const updated = [...filterPresets];
+    updated[idx] = {
+      ...updated[idx],
+      filters: { ...filters },
+      advancedFilters: [...advancedFilters],
+      advancedFiltersLogic,
+    };
+    setFilterPresets(updated);
+    const ok = await persistFilterPresets(updated);
+    if (!ok) {
+      setFilterPresets(prev);
+      return;
+    }
+    setAlert({ open: true, message: 'Preset updated with your current filters', severity: 'success' });
+  };
+
+  const deleteFilterPreset = async (presetId: string) => {
     const updatedPresets = filterPresets.filter(p => p.id !== presetId);
+    const ok = await persistFilterPresets(updatedPresets);
+    if (!ok) return;
+
     setFilterPresets(updatedPresets);
     if (currentPreset === presetId) {
       setCurrentPreset('');
     }
-    void persistFilterPresets(updatedPresets);
+    setAlert({ open: true, message: 'Preset deleted', severity: 'success' });
   };
 
   const updateFilter = (key: string, value: any) => {
@@ -3234,7 +3273,7 @@ export default function EnquiriesPage() {
     return filteredEnquiries.slice(startIndex, endIndex);
   };
 
-  // Load user-scoped presets so they follow login across devices/sessions.
+  // Live-sync user-scoped presets from Firestore (same doc path as persist).
   useEffect(() => {
     if (!db || !user?.uid) {
       setFilterPresets([]);
@@ -3242,16 +3281,18 @@ export default function EnquiriesPage() {
       return;
     }
 
-    let cancelled = false;
-    void (async () => {
-      try {
-        const userSnap = await getDoc(doc(db, 'users', user.uid));
-        if (!userSnap.exists() || cancelled) return;
+    const userRef = doc(db, 'users', user.uid);
+    const unsub = onSnapshot(
+      userRef,
+      userSnap => {
+        if (!userSnap.exists()) {
+          setFilterPresets([]);
+          return;
+        }
         const data = userSnap.data() as { enquiryFilterPresets?: unknown };
         const rawPresets = data.enquiryFilterPresets;
         if (!Array.isArray(rawPresets)) {
           setFilterPresets([]);
-          setCurrentPreset('');
           return;
         }
         const safePresets = rawPresets.filter((preset): preset is EnquiryFilterPreset => (
@@ -3262,14 +3303,18 @@ export default function EnquiriesPage() {
           typeof (preset as EnquiryFilterPreset).filters === 'object'
         ));
         setFilterPresets(safePresets);
-      } catch (error) {
+      },
+      error => {
         console.error('Error loading enquiry filter presets:', error);
+        setAlert({
+          open: true,
+          message: error instanceof Error ? error.message : 'Could not load filter presets',
+          severity: 'error',
+        });
       }
-    })();
+    );
 
-    return () => {
-      cancelled = true;
-    };
+    return () => unsub();
   }, [user?.uid]);
 
   // Column management functions
@@ -5312,7 +5357,8 @@ export default function EnquiriesPage() {
         currentPreset={currentPreset}
         onLoadPreset={loadFilterPreset}
         onSavePresetClick={() => setShowPresetDialog(true)}
-        onDeletePreset={() => currentPreset && deleteFilterPreset(currentPreset)}
+        onDeletePreset={() => currentPreset && void deleteFilterPreset(currentPreset)}
+        onUpdateCurrentPreset={() => void updateCurrentFilterPreset()}
         onClearAll={clearFilters}
         filteredCount={filteredEnquiries.length}
         totalCount={enquiries.length}

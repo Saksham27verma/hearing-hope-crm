@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Paper,
   Box,
@@ -37,6 +37,7 @@ import {
   LocalFireDepartment as LocalFireDepartmentIcon,
   ExpandLess as ExpandLessIcon,
   ExpandMore as ExpandMoreIcon,
+  Save as SaveIcon,
 } from '@mui/icons-material';
 import { ENQUIRY_STATUS_OPTIONS } from '@/utils/enquiryStatus';
 import {
@@ -84,6 +85,8 @@ export interface EnquiryFilterSectionProps {
   onLoadPreset: (presetId: string) => void;
   onSavePresetClick: () => void;
   onDeletePreset: () => void;
+  /** Overwrite the selected preset with the current filter state (same name). */
+  onUpdateCurrentPreset?: () => void | Promise<void>;
   onClearAll: () => void;
   filteredCount: number;
   totalCount: number;
@@ -98,28 +101,45 @@ function formatIsoDate(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
-function applyCreatedDatePreset(
+/** Shown at the top of Add filter for quick access (field paths must exist in schema). */
+const PINNED_FILTER_FIELDS = ['name', 'phone', 'center', 'visitDateAny', 'createdAt'] as const;
+const PINNED_FILTER_FIELDS_SET = new Set<string>(PINNED_FILTER_FIELDS);
+
+function applyDateRangePreset(
   preset: 'today' | 'last7' | 'thisMonth',
-  updateFilter: (k: string, v: any) => void
+  updateFilter: (k: string, v: any) => void,
+  fromKey: string,
+  toKey: string
 ) {
   const now = new Date();
   if (preset === 'today') {
     const s = formatIsoDate(now);
-    updateFilter('dateFrom', s);
-    updateFilter('dateTo', s);
+    updateFilter(fromKey, s);
+    updateFilter(toKey, s);
     return;
   }
   if (preset === 'last7') {
     const from = new Date(now);
     from.setDate(from.getDate() - 6);
-    updateFilter('dateFrom', formatIsoDate(from));
-    updateFilter('dateTo', formatIsoDate(now));
+    updateFilter(fromKey, formatIsoDate(from));
+    updateFilter(toKey, formatIsoDate(now));
     return;
   }
   const start = new Date(now.getFullYear(), now.getMonth(), 1);
   const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  updateFilter('dateFrom', formatIsoDate(start));
-  updateFilter('dateTo', formatIsoDate(end));
+  updateFilter(fromKey, formatIsoDate(start));
+  updateFilter(toKey, formatIsoDate(end));
+}
+
+function applyCreatedDatePreset(
+  preset: 'today' | 'last7' | 'thisMonth',
+  updateFilter: (k: string, v: any) => void
+) {
+  applyDateRangePreset(preset, updateFilter, 'dateFrom', 'dateTo');
+}
+
+function applyVisitDatePreset(preset: 'today' | 'last7' | 'thisMonth', updateFilter: (k: string, v: any) => void) {
+  applyDateRangePreset(preset, updateFilter, 'visitDateFrom', 'visitDateTo');
 }
 
 function enumOptionsForField(
@@ -284,6 +304,7 @@ export default function EnquiryFilterSection({
   onLoadPreset,
   onSavePresetClick,
   onDeletePreset,
+  onUpdateCurrentPreset,
   onClearAll,
   filteredCount,
   totalCount,
@@ -293,6 +314,7 @@ export default function EnquiryFilterSection({
   const theme = useTheme();
   const isDark = theme.palette.mode === 'dark';
   const [addAnchor, setAddAnchor] = useState<HTMLElement | null>(null);
+  const fieldSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [pickerStep, setPickerStep] = useState<'fields' | 'configure'>('fields');
   const [fieldSearch, setFieldSearch] = useState('');
   const [filterBuilder, setFilterBuilder] = useState({
@@ -305,6 +327,16 @@ export default function EnquiryFilterSection({
   const [filtersVisible, setFiltersVisible] = useState(true);
 
   const filterableFlat = useMemo(() => flatFilterFields(), []);
+  const pinnedFieldMetas = useMemo(
+    () => PINNED_FILTER_FIELDS.map(f => getFieldMeta(f)).filter((m): m is EnquiryFilterFieldMeta => Boolean(m)),
+    []
+  );
+  const pinnedVisible = useMemo(() => {
+    const q = fieldSearch.trim().toLowerCase();
+    return pinnedFieldMetas.filter(
+      f => !q || f.label.toLowerCase().includes(q) || f.field.toLowerCase().includes(q)
+    );
+  }, [pinnedFieldMetas, fieldSearch]);
 
   const handleOpenAdd = (e: React.MouseEvent<HTMLElement>) => {
     setAddAnchor(e.currentTarget);
@@ -313,6 +345,13 @@ export default function EnquiryFilterSection({
     setFilterBuilder({ field: '', operator: '', value: '', dataType: 'text' });
     setMultiEnumValue([]);
   };
+
+  useEffect(() => {
+    if (addAnchor && pickerStep === 'fields') {
+      const t = window.setTimeout(() => fieldSearchInputRef.current?.focus(), 50);
+      return () => window.clearTimeout(t);
+    }
+  }, [addAnchor, pickerStep]);
 
   const handleCloseAdd = () => {
     setAddAnchor(null);
@@ -386,12 +425,13 @@ export default function EnquiryFilterSection({
 
   const filteredGroups = useMemo(() => {
     const q = fieldSearch.trim().toLowerCase();
-    if (!q) return ENQUIRY_FILTER_FIELD_GROUPS;
     return ENQUIRY_FILTER_FIELD_GROUPS.map(g => ({
       ...g,
-      fields: g.fields.filter(
-        f => f.label.toLowerCase().includes(q) || f.field.toLowerCase().includes(q)
-      ),
+      fields: g.fields.filter(f => {
+        if (PINNED_FILTER_FIELDS_SET.has(f.field)) return false;
+        if (!q) return true;
+        return f.label.toLowerCase().includes(q) || f.field.toLowerCase().includes(q);
+      }),
     })).filter(g => g.fields.length > 0);
   }, [fieldSearch]);
 
@@ -605,7 +645,7 @@ export default function EnquiryFilterSection({
           />
         );
       case 'date':
-        if (filterBuilder.field === 'createdAt' && operator === 'between') {
+        if ((filterBuilder.field === 'createdAt' || filterBuilder.field === 'visitDateAny') && operator === 'between') {
           return (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
@@ -809,16 +849,29 @@ export default function EnquiryFilterSection({
         <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary', mr: 1 }}>
           Filter presets
         </Typography>
-        <FormControl size="small" sx={{ minWidth: 180 }}>
-          <InputLabel id="preset-select">Preset</InputLabel>
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel id="preset-select" shrink>
+            Preset
+          </InputLabel>
           <Select
             labelId="preset-select"
             label="Preset"
+            displayEmpty
             value={currentPreset}
             onChange={e => onLoadPreset(e.target.value as string)}
+            renderValue={selected => {
+              if (!selected) {
+                return (
+                  <Typography component="span" variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                    None — custom filters
+                  </Typography>
+                );
+              }
+              return filterPresets.find(p => p.id === selected)?.name ?? String(selected);
+            }}
           >
             <MenuItem value="">
-              <em>Select preset</em>
+              <em>None (keep current filters)</em>
             </MenuItem>
             {filterPresets.map(p => (
               <MenuItem key={p.id} value={p.id}>
@@ -828,8 +881,19 @@ export default function EnquiryFilterSection({
           </Select>
         </FormControl>
         <Button size="small" variant="outlined" onClick={onSavePresetClick} startIcon={<AddIcon />}>
-          Save current
+          Save as new
         </Button>
+        {currentPreset && onUpdateCurrentPreset ? (
+          <Button
+            size="small"
+            variant="outlined"
+            color="primary"
+            onClick={() => void onUpdateCurrentPreset()}
+            startIcon={<SaveIcon />}
+          >
+            Update preset
+          </Button>
+        ) : null}
         {currentPreset ? (
           <Button size="small" variant="outlined" color="error" onClick={onDeletePreset} startIcon={<DeleteIcon />}>
             Delete
@@ -880,24 +944,24 @@ export default function EnquiryFilterSection({
         <FormControl
           size="small"
           sx={{
-            minWidth: 200,
+            minWidth: 220,
             bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
             borderRadius: 1,
           }}
         >
-          <InputLabel id="enquiry-type-label">Enquiry type</InputLabel>
+          <InputLabel id="center-filter-label">Center</InputLabel>
           <Select
-            labelId="enquiry-type-label"
-            label="Enquiry type"
-            value={filters.enquiryType || 'all'}
-            onChange={e => updateFilter('enquiryType', e.target.value)}
+            labelId="center-filter-label"
+            label="Center"
+            value={filters.visitingCenter || 'all'}
+            onChange={e => updateFilter('visitingCenter', e.target.value)}
           >
-            <MenuItem value="all">All types</MenuItem>
-            <MenuItem value="general">General</MenuItem>
-            <MenuItem value="product">Product inquiry</MenuItem>
-            <MenuItem value="service">Service request</MenuItem>
-            <MenuItem value="complaint">Complaint</MenuItem>
-            <MenuItem value="appointment">Appointment</MenuItem>
+            <MenuItem value="all">All centers</MenuItem>
+            {centers.map(c => (
+              <MenuItem key={String(c.id)} value={String(c.id)}>
+                {c.name || c.id}
+              </MenuItem>
+            ))}
           </Select>
         </FormControl>
         <Tooltip title={filters.hotEnquiry === 'hot' ? 'Hot enquiries only (click to clear)' : 'Show hot enquiries only'}>
@@ -971,6 +1035,51 @@ export default function EnquiryFilterSection({
         />
       </Box>
 
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75, fontWeight: 600 }}>
+        Visit date (any visit or scheduled visit)
+      </Typography>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2, alignItems: 'center' }}>
+        {(['today', 'last7', 'thisMonth'] as const).map(preset => (
+          <Chip
+            key={`vd-${preset}`}
+            size="small"
+            variant="outlined"
+            label={preset === 'today' ? 'Today' : preset === 'last7' ? 'Last 7 days' : 'This month'}
+            onClick={() => applyVisitDatePreset(preset, updateFilter)}
+            sx={{
+              borderColor: alpha(theme.palette.primary.main, 0.45),
+              '&:hover': { bgcolor: alpha(theme.palette.primary.main, isDark ? 0.15 : 0.08) },
+            }}
+          />
+        ))}
+        <TextField
+          type="date"
+          size="small"
+          label="Visit from"
+          value={filters.visitDateFrom || ''}
+          onChange={e => updateFilter('visitDateFrom', e.target.value)}
+          InputLabelProps={{ shrink: true }}
+          sx={{
+            width: 160,
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+            borderRadius: 1,
+          }}
+        />
+        <TextField
+          type="date"
+          size="small"
+          label="Visit to"
+          value={filters.visitDateTo || ''}
+          onChange={e => updateFilter('visitDateTo', e.target.value)}
+          InputLabelProps={{ shrink: true }}
+          sx={{
+            width: 160,
+            bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.04) : '#fff'),
+            borderRadius: 1,
+          }}
+        />
+      </Box>
+
       <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1.5 }}>
         <Button
           variant="contained"
@@ -1001,7 +1110,7 @@ export default function EnquiryFilterSection({
           color="inherit"
           startIcon={<ClearIcon />}
           onClick={onClearAll}
-          disabled={activeRuleCount === 0 && !filters.dateFrom && !filters.dateTo}
+          disabled={activeRuleCount === 0}
           sx={{ textTransform: 'none', color: 'text.secondary' }}
         >
           Clear all
@@ -1072,7 +1181,7 @@ export default function EnquiryFilterSection({
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         slotProps={{
           paper: {
-            sx: { width: 400, maxWidth: 'calc(100vw - 24px)', borderRadius: 2, mt: 1, maxHeight: 480 },
+            sx: { width: 440, maxWidth: 'calc(100vw - 24px)', borderRadius: 2, mt: 1, maxHeight: 520 },
           },
         }}
       >
@@ -1082,7 +1191,11 @@ export default function EnquiryFilterSection({
               <Typography variant="subtitle2" fontWeight={700}>
                 Add filter
               </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                Choose a field, then an operator and value. Use search to find any field quickly.
+              </Typography>
               <TextField
+                inputRef={fieldSearchInputRef}
                 size="small"
                 fullWidth
                 placeholder="Find a field…"
@@ -1098,7 +1211,33 @@ export default function EnquiryFilterSection({
                 }}
               />
             </Box>
-            <List dense sx={{ maxHeight: 360, overflow: 'auto', py: 0 }}>
+            <List dense sx={{ maxHeight: 380, overflow: 'auto', py: 0 }}>
+              {pinnedVisible.length > 0 ? (
+                <>
+                  <ListSubheader
+                    sx={{
+                      bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f5f5f5'),
+                      lineHeight: '32px',
+                      fontWeight: 700,
+                      color: 'text.primary',
+                    }}
+                  >
+                    Common
+                  </ListSubheader>
+                  {pinnedVisible.map(f => (
+                    <ListItemButton key={`pinned-${f.field}`} onClick={() => selectField(f.field)}>
+                      <Box>
+                        <Typography variant="body2" fontWeight={600}>
+                          {f.label}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                          {f.field}
+                        </Typography>
+                      </Box>
+                    </ListItemButton>
+                  ))}
+                </>
+              ) : null}
               {filteredGroups.map(group => [
                 <ListSubheader
                   key={group.category}

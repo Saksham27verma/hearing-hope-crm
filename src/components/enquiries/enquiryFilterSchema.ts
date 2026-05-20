@@ -139,6 +139,13 @@ export const ENQUIRY_FILTER_FIELD_GROUPS: { category: string; fields: EnquiryFil
   {
     category: 'Visits',
     fields: [
+      {
+        field: 'visitDateAny',
+        label: 'Date of visit (any visit)',
+        dataType: 'date',
+        category: 'Visits',
+        description: 'Matches if any visit or scheduled visit date satisfies the rule',
+      },
       { field: 'visits.length', label: 'Number of visits', dataType: 'number', category: 'Visits' },
       { field: 'visitSchedules.length', label: 'Scheduled visits count', dataType: 'number', category: 'Visits' },
       { field: 'testDetails.testPrice', label: 'Test price (root)', dataType: 'number', category: 'Visits' },
