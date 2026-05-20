@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
@@ -243,6 +243,24 @@ const startOfWeekMonday = (d: Date) => {
   return startOfDay(addDays(d, diff));
 };
 
+function sheetDateFromDoc(doc: DailySheetDoc): Date {
+  return new Date(doc.date.seconds * 1000);
+}
+
+/** Non-admins: only today and yesterday (local calendar). Admins: unrestricted. */
+function isCashRegisterSheetVisibleForRole(sheetDate: Date, now: Date, admin: boolean): boolean {
+  if (admin) return true;
+  const d0 = startOfDay(sheetDate);
+  const yesterday0 = startOfDay(addDays(startOfDay(now), -1));
+  const today0 = startOfDay(now);
+  return d0.getTime() >= yesterday0.getTime() && d0.getTime() <= today0.getTime();
+}
+
+/** Allowed entry/save dates for non-admin users (same window as visibility). */
+function isCashRegisterEntryDateAllowedForNonAdmin(entryDate: Date, now: Date): boolean {
+  return isCashRegisterSheetVisibleForRole(entryDate, now, false);
+}
+
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
 
@@ -307,10 +325,24 @@ const CashRegisterPage = () => {
     load();
   }, [user, authLoading]);
 
+  const loadAllSheets = useCallback(async () => {
+    try {
+      setSummaryLoading(true);
+      const snap = await getDocs(query(collection(db, 'cashDailySheets'), orderBy('date', 'desc')));
+      const rows = snap.docs.map((d) => ({ id: d.id, doc: d.data() as DailySheetDoc }));
+      setAllSheets(rows);
+    } catch (e) {
+      console.error('Failed to load daily sheets', e);
+      setErrorMsg('Failed to load daily sheets');
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (authLoading || !user) return;
     loadAllSheets();
-  }, [user, authLoading]);
+  }, [user, authLoading, loadAllSheets]);
 
   const visibleCenters = useMemo(() => {
     const mode = resolveDataScope(effectiveScopeCenterId, allowedCenterIds);
@@ -330,6 +362,12 @@ const CashRegisterPage = () => {
     return allSheets.filter((s) => s.doc.centerId === mode.centerId);
   }, [allSheets, effectiveScopeCenterId, allowedCenterIds]);
 
+  const registerVisibleSheets = useMemo(() => {
+    const now = new Date();
+    if (isAdmin) return scopedSheets;
+    return scopedSheets.filter((s) => isCashRegisterSheetVisibleForRole(sheetDateFromDoc(s.doc), now, false));
+  }, [scopedSheets, isAdmin]);
+
   useEffect(() => {
     if (!centers.length) return;
     const mode = resolveDataScope(effectiveScopeCenterId, allowedCenterIds);
@@ -344,28 +382,23 @@ const CashRegisterPage = () => {
     }
   }, [user, authLoading, router]);
 
-  const loadAllSheets = async () => {
-    try {
-      setSummaryLoading(true);
-      const snap = await getDocs(query(collection(db, 'cashDailySheets'), orderBy('date', 'desc')));
-      const rows = snap.docs.map((d) => ({ id: d.id, doc: d.data() as DailySheetDoc }));
-      setAllSheets(rows);
-    } catch (e) {
-      console.error('Failed to load daily sheets', e);
-      setErrorMsg('Failed to load daily sheets');
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
-  // Sheets filtered to current center (data already limited by CRM scope when applicable)
-  const centerSheets = useMemo(() => {
+  /** All sheets for the selected center (for summary cards — full history within CRM scope). */
+  const centerSheetsAllTime = useMemo(() => {
     if (!selectedCenter) return [];
     return scopedSheets.filter((s) => {
       if (s.doc.centerId) return s.doc.centerId === selectedCenter.id;
-      return false; // legacy sheets without centerId don't belong to any center
+      return false;
     });
   }, [scopedSheets, selectedCenter]);
+
+  /** Saved-sheets table: admins see full center history; non-admins only today + yesterday. */
+  const centerSheets = useMemo(() => {
+    if (!selectedCenter) return [];
+    return registerVisibleSheets.filter((s) => {
+      if (s.doc.centerId) return s.doc.centerId === selectedCenter.id;
+      return false; // legacy sheets without centerId don't belong to any center
+    });
+  }, [registerVisibleSheets, selectedCenter]);
 
   // --- Daily form helpers ---
   const addCashInRow = () =>
@@ -404,6 +437,10 @@ const CashRegisterPage = () => {
   const saveDailySheet = async () => {
     if (!selectedCenter) {
       setErrorMsg('Please select a center first');
+      return;
+    }
+    if (!isAdmin && !isCashRegisterEntryDateAllowedForNonAdmin(entryDate, new Date())) {
+      setErrorMsg('You can only save or update sheets for today and yesterday.');
       return;
     }
     try {
@@ -552,9 +589,11 @@ const CashRegisterPage = () => {
 
   const renderSummaryCards = (
     totals: { netIn: number; netOut: number; balance: number; cashBalance: number },
-    options?: { adminExpenseTotal?: number }
+    options?: { adminExpenseTotal?: number; showOnlyCashBalance?: boolean }
   ) => {
     const mdSpan = options?.adminExpenseTotal !== undefined ? 2 : 3;
+    const singleCardSpan = 12;
+    const cardMdSpan = options?.showOnlyCashBalance ? singleCardSpan : mdSpan;
     const cards: Array<{
       label: string;
       value: number;
@@ -614,10 +653,11 @@ const CashRegisterPage = () => {
         caption: 'Cash out lines tagged Expenses',
       });
     }
+    const visibleCards = options?.showOnlyCashBalance ? cards.filter((c) => c.label === 'Cash Balance') : cards;
     return (
       <Grid container spacing={2} mb={3}>
-        {cards.map((card) => (
-          <Grid key={card.label} sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: `span ${mdSpan}` } }}>
+        {visibleCards.map((card) => (
+          <Grid key={card.label} sx={{ gridColumn: { xs: `span ${singleCardSpan}`, sm: `span ${singleCardSpan}`, md: `span ${cardMdSpan}` } }}>
             <Card
               elevation={2}
               sx={{
@@ -902,15 +942,26 @@ const CashRegisterPage = () => {
 
   const renderSavedSheetsTable = (
     sheets: typeof allSheets,
-    opts?: { omitSummary?: boolean; omitFilterBar?: boolean }
+    opts?: { omitSummary?: boolean; omitFilterBar?: boolean; summaryFromSheets?: typeof allSheets }
   ) => {
-    const filtered = filterByRange(sheets);
-    const totals = computeTotals(filtered);
+    const tableFiltered = isAdmin ? filterByRange(sheets) : sheets;
+    const totalsBase = opts?.summaryFromSheets ?? sheets;
+    const totalsFiltered = isAdmin ? filterByRange(totalsBase) : totalsBase;
+    const totals = computeTotals(totalsFiltered);
 
     return (
       <>
-        {!opts?.omitSummary && renderSummaryCards(totals)}
-        {!opts?.omitFilterBar && renderFilterBar()}
+        {!opts?.omitSummary && renderSummaryCards(totals, { showOnlyCashBalance: !isAdmin })}
+        {!opts?.omitFilterBar &&
+          (isAdmin ? (
+            renderFilterBar()
+          ) : (
+            <Paper elevation={0} sx={filterBarPaperSx}>
+              <Typography variant="body2" color="text.secondary">
+                Showing today and yesterday only.
+              </Typography>
+            </Paper>
+          ))}
         <Paper elevation={0} sx={listPanelPaperSx}>
           <Box sx={{ px: 2.5, py: 1.75, borderBottom: '1px solid', borderColor: 'divider', bgcolor: alpha(theme.palette.primary.main, 0.04) }}>
             <Stack direction="row" alignItems="center" spacing={1}>
@@ -936,7 +987,7 @@ const CashRegisterPage = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filtered.map((s) => (
+                {tableFiltered.map((s) => (
                   <TableRow
                     key={s.id}
                     hover
@@ -966,6 +1017,11 @@ const CashRegisterPage = () => {
                             color="success"
                             aria-label="Edit sheet"
                             onClick={() => {
+                              const sd = sheetDateFromDoc(s.doc);
+                              if (!isAdmin && !isCashRegisterSheetVisibleForRole(sd, new Date(), false)) {
+                                setErrorMsg('You can only edit cash sheets for today or yesterday.');
+                                return;
+                              }
                               setEntryDate(new Date(s.doc.date.seconds * 1000));
                               setCashInRows(normalizeCashInRows(s.doc.cashIn));
                               setCashOutRows(normalizeCashOutRows(s.doc.cashOut));
@@ -987,7 +1043,7 @@ const CashRegisterPage = () => {
                     </TableCell>
                   </TableRow>
                 ))}
-                {filtered.length === 0 && (
+                {tableFiltered.length === 0 && (
                   <TableRow><TableCell colSpan={activeTab === 1 ? 9 : 8} align="center" sx={{ py: 3 }}>No daily sheets found</TableCell></TableRow>
                 )}
               </TableBody>
@@ -1294,7 +1350,7 @@ const CashRegisterPage = () => {
           </Button>
         </Toolbar>
 
-        {renderSavedSheetsTable(centerSheets)}
+        {renderSavedSheetsTable(centerSheets, { summaryFromSheets: centerSheetsAllTime })}
       </Box>
     );
   };
