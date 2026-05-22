@@ -78,6 +78,20 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { v4 as uuidv4 } from 'uuid';
 import { cashRegisterExpenseAmount } from '@/lib/cash-register/expenseOutflow';
+import {
+  type DailySheetDoc,
+  type TodayDrawerSnapshot,
+  buildTotalsPayload,
+  computeClosingCashBalance,
+  computePeriodDrawerBalances,
+  findLatestSheetForCenter,
+  findSheetForCenterOnDate,
+  getTodayDrawerSnapshot,
+  normalizeSheetBalances,
+  resolveDrawerBalancesForSheet,
+  sheetDateFromDoc,
+  suggestOpeningCashBalance,
+} from '@/lib/cash-register/dailySheetBalances';
 import { RADIUS_2XL } from '@/components/Layout/crm-theme';
 
 const dialogPaperProps = { sx: { borderRadius: 2 } } as const;
@@ -199,23 +213,6 @@ function labelForCashOutCategory(c: TransactionCategory) {
   return CASH_OUT_CATEGORIES.find((x) => x.value === c)?.label ?? 'Miscellaneous';
 }
 
-interface DailySheetDoc {
-  date: Timestamp;
-  centerId?: string;
-  centerName?: string;
-  cashIn: DailyRow[];
-  cashOut: DailyRow[];
-  totals: {
-    netIn: number;
-    netOut: number;
-    cashIn: number;
-    cashOut: number;
-    balance: number;
-    cashBalance: number;
-  };
-  createdAt: Timestamp;
-}
-
 interface Center {
   id: string;
   name: string;
@@ -242,10 +239,6 @@ const startOfWeekMonday = (d: Date) => {
   const diff = day === 0 ? -6 : 1 - day;
   return startOfDay(addDays(d, diff));
 };
-
-function sheetDateFromDoc(doc: DailySheetDoc): Date {
-  return new Date(doc.date.seconds * 1000);
-}
 
 /** Non-admins: only today and yesterday (local calendar). Admins: unrestricted. */
 function isCashRegisterSheetVisibleForRole(sheetDate: Date, now: Date, admin: boolean): boolean {
@@ -302,6 +295,9 @@ const CashRegisterPage = () => {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [quickRangePreset, setQuickRangePreset] = useState('');
   const [entryDrawerOpen, setEntryDrawerOpen] = useState(false);
+  const [openingCashBalance, setOpeningCashBalance] = useState(0);
+  const [openingManuallyEdited, setOpeningManuallyEdited] = useState(false);
+  const [carriedForwardFromDate, setCarriedForwardFromDate] = useState<Date | null>(null);
 
   // Date range filters
   const [rangeStart, setRangeStart] = useState<Date | null>(null);
@@ -400,6 +396,41 @@ const CashRegisterPage = () => {
     });
   }, [registerVisibleSheets, selectedCenter]);
 
+  const latestSheetForSelectedCenter = useMemo(() => {
+    if (!selectedCenter) return null;
+    return findLatestSheetForCenter(centerSheetsAllTime, selectedCenter.id);
+  }, [centerSheetsAllTime, selectedCenter]);
+
+  const todayDrawerSnapshot = useMemo((): TodayDrawerSnapshot | null => {
+    if (!selectedCenter) return null;
+    return getTodayDrawerSnapshot(centerSheetsAllTime, selectedCenter.id, new Date());
+  }, [centerSheetsAllTime, selectedCenter]);
+
+  const sheetsForCenterChain = useCallback(
+    (centerId: string | undefined) => {
+      if (!centerId) return allSheets;
+      return allSheets.filter((s) => s.doc.centerId === centerId);
+    },
+    [allSheets],
+  );
+
+  const applySuggestedOpening = useCallback(
+    (date: Date, force = false) => {
+      if (!selectedCenter) return;
+      if (!force && openingManuallyEdited) return;
+      const { opening, priorSheet } = suggestOpeningCashBalance(centerSheetsAllTime, selectedCenter.id, date);
+      setOpeningCashBalance(opening);
+      setCarriedForwardFromDate(priorSheet ? sheetDateFromDoc(priorSheet.doc) : null);
+      setOpeningManuallyEdited(false);
+    },
+    [selectedCenter, centerSheetsAllTime, openingManuallyEdited],
+  );
+
+  useEffect(() => {
+    if (!entryDrawerOpen || !selectedCenter || editingSheetId) return;
+    applySuggestedOpening(entryDate, false);
+  }, [entryDate, entryDrawerOpen, selectedCenter, editingSheetId, applySuggestedOpening]);
+
   // --- Daily form helpers ---
   const addCashInRow = () =>
     setCashInRows((prev) => [
@@ -419,12 +450,11 @@ const CashRegisterPage = () => {
     setter((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   };
 
-  const dailyTotals = () => {
-    const netIn = cashInRows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
-    const netOut = cashOutRows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
-    const cashIn = cashInRows.filter((r) => r.paymentMethod === 'cash').reduce((s, r) => s + (Number(r.amount) || 0), 0);
-    const cashOut = cashOutRows.filter((r) => r.paymentMethod === 'cash').reduce((s, r) => s + (Number(r.amount) || 0), 0);
-    return { netIn, netOut, cashIn, cashOut, balance: netIn - netOut, cashBalance: cashIn - cashOut };
+  const dailyTotals = () => buildTotalsPayload(cashInRows, cashOutRows, openingCashBalance);
+
+  const expectedClosingCash = () => {
+    const t = dailyTotals();
+    return t.closingCashBalance ?? computeClosingCashBalance(openingCashBalance, t.cashIn, t.cashOut);
   };
 
   const resetDailyForm = () => {
@@ -432,6 +462,20 @@ const CashRegisterPage = () => {
     setCashInRows([{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_IN_CATEGORY }]);
     setCashOutRows([{ id: uuidv4(), partyName: '', itemDetails: '', quantity: 1, paymentMethod: 'cash', amount: 0, transactionCategory: DEFAULT_CASH_OUT_CATEGORY }]);
     setEditingSheetId(null);
+    setOpeningCashBalance(0);
+    setOpeningManuallyEdited(false);
+    setCarriedForwardFromDate(null);
+  };
+
+  const openNewDailyEntry = () => {
+    resetDailyForm();
+    if (selectedCenter) {
+      const today = new Date();
+      const { opening, priorSheet } = suggestOpeningCashBalance(centerSheetsAllTime, selectedCenter.id, today);
+      setOpeningCashBalance(opening);
+      setCarriedForwardFromDate(priorSheet ? sheetDateFromDoc(priorSheet.doc) : null);
+    }
+    setEntryDrawerOpen(true);
   };
 
   const saveDailySheet = async () => {
@@ -443,16 +487,38 @@ const CashRegisterPage = () => {
       setErrorMsg('You can only save or update sheets for today and yesterday.');
       return;
     }
+    const duplicate = findSheetForCenterOnDate(centerSheetsAllTime, selectedCenter.id, entryDate, editingSheetId);
+    if (duplicate) {
+      setErrorMsg(
+        `A cash sheet already exists for ${selectedCenter.name} on ${entryDate.toLocaleDateString('en-IN')}. Edit that sheet instead.`,
+      );
+      return;
+    }
     try {
       const totals = dailyTotals();
+      const { opening: suggestedOpening, priorSheet } = suggestOpeningCashBalance(
+        centerSheetsAllTime,
+        selectedCenter.id,
+        entryDate,
+      );
+      const opening = openingManuallyEdited
+        ? Math.max(0, Number(openingCashBalance) || 0)
+        : suggestedOpening;
+      const openingSource =
+        openingManuallyEdited || (priorSheet && opening !== suggestedOpening) ? 'manual' : 'carried_forward';
+      const closingCashBalance = totals.closingCashBalance ?? computeClosingCashBalance(opening, totals.cashIn, totals.cashOut);
       const cashInNormalized = cashInRows.map((r) => normalizeDailyRow(r as unknown as Record<string, unknown>, 'in'));
       const cashOutNormalized = cashOutRows.map((r) => normalizeDailyRow(r as unknown as Record<string, unknown>, 'out'));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const payload: any = {
         date: Timestamp.fromDate(entryDate),
         centerId: selectedCenter.id,
         centerName: selectedCenter.name,
         cashIn: cashInNormalized,
         cashOut: cashOutNormalized,
+        openingCashBalance: opening,
+        closingCashBalance,
+        openingSource,
         totals,
         createdAt: Timestamp.now(),
       };
@@ -587,60 +653,167 @@ const CashRegisterPage = () => {
     </Paper>
   );
 
+  const renderDrawerBalanceStrip = (opts: {
+    opening: number;
+    closing: number | null;
+    closingNotSavedYet?: boolean;
+    openingCaption?: string;
+    closingCaption?: string;
+    openingLabel?: string;
+    closingLabel?: string;
+  }) => (
+    <Paper
+      elevation={0}
+      sx={{
+        mb: 2,
+        p: 2,
+        borderRadius: 2,
+        border: '1px solid',
+        borderColor: 'divider',
+        bgcolor: alpha(theme.palette.primary.main, 0.04),
+      }}
+    >
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={{ xs: 2, sm: 4 }}
+        divider={<Divider orientation="vertical" flexItem sx={{ display: { xs: 'none', sm: 'block' } }} />}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {opts.openingLabel ?? 'Opening balance'}
+          </Typography>
+          {summaryLoading ? (
+            <Skeleton variant="text" width="40%" height={36} sx={{ mt: 0.5 }} />
+          ) : (
+            <Typography variant="h5" fontWeight={800} sx={{ mt: 0.25, fontFeatureSettings: '"tnum"' }}>
+              {formatCurrency(opts.opening)}
+            </Typography>
+          )}
+          {opts.openingCaption && (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+              {opts.openingCaption}
+            </Typography>
+          )}
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            {opts.closingLabel ?? 'Closing balance'}
+          </Typography>
+          {summaryLoading ? (
+            <Skeleton variant="text" width="40%" height={36} sx={{ mt: 0.5 }} />
+          ) : (
+            <Typography variant="h5" fontWeight={800} sx={{ mt: 0.25, fontFeatureSettings: '"tnum"', color: 'primary.main' }}>
+              {opts.closingNotSavedYet ? 'Not saved yet' : formatCurrency(opts.closing ?? opts.opening)}
+            </Typography>
+          )}
+          {opts.closingCaption && (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+              {opts.closingCaption}
+            </Typography>
+          )}
+        </Box>
+      </Stack>
+    </Paper>
+  );
+
   const renderSummaryCards = (
     totals: { netIn: number; netOut: number; balance: number; cashBalance: number },
-    options?: { adminExpenseTotal?: number; showOnlyCashBalance?: boolean }
+    options?: {
+      adminExpenseTotal?: number;
+      showDrawerBalances?: boolean;
+      showTodayDrawer?: boolean;
+      todayDrawer?: TodayDrawerSnapshot | null;
+      drawerBalances?: { periodOpening: number; periodClosing: number; isSingleDay: boolean; sheetCount: number };
+    },
   ) => {
+    const today = options?.todayDrawer;
+    const period = options?.drawerBalances;
+    const periodCaption =
+      period && period.sheetCount > 0 && !period.isSingleDay
+        ? 'First sheet opening → last sheet closing in range'
+        : undefined;
+
     const mdSpan = options?.adminExpenseTotal !== undefined ? 2 : 3;
     const singleCardSpan = 12;
-    const cardMdSpan = options?.showOnlyCashBalance ? singleCardSpan : mdSpan;
+    const cardMdSpan = mdSpan;
+
+    const drawerStrip =
+      today && (options?.showDrawerBalances || options?.showTodayDrawer) ? (
+        renderDrawerBalanceStrip({
+          opening: today.opening,
+          closing: today.closing,
+          closingNotSavedYet: today.closingNotSavedYet,
+          openingCaption: today.priorSheetDate
+            ? `Same as ${today.priorSheetDate.toLocaleDateString('en-IN')} closing cash balance`
+            : 'Start of today',
+          closingCaption: today.closingNotSavedYet
+            ? "Save today's sheet after cash in/out"
+            : 'End of today in drawer',
+        })
+      ) : period && period.sheetCount > 0 && !options?.showDrawerBalances ? (
+        renderDrawerBalanceStrip({
+          opening: period.periodOpening,
+          closing: period.periodClosing,
+          openingLabel: period.isSingleDay ? 'Opening balance' : 'Period opening',
+          closingLabel: period.isSingleDay ? 'Closing balance' : 'Period closing',
+          openingCaption: periodCaption,
+          closingCaption: periodCaption,
+        })
+      ) : null;
+
     const cards: Array<{
       label: string;
       value: number;
+      valueDisplay?: string;
       icon: React.ReactElement;
       accent: string;
       iconBg: string;
       iconColor: string;
       valueColor: string;
       caption?: string;
-    }> = [
-      {
-        label: 'Balance',
-        value: totals.balance,
-        icon: <BalanceIcon />,
-        accent: theme.palette.primary.main,
-        iconBg: alpha(theme.palette.primary.main, 0.14),
-        iconColor: theme.palette.primary.main,
-        valueColor: theme.palette.text.primary,
-      },
-      {
-        label: 'Net In',
-        value: totals.netIn,
-        icon: <IncomeIcon />,
-        accent: theme.palette.success.main,
-        iconBg: alpha(theme.palette.success.main, 0.14),
-        iconColor: theme.palette.success.dark,
-        valueColor: theme.palette.success.dark,
-      },
-      {
-        label: 'Net Out',
-        value: totals.netOut,
-        icon: <ExpenseIcon />,
-        accent: theme.palette.error.main,
-        iconBg: alpha(theme.palette.error.main, 0.12),
-        iconColor: theme.palette.error.main,
-        valueColor: theme.palette.error.main,
-      },
-      {
-        label: 'Cash Balance',
-        value: totals.cashBalance,
-        icon: <MoneyIcon />,
-        accent: theme.palette.info.main,
-        iconBg: alpha(theme.palette.info.main, 0.14),
-        iconColor: theme.palette.info.dark,
-        valueColor: theme.palette.info.dark,
-      },
-    ];
+    }> = [];
+
+    if (!options?.showDrawerBalances) {
+      cards.push(
+        {
+          label: 'Balance',
+          value: totals.balance,
+          icon: <BalanceIcon />,
+          accent: theme.palette.primary.main,
+          iconBg: alpha(theme.palette.primary.main, 0.14),
+          iconColor: theme.palette.primary.main,
+          valueColor: theme.palette.text.primary,
+        },
+        {
+          label: 'Net In',
+          value: totals.netIn,
+          icon: <IncomeIcon />,
+          accent: theme.palette.success.main,
+          iconBg: alpha(theme.palette.success.main, 0.14),
+          iconColor: theme.palette.success.dark,
+          valueColor: theme.palette.success.dark,
+        },
+        {
+          label: 'Net Out',
+          value: totals.netOut,
+          icon: <ExpenseIcon />,
+          accent: theme.palette.error.main,
+          iconBg: alpha(theme.palette.error.main, 0.12),
+          iconColor: theme.palette.error.main,
+          valueColor: theme.palette.error.main,
+        },
+        {
+          label: 'Cash balance',
+          value: totals.cashBalance,
+          icon: <MoneyIcon />,
+          accent: theme.palette.info.main,
+          iconBg: alpha(theme.palette.info.main, 0.14),
+          iconColor: theme.palette.info.dark,
+          valueColor: theme.palette.info.dark,
+        },
+      );
+    }
+
     if (options?.adminExpenseTotal !== undefined) {
       cards.push({
         label: 'Expenses (categorized)',
@@ -653,9 +826,12 @@ const CashRegisterPage = () => {
         caption: 'Cash out lines tagged Expenses',
       });
     }
-    const visibleCards = options?.showOnlyCashBalance ? cards.filter((c) => c.label === 'Cash Balance') : cards;
+    const visibleCards = cards;
     return (
-      <Grid container spacing={2} mb={3}>
+      <Box mb={3}>
+        {drawerStrip}
+        {visibleCards.length > 0 && (
+      <Grid container spacing={2}>
         {visibleCards.map((card) => (
           <Grid key={card.label} sx={{ gridColumn: { xs: `span ${singleCardSpan}`, sm: `span ${singleCardSpan}`, md: `span ${cardMdSpan}` } }}>
             <Card
@@ -684,7 +860,7 @@ const CashRegisterPage = () => {
                       color: card.iconColor,
                     }}
                   >
-                    {React.cloneElement(card.icon, { sx: { fontSize: 22 } })}
+                    {React.cloneElement(card.icon as React.ReactElement<{ sx?: object }>, { sx: { fontSize: 22 } })}
                   </Avatar>
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography variant="overline" color="text.secondary" fontWeight={700} sx={{ letterSpacing: '0.08em', lineHeight: 1.2 }}>
@@ -701,10 +877,10 @@ const CashRegisterPage = () => {
                           letterSpacing: '-0.03em',
                           lineHeight: 1.15,
                           mt: 0.5,
-                          fontFeatureSettings: '"tnum"',
+                          fontFeatureSettings: card.valueDisplay ? undefined : '"tnum"',
                         }}
                       >
-                        {formatCurrency(card.value)}
+                        {card.valueDisplay ?? formatCurrency(card.value)}
                       </Typography>
                     )}
                     {card.caption && (
@@ -719,6 +895,8 @@ const CashRegisterPage = () => {
           </Grid>
         ))}
       </Grid>
+        )}
+      </Box>
     );
   };
 
@@ -865,6 +1043,97 @@ const CashRegisterPage = () => {
     );
   };
 
+  const renderOpeningBalanceSection = () => {
+    const t = dailyTotals();
+    const closing = expectedClosingCash();
+    const helperText = carriedForwardFromDate
+      ? `Opening equals ${carriedForwardFromDate.toLocaleDateString('en-IN')} closing cash balance`
+      : 'No prior sheet — opening cash balance is ₹0';
+
+    const formulaParts: string[] = [formatCurrency(openingCashBalance)];
+    if (t.cashIn > 0) formulaParts.push(`+ ${formatCurrency(t.cashIn)} received`);
+    if (t.cashOut > 0) formulaParts.push(`− ${formatCurrency(t.cashOut)} paid`);
+    const formulaLine =
+      t.cashOut > 0 && t.cashIn === 0
+        ? `${formatCurrency(openingCashBalance)} − ${formatCurrency(t.cashOut)} = ${formatCurrency(closing)}`
+        : `${formulaParts.join(' ')} = ${formatCurrency(closing)}`;
+
+    const statementRow = (label: string, value: string, opts?: { bold?: boolean; success?: boolean }) => (
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ py: 1, borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Typography variant="body2" color="text.secondary" fontWeight={600}>
+          {label}
+        </Typography>
+        <Typography
+          variant="body1"
+          fontWeight={opts?.bold ? 800 : 600}
+          sx={{
+            fontFeatureSettings: '"tnum"',
+            color: opts?.success ? 'success.main' : 'text.primary',
+          }}
+        >
+          {value}
+        </Typography>
+      </Stack>
+    );
+
+    return (
+      <Paper
+        elevation={0}
+        sx={{
+          p: 2,
+          mb: 2,
+          borderRadius: 2,
+          border: '1px solid',
+          borderColor: 'divider',
+          bgcolor: alpha(theme.palette.primary.main, 0.04),
+        }}
+      >
+        <Typography variant="subtitle2" fontWeight={800} sx={{ mb: 1.5, letterSpacing: '-0.01em' }}>
+          Daily cash balance
+        </Typography>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+          Cash payment lines only — card/UPI do not change drawer balance
+        </Typography>
+
+        <TextField
+          variant="outlined"
+          size="small"
+          fullWidth
+          type="number"
+          label="Opening balance"
+          value={openingCashBalance}
+          onChange={(e) => {
+            setOpeningCashBalance(Math.max(0, Number(e.target.value) || 0));
+            setOpeningManuallyEdited(true);
+          }}
+          inputProps={{ min: 0, step: 1 }}
+          InputProps={{ startAdornment: <InputAdornment position="start">₹</InputAdornment> }}
+          helperText={helperText}
+          sx={{ mb: 1.5 }}
+        />
+        {!editingSheetId && (
+          <Button
+            size="small"
+            sx={{ mb: 1.5, textTransform: 'none', fontWeight: 600 }}
+            onClick={() => applySuggestedOpening(entryDate, true)}
+          >
+            Use previous day closing as opening
+          </Button>
+        )}
+
+        <Box sx={{ borderRadius: 2, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', px: 2 }}>
+          {statementRow('Cash received today', formatCurrency(t.cashIn))}
+          {statementRow('Cash paid today', formatCurrency(t.cashOut))}
+          {statementRow('Closing balance', formatCurrency(closing), { bold: true, success: true })}
+        </Box>
+
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
+          {formulaLine}
+        </Typography>
+      </Paper>
+    );
+  };
+
   const renderEntryDrawer = () => (
     <Drawer
       anchor="right"
@@ -908,11 +1177,18 @@ const CashRegisterPage = () => {
           <DatePicker
             label="Entry date"
             value={entryDate}
-            onChange={(d) => d && setEntryDate(d)}
+            onChange={(d) => {
+              if (!d) return;
+              setEntryDate(d);
+              if (!editingSheetId || !openingManuallyEdited) {
+                applySuggestedOpening(d, false);
+              }
+            }}
             slotProps={{ textField: { size: 'small', variant: 'outlined', fullWidth: true } }}
           />
         </LocalizationProvider>
         <Divider sx={{ my: 2 }} />
+        {renderOpeningBalanceSection()}
         {renderDailyTable(cashInRows, 'in')}
         {renderDailyTable(cashOutRows, 'out')}
       </Box>
@@ -929,8 +1205,15 @@ const CashRegisterPage = () => {
       >
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="flex-end">
           <Stack direction="row" flexWrap="wrap" gap={1} justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}>
-            <Chip label={`Balance: ${formatCurrency(dailyTotals().balance)}`} color={dailyTotals().balance >= 0 ? 'success' : 'error'} variant="outlined" size="small" />
-            <Chip label={`Cash balance: ${formatCurrency(dailyTotals().cashBalance)}`} color={dailyTotals().cashBalance >= 0 ? 'success' : 'error'} variant="outlined" size="small" />
+            <Chip label={`Opening: ${formatCurrency(openingCashBalance)}`} variant="outlined" size="small" />
+            <Chip label={`Received: ${formatCurrency(dailyTotals().cashIn)}`} variant="outlined" size="small" color="success" />
+            <Chip label={`Paid: ${formatCurrency(dailyTotals().cashOut)}`} variant="outlined" size="small" color="error" />
+            <Chip
+              label={`Closing: ${formatCurrency(expectedClosingCash())}`}
+              color={expectedClosingCash() >= 0 ? 'success' : 'error'}
+              variant="outlined"
+              size="small"
+            />
           </Stack>
           <Button variant="contained" onClick={saveDailySheet} startIcon={<ReceiptIcon />} sx={{ textTransform: 'none', fontWeight: 700, px: 3, py: 1.25 }}>
             {editingSheetId ? 'Update sheet' : 'Save daily sheet'}
@@ -942,16 +1225,25 @@ const CashRegisterPage = () => {
 
   const renderSavedSheetsTable = (
     sheets: typeof allSheets,
-    opts?: { omitSummary?: boolean; omitFilterBar?: boolean; summaryFromSheets?: typeof allSheets }
+    opts?: {
+      omitSummary?: boolean;
+      omitFilterBar?: boolean;
+      todayDrawer?: TodayDrawerSnapshot | null;
+    },
   ) => {
     const tableFiltered = isAdmin ? filterByRange(sheets) : sheets;
-    const totalsBase = opts?.summaryFromSheets ?? sheets;
-    const totalsFiltered = isAdmin ? filterByRange(totalsBase) : totalsBase;
-    const totals = computeTotals(totalsFiltered);
+    const totalsFiltered = isAdmin ? filterByRange(sheets) : [];
+    const totals = computeTotals(totalsFiltered.length > 0 ? totalsFiltered : sheets);
+    const todayDrawer = opts?.todayDrawer ?? null;
 
     return (
       <>
-        {!opts?.omitSummary && renderSummaryCards(totals, { showOnlyCashBalance: !isAdmin })}
+        {!opts?.omitSummary &&
+          renderSummaryCards(totals, {
+            showDrawerBalances: !isAdmin,
+            showTodayDrawer: isAdmin && !!todayDrawer,
+            todayDrawer,
+          })}
         {!opts?.omitFilterBar &&
           (isAdmin ? (
             renderFilterBar()
@@ -977,17 +1269,23 @@ const CashRegisterPage = () => {
                 <TableRow>
                   <TableCell sx={headCellSx}>Date</TableCell>
                   {activeTab === 1 && <TableCell sx={headCellSx}>Center</TableCell>}
+                  <TableCell sx={headCellSx} align="right">Opening</TableCell>
+                  <TableCell sx={headCellSx} align="right">
+                    <Tooltip title="End-of-day cash in drawer">
+                      <span>Closing</span>
+                    </Tooltip>
+                  </TableCell>
                   <TableCell sx={headCellSx} align="right">Net In</TableCell>
                   <TableCell sx={headCellSx} align="right">Net Out</TableCell>
-                  <TableCell sx={headCellSx} align="right">Balance</TableCell>
                   <TableCell sx={headCellSx} align="right">Cash In</TableCell>
                   <TableCell sx={headCellSx} align="right">Cash Out</TableCell>
-                  <TableCell sx={headCellSx} align="right">Cash Balance</TableCell>
                   <TableCell sx={headCellSx} align="right" width={140}>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {tableFiltered.map((s) => (
+                {tableFiltered.map((s) => {
+                  const bal = resolveDrawerBalancesForSheet(sheetsForCenterChain(s.doc.centerId), s);
+                  return (
                   <TableRow
                     key={s.id}
                     hover
@@ -998,12 +1296,12 @@ const CashRegisterPage = () => {
                   >
                     <TableCell>{new Date(s.doc.date.seconds * 1000).toLocaleDateString('en-IN')}</TableCell>
                     {activeTab === 1 && <TableCell><Chip label={s.doc.centerName || 'Legacy'} size="small" /></TableCell>}
-                    <TableCell align="right">{formatCurrency(s.doc.totals.netIn)}</TableCell>
-                    <TableCell align="right">{formatCurrency(s.doc.totals.netOut)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(s.doc.totals.balance)}</TableCell>
+                    <TableCell align="right">{formatCurrency(bal.openingCashBalance)}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(bal.closingCashBalance)}</TableCell>
+                    <TableCell align="right" sx={{ color: 'success.main' }}>{formatCurrency(s.doc.totals.netIn)}</TableCell>
+                    <TableCell align="right" sx={{ color: 'error.main' }}>{formatCurrency(s.doc.totals.netOut)}</TableCell>
                     <TableCell align="right">{formatCurrency(s.doc.totals.cashIn)}</TableCell>
                     <TableCell align="right">{formatCurrency(s.doc.totals.cashOut)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(s.doc.totals.cashBalance)}</TableCell>
                     <TableCell align="right">
                       <Tooltip title="Preview">
                         <IconButton size="small" color="primary" onClick={() => setPreviewSheet(s)} aria-label="Preview sheet">
@@ -1022,9 +1320,13 @@ const CashRegisterPage = () => {
                                 setErrorMsg('You can only edit cash sheets for today or yesterday.');
                                 return;
                               }
+                              const bal = resolveDrawerBalancesForSheet(sheetsForCenterChain(s.doc.centerId), s);
                               setEntryDate(new Date(s.doc.date.seconds * 1000));
                               setCashInRows(normalizeCashInRows(s.doc.cashIn));
                               setCashOutRows(normalizeCashOutRows(s.doc.cashOut));
+                              setOpeningCashBalance(bal.openingCashBalance);
+                              setOpeningManuallyEdited(s.doc.openingSource === 'manual');
+                              setCarriedForwardFromDate(null);
                               setEditingSheetId(s.id);
                               setEntryDrawerOpen(true);
                             }}
@@ -1042,7 +1344,8 @@ const CashRegisterPage = () => {
                       )}
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
                 {tableFiltered.length === 0 && (
                   <TableRow><TableCell colSpan={activeTab === 1 ? 9 : 8} align="center" sx={{ py: 3 }}>No daily sheets found</TableCell></TableRow>
                 )}
@@ -1079,7 +1382,7 @@ const CashRegisterPage = () => {
                 {d?.centerName ? (
                   <li>Center: <Box component="span" fontWeight={600} color="text.primary">{d.centerName}</Box></li>
                 ) : null}
-                <li>Balance: <Box component="span" fontWeight={600} color="text.primary">{formatCurrency(d?.totals?.balance ?? 0)}</Box></li>
+                <li>Closing cash: <Box component="span" fontWeight={600} color="text.primary">{formatCurrency(sheetToDelete ? resolveDrawerBalancesForSheet(sheetsForCenterChain(sheetToDelete.doc.centerId), sheetToDelete).closingCashBalance : 0)}</Box></li>
               </Box>
             </>
           )}
@@ -1136,14 +1439,22 @@ const CashRegisterPage = () => {
               <CloseIcon />
             </IconButton>
           </Stack>
-          {previewSheet && (
+          {previewSheet && (() => {
+            const bal = resolveDrawerBalancesForSheet(
+              sheetsForCenterChain(previewSheet.doc.centerId),
+              previewSheet,
+            );
+            return (
             <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 2 }}>
+              <Chip label={`Opening: ${formatCurrency(bal.openingCashBalance)}`} variant="outlined" size="small" />
+              <Chip label={`Closing: ${formatCurrency(bal.closingCashBalance)}`} color="primary" variant="outlined" size="small" />
+              <Chip label={`Received: ${formatCurrency(previewSheet.doc.totals.cashIn)}`} color="success" variant="outlined" size="small" />
+              <Chip label={`Paid: ${formatCurrency(previewSheet.doc.totals.cashOut)}`} color="error" variant="outlined" size="small" />
               <Chip label={`Net In: ${formatCurrency(previewSheet.doc.totals.netIn)}`} color="success" variant="outlined" size="small" />
               <Chip label={`Net Out: ${formatCurrency(previewSheet.doc.totals.netOut)}`} color="error" variant="outlined" size="small" />
-              <Chip label={`Balance: ${formatCurrency(previewSheet.doc.totals.balance)}`} variant="outlined" size="small" />
-              <Chip label={`Cash Balance: ${formatCurrency(previewSheet.doc.totals.cashBalance)}`} variant="outlined" size="small" />
             </Stack>
-          )}
+            );
+          })()}
         </Box>
         <Box sx={{ flex: 1, overflow: 'auto', overflowX: 'auto', p: 2 }}>
           {previewSheet && (
@@ -1240,10 +1551,22 @@ const CashRegisterPage = () => {
     });
 
     const centerSummaries = Array.from(byCenterId.entries())
-      .map(([cId, { centerName, sheets }]) => ({ centerId: cId, centerName, ...computeTotals(sheets), sheetCount: sheets.length }))
+      .map(([cId, { centerName, sheets }]) => {
+        const movement = computeTotals(sheets);
+        const drawer = computePeriodDrawerBalances(sheets);
+        return {
+          centerId: cId,
+          centerName,
+          ...movement,
+          periodOpening: drawer.periodOpening,
+          periodClosing: drawer.periodClosing,
+          sheetCount: sheets.length,
+        };
+      })
       .sort((a, b) => a.centerName.localeCompare(b.centerName));
 
     const categorizedExpensesTotal = sumCategorizedCashOutExpenses(rangeFiltered);
+    const overallDrawer = computePeriodDrawerBalances(rangeFiltered);
 
     return (
       <Box>
@@ -1252,7 +1575,7 @@ const CashRegisterPage = () => {
           Aggregated totals and per-center breakdown for the selected date range
         </Typography>
 
-        {renderSummaryCards(overall, { adminExpenseTotal: categorizedExpensesTotal })}
+        {renderSummaryCards(overall, { adminExpenseTotal: categorizedExpensesTotal, drawerBalances: overallDrawer })}
 
         {renderFilterBar()}
 
@@ -1268,10 +1591,10 @@ const CashRegisterPage = () => {
                 <TableRow>
                   <TableCell sx={headCellSx}>Center</TableCell>
                   <TableCell sx={headCellSx} align="right">Sheets</TableCell>
+                  <TableCell sx={headCellSx} align="right">Period opening</TableCell>
+                  <TableCell sx={headCellSx} align="right">Period closing</TableCell>
                   <TableCell sx={headCellSx} align="right">Net In</TableCell>
                   <TableCell sx={headCellSx} align="right">Net Out</TableCell>
-                  <TableCell sx={headCellSx} align="right">Balance</TableCell>
-                  <TableCell sx={headCellSx} align="right">Cash Balance</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -1286,10 +1609,10 @@ const CashRegisterPage = () => {
                   >
                     <TableCell><Chip icon={<StoreIcon />} label={cs.centerName} size="small" variant="outlined" /></TableCell>
                     <TableCell align="right">{cs.sheetCount}</TableCell>
+                    <TableCell align="right">{formatCurrency(cs.periodOpening)}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(cs.periodClosing)}</TableCell>
                     <TableCell align="right" sx={{ color: 'success.main' }}>{formatCurrency(cs.netIn)}</TableCell>
                     <TableCell align="right" sx={{ color: 'error.main' }}>{formatCurrency(cs.netOut)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(cs.balance)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(cs.cashBalance)}</TableCell>
                   </TableRow>
                 ))}
                 {centerSummaries.length === 0 && (
@@ -1299,10 +1622,10 @@ const CashRegisterPage = () => {
                   <TableRow sx={{ bgcolor: 'action.hover' }}>
                     <TableCell sx={{ fontWeight: 700 }}>Total (All Centers)</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700 }}>{rangeFiltered.length}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(overallDrawer.periodOpening)}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(overallDrawer.periodClosing)}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700, color: 'success.main' }}>{formatCurrency(overall.netIn)}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700, color: 'error.main' }}>{formatCurrency(overall.netOut)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(overall.balance)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(overall.cashBalance)}</TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -1336,21 +1659,32 @@ const CashRegisterPage = () => {
               Change center
             </Button>
           )}
-          <Chip icon={<StoreIcon />} label={selectedCenter?.name} color="primary" variant="outlined" sx={{ fontWeight: 700, borderWidth: 2 }} />
+          <Stack alignItems="flex-end" spacing={0.5}>
+            <Chip icon={<StoreIcon />} label={selectedCenter?.name} color="primary" variant="outlined" sx={{ fontWeight: 700, borderWidth: 2 }} />
+            {latestSheetForSelectedCenter && (() => {
+              const bal = resolveDrawerBalancesForSheet(
+                sheetsForCenterChain(latestSheetForSelectedCenter.doc.centerId),
+                latestSheetForSelectedCenter,
+              );
+              const d = sheetDateFromDoc(latestSheetForSelectedCenter.doc);
+              return (
+                <Typography variant="caption" color="text.secondary">
+                  Prior closing cash balance: {formatCurrency(bal.closingCashBalance)} ({d.toLocaleDateString('en-IN')}) — today&apos;s opening
+                </Typography>
+              );
+            })()}
+          </Stack>
           <Button
             variant="contained"
             startIcon={<AddIcon />}
-            onClick={() => {
-              resetDailyForm();
-              setEntryDrawerOpen(true);
-            }}
+            onClick={openNewDailyEntry}
             sx={{ textTransform: 'none', fontWeight: 700 }}
           >
             Daily cash entry
           </Button>
         </Toolbar>
 
-        {renderSavedSheetsTable(centerSheets, { summaryFromSheets: centerSheetsAllTime })}
+        {renderSavedSheetsTable(centerSheets, { todayDrawer: todayDrawerSnapshot })}
       </Box>
     );
   };

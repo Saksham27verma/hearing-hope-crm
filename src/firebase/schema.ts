@@ -182,10 +182,10 @@
  * @field createdAt - Timestamp when the challan was created
  */
 
-// Collection: cashRegister
+// Collection: cashRegister (legacy — see cashDailySheets for current Cash Register UI)
 /**
  * @collection cashRegister
- * @description Cash register entries for tracking cash flow
+ * @description Legacy cash register entries for tracking cash flow
  * @field type - Type of transaction ("income" or "expense")
  * @field amount - Transaction amount
  * @field category - Category of income/expense
@@ -194,6 +194,22 @@
  * @field transactionDate - Date of the transaction
  * @field createdBy - User who recorded the transaction
  * @field createdAt - Timestamp when the transaction was recorded
+ */
+
+// Collection: cashDailySheets
+/**
+ * @collection cashDailySheets
+ * @description Per-center daily cash register sheets (Cash Register module)
+ * @field date - Calendar day for this sheet (Firestore Timestamp)
+ * @field centerId - centers/{id}
+ * @field centerName - Denormalized center name
+ * @field openingCashBalance - Cash in drawer at start of day (INR)
+ * @field closingCashBalance - Computed: opening + cash in − cash out (cash-method lines only)
+ * @field openingSource - "carried_forward" | "manual"
+ * @field cashIn - Array of cash-in line items (partyName, itemDetails, quantity, paymentMethod, amount, transactionCategory)
+ * @field cashOut - Array of cash-out line items (same shape; transactionCategory: handed_over | expenses | miscellaneous)
+ * @field totals - Precomputed aggregates including netIn, netOut, cashIn, cashOut, balance, cashBalance, openingCashBalance, closingCashBalance
+ * @field createdAt - Timestamp when the sheet was saved
  */
 
 // Collection: staffTrialCustody
