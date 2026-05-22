@@ -8,6 +8,18 @@ import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+/** Allow Admin PWA (and other apps) to call live CRM PDF render from the browser. */
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
+  'Access-Control-Max-Age': '86400',
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 type RenderInvoiceBody = {
   invoiceData: InvoiceData;
   templateId?: string | null;
@@ -18,12 +30,15 @@ export async function POST(req: Request) {
     const body = (await req.json()) as RenderInvoiceBody;
     const invoiceData = body?.invoiceData;
     if (!invoiceData) {
-      return NextResponse.json({ ok: false, error: 'invoiceData is required' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: 'invoiceData is required' },
+        { status: 400, headers: CORS_HEADERS },
+      );
     }
     if (!saleHasBillableInvoiceNumber(invoiceData.invoiceNumber)) {
       return NextResponse.json(
         { ok: false, error: 'invoiceData.invoiceNumber must be a valid assigned invoice number (not empty or provisional).' },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS },
       );
     }
 
@@ -33,7 +48,7 @@ export async function POST(req: Request) {
     if (!template?.htmlContent) {
       return NextResponse.json(
         { ok: false, error: 'invoice HTML template is required in Invoice Manager.' },
-        { status: 422 }
+        { status: 422, headers: CORS_HEADERS },
       );
     }
 
@@ -44,13 +59,14 @@ export async function POST(req: Request) {
     return new NextResponse(buffer, {
       status: 200,
       headers: {
+        ...CORS_HEADERS,
         'Content-Type': 'application/pdf',
         'Content-Disposition': `inline; filename="${safe}"`,
       },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Failed to render invoice PDF';
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: message }, { status: 500, headers: CORS_HEADERS });
   }
 }
 
