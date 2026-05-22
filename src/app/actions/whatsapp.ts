@@ -16,10 +16,15 @@ export type SendInvoiceWhatsAppResult =
 function pinnacleConfig() {
   const phoneId = (process.env.PINNACLE_PHONE_ID || '').trim();
   const apiKey = (process.env.PINNACLE_API_KEY || '').trim();
+  /** Pinnacle "English" templates use `en`, not `en_US`. */
+  const templateName = (
+    process.env.PINNACLE_TEMPLATE_NAME || 'invoice_from_crm_testing_template'
+  ).trim();
+  const templateLanguage = (process.env.PINNACLE_TEMPLATE_LANGUAGE || 'en').trim();
   if (!phoneId || !apiKey) {
     throw new Error('Pinnacle WhatsApp is not configured (PINNACLE_PHONE_ID / PINNACLE_API_KEY).');
   }
-  return { phoneId, apiKey };
+  return { phoneId, apiKey, templateName, templateLanguage };
 }
 
 function buildPinnaclePayload(params: {
@@ -28,6 +33,7 @@ function buildPinnaclePayload(params: {
   invoiceNumber: string;
   customerName: string;
 }) {
+  const { templateName, templateLanguage } = pinnacleConfig();
   const filename = `Invoice_${params.invoiceNumber || 'document'}.pdf`.replace(/[^\w.-]+/g, '_');
   return {
     messaging_product: 'whatsapp',
@@ -35,8 +41,8 @@ function buildPinnaclePayload(params: {
     to: params.to,
     type: 'template',
     template: {
-      name: 'invoice_from_crm_testing_template',
-      language: { code: 'en_US' },
+      name: templateName,
+      language: { code: templateLanguage },
       components: [
         {
           type: 'header',
@@ -81,10 +87,25 @@ async function postToPinnacle(body: Record<string, unknown>) {
   }
 
   if (!res.ok) {
-    const detail =
-      typeof responseJson === 'object' && responseJson && 'error' in responseJson
-        ? JSON.stringify((responseJson as { error?: unknown }).error)
-        : text || res.statusText;
+    const root =
+      typeof responseJson === 'object' && responseJson ? (responseJson as Record<string, unknown>) : null;
+    const errObj =
+      root?.error && typeof root.error === 'object'
+        ? (root.error as Record<string, unknown>)
+        : root;
+    const code = errObj?.code;
+    const detail = errObj ? JSON.stringify(errObj) : text || res.statusText;
+    const detailStr = String(root?.message || detail);
+
+    if (code === 132001 || detailStr.includes('132001') || detailStr.includes('does not exist in the translation')) {
+      const { templateName, templateLanguage } = pinnacleConfig();
+      throw new Error(
+        `WhatsApp template not found: name="${templateName}" language="${templateLanguage}". ` +
+          'In Pinnacle / Meta WhatsApp Manager, copy the exact approved template name and language code into ' +
+          'PINNACLE_TEMPLATE_NAME and PINNACLE_TEMPLATE_LANGUAGE (e.g. en or en_US), then redeploy.',
+      );
+    }
+
     throw new Error(`Pinnacle API error (${res.status}): ${detail}`);
   }
 
