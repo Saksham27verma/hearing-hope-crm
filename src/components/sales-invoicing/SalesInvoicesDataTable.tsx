@@ -34,6 +34,8 @@ import {
 import type { PatientPaymentLine, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import { Timestamp } from 'firebase/firestore';
 import { isDetailOrEditPath } from '@/utils/openInNewTab';
+import InvoiceWhatsAppButton from '@/components/sales-invoicing/InvoiceWhatsAppButton';
+import { invoiceWhatsAppPropsFromRow } from '@/lib/sales-invoicing/invoiceWhatsAppFromRow';
 
 export type SortKey = 'invoiceNumber' | 'date' | 'client' | 'linked' | 'total';
 
@@ -336,6 +338,10 @@ export default function SalesInvoicesDataTable({
                               <PrintIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          {(() => {
+                            const waProps = invoiceWhatsAppPropsFromRow(r);
+                            return waProps ? <InvoiceWhatsAppButton invoice={waProps} /> : null;
+                          })()}
                         </>
                       )}
                       {r.kind === 'saved' && voided && (

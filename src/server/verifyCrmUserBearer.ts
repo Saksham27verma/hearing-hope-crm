@@ -33,6 +33,25 @@ export async function verifyCrmUserFromBearer(req: Request): Promise<{ uid: stri
   return { uid: decoded.uid, role };
 }
 
+/** Server Actions / internal callers that already hold a Firebase ID token string. */
+export async function verifyCrmUserFromIdToken(idToken: string): Promise<{ uid: string; role: string }> {
+  const token = (idToken || '').trim();
+  if (!token) throw new CrmAuthHttpError('Missing Authorization bearer token', 401);
+
+  const decoded = await adminAuth().verifyIdToken(token);
+  const db = adminDb();
+  const userSnap = await db.collection('users').doc(decoded.uid).get();
+  if (!userSnap.exists) throw new CrmAuthHttpError('Forbidden', 403);
+
+  const roleRaw = (userSnap.data() as { role?: string })?.role;
+  const role = typeof roleRaw === 'string' ? roleRaw.trim().toLowerCase() : '';
+  if (!role || !['admin', 'staff', 'audiologist'].includes(role)) {
+    throw new CrmAuthHttpError('Forbidden', 403);
+  }
+
+  return { uid: decoded.uid, role };
+}
+
 /** Inventory-style actions: admin and staff only (not audiologist). */
 export function assertStaffTrialCustodyWriter(role: string) {
   const r = role.trim().toLowerCase();
