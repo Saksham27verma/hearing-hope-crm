@@ -1,6 +1,7 @@
 import type { DocumentReference } from 'firebase-admin/firestore';
 import { adminDb } from '@/server/firebaseAdmin';
 import type { WaStatus } from '@/lib/invoices/whatsappTypes';
+import { isProvisionalInvoiceNumber, normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 
 export type { WaStatus };
 
@@ -19,26 +20,55 @@ function normalizeWaStatus(raw: unknown): WaStatus {
   return 'PENDING_APPROVAL';
 }
 
-function mapInvoicesDoc(id: string, data: Record<string, unknown>): InvoiceWhatsAppRecord {
-  return {
-    id,
-    customerName: String(data.customerName || data.patientName || '').trim(),
-    customerPhone: String(data.customerPhone || data.phone || '').trim(),
-    invoiceNumber: String(data.invoiceNumber || '').trim(),
-    pdfUrl: String(data.pdfUrl || data.pdf_url || '').trim(),
-    waStatus: normalizeWaStatus(data.waStatus),
-  };
+const INVOICE_NUMBER_KEYS = ['invoiceNumber', 'invoice_number', 'salesInvoiceNumber'] as const;
+
+/** Billable invoice # from one or more Firestore payloads (sales doc wins over sparse `invoices` stub). */
+export function extractBillableInvoiceNumber(
+  ...sources: Array<Record<string, unknown> | null | undefined>
+): string {
+  for (const data of sources) {
+    if (!data) continue;
+    for (const key of INVOICE_NUMBER_KEYS) {
+      const raw = data[key];
+      const normalized = normalizeInvoiceNumberString(raw);
+      if (normalized && !isProvisionalInvoiceNumber(normalized)) return normalized;
+      const s = String(raw ?? '').trim();
+      if (s && !isProvisionalInvoiceNumber(s)) return s;
+    }
+  }
+  return '';
 }
 
-function mapSalesDoc(id: string, data: Record<string, unknown>): InvoiceWhatsAppRecord {
-  return {
-    id,
-    customerName: String(data.patientName || data.customerName || '').trim(),
-    customerPhone: String(data.phone || data.customerPhone || '').trim(),
-    invoiceNumber: String(data.invoiceNumber || '').trim(),
-    pdfUrl: String(data.pdfUrl || data.pdf_url || '').trim(),
-    waStatus: normalizeWaStatus(data.waStatus),
-  };
+function mergeInvoiceRecord(
+  id: string,
+  invoiceData: Record<string, unknown> | null,
+  saleData: Record<string, unknown> | null,
+): InvoiceWhatsAppRecord {
+  const invoiceNumber = extractBillableInvoiceNumber(saleData, invoiceData);
+  const customerName = String(
+    saleData?.patientName ||
+      saleData?.customerName ||
+      invoiceData?.customerName ||
+      invoiceData?.patientName ||
+      '',
+  ).trim();
+  const customerPhone = String(
+    saleData?.phone ||
+      saleData?.customerPhone ||
+      invoiceData?.customerPhone ||
+      invoiceData?.phone ||
+      '',
+  ).trim();
+  const pdfUrl = String(
+    saleData?.pdfUrl ||
+      saleData?.pdf_url ||
+      invoiceData?.pdfUrl ||
+      invoiceData?.pdf_url ||
+      '',
+  ).trim();
+  const waStatus = normalizeWaStatus(saleData?.waStatus ?? invoiceData?.waStatus);
+
+  return { id, customerName, customerPhone, invoiceNumber, pdfUrl, waStatus };
 }
 
 export function normalizePhoneForWhatsApp(raw: string): string {
@@ -86,22 +116,21 @@ export async function loadInvoiceForWhatsApp(id: string): Promise<LoadedInvoiceF
 
   const [invoiceSnap, saleSnap] = await Promise.all([invoicesRef.get(), salesRef.get()]);
   const saleData = saleSnap.exists ? ((saleSnap.data() || {}) as Record<string, unknown>) : null;
+  const invoiceData = invoiceSnap.exists
+    ? ((invoiceSnap.data() || {}) as Record<string, unknown>)
+    : null;
 
-  if (invoiceSnap.exists) {
-    let record = mapInvoicesDoc(trimmedId, (invoiceSnap.data() || {}) as Record<string, unknown>);
-    record = await enrichPhoneFromLinkedEnquiry(record, saleData);
-    const refs: DocumentReference[] = [invoicesRef];
-    if (saleSnap.exists) refs.push(salesRef);
-    return { record, statusUpdateRefs: refs };
+  if (!saleSnap.exists && !invoiceSnap.exists) {
+    throw new Error('Invoice not found');
   }
 
-  if (saleSnap.exists) {
-    let record = mapSalesDoc(trimmedId, saleData!);
-    record = await enrichPhoneFromLinkedEnquiry(record, saleData);
-    return { record, statusUpdateRefs: [invoicesRef, salesRef] };
-  }
+  let record = mergeInvoiceRecord(trimmedId, invoiceData, saleData);
+  record = await enrichPhoneFromLinkedEnquiry(record, saleData);
 
-  throw new Error('Invoice not found');
+  const statusUpdateRefs: DocumentReference[] = [invoicesRef];
+  if (saleSnap.exists) statusUpdateRefs.push(salesRef);
+
+  return { record, statusUpdateRefs };
 }
 
 export async function setInvoiceWaStatus(

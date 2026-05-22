@@ -40,7 +40,7 @@ export default function InvoiceWhatsAppButton({ invoice }: { invoice: InvoiceWha
     setLoading(true);
     try {
       const idToken = await user.getIdToken();
-      const result = await sendInvoiceWhatsApp(invoice.id, idToken);
+      const result = await sendInvoiceWhatsApp(invoice.id, idToken, invoice.invoiceNumber);
       if (result.ok) {
         enqueueSnackbar(`Invoice ${invoice.invoiceNumber} sent on WhatsApp`, { variant: 'success' });
       } else {

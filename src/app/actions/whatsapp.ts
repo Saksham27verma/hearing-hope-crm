@@ -4,10 +4,12 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { verifyCrmUserFromIdToken, CrmAuthHttpError } from '@/server/verifyCrmUserBearer';
 import { ensureInvoicePdfUrl } from '@/server/invoices/ensureInvoicePdfUrl';
 import {
+  extractBillableInvoiceNumber,
   loadInvoiceForWhatsApp,
   normalizePhoneForWhatsApp,
   setInvoiceWaStatus,
 } from '@/server/invoices/whatsappInvoiceRecord';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 export type SendInvoiceWhatsAppResult =
   | { ok: true; waStatus: 'SENT_VIA_WA' }
@@ -120,6 +122,7 @@ async function postToPinnacle(body: Record<string, unknown>) {
 export async function sendInvoiceWhatsApp(
   invoiceId: string,
   idToken: string,
+  invoiceNumberHint?: string,
 ): Promise<SendInvoiceWhatsAppResult> {
   let statusUpdateRefs: Awaited<ReturnType<typeof loadInvoiceForWhatsApp>>['statusUpdateRefs'] | null =
     null;
@@ -129,10 +132,19 @@ export async function sendInvoiceWhatsApp(
 
     const loaded = await loadInvoiceForWhatsApp(invoiceId);
     statusUpdateRefs = loaded.statusUpdateRefs;
-    const { record } = loaded;
+    let { record } = loaded;
 
-    if (!record.invoiceNumber) {
-      throw new Error('Invoice number is required before sending on WhatsApp.');
+    const hintNumber = extractBillableInvoiceNumber({
+      invoiceNumber: (invoiceNumberHint || '').trim(),
+    });
+    if (!saleHasBillableInvoiceNumber(record.invoiceNumber) && hintNumber) {
+      record = { ...record, invoiceNumber: hintNumber };
+    }
+
+    if (!saleHasBillableInvoiceNumber(record.invoiceNumber)) {
+      throw new Error(
+        'Invoice number is required before sending on WhatsApp. Save the sale with an assigned invoice number first.',
+      );
     }
 
     const to = normalizePhoneForWhatsApp(record.customerPhone);

@@ -2,6 +2,7 @@ import type { DocumentReference } from 'firebase-admin/firestore';
 import { adminDb, adminStorageBucket } from '@/server/firebaseAdmin';
 import { getResolvedHtmlTemplateAdmin } from '@/server/invoiceTemplatesAdmin';
 import { renderHtmlToPdfBuffer } from '@/server/htmlToPdfBuffer';
+import { extractBillableInvoiceNumber } from '@/server/invoices/whatsappInvoiceRecord';
 import { convertSaleToInvoiceData, saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { processInvoiceHtmlTemplate } from '@/utils/invoiceHtmlTemplate';
 
@@ -40,7 +41,7 @@ export async function ensureInvoicePdfUrl(
   const existing = String(sale.pdfUrl || sale.pdf_url || '').trim();
   if (isPublicPdfUrl(existing)) return existing;
 
-  const invoiceNumber = String(sale.invoiceNumber || '').trim();
+  const invoiceNumber = extractBillableInvoiceNumber(sale);
   if (!saleHasBillableInvoiceNumber(invoiceNumber)) {
     throw new Error('A valid assigned invoice number is required before generating the PDF.');
   }
