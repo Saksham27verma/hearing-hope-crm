@@ -2,6 +2,7 @@ import { getApps, initializeApp, cert, applicationDefault } from 'firebase-admin
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getMessaging } from 'firebase-admin/messaging';
+import { getStorage } from 'firebase-admin/storage';
 
 function initAdminApp() {
   if (getApps().length) return;
@@ -42,5 +43,20 @@ export function adminDb() {
 export function adminMessaging() {
   initAdminApp();
   return getMessaging();
+}
+
+function resolveStorageBucketName(): string | undefined {
+  const raw =
+    process.env.FIREBASE_STORAGE_BUCKET ||
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+    '';
+  const trimmed = raw.replace(/^gs:\/\//, '').trim();
+  return trimmed || undefined;
+}
+
+export function adminStorageBucket() {
+  initAdminApp();
+  const name = resolveStorageBucketName();
+  return name ? getStorage().bucket(name) : getStorage().bucket();
 }
 

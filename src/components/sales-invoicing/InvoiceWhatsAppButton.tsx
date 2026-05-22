@@ -26,10 +26,9 @@ export default function InvoiceWhatsAppButton({ invoice }: { invoice: InvoiceWha
   const { enqueueSnackbar } = useSnackbar();
   const [loading, setLoading] = useState(false);
 
-  const hasPdf = !!invoice.pdfUrl?.trim() && /^https?:\/\//i.test(invoice.pdfUrl);
-  const hasPhone = !!(invoice.customerPhone || '').replace(/\D/g, '');
   const alreadySent = invoice.waStatus === 'SENT_VIA_WA';
-  const disabled = loading || !hasPdf || !hasPhone || !invoice.id || alreadySent;
+  /** Phone may exist only on linked enquiry — server resolves on send. */
+  const disabled = loading || !invoice.id || alreadySent;
 
   const handleClick = async () => {
     if (disabled) return;
@@ -54,10 +53,7 @@ export default function InvoiceWhatsAppButton({ invoice }: { invoice: InvoiceWha
     }
   };
 
-  let disabledReason = '';
-  if (!hasPdf) disabledReason = 'Upload PDF and set pdfUrl on this invoice first';
-  else if (!hasPhone) disabledReason = 'Customer phone number is required';
-  else if (alreadySent) disabledReason = 'Already sent on WhatsApp';
+  const disabledReason = alreadySent ? 'Already sent on WhatsApp' : '';
 
   return (
     <Tooltip title={disabled && disabledReason ? disabledReason : statusTooltip(invoice.waStatus)}>

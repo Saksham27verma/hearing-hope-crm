@@ -58,6 +58,24 @@ export type LoadedInvoiceForWhatsApp = {
 /**
  * Resolves invoice payload for WhatsApp: `invoices/{id}` first, then `sales/{id}` (CRM saved sales).
  */
+async function enrichPhoneFromLinkedEnquiry(
+  record: InvoiceWhatsAppRecord,
+  saleData: Record<string, unknown> | null,
+): Promise<InvoiceWhatsAppRecord> {
+  if (normalizePhoneForWhatsApp(record.customerPhone)) return record;
+
+  const enquiryId = String(saleData?.enquiryId || '').trim();
+  if (!enquiryId) return record;
+
+  const enqSnap = await adminDb().collection('enquiries').doc(enquiryId).get();
+  if (!enqSnap.exists) return record;
+
+  const phone = String((enqSnap.data() as Record<string, unknown>)?.phone || '').trim();
+  if (!phone) return record;
+
+  return { ...record, customerPhone: phone };
+}
+
 export async function loadInvoiceForWhatsApp(id: string): Promise<LoadedInvoiceForWhatsApp> {
   const trimmedId = (id || '').trim();
   if (!trimmedId) throw new Error('Invoice id is required');
@@ -67,16 +85,19 @@ export async function loadInvoiceForWhatsApp(id: string): Promise<LoadedInvoiceF
   const salesRef = db.collection('sales').doc(trimmedId);
 
   const [invoiceSnap, saleSnap] = await Promise.all([invoicesRef.get(), salesRef.get()]);
+  const saleData = saleSnap.exists ? ((saleSnap.data() || {}) as Record<string, unknown>) : null;
 
   if (invoiceSnap.exists) {
-    const record = mapInvoicesDoc(trimmedId, (invoiceSnap.data() || {}) as Record<string, unknown>);
+    let record = mapInvoicesDoc(trimmedId, (invoiceSnap.data() || {}) as Record<string, unknown>);
+    record = await enrichPhoneFromLinkedEnquiry(record, saleData);
     const refs: DocumentReference[] = [invoicesRef];
     if (saleSnap.exists) refs.push(salesRef);
     return { record, statusUpdateRefs: refs };
   }
 
   if (saleSnap.exists) {
-    const record = mapSalesDoc(trimmedId, (saleSnap.data() || {}) as Record<string, unknown>);
+    let record = mapSalesDoc(trimmedId, saleData!);
+    record = await enrichPhoneFromLinkedEnquiry(record, saleData);
     return { record, statusUpdateRefs: [invoicesRef, salesRef] };
   }
 

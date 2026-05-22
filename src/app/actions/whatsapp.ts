@@ -2,6 +2,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { verifyCrmUserFromIdToken, CrmAuthHttpError } from '@/server/verifyCrmUserBearer';
+import { ensureInvoicePdfUrl } from '@/server/invoices/ensureInvoicePdfUrl';
 import {
   loadInvoiceForWhatsApp,
   normalizePhoneForWhatsApp,
@@ -113,17 +114,12 @@ export async function sendInvoiceWhatsApp(
       throw new Error('Invoice number is required before sending on WhatsApp.');
     }
 
-    const pdfUrl = record.pdfUrl;
-    if (!pdfUrl || !/^https?:\/\//i.test(pdfUrl)) {
-      throw new Error(
-        'A public PDF URL (pdfUrl) is required on the invoice. Upload the PDF to Firebase Storage and save pdfUrl on the invoice or sale document.',
-      );
-    }
-
     const to = normalizePhoneForWhatsApp(record.customerPhone);
     if (!to || to.length < 10) {
       throw new Error('A valid customer phone number is required (e.g. 919876543210).');
     }
+
+    const pdfUrl = await ensureInvoicePdfUrl(invoiceId, statusUpdateRefs);
 
     const payload = buildPinnaclePayload({
       to,

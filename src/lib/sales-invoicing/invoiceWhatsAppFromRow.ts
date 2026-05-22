@@ -13,7 +13,7 @@ export function invoiceWhatsAppPropsFromRow(row: UnifiedInvoiceRow): InvoiceWhat
   return {
     id: saleId,
     customerName: sale.patientName || row.clientName,
-    customerPhone: sale.phone || row.clientPhone || '',
+    customerPhone: (sale.phone || row.clientPhone || '').trim(),
     invoiceNumber,
     pdfUrl: sale.pdfUrl || '',
     waStatus: sale.waStatus,

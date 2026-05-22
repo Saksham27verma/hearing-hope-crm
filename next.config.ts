@@ -1,5 +1,20 @@
 import type { NextConfig } from "next";
 
+function serverActionAllowedOrigins(): string[] {
+  const hosts = new Set<string>(['localhost:3000', 'localhost:3002']);
+  const vercel = (process.env.VERCEL_URL || '').trim();
+  if (vercel) hosts.add(vercel);
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_CRM_URL || '').trim();
+  if (appUrl) {
+    try {
+      hosts.add(new URL(appUrl).host);
+    } catch {
+      /* ignore invalid URL */
+    }
+  }
+  return [...hosts];
+}
+
 const nextConfig: NextConfig = {
   /**
    * jspdf / jspdf-autotable / xlsx ship mixed ESM–CJS; without transpilation webpack can throw
@@ -26,7 +41,7 @@ const nextConfig: NextConfig = {
   // Experimental features for better performance
   experimental: {
     serverActions: {
-      allowedOrigins: ['localhost:3000'],
+      allowedOrigins: serverActionAllowedOrigins(),
     },
     /** Smaller server/client modules from barrel imports — reduces flaky missing-chunk issues in dev */
     optimizePackageImports: ['lucide-react', '@mui/material', '@mui/icons-material'],
