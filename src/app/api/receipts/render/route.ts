@@ -21,6 +21,17 @@ import { getEnquiryPaymentLedgerLines } from '@/utils/enquiryPaymentLedger';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
+  'Access-Control-Max-Age': '86400',
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 function publicSiteOrigin(): string {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
   if (explicit && explicit.trim()) return explicit.replace(/\/$/, '');
@@ -63,7 +74,7 @@ export async function POST(req: Request) {
     if (receiptType !== 'booking' && receiptType !== 'trial' && receiptType !== 'payment_acknowledgment') {
       return NextResponse.json(
         { ok: false, error: 'receiptType must be booking, trial, or payment_acknowledgment' },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS },
       );
     }
     const enquiry = (body?.enquiry || {}) as EnquiryLike;
@@ -74,13 +85,16 @@ export async function POST(req: Request) {
     if (receiptType === 'payment_acknowledgment') {
       const lines = getEnquiryPaymentLedgerLines(body?.enquiry as Record<string, unknown>);
       if (lines.length === 0) {
-        return NextResponse.json({ ok: false, error: 'No payments recorded for this enquiry.' }, { status: 400 });
+        return NextResponse.json(
+          { ok: false, error: 'No payments recorded for this enquiry.' },
+          { status: 400, headers: CORS_HEADERS },
+        );
       }
       const template = await getResolvedHtmlTemplateAdmin('payment_acknowledgment');
       if (!template?.htmlContent) {
         return NextResponse.json(
           { ok: false, error: 'payment_acknowledgment HTML template is required in Invoice Manager.' },
-          { status: 422 }
+          { status: 422, headers: CORS_HEADERS },
         );
       }
       const centerName =
@@ -97,6 +111,7 @@ export async function POST(req: Request) {
       return new NextResponse(buffer, {
         status: 200,
         headers: {
+          ...CORS_HEADERS,
           'Content-Type': 'application/pdf',
           'Content-Disposition': `inline; filename="payment-acknowledgment.pdf"`,
         },
@@ -108,7 +123,7 @@ export async function POST(req: Request) {
       if (!template?.htmlContent) {
         return NextResponse.json(
           { ok: false, error: 'booking_receipt HTML template is required in Invoice Manager.' },
-          { status: 422 }
+          { status: 422, headers: CORS_HEADERS },
         );
       }
       const centerName =
@@ -125,6 +140,7 @@ export async function POST(req: Request) {
       return new NextResponse(buffer, {
         status: 200,
         headers: {
+          ...CORS_HEADERS,
           'Content-Type': 'application/pdf',
           'Content-Disposition': `inline; filename="booking-receipt.pdf"`,
         },
@@ -135,7 +151,7 @@ export async function POST(req: Request) {
     if (!template?.htmlContent) {
       return NextResponse.json(
         { ok: false, error: 'trial_receipt HTML template is required in Invoice Manager.' },
-        { status: 422 }
+        { status: 422, headers: CORS_HEADERS },
       );
     }
     const centerName =
@@ -151,13 +167,14 @@ export async function POST(req: Request) {
     return new NextResponse(buffer, {
       status: 200,
       headers: {
+        ...CORS_HEADERS,
         'Content-Type': 'application/pdf',
         'Content-Disposition': `inline; filename="trial-receipt.pdf"`,
       },
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'Failed to render receipt PDF';
-    return NextResponse.json({ ok: false, error: detail }, { status: 500 });
+    return NextResponse.json({ ok: false, error: detail }, { status: 500, headers: CORS_HEADERS });
   }
 }
 

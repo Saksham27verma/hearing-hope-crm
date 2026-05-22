@@ -9,6 +9,17 @@ import type { SalarySlipData } from '@/utils/salarySlipHtmlTemplate';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
+  'Access-Control-Max-Age': '86400',
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 function publicOrigin(): string {
   const explicit = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
   if (explicit?.trim()) return explicit.replace(/\/$/, '');
@@ -70,10 +81,13 @@ export async function GET(req: Request) {
     const format = (url.searchParams.get('format') || 'pdf').trim().toLowerCase();
 
     if (!staffId) {
-      return NextResponse.json({ ok: false, error: 'staffId is required' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: 'staffId is required' }, { status: 400, headers: CORS_HEADERS });
     }
     if (!month || !/^\d{4}-\d{2}$/.test(month)) {
-      return NextResponse.json({ ok: false, error: 'month is required (YYYY-MM)' }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: 'month is required (YYYY-MM)' },
+        { status: 400, headers: CORS_HEADERS },
+      );
     }
 
     const db = adminDb();
@@ -81,7 +95,10 @@ export async function GET(req: Request) {
     // ── Fetch staff document ─────────────────────────────────────────────────
     const staffSnap = await db.collection('staff').doc(staffId).get();
     if (!staffSnap.exists) {
-      return NextResponse.json({ ok: false, error: 'Staff member not found' }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: 'Staff member not found' },
+        { status: 404, headers: CORS_HEADERS },
+      );
     }
     const staffData = staffSnap.data() as Record<string, unknown>;
 
@@ -109,7 +126,7 @@ export async function GET(req: Request) {
     if (!salaryData) {
       return NextResponse.json(
         { ok: false, error: `No salary record found for ${month}` },
-        { status: 404 }
+        { status: 404, headers: CORS_HEADERS },
       );
     }
 
@@ -237,6 +254,7 @@ export async function GET(req: Request) {
     return new NextResponse(buffer, {
       status: 200,
       headers: {
+        ...CORS_HEADERS,
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${filename}"`,
         'Cache-Control': 'no-store',
@@ -245,6 +263,6 @@ export async function GET(req: Request) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to generate salary slip PDF';
     console.error('salary-slip-pdf error:', err);
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: message }, { status: 500, headers: CORS_HEADERS });
   }
 }

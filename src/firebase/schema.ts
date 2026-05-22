@@ -206,9 +206,10 @@
  * @field openingCashBalance - Cash in drawer at start of day (INR)
  * @field closingCashBalance - Computed: opening + cash in − cash out (cash-method lines only)
  * @field openingSource - "carried_forward" | "manual"
+ * @field remarks - Optional free-text notes for the day
  * @field cashIn - Array of cash-in line items (partyName, itemDetails, quantity, paymentMethod, amount, transactionCategory)
  * @field cashOut - Array of cash-out line items (same shape; transactionCategory: handed_over | expenses | miscellaneous)
- * @field totals - Precomputed aggregates including netIn, netOut, cashIn, cashOut, balance, cashBalance, openingCashBalance, closingCashBalance
+ * @field totals - Precomputed aggregates including netIn, netOut, cashIn, cashOut, netCashIn, balance, cashBalance, openingCashBalance, closingCashBalance
  * @field createdAt - Timestamp when the sheet was saved
  */
 

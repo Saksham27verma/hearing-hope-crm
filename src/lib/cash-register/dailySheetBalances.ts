@@ -9,6 +9,8 @@ export interface DailySheetTotals {
   cashOut: number;
   balance: number;
   cashBalance: number;
+  /** Cash received minus cash paid (cash payment method only) for the day */
+  netCashIn?: number;
   openingCashBalance?: number;
   closingCashBalance?: number;
 }
@@ -22,8 +24,21 @@ export interface DailySheetDoc {
   openingCashBalance?: number;
   closingCashBalance?: number;
   openingSource?: OpeningSource;
+  remarks?: string;
   totals: DailySheetTotals;
   createdAt: Timestamp;
+}
+
+/** Net cash in for the day (cash-method lines only). */
+export function netCashInForDay(doc: DailySheetDoc): number {
+  const cashIn = Number(doc.totals?.cashIn) || 0;
+  const cashOut = Number(doc.totals?.cashOut) || 0;
+  const stored = doc.totals?.netCashIn;
+  if (typeof stored === 'number' && Number.isFinite(stored)) return stored;
+  if (typeof doc.totals?.cashBalance === 'number' && Number.isFinite(doc.totals.cashBalance)) {
+    return doc.totals.cashBalance;
+  }
+  return cashIn - cashOut;
 }
 
 export type CashDailySheetRef = { id: string; doc: DailySheetDoc };
@@ -257,6 +272,7 @@ export function buildTotalsPayload(
   const closingCashBalance = computeClosingCashBalance(opening, movement.cashIn, movement.cashOut);
   return {
     ...movement,
+    netCashIn: movement.cashIn - movement.cashOut,
     openingCashBalance: opening,
     closingCashBalance,
   };

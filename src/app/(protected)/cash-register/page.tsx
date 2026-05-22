@@ -87,6 +87,7 @@ import {
   findLatestSheetForCenter,
   findSheetForCenterOnDate,
   getTodayDrawerSnapshot,
+  netCashInForDay,
   normalizeSheetBalances,
   resolveDrawerBalancesForSheet,
   sheetDateFromDoc,
@@ -298,6 +299,7 @@ const CashRegisterPage = () => {
   const [openingCashBalance, setOpeningCashBalance] = useState(0);
   const [openingManuallyEdited, setOpeningManuallyEdited] = useState(false);
   const [carriedForwardFromDate, setCarriedForwardFromDate] = useState<Date | null>(null);
+  const [sheetRemarks, setSheetRemarks] = useState('');
 
   // Date range filters
   const [rangeStart, setRangeStart] = useState<Date | null>(null);
@@ -465,6 +467,7 @@ const CashRegisterPage = () => {
     setOpeningCashBalance(0);
     setOpeningManuallyEdited(false);
     setCarriedForwardFromDate(null);
+    setSheetRemarks('');
   };
 
   const openNewDailyEntry = () => {
@@ -519,6 +522,7 @@ const CashRegisterPage = () => {
         openingCashBalance: opening,
         closingCashBalance,
         openingSource,
+        remarks: sheetRemarks.trim(),
         totals,
         createdAt: Timestamp.now(),
       };
@@ -680,7 +684,7 @@ const CashRegisterPage = () => {
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            {opts.openingLabel ?? 'Opening balance'}
+            {opts.openingLabel ?? 'Cash opening balance'}
           </Typography>
           {summaryLoading ? (
             <Skeleton variant="text" width="40%" height={36} sx={{ mt: 0.5 }} />
@@ -697,7 +701,7 @@ const CashRegisterPage = () => {
         </Box>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            {opts.closingLabel ?? 'Closing balance'}
+            {opts.closingLabel ?? 'Cash closing balance'}
           </Typography>
           {summaryLoading ? (
             <Skeleton variant="text" width="40%" height={36} sx={{ mt: 0.5 }} />
@@ -754,8 +758,8 @@ const CashRegisterPage = () => {
         renderDrawerBalanceStrip({
           opening: period.periodOpening,
           closing: period.periodClosing,
-          openingLabel: period.isSingleDay ? 'Opening balance' : 'Period opening',
-          closingLabel: period.isSingleDay ? 'Closing balance' : 'Period closing',
+          openingLabel: period.isSingleDay ? 'Cash opening balance' : 'Period cash opening',
+          closingLabel: period.isSingleDay ? 'Cash closing balance' : 'Period cash closing',
           openingCaption: periodCaption,
           closingCaption: periodCaption,
         })
@@ -1100,7 +1104,7 @@ const CashRegisterPage = () => {
           size="small"
           fullWidth
           type="number"
-          label="Opening balance"
+          label="Cash opening balance"
           value={openingCashBalance}
           onChange={(e) => {
             setOpeningCashBalance(Math.max(0, Number(e.target.value) || 0));
@@ -1122,9 +1126,13 @@ const CashRegisterPage = () => {
         )}
 
         <Box sx={{ borderRadius: 2, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', px: 2 }}>
+          {statementRow('Cash opening balance', formatCurrency(openingCashBalance))}
+          {statementRow('Net cash in (today)', formatCurrency(t.cashIn - t.cashOut), {
+            success: t.cashIn - t.cashOut >= 0,
+          })}
           {statementRow('Cash received today', formatCurrency(t.cashIn))}
           {statementRow('Cash paid today', formatCurrency(t.cashOut))}
-          {statementRow('Closing balance', formatCurrency(closing), { bold: true, success: true })}
+          {statementRow('Cash closing balance', formatCurrency(closing), { bold: true, success: true })}
         </Box>
 
         <Typography variant="caption" color="text.secondary" sx={{ mt: 1.5, display: 'block' }}>
@@ -1191,6 +1199,19 @@ const CashRegisterPage = () => {
         {renderOpeningBalanceSection()}
         {renderDailyTable(cashInRows, 'in')}
         {renderDailyTable(cashOutRows, 'out')}
+        <Divider sx={{ my: 2 }} />
+        <TextField
+          variant="outlined"
+          size="small"
+          fullWidth
+          multiline
+          minRows={3}
+          maxRows={8}
+          label="Remarks"
+          placeholder="Notes for this day (optional)"
+          value={sheetRemarks}
+          onChange={(e) => setSheetRemarks(e.target.value)}
+        />
       </Box>
 
       <Paper
@@ -1205,11 +1226,16 @@ const CashRegisterPage = () => {
       >
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="flex-end">
           <Stack direction="row" flexWrap="wrap" gap={1} justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}>
-            <Chip label={`Opening: ${formatCurrency(openingCashBalance)}`} variant="outlined" size="small" />
+            <Chip label={`Cash opening: ${formatCurrency(openingCashBalance)}`} variant="outlined" size="small" />
+            <Chip
+              label={`Net cash in: ${formatCurrency(dailyTotals().cashIn - dailyTotals().cashOut)}`}
+              variant="outlined"
+              size="small"
+            />
             <Chip label={`Received: ${formatCurrency(dailyTotals().cashIn)}`} variant="outlined" size="small" color="success" />
             <Chip label={`Paid: ${formatCurrency(dailyTotals().cashOut)}`} variant="outlined" size="small" color="error" />
             <Chip
-              label={`Closing: ${formatCurrency(expectedClosingCash())}`}
+              label={`Cash closing: ${formatCurrency(expectedClosingCash())}`}
               color={expectedClosingCash() >= 0 ? 'success' : 'error'}
               variant="outlined"
               size="small"
@@ -1263,22 +1289,20 @@ const CashRegisterPage = () => {
               </Typography>
             </Stack>
           </Box>
-          <TableContainer sx={{ maxHeight: 560 }}>
-            <Table size="small" stickyHeader sx={{ '& .MuiTableCell-root': { py: 0.75, px: 1.5, fontSize: '0.8125rem' } }}>
+          <TableContainer sx={{ maxHeight: 560, overflowX: 'auto' }}>
+            <Table size="small" stickyHeader sx={{ minWidth: 1100, '& .MuiTableCell-root': { py: 0.75, px: 1.5, fontSize: '0.8125rem' } }}>
               <TableHead>
                 <TableRow>
                   <TableCell sx={headCellSx}>Date</TableCell>
                   {activeTab === 1 && <TableCell sx={headCellSx}>Center</TableCell>}
-                  <TableCell sx={headCellSx} align="right">Opening</TableCell>
-                  <TableCell sx={headCellSx} align="right">
-                    <Tooltip title="End-of-day cash in drawer">
-                      <span>Closing</span>
-                    </Tooltip>
-                  </TableCell>
+                  <TableCell sx={headCellSx} align="right">Cash opening</TableCell>
+                  <TableCell sx={headCellSx} align="right">Cash closing</TableCell>
+                  <TableCell sx={headCellSx} align="right">Net cash in</TableCell>
                   <TableCell sx={headCellSx} align="right">Net In</TableCell>
                   <TableCell sx={headCellSx} align="right">Net Out</TableCell>
                   <TableCell sx={headCellSx} align="right">Cash In</TableCell>
                   <TableCell sx={headCellSx} align="right">Cash Out</TableCell>
+                  <TableCell sx={headCellSx}>Remarks</TableCell>
                   <TableCell sx={headCellSx} align="right" width={140}>Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -1298,10 +1322,22 @@ const CashRegisterPage = () => {
                     {activeTab === 1 && <TableCell><Chip label={s.doc.centerName || 'Legacy'} size="small" /></TableCell>}
                     <TableCell align="right">{formatCurrency(bal.openingCashBalance)}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(bal.closingCashBalance)}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 600 }}>{formatCurrency(netCashInForDay(s.doc))}</TableCell>
                     <TableCell align="right" sx={{ color: 'success.main' }}>{formatCurrency(s.doc.totals.netIn)}</TableCell>
                     <TableCell align="right" sx={{ color: 'error.main' }}>{formatCurrency(s.doc.totals.netOut)}</TableCell>
                     <TableCell align="right">{formatCurrency(s.doc.totals.cashIn)}</TableCell>
                     <TableCell align="right">{formatCurrency(s.doc.totals.cashOut)}</TableCell>
+                    <TableCell sx={{ maxWidth: 200 }}>
+                      {s.doc.remarks?.trim() ? (
+                        <Tooltip title={s.doc.remarks.trim()}>
+                          <Typography variant="body2" noWrap>
+                            {s.doc.remarks.trim()}
+                          </Typography>
+                        </Tooltip>
+                      ) : (
+                        <Typography variant="body2" color="text.disabled">—</Typography>
+                      )}
+                    </TableCell>
                     <TableCell align="right">
                       <Tooltip title="Preview">
                         <IconButton size="small" color="primary" onClick={() => setPreviewSheet(s)} aria-label="Preview sheet">
@@ -1327,6 +1363,7 @@ const CashRegisterPage = () => {
                               setOpeningCashBalance(bal.openingCashBalance);
                               setOpeningManuallyEdited(s.doc.openingSource === 'manual');
                               setCarriedForwardFromDate(null);
+                              setSheetRemarks(typeof s.doc.remarks === 'string' ? s.doc.remarks : '');
                               setEditingSheetId(s.id);
                               setEntryDrawerOpen(true);
                             }}
@@ -1347,7 +1384,7 @@ const CashRegisterPage = () => {
                   );
                 })}
                 {tableFiltered.length === 0 && (
-                  <TableRow><TableCell colSpan={activeTab === 1 ? 9 : 8} align="center" sx={{ py: 3 }}>No daily sheets found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={activeTab === 1 ? 11 : 10} align="center" sx={{ py: 3 }}>No daily sheets found</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
@@ -1382,7 +1419,11 @@ const CashRegisterPage = () => {
                 {d?.centerName ? (
                   <li>Center: <Box component="span" fontWeight={600} color="text.primary">{d.centerName}</Box></li>
                 ) : null}
-                <li>Closing cash: <Box component="span" fontWeight={600} color="text.primary">{formatCurrency(sheetToDelete ? resolveDrawerBalancesForSheet(sheetsForCenterChain(sheetToDelete.doc.centerId), sheetToDelete).closingCashBalance : 0)}</Box></li>
+                <li>Cash opening: <Box component="span" fontWeight={600} color="text.primary">{formatCurrency(sheetToDelete ? resolveDrawerBalancesForSheet(sheetsForCenterChain(sheetToDelete.doc.centerId), sheetToDelete).openingCashBalance : 0)}</Box></li>
+                <li>Cash closing: <Box component="span" fontWeight={600} color="text.primary">{formatCurrency(sheetToDelete ? resolveDrawerBalancesForSheet(sheetsForCenterChain(sheetToDelete.doc.centerId), sheetToDelete).closingCashBalance : 0)}</Box></li>
+                {d?.remarks?.trim() ? (
+                  <li>Remarks: <Box component="span" fontWeight={600} color="text.primary">{d.remarks.trim()}</Box></li>
+                ) : null}
               </Box>
             </>
           )}
@@ -1446,12 +1487,13 @@ const CashRegisterPage = () => {
             );
             return (
             <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 2 }}>
-              <Chip label={`Opening: ${formatCurrency(bal.openingCashBalance)}`} variant="outlined" size="small" />
-              <Chip label={`Closing: ${formatCurrency(bal.closingCashBalance)}`} color="primary" variant="outlined" size="small" />
-              <Chip label={`Received: ${formatCurrency(previewSheet.doc.totals.cashIn)}`} color="success" variant="outlined" size="small" />
-              <Chip label={`Paid: ${formatCurrency(previewSheet.doc.totals.cashOut)}`} color="error" variant="outlined" size="small" />
+              <Chip label={`Cash opening: ${formatCurrency(bal.openingCashBalance)}`} variant="outlined" size="small" />
+              <Chip label={`Cash closing: ${formatCurrency(bal.closingCashBalance)}`} color="primary" variant="outlined" size="small" />
+              <Chip label={`Net cash in: ${formatCurrency(netCashInForDay(previewSheet.doc))}`} variant="outlined" size="small" />
               <Chip label={`Net In: ${formatCurrency(previewSheet.doc.totals.netIn)}`} color="success" variant="outlined" size="small" />
               <Chip label={`Net Out: ${formatCurrency(previewSheet.doc.totals.netOut)}`} color="error" variant="outlined" size="small" />
+              <Chip label={`Cash In: ${formatCurrency(previewSheet.doc.totals.cashIn)}`} variant="outlined" size="small" />
+              <Chip label={`Cash Out: ${formatCurrency(previewSheet.doc.totals.cashOut)}`} variant="outlined" size="small" />
             </Stack>
             );
           })()}
@@ -1459,6 +1501,16 @@ const CashRegisterPage = () => {
         <Box sx={{ flex: 1, overflow: 'auto', overflowX: 'auto', p: 2 }}>
           {previewSheet && (
             <Stack spacing={2} sx={{ minWidth: 0 }}>
+              {previewSheet.doc.remarks?.trim() ? (
+                <Paper elevation={0} sx={{ p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                  <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    Remarks
+                  </Typography>
+                  <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
+                    {previewSheet.doc.remarks.trim()}
+                  </Typography>
+                </Paper>
+              ) : null}
               <Card elevation={0} sx={{ border: '1px solid #e0e0e0', borderRadius: 1 }}>
                 <CardContent>
                   <Typography variant="subtitle2" sx={{ mb: 1.5, color: 'success.main', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cash In</Typography>
