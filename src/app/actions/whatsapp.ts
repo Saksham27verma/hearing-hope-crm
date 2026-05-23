@@ -8,6 +8,7 @@ import {
   handleRequestInvoiceWhatsAppApproval,
   type WhatsAppActionResult,
 } from '@/server/invoices/whatsappApprovalHandlers';
+import { refreshWhatsAppApprovalRequestPdf } from '@/server/invoices/ensureInvoicePdfUrl';
 
 export type SendInvoiceWhatsAppResult = WhatsAppActionResult;
 
@@ -66,5 +67,20 @@ export async function rejectInvoiceWhatsAppRequest(
     return await handleRejectInvoiceWhatsAppRequest({ requestId, reviewerUid: uid, reason });
   } catch (e) {
     return toResult(e);
+  }
+}
+
+/** Admin: refresh invoice PDF preview (fixes payment mode from enquiry payments). */
+export async function refreshWhatsAppApprovalPreviewPdf(
+  requestId: string,
+  idToken: string,
+): Promise<{ ok: true; pdfUrl: string } | { ok: false; error: string }> {
+  try {
+    const { role } = await verifyCrmUserFromIdToken(idToken);
+    assertAdminRole(role);
+    const pdfUrl = await refreshWhatsAppApprovalRequestPdf(requestId);
+    return { ok: true, pdfUrl };
+  } catch (e) {
+    return toResult(e) as { ok: false; error: string };
   }
 }

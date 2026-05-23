@@ -1,6 +1,7 @@
 // Invoice Service - Unified API for multiple invoice providers
 import { InvoiceData } from '@/components/invoices/InvoiceTemplate';
 import { resolveInvoicePdfGrandTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import { resolveInvoicePaymentMethodLabel } from '@/utils/invoiceSaleToData';
 
 // Base interfaces
 export interface InvoiceProvider {
@@ -639,7 +640,7 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
     referenceDoctor: sale.referenceDoctor?.name || '',
     salesperson: sale.salesperson?.name || '',
     branch: sale.branch || '',
-    paymentMethod: sale.paymentMethod || '',
+    paymentMethod: resolveInvoicePaymentMethodLabel(sale),
     notes: sale.notes || '',
     terms: 'Payment is due within 30 days of invoice date.',
   };

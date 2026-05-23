@@ -184,7 +184,6 @@ export async function handleApproveInvoiceWhatsAppRequest(params: {
   const sendResult = await executeInvoiceWhatsAppSend(
     data.saleId,
     data.invoiceNumber,
-    data.pdfUrl,
   );
 
   if (!sendResult.ok) {

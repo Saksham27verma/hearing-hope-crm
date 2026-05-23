@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Box,
@@ -26,6 +26,7 @@ import type { InvoiceWhatsAppRequestWithId } from '@/lib/invoices/invoiceWhatsAp
 import {
   approveInvoiceWhatsAppRequest,
   rejectInvoiceWhatsAppRequest,
+  refreshWhatsAppApprovalPreviewPdf,
 } from '@/app/actions/whatsapp';
 
 function formatWhen(createdAt: unknown): string {
@@ -52,6 +53,7 @@ export default function WhatsAppInvoiceApprovalsPage() {
   const [busy, setBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const refreshedPreviewIdsRef = useRef<Set<string>>(new Set());
 
   const selected = useMemo(
     () => pending.find((r) => r.id === selectedId) ?? pending[0] ?? null,
@@ -72,6 +74,20 @@ export default function WhatsAppInvoiceApprovalsPage() {
       router.replace('/sales');
     }
   }, [userProfile, isAdmin, router]);
+
+  useEffect(() => {
+    if (!selected?.id || !user || !isAdmin) return;
+    if (refreshedPreviewIdsRef.current.has(selected.id)) return;
+    refreshedPreviewIdsRef.current.add(selected.id);
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        await refreshWhatsAppApprovalPreviewPdf(selected.id, token);
+      } catch (e) {
+        console.warn('refresh whatsapp preview pdf:', e);
+      }
+    })();
+  }, [selected?.id, user, isAdmin]);
 
   const runApprove = useCallback(async () => {
     if (!selected || !user) return;

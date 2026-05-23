@@ -13,12 +13,10 @@ export type ExecuteWhatsAppSendResult = { ok: true } | { ok: false; error: strin
 
 /**
  * Sends invoice via Pinnacle using sale/invoice data. Used after admin approval.
- * @param existingPdfUrl — when set (from approval request), skips PDF regeneration when valid.
  */
 export async function executeInvoiceWhatsAppSend(
   saleId: string,
   invoiceNumberHint?: string,
-  existingPdfUrl?: string,
 ): Promise<ExecuteWhatsAppSendResult> {
   let statusUpdateRefs: Awaited<ReturnType<typeof loadInvoiceForWhatsApp>>['statusUpdateRefs'] | null =
     null;
@@ -44,10 +42,7 @@ export async function executeInvoiceWhatsAppSend(
       throw new Error('A valid customer phone number is required (e.g. 919876543210).');
     }
 
-    const pdfUrl =
-      existingPdfUrl && /^https?:\/\//i.test(existingPdfUrl.trim())
-        ? existingPdfUrl.trim()
-        : await ensureInvoicePdfUrl(saleId, statusUpdateRefs);
+    const pdfUrl = await ensureInvoicePdfUrl(saleId, statusUpdateRefs);
 
     const payload = buildPinnaclePayload({
       to,

@@ -74,6 +74,34 @@ function formatInvoiceDateLabel(value: unknown): string {
   return new Date().toLocaleDateString('en-IN');
 }
 
+/**
+ * Resolves the payment mode label for invoice PDFs — matches Sales & Invoicing and patient profile:
+ * sale fields first, then payment lines on the sale or linked enquiry.
+ */
+export function resolveInvoicePaymentMethodLabel(
+  sale: Record<string, unknown>,
+  enquiry?: Record<string, unknown> | null,
+): string {
+  const fromSale = String(sale.paymentMethod ?? sale.paymentMode ?? '').trim();
+  if (fromSale) return fromSale;
+
+  const saleLines = extractPatientPaymentsFromEnquiryDoc(sale);
+  const saleModes = [
+    ...new Set(saleLines.map((l) => l.mode).filter((m) => m && m !== '—')),
+  ];
+  if (saleModes.length) return saleModes.join(', ');
+
+  if (enquiry) {
+    const enquiryLines = extractPatientPaymentsFromEnquiryDoc(enquiry);
+    const enquiryModes = [
+      ...new Set(enquiryLines.map((l) => l.mode).filter((m) => m && m !== '—')),
+    ];
+    if (enquiryModes.length) return enquiryModes.join(', ');
+  }
+
+  return '';
+}
+
 const getDefaultTermsAndConditions = (): string => {
   return `1. Payment is due within 30 days of invoice date.
 2. All sales are final unless otherwise specified.
@@ -83,7 +111,10 @@ const getDefaultTermsAndConditions = (): string => {
 };
 
 /** Map raw sale payload (enquiry visit / billing) into `InvoiceData` for HTML/React PDF. */
-export const convertSaleToInvoiceData = (sale: Record<string, unknown>): InvoiceData => {
+export const convertSaleToInvoiceData = (
+  sale: Record<string, unknown>,
+  options?: { enquiry?: Record<string, unknown> | null },
+): InvoiceData => {
   const products = (sale.products as Record<string, unknown>[]) || [];
   const accessories = (sale.accessories as Record<string, unknown>[]) || [];
 
@@ -194,6 +225,8 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
     (sale.customerGST as string) ||
     '';
 
+  const paymentMethod = resolveInvoicePaymentMethodLabel(sale, options?.enquiry);
+
   return {
     companyName: 'Hope Hearing Solutions',
     companyAddress: 'Your Company Address\nCity, State - PIN Code',
@@ -215,7 +248,7 @@ export const convertSaleToInvoiceData = (sale: Record<string, unknown>): Invoice
     referenceDoctor: refDoc?.name || '',
     salesperson: salesDoc?.name || '',
     branch: (sale.branch as string) || '',
-    paymentMethod: (sale.paymentMethod as string) || '',
+    paymentMethod,
     notes: (sale.notes as string) || '',
     terms: getDefaultTermsAndConditions(),
   };

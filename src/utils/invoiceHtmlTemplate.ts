@@ -103,7 +103,12 @@ export function processInvoiceHtmlTemplate(
     .replace(/\{\{INVOICE_NUMBER\}\}/g, invoiceData.invoiceNumber || '')
     .replace(/\{\{INVOICE_DATE\}\}/g, invoiceData.invoiceDate || new Date().toLocaleDateString('en-IN'))
     .replace(/\{\{DUE_DATE\}\}/g, invoiceData.dueDate || '')
-    .replace(/\{\{PAYMENT_MODE\}\}/g, (invoiceData as { paymentMode?: string }).paymentMode || invoiceData.paymentMethod || 'Cash')
+    .replace(
+      /\{\{PAYMENT_MODE\}\}/g,
+      (invoiceData as { paymentMode?: string }).paymentMode ||
+        invoiceData.paymentMethod ||
+        '—',
+    )
     .replace(/\{\{WARRANTY_PERIOD\}\}/g, (invoiceData as { warrantyPeriod?: string }).warrantyPeriod || '1 Year')
     .replace(/\{\{TRIAL_PERIOD\}\}/g, (invoiceData as { trialPeriod?: string }).trialPeriod || '7')
     .replace(/\{\{SUBTOTAL\}\}/g, formatCurrency(invoiceData.subtotal || 0))
