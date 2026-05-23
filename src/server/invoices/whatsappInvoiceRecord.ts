@@ -16,7 +16,7 @@ export interface InvoiceWhatsAppRecord {
 
 function normalizeWaStatus(raw: unknown): WaStatus {
   const s = String(raw || '').trim().toUpperCase();
-  if (s === 'SENT_VIA_WA' || s === 'FAILED') return s;
+  if (s === 'SENT_VIA_WA' || s === 'FAILED' || s === 'REJECTED') return s;
   return 'PENDING_APPROVAL';
 }
 

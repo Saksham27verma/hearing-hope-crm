@@ -26,6 +26,7 @@ import {
   Activity,
   Wallet,
   PackageSearch,
+  MessageSquare,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -53,6 +54,12 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   { text: 'Material Out', path: '/material-out', icon: ArrowUpFromLine },
   { text: 'Distribution Sales', path: '/distribution-sales', icon: Truck },
   { text: 'Sales & Invoicing', path: '/sales', icon: CircleDollarSign },
+  {
+    text: 'WhatsApp Approvals',
+    path: '/whatsapp-invoice-approvals',
+    icon: MessageSquare,
+    adminOnly: true,
+  },
   { text: 'Receipts', path: '/receipts', icon: ScrollText },
   { text: 'Invoice Manager', path: '/invoice-manager', icon: FileText },
   { text: 'Parties', path: '/parties', icon: Handshake },

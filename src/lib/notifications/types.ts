@@ -1,8 +1,9 @@
-export type NotificationType = 'due_calls' | 'new_sale' | 'system';
+export type NotificationType = 'due_calls' | 'new_sale' | 'whatsapp_invoice_request' | 'system';
 
 export type NotificationEntity =
   | { kind: 'enquiry'; id: string }
   | { kind: 'sale'; id: string }
+  | { kind: 'whatsapp_invoice_request'; id: string }
   | { kind: 'system'; id?: string };
 
 /**

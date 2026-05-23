@@ -61,7 +61,9 @@ export interface SaleRecord {
   /** Public Firebase Storage URL for WhatsApp / Pinnacle document header. */
   pdfUrl?: string;
   /** WhatsApp delivery state for Pinnacle template sends. */
-  waStatus?: 'PENDING_APPROVAL' | 'SENT_VIA_WA' | 'FAILED';
+  waStatus?: 'PENDING_APPROVAL' | 'SENT_VIA_WA' | 'FAILED' | 'REJECTED';
+  /** Active or latest WhatsApp approval request for this sale. */
+  waRequestId?: string;
 }
 
 export interface DerivedEnquirySale {

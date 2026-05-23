@@ -5,7 +5,7 @@ import { IconButton, Tooltip, CircularProgress } from '@mui/material';
 import { WhatsApp as WhatsAppIcon } from '@mui/icons-material';
 import { useSnackbar } from 'notistack';
 import { useAuth } from '@/context/AuthContext';
-import { sendInvoiceWhatsApp } from '@/app/actions/whatsapp';
+import { requestInvoiceWhatsAppApproval } from '@/app/actions/whatsapp';
 import type { InvoiceWhatsAppInvoiceProps, WaStatus } from '@/lib/invoices/whatsappTypes';
 
 export type { InvoiceWhatsAppInvoiceProps };
@@ -14,10 +14,14 @@ function statusTooltip(status: WaStatus | undefined): string {
   switch (status) {
     case 'SENT_VIA_WA':
       return 'Invoice already sent on WhatsApp';
+    case 'PENDING_APPROVAL':
+      return 'Awaiting admin approval to send on WhatsApp';
+    case 'REJECTED':
+      return 'Admin rejected — tap to request approval again';
     case 'FAILED':
-      return 'Last WhatsApp send failed — tap to retry';
+      return 'Last WhatsApp send failed — tap to request approval again';
     default:
-      return 'Send invoice PDF on WhatsApp (approval)';
+      return 'Request admin approval to send invoice on WhatsApp';
   }
 }
 
@@ -27,8 +31,8 @@ export default function InvoiceWhatsAppButton({ invoice }: { invoice: InvoiceWha
   const [loading, setLoading] = useState(false);
 
   const alreadySent = invoice.waStatus === 'SENT_VIA_WA';
-  /** Phone may exist only on linked enquiry — server resolves on send. */
-  const disabled = loading || !invoice.id || alreadySent;
+  const pendingApproval = invoice.waStatus === 'PENDING_APPROVAL';
+  const disabled = loading || !invoice.id || alreadySent || pendingApproval;
 
   const handleClick = async () => {
     if (disabled) return;
@@ -40,11 +44,15 @@ export default function InvoiceWhatsAppButton({ invoice }: { invoice: InvoiceWha
     setLoading(true);
     try {
       const idToken = await user.getIdToken();
-      const result = await sendInvoiceWhatsApp(invoice.id, idToken, invoice.invoiceNumber);
+      const result = await requestInvoiceWhatsAppApproval(
+        invoice.id,
+        idToken,
+        invoice.invoiceNumber,
+      );
       if (result.ok) {
-        enqueueSnackbar(`Invoice ${invoice.invoiceNumber} sent on WhatsApp`, { variant: 'success' });
+        enqueueSnackbar('Approval request sent to admins', { variant: 'success' });
       } else {
-        enqueueSnackbar(result.error || 'WhatsApp send failed', { variant: 'error' });
+        enqueueSnackbar(result.error || 'Could not submit approval request', { variant: 'error' });
       }
     } catch (e) {
       enqueueSnackbar(e instanceof Error ? e.message : 'WhatsApp send failed', { variant: 'error' });
@@ -53,14 +61,22 @@ export default function InvoiceWhatsAppButton({ invoice }: { invoice: InvoiceWha
     }
   };
 
-  const disabledReason = alreadySent ? 'Already sent on WhatsApp' : '';
+  let disabledReason = '';
+  if (alreadySent) disabledReason = 'Already sent on WhatsApp';
+  else if (pendingApproval) disabledReason = 'Awaiting admin approval';
 
   return (
     <Tooltip title={disabled && disabledReason ? disabledReason : statusTooltip(invoice.waStatus)}>
       <span>
         <IconButton
           size="small"
-          color={invoice.waStatus === 'FAILED' ? 'warning' : 'success'}
+          color={
+            invoice.waStatus === 'FAILED' || invoice.waStatus === 'REJECTED'
+              ? 'warning'
+              : pendingApproval
+                ? 'default'
+                : 'success'
+          }
           onClick={handleClick}
           disabled={disabled}
           aria-label="Send invoice on WhatsApp"
