@@ -35,6 +35,7 @@ import {
 
 import { db } from '@/firebase/config';
 import { getEnquiryStatusMeta } from '@/utils/enquiryStatus';
+import { fetchAllCenters, getCenterLabel } from '@/utils/centerUtils';
 import EnquiryProfileLink from '@/components/common/EnquiryProfileLink';
 
 type EnquiryStatusKey =
@@ -48,9 +49,18 @@ type EnquiryDoc = {
   id: string;
   name: string;
   phone: string;
+  email: string;
   assignedTo: string;
+  telecaller: string;
+  center: string;
+  reference: string;
   createdAt: Date | null;
   statusKey: EnquiryStatusKey | null;
+};
+
+const formatReference = (value: unknown): string => {
+  if (Array.isArray(value)) return value.map((v) => String(v ?? '').trim()).filter(Boolean).join(' | ');
+  return String(value ?? '').trim();
 };
 
 type ExecutiveRow = {
@@ -166,15 +176,23 @@ export default function ExecutiveAnalysisReportTab() {
   const fetchEnquiries = useCallback(async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, 'enquiries'));
+      const [snap, centersList] = await Promise.all([
+        getDocs(collection(db, 'enquiries')),
+        fetchAllCenters(),
+      ]);
       const normalized: EnquiryDoc[] = snap.docs.map((docSnap) => {
         const raw = docSnap.data() as Record<string, unknown>;
         const statusMeta = getEnquiryStatusMeta(raw);
+        const centerId = String(raw.center || '').trim();
         return {
           id: docSnap.id,
           name: String(raw.name || raw.patientName || raw.fullName || '—'),
           phone: String(raw.phone || ''),
+          email: String(raw.email || ''),
           assignedTo: String(raw.assignedTo || '').trim() || 'Unassigned',
+          telecaller: String(raw.telecaller || ''),
+          center: getCenterLabel(centerId, centersList),
+          reference: formatReference(raw.reference),
           createdAt: asDate(raw.createdAt),
           statusKey: normalizeStatus(statusMeta.key),
         };
@@ -262,7 +280,35 @@ export default function ExecutiveAnalysisReportTab() {
   );
 
   const exportCsv = () => {
-    const headers = [
+    const detailHeaders = [
+      'Enquiry ID',
+      'Created At',
+      'Name',
+      'Phone',
+      'Email',
+      'Executive',
+      'Telecaller',
+      'Center',
+      'Reference',
+      'Status',
+    ];
+    const detailRows = executiveFilteredEnquiries
+      .slice()
+      .sort((a, b) => (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0))
+      .map((row) => [
+        row.id,
+        row.createdAt ? row.createdAt.toLocaleString() : '',
+        row.name,
+        row.phone,
+        row.email,
+        row.assignedTo,
+        row.telecaller,
+        row.center,
+        row.reference,
+        statusLabel(row.statusKey),
+      ]);
+
+    const summaryHeaders = [
       'Executive',
       'Assigned',
       'Sold',
@@ -271,7 +317,7 @@ export default function ExecutiveAnalysisReportTab() {
       'Irrelevant (Not Interested)',
       'Tests Only',
     ];
-    const rows = executiveRows.map((r) => [
+    const summaryRows = executiveRows.map((r) => [
       r.executive,
       r.assignedCount,
       r.soldCount,
@@ -280,7 +326,30 @@ export default function ExecutiveAnalysisReportTab() {
       r.irrelevantCount,
       r.testsOnlyCount,
     ]);
-    downloadCsv('executive-analysis-report.csv', headers, rows);
+
+    const csv =
+      '\uFEFF' +
+      [
+        ['DETAILED RECORDS'],
+        detailHeaders,
+        ...detailRows,
+        [],
+        ['EXECUTIVE SUMMARY'],
+        summaryHeaders,
+        ...summaryRows,
+      ]
+        .map((r) => r.map(escapeCsv).join(','))
+        .join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `executive-analysis-report-${fromDate}-to-${toDate}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
 
   if (loading) {
@@ -396,13 +465,17 @@ export default function ExecutiveAnalysisReportTab() {
             : `Showing detailed records for ${executiveFilter}.`}
         </Typography>
         <TableContainer sx={{ maxHeight: 420, width: '100%', overflowX: 'auto' }}>
-          <Table size="small" stickyHeader sx={{ minWidth: 920 }}>
+          <Table size="small" stickyHeader sx={{ minWidth: 1280 }}>
             <TableHead>
               <TableRow>
                 <TableCell>Created At</TableCell>
                 <TableCell>Patient</TableCell>
                 <TableCell>Phone</TableCell>
+                <TableCell>Email</TableCell>
                 <TableCell>Executive</TableCell>
+                <TableCell>Telecaller</TableCell>
+                <TableCell>Center</TableCell>
+                <TableCell>Reference</TableCell>
                 <TableCell>Status</TableCell>
               </TableRow>
             </TableHead>
@@ -418,13 +491,17 @@ export default function ExecutiveAnalysisReportTab() {
                         <EnquiryProfileLink enquiryId={row.id}>{row.name || '—'}</EnquiryProfileLink>
                       </TableCell>
                       <TableCell>{row.phone || '—'}</TableCell>
+                      <TableCell>{row.email || '—'}</TableCell>
                       <TableCell>{row.assignedTo}</TableCell>
+                      <TableCell>{row.telecaller || '—'}</TableCell>
+                      <TableCell>{row.center || '—'}</TableCell>
+                      <TableCell>{row.reference || '—'}</TableCell>
                       <TableCell>{statusLabel(row.statusKey)}</TableCell>
                     </TableRow>
                   ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                  <TableCell colSpan={9} align="center" sx={{ py: 3 }}>
                     No records found for selected timeline/executive.
                   </TableCell>
                 </TableRow>
