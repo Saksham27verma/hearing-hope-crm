@@ -901,7 +901,7 @@ export default function SalesInvoicingPageInner() {
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
     const saleWithPaymentMode = { ...raw } as Record<string, unknown>;
-    if (!saleWithPaymentMode.paymentMethod && row.patientPayments?.length) {
+    if (row.patientPayments?.length) {
       const uniqueModes = [...new Set(
         row.patientPayments.map((p) => p.mode).filter((m) => m && m !== '—')
       )];
@@ -919,7 +919,7 @@ export default function SalesInvoicingPageInner() {
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
     const saleWithPaymentMode = { ...raw } as Record<string, unknown>;
-    if (!saleWithPaymentMode.paymentMethod && row.patientPayments?.length) {
+    if (row.patientPayments?.length) {
       const uniqueModes = [...new Set(
         row.patientPayments.map((p) => p.mode).filter((m) => m && m !== '—')
       )];

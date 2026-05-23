@@ -12,7 +12,6 @@ import {
   resolveInvoicePaymentMethodLabel,
   saleHasBillableInvoiceNumber,
 } from '@/utils/invoiceSaleToData';
-import { extractPatientPaymentsFromEnquiryDoc } from '@/lib/sales-invoicing/enquiryPayments';
 import { processInvoiceHtmlTemplate } from '@/utils/invoiceHtmlTemplate';
 
 const PDF_SIGNED_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -38,22 +37,14 @@ async function loadEnquiryForSale(sale: Record<string, unknown>): Promise<Record
   return (snap.data() || {}) as Record<string, unknown>;
 }
 
-function saleDocHasStoredPaymentMethod(sale: Record<string, unknown>): boolean {
-  return Boolean(String(sale.paymentMethod ?? sale.paymentMode ?? '').trim());
-}
-
-/** True when enquiry (or sale) has payment lines but the sale doc never stored a mode label. */
+/** Regenerate when cached PDF used a placeholder sale field but enquiry has real payment modes. */
 function shouldRegeneratePdfForPaymentMode(
   sale: Record<string, unknown>,
-  enquiry: Record<string, unknown> | null,
   resolvedPaymentMethod: string,
 ): boolean {
   if (!resolvedPaymentMethod) return false;
-  if (saleDocHasStoredPaymentMethod(sale)) return false;
-  const hasPaymentLines =
-    extractPatientPaymentsFromEnquiryDoc(sale).length > 0 ||
-    (enquiry ? extractPatientPaymentsFromEnquiryDoc(enquiry).length > 0 : false);
-  return hasPaymentLines;
+  const stored = String(sale.paymentMethod ?? sale.paymentMode ?? '').trim();
+  return stored !== resolvedPaymentMethod;
 }
 
 /**
@@ -75,14 +66,11 @@ export async function ensureInvoicePdfUrl(
   const sale = (saleSnap.data() || {}) as Record<string, unknown>;
   const enquiry = await loadEnquiryForSale(sale);
   const paymentMethod = resolveInvoicePaymentMethodLabel(sale, enquiry);
-  const saleForInvoice =
-    paymentMethod && !saleDocHasStoredPaymentMethod(sale)
-      ? { ...sale, paymentMethod }
-      : sale;
+  const saleForInvoice = paymentMethod ? { ...sale, paymentMethod } : sale;
 
   const existing = String(sale.pdfUrl || sale.pdf_url || '').trim();
   const mustRegenerateForPayment =
-    isPublicPdfUrl(existing) && shouldRegeneratePdfForPaymentMode(sale, enquiry, paymentMethod);
+    isPublicPdfUrl(existing) && shouldRegeneratePdfForPaymentMode(sale, paymentMethod);
   if (isPublicPdfUrl(existing) && !mustRegenerateForPayment) return existing;
 
   const invoiceNumber = extractBillableInvoiceNumber(sale);
@@ -120,6 +108,11 @@ export async function ensureInvoicePdfUrl(
   }
 
   await persistPdfUrl(statusUpdateRefs, signedUrl);
+  if (paymentMethod && shouldRegeneratePdfForPaymentMode(sale, paymentMethod)) {
+    await Promise.all(
+      statusUpdateRefs.map((ref) => ref.set({ paymentMethod }, { merge: true })),
+    );
+  }
   return signedUrl;
 }
 
@@ -144,7 +137,7 @@ export async function refreshWhatsAppApprovalRequestPdf(requestId: string): Prom
   const enquiry = await loadEnquiryForSale(sale);
   const paymentMethod = resolveInvoicePaymentMethodLabel(sale, enquiry);
   const existingRequestPdf = String(request.pdfUrl || sale.pdfUrl || sale.pdf_url || '').trim();
-  const needsRegenerate = shouldRegeneratePdfForPaymentMode(sale, enquiry, paymentMethod);
+  const needsRegenerate = shouldRegeneratePdfForPaymentMode(sale, paymentMethod);
 
   if (!needsRegenerate && isPublicPdfUrl(existingRequestPdf)) {
     return existingRequestPdf;

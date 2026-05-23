@@ -33,14 +33,7 @@ export function enquiryVisitToInvoiceSalePayload(
   const invoiceNumber = saleHasBillableInvoiceNumber(invoiceNumberFromRecord) ? invoiceNumberFromRecord : '';
 
   const paymentLines = extractPatientPaymentsFromEnquiryDoc(enquiry);
-  const uniqueModes = [
-    ...new Set(
-      paymentLines
-        .map((l) => l.mode)
-        .filter((m) => m && m !== '—')
-    ),
-  ];
-  const paymentMethod = uniqueModes.join(', ');
+  const paymentMethod = joinPaymentModesFromLines(paymentLines);
 
   return {
     products: visit?.products || [],
@@ -74,32 +67,35 @@ function formatInvoiceDateLabel(value: unknown): string {
   return new Date().toLocaleDateString('en-IN');
 }
 
+function joinPaymentModesFromLines(
+  lines: ReturnType<typeof extractPatientPaymentsFromEnquiryDoc>,
+): string {
+  return [...new Set(lines.map((l) => l.mode).filter((m) => m && m !== '—'))].join(', ');
+}
+
+/** Generic defaults on synced sales (e.g. resync-enquiry-sales) — not real patient payment modes. */
+export function isPlaceholderInvoicePaymentMethod(value: unknown): boolean {
+  const v = String(value ?? '').trim().toLowerCase();
+  return !v || v === 'cash' || v === 'pending';
+}
+
 /**
- * Resolves the payment mode label for invoice PDFs — matches Sales & Invoicing and patient profile:
- * sale fields first, then payment lines on the sale or linked enquiry.
+ * Resolves payment mode for invoice PDFs — same priority as patient profile export:
+ * enquiry payment records first, then sale payment lines, then sale field.
  */
 export function resolveInvoicePaymentMethodLabel(
   sale: Record<string, unknown>,
   enquiry?: Record<string, unknown> | null,
 ): string {
-  const fromSale = String(sale.paymentMethod ?? sale.paymentMode ?? '').trim();
-  if (fromSale) return fromSale;
-
-  const saleLines = extractPatientPaymentsFromEnquiryDoc(sale);
-  const saleModes = [
-    ...new Set(saleLines.map((l) => l.mode).filter((m) => m && m !== '—')),
-  ];
-  if (saleModes.length) return saleModes.join(', ');
-
   if (enquiry) {
-    const enquiryLines = extractPatientPaymentsFromEnquiryDoc(enquiry);
-    const enquiryModes = [
-      ...new Set(enquiryLines.map((l) => l.mode).filter((m) => m && m !== '—')),
-    ];
-    if (enquiryModes.length) return enquiryModes.join(', ');
+    const fromEnquiry = joinPaymentModesFromLines(extractPatientPaymentsFromEnquiryDoc(enquiry));
+    if (fromEnquiry) return fromEnquiry;
   }
 
-  return '';
+  const fromSaleLines = joinPaymentModesFromLines(extractPatientPaymentsFromEnquiryDoc(sale));
+  if (fromSaleLines) return fromSaleLines;
+
+  return String(sale.paymentMethod ?? sale.paymentMode ?? '').trim();
 }
 
 const getDefaultTermsAndConditions = (): string => {
