@@ -137,7 +137,9 @@ export default function WhatsAppInvoiceApprovalsPage() {
 
       {error && (
         <Typography color="error" sx={{ mb: 2 }}>
-          {error}
+          {error.includes('index')
+            ? 'Could not load requests. If you still see this after refresh, deploy Firestore indexes: firebase deploy --only firestore:indexes'
+            : error}
         </Typography>
       )}
 

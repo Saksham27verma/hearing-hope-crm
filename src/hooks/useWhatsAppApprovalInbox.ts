@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { sortWhatsAppRequestsNewestFirst } from '@/lib/invoices/sortWhatsAppRequests';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import { useCenterScope } from '@/hooks/useCenterScope';
@@ -44,14 +45,15 @@ export function useWhatsAppApprovalInbox() {
     const q = query(
       collection(db, INVOICE_WHATSAPP_REQUESTS_COLLECTION),
       where('status', '==', 'pending'),
-      orderBy('requestedAt', 'desc'),
     );
 
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const rows = snap.docs.map(
-          (d) => ({ id: d.id, ...(d.data() as object) }) as InvoiceWhatsAppRequestWithId,
+        const rows = sortWhatsAppRequestsNewestFirst(
+          snap.docs.map(
+            (d) => ({ id: d.id, ...(d.data() as object) }) as InvoiceWhatsAppRequestWithId,
+          ),
         );
         setAll(rows);
         setError(null);
