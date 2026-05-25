@@ -32,6 +32,10 @@ import {
   CardContent,
   LinearProgress,
   TableFooter,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
@@ -203,6 +207,16 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   const [serialEditIndex, setSerialEditIndex] = useState<number | null>(null);
   const [serialEditInput, setSerialEditInput] = useState('');
   const [serialEditError, setSerialEditError] = useState('');
+
+  // Line edit (qty / price / discount) state
+  const [lineEditIndex, setLineEditIndex] = useState<number | null>(null);
+  const [lineEditDraft, setLineEditDraft] = useState<{
+    quantity: number;
+    mrp: number;
+    dealerPrice: number;
+    discountPercent: number;
+  } | null>(null);
+  const [lineEditError, setLineEditError] = useState<string>('');
 
   // All serial numbers that already exist anywhere in the system
   const [existingSerials, setExistingSerials] = useState<SerialIndex | null>(null);
@@ -763,7 +777,119 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     setPurchaseData((prev) => ({ ...prev, products: updatedProducts }));
     handleCancelSerialEdit();
   };
-  
+
+  // ----- Line edit (quantity / MRP / dealer price / discount) -----
+  const handleOpenLineEdit = (index: number) => {
+    const target = purchaseData.products[index];
+    if (!target) return;
+    const fallbackDiscount =
+      typeof target.discountPercent === 'number'
+        ? target.discountPercent
+        : calculateDiscountPercent(target.mrp, target.dealerPrice);
+    setLineEditIndex(index);
+    setLineEditDraft({
+      quantity: target.quantity,
+      mrp: target.mrp,
+      dealerPrice: target.dealerPrice,
+      discountPercent: fallbackDiscount,
+    });
+    setLineEditError('');
+  };
+
+  const handleCancelLineEdit = () => {
+    setLineEditIndex(null);
+    setLineEditDraft(null);
+    setLineEditError('');
+  };
+
+  const handleLineEditMrpChange = (value: number) => {
+    setLineEditDraft((prev) => {
+      if (!prev) return prev;
+      const nextDiscount = value > 0 ? calculateDiscountPercent(value, prev.dealerPrice) : 0;
+      return { ...prev, mrp: value, discountPercent: nextDiscount };
+    });
+  };
+
+  const handleLineEditDealerPriceChange = (value: number) => {
+    setLineEditDraft((prev) => {
+      if (!prev) return prev;
+      const nextDiscount = prev.mrp > 0 ? calculateDiscountPercent(prev.mrp, value) : 0;
+      return { ...prev, dealerPrice: value, discountPercent: nextDiscount };
+    });
+  };
+
+  const handleLineEditDiscountChange = (value: number) => {
+    setLineEditDraft((prev) => {
+      if (!prev) return prev;
+      if (prev.mrp <= 0) {
+        return { ...prev, discountPercent: value };
+      }
+      const newDealerPrice = Math.round(prev.mrp * (1 - value / 100));
+      return { ...prev, discountPercent: value, dealerPrice: newDealerPrice };
+    });
+  };
+
+  const handleSaveLineEdit = () => {
+    if (lineEditIndex === null || !lineEditDraft) return;
+    const target = purchaseData.products[lineEditIndex];
+    if (!target) return;
+
+    const { quantity, mrp, dealerPrice } = lineEditDraft;
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setLineEditError('Quantity must be greater than zero.');
+      return;
+    }
+    if (!Number.isFinite(dealerPrice) || dealerPrice < 0) {
+      setLineEditError('Dealer price cannot be negative.');
+      return;
+    }
+    if (!Number.isFinite(mrp) || mrp < 0) {
+      setLineEditError('MRP cannot be negative.');
+      return;
+    }
+
+    const serialCount = Array.isArray(target.serialNumbers) ? target.serialNumbers.length : 0;
+    if (serialCount > 0) {
+      const isPair = target.type === 'Hearing Aid' && target.quantityType === 'pair';
+      const expected = isPair ? quantity * 2 : quantity;
+      if (expected !== serialCount) {
+        setLineEditError(
+          `This row has ${serialCount} serial number${serialCount === 1 ? '' : 's'} attached. Quantity must remain ${
+            isPair ? serialCount / 2 : serialCount
+          } (remove the row or edit serial numbers to change the count).`,
+        );
+        return;
+      }
+    }
+
+    const discountAmount = calculateDiscountAmount(mrp, dealerPrice);
+    const discountPercent = calculateDiscountPercent(mrp, dealerPrice);
+    const finalPrice = dealerPrice;
+
+    const updatedProducts = purchaseData.products.map((product, idx) =>
+      idx === lineEditIndex
+        ? {
+            ...product,
+            quantity,
+            mrp,
+            dealerPrice,
+            discountPercent,
+            discountAmount,
+            finalPrice,
+          }
+        : product,
+    );
+
+    const totalAmount = updatedProducts.reduce(
+      (sum, product) => sum + (product.finalPrice || product.dealerPrice) * product.quantity,
+      0,
+    );
+
+    setPurchaseData((prev) => ({ ...prev, products: updatedProducts, totalAmount }));
+    handleCancelLineEdit();
+  };
+
   // Handle form submission
   const handleSubmit = () => {
     onSave(purchaseData);
@@ -1747,6 +1873,14 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                       </Typography>
                     </TableCell>
                     <TableCell align="center">
+                      <IconButton
+                        size="small"
+                        color="secondary"
+                        onClick={() => handleOpenLineEdit(index)}
+                        title="Edit quantity / price / discount"
+                      >
+                        <CalculateIcon fontSize="small" />
+                      </IconButton>
                       {product.serialNumbers.length > 0 && (
                         <IconButton
                           size="small"
@@ -1817,6 +1951,119 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
           </Alert>
         )}
       </Paper>
+
+      {/* Line edit dialog: quantity, MRP, dealer price, discount */}
+      <Dialog
+        open={lineEditIndex !== null && lineEditDraft !== null}
+        onClose={handleCancelLineEdit}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>
+          Edit product line
+          {lineEditIndex !== null && purchaseData.products[lineEditIndex] && (
+            <Typography variant="caption" display="block" color="text.secondary">
+              {purchaseData.products[lineEditIndex].name}
+            </Typography>
+          )}
+        </DialogTitle>
+        <DialogContent dividers>
+          {lineEditDraft && lineEditIndex !== null && (
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' },
+                gap: 2,
+              }}
+            >
+              <TextField
+                fullWidth
+                size="small"
+                label="Quantity"
+                type="number"
+                inputProps={{ min: 1, step: 1 }}
+                value={lineEditDraft.quantity}
+                onChange={(e) =>
+                  setLineEditDraft((prev) =>
+                    prev
+                      ? { ...prev, quantity: Math.max(0, parseInt(e.target.value || '0', 10) || 0) }
+                      : prev,
+                  )
+                }
+                helperText={
+                  purchaseData.products[lineEditIndex].type === 'Hearing Aid' &&
+                  purchaseData.products[lineEditIndex].quantityType === 'pair'
+                    ? 'Counted in pairs'
+                    : undefined
+                }
+              />
+              <TextField
+                fullWidth
+                size="small"
+                label="MRP"
+                type="number"
+                inputProps={{ min: 0, step: '0.01' }}
+                value={lineEditDraft.mrp}
+                onChange={(e) => handleLineEditMrpChange(parseFloat(e.target.value) || 0)}
+                InputProps={{
+                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+                }}
+              />
+              <TextField
+                fullWidth
+                size="small"
+                label="Dealer Price"
+                type="number"
+                inputProps={{ min: 0, step: '0.01' }}
+                value={lineEditDraft.dealerPrice}
+                onChange={(e) => handleLineEditDealerPriceChange(parseFloat(e.target.value) || 0)}
+                InputProps={{
+                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+                }}
+              />
+              <TextField
+                fullWidth
+                size="small"
+                label="Discount %"
+                type="number"
+                inputProps={{ min: 0, max: 100, step: '0.01' }}
+                value={lineEditDraft.discountPercent}
+                onChange={(e) => handleLineEditDiscountChange(parseFloat(e.target.value) || 0)}
+                InputProps={{
+                  endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                }}
+              />
+              <Box
+                sx={{
+                  gridColumn: { xs: '1', sm: '1 / span 2' },
+                  p: 2,
+                  borderRadius: 1,
+                  bgcolor: (t) =>
+                    t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa',
+                }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  Line total
+                </Typography>
+                <Typography variant="h6" fontWeight={700} color="primary">
+                  {formatCurrency(lineEditDraft.dealerPrice * lineEditDraft.quantity)}
+                </Typography>
+              </Box>
+              {lineEditError && (
+                <Box sx={{ gridColumn: { xs: '1', sm: '1 / span 2' } }}>
+                  <Alert severity="error">{lineEditError}</Alert>
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelLineEdit}>Cancel</Button>
+          <Button variant="contained" onClick={handleSaveLineEdit}>
+            Save changes
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
   
