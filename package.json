@@ -17,6 +17,7 @@
     "clear-enquiries": "node scripts/clear-enquiries.js",
     "fix-stock-transfers": "node scripts/fix-stock-transfer-types.js",
     "check-stock-transfers": "node scripts/check-stock-transfer-types.js",
+    "register-pinnacle-webhook": "node scripts/register-webhook.js",
     "firebase:emulators": "firebase emulators:start",
     "firebase:deploy": "firebase deploy",
     "performance:check": "npm run build && npm run start"
