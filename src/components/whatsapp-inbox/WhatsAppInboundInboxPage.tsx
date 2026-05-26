@@ -1,20 +1,35 @@
 'use client';
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
+  Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  IconButton,
   Link,
   List,
   ListItem,
   ListItemText,
   Paper,
+  Tooltip,
   Typography,
 } from '@mui/material';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import { useSnackbar } from 'notistack';
 import { useAuth } from '@/context/AuthContext';
 import { useWhatsAppInboundInbox } from '@/hooks/useWhatsAppInboundInbox';
+import {
+  clearAllWhatsAppInboundViaApi,
+  deleteWhatsAppInboundMessage,
+} from '@/lib/whatsapp/deleteInboundMessage';
 
 function formatWhen(createdAt: unknown): string {
   if (!createdAt) return '';
@@ -37,10 +52,58 @@ function waMeLink(phone: string): string {
 
 export default function WhatsAppInboundInboxPage() {
   const router = useRouter();
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth();
+  const { enqueueSnackbar } = useSnackbar();
   const { messages, loading, error } = useWhatsAppInboundInbox();
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clearAllOpen, setClearAllOpen] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    id: string;
+    customerName: string;
+  } | null>(null);
+
   const isAdmin = userProfile?.role === 'admin';
+
+  const handleDeleteOne = useCallback(async () => {
+    if (!confirmDelete) return;
+    setDeletingId(confirmDelete.id);
+    try {
+      await deleteWhatsAppInboundMessage(confirmDelete.id);
+      enqueueSnackbar('Message deleted', { variant: 'success' });
+      setConfirmDelete(null);
+    } catch (e) {
+      enqueueSnackbar(e instanceof Error ? e.message : 'Failed to delete message', {
+        variant: 'error',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  }, [confirmDelete, enqueueSnackbar]);
+
+  const handleDeleteAll = useCallback(async () => {
+    if (!user) {
+      enqueueSnackbar('Sign in to delete messages', { variant: 'warning' });
+      return;
+    }
+    setClearingAll(true);
+    try {
+      const token = await user.getIdToken();
+      const { messagesDeleted, notificationsDeleted } = await clearAllWhatsAppInboundViaApi(token);
+      enqueueSnackbar(
+        `Deleted ${messagesDeleted} message${messagesDeleted === 1 ? '' : 's'}${notificationsDeleted > 0 ? ` and ${notificationsDeleted} notification${notificationsDeleted === 1 ? '' : 's'}` : ''}`,
+        { variant: 'success' },
+      );
+      setClearAllOpen(false);
+    } catch (e) {
+      enqueueSnackbar(e instanceof Error ? e.message : 'Failed to delete all messages', {
+        variant: 'error',
+      });
+    } finally {
+      setClearingAll(false);
+    }
+  }, [user, enqueueSnackbar]);
 
   useEffect(() => {
     if (userProfile && !isAdmin) {
@@ -63,9 +126,30 @@ export default function WhatsAppInboundInboxPage() {
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, maxWidth: 900, mx: 'auto' }}>
-      <Typography variant="h5" fontWeight={800} gutterBottom>
-        WhatsApp Inbox
-      </Typography>
+      <Box
+        sx={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 2,
+          mb: 1,
+        }}
+      >
+        <Typography variant="h5" fontWeight={800}>
+          WhatsApp Inbox
+        </Typography>
+        <Button
+          color="error"
+          variant="contained"
+          startIcon={clearingAll ? <CircularProgress size={18} color="inherit" /> : <DeleteSweepIcon />}
+          disabled={loading || clearingAll || messages.length === 0}
+          onClick={() => setClearAllOpen(true)}
+          sx={{ flexShrink: 0 }}
+        >
+          Delete all messages
+        </Button>
+      </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Incoming customer text messages received via Pinnacle. New messages also appear in the
         notification bell.
@@ -106,9 +190,33 @@ export default function WhatsAppInboundInboxPage() {
                   <Typography variant="subtitle1" fontWeight={700}>
                     {m.customerName || 'Unknown'}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-                    {formatWhen(m.createdAt)}
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {formatWhen(m.createdAt)}
+                    </Typography>
+                    <Tooltip title="Delete message">
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          aria-label="Delete message"
+                          disabled={deletingId === m.id || clearingAll}
+                          onClick={() =>
+                            setConfirmDelete({
+                              id: m.id,
+                              customerName: m.customerName || 'Unknown',
+                            })
+                          }
+                        >
+                          {deletingId === m.id ? (
+                            <CircularProgress size={18} color="inherit" />
+                          ) : (
+                            <DeleteOutlineIcon fontSize="small" />
+                          )}
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Box>
                 </Box>
                 <Link
                   href={waMeLink(m.customerPhone)}
@@ -128,6 +236,52 @@ export default function WhatsAppInboundInboxPage() {
           </List>
         </Paper>
       )}
+
+      <Dialog open={Boolean(confirmDelete)} onClose={() => !deletingId && setConfirmDelete(null)}>
+        <DialogTitle>Delete message?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Remove this message from the inbox and delete related notifications. This cannot be
+            undone.
+            {confirmDelete ? (
+              <>
+                <br />
+                <br />
+                <strong>{confirmDelete.customerName}</strong>
+              </>
+            ) : null}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDelete(null)} disabled={Boolean(deletingId)}>
+            Cancel
+          </Button>
+          <Button color="error" variant="contained" onClick={handleDeleteOne} disabled={Boolean(deletingId)}>
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={clearAllOpen} onClose={() => !clearingAll && setClearAllOpen(false)}>
+        <DialogTitle>Delete all messages?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This removes every message in the WhatsApp inbox from Firebase
+            {messages.length > 0
+              ? ` (including ${messages.length} shown here, and any older ones not on screen)`
+              : ''}
+            , plus related notification bell entries. This cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setClearAllOpen(false)} disabled={clearingAll}>
+            Cancel
+          </Button>
+          <Button color="error" variant="contained" onClick={handleDeleteAll} disabled={clearingAll}>
+            {clearingAll ? 'Deleting…' : 'Delete all messages'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
