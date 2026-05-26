@@ -218,6 +218,9 @@ const getTimestampValue = (timestamp: any) => {
   return 0;
 };
 
+const isSerialInventoryRow = (item: Pick<InventoryItem, 'serialNumber'>) =>
+  Boolean(item.serialNumber && item.serialNumber !== '-');
+
 const normalizeSerialNumber = (serialNumber: string) =>
   String(serialNumber || '')
     .trim()
@@ -4519,7 +4522,7 @@ export default function InventoryPage() {
                               <VisibilityIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
-                          {!isRestrictedUser && (
+                          {!isRestrictedUser && !isSerialInventoryRow(item) && (
                             <Tooltip title="Edit Item">
                               <IconButton 
                                 size="small" 
