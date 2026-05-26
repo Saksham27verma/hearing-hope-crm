@@ -20,11 +20,11 @@ dotenv.config({ path: path.join(__dirname, '..', '.env.local') });
 
 // --- Option A: fill these in if you prefer not to use .env.local ---
 const CONFIG = {
-  phoneNumberId: '', // e.g. "123456789012345" — same as PINNACLE_PHONE_ID
-  apiKey: '', // WABA API key — same as PINNACLE_API_KEY
-  webhookUrl: '', // e.g. "https://your-crm.vercel.app/api/webhook/whatsapp"
+  phoneNumberId: '1082976528239170', // e.g. "123456789012345" — same as PINNACLE_PHONE_ID
+  apiKey: '98794b62-5419-11f1-894a-02c8a5e042bd', // WABA API key — same as PINNACLE_API_KEY
+  webhookUrl: 'https://hearing-hope-crm.vercel.app/api/webhook/whatsapp', // e.g. "https://your-crm.vercel.app/api/webhook/whatsapp"
   /** Sent as request header `x-pinnacle-secret` on each inbound webhook from Pinnacle */
-  headerSecret: '', // pick a long random string; store the same value server-side if you validate it
+  headerSecret: '0166c7e9f8119c99c87390b9068630d0', // pick a long random string; store the same value server-side if you validate it
 };
 
 function pick(...values) {
