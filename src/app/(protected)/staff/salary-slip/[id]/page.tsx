@@ -482,26 +482,59 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
         {/* ── Slip Header ── */}
         <Box
           sx={{
-            background: (t) =>
-              `linear-gradient(135deg, ${t.palette.primary.dark} 0%, ${t.palette.primary.main} 100%)`,
-            color: 'white',
+            bgcolor: 'background.paper',
+            color: 'text.primary',
             px: 4,
             py: 3,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'flex-start',
+            borderBottom: '3px solid',
+            borderBottomColor: 'primary.dark',
+            gap: 2,
           }}
         >
-          <Box>
+          <Box sx={{ maxWidth: '62%' }}>
             <Typography
-              variant="h5"
+              variant="h6"
               fontWeight={800}
-              sx={{ letterSpacing: '-0.5px', lineHeight: 1.2 }}
+              sx={{ letterSpacing: '-0.3px', lineHeight: 1.2, color: 'text.primary' }}
             >
-              Hearing Hope
+              Hope Digital Innovations Pvt Ltd
             </Typography>
-            <Typography variant="caption" sx={{ opacity: 0.75, display: 'block', mt: 0.25 }}>
-              Hearing Hope Center &nbsp;·&nbsp; India
+            <Typography
+              variant="caption"
+              sx={{
+                display: 'block',
+                mt: 0.6,
+                color: 'text.secondary',
+                lineHeight: 1.55,
+                fontSize: 11,
+              }}
+            >
+              G-14, Kings Mall, Rohini, Sector-13, New Delhi, Delhi-110085
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{
+                display: 'block',
+                mt: 0.6,
+                color: 'text.secondary',
+                fontWeight: 600,
+                letterSpacing: 0.3,
+                fontSize: 10.5,
+              }}
+            >
+              GSTIN:{' '}
+              <Box
+                component="span"
+                sx={{
+                  color: 'text.primary',
+                  fontFamily: '"SFMono-Regular", Menlo, Consolas, monospace',
+                }}
+              >
+                07AAHCH3320A1Z9
+              </Box>
             </Typography>
           </Box>
           <Box textAlign="right">
@@ -509,23 +542,28 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
               variant="overline"
               sx={{
                 display: 'block',
-                fontWeight: 800,
-                letterSpacing: 2,
+                fontWeight: 700,
+                letterSpacing: 3,
                 fontSize: 11,
-                opacity: 0.85,
                 lineHeight: 1,
+                color: 'primary.dark',
               }}
             >
               Salary Slip
             </Typography>
-            <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.3, mt: 0.5 }}>
+            <Typography
+              variant="h6"
+              fontWeight={700}
+              sx={{ lineHeight: 1.3, mt: 1, color: 'text.primary' }}
+            >
               {fmtMonth(salary.month)}
             </Typography>
-            {salary.isPaid && salary.paidDate && (
-              <Typography variant="caption" sx={{ opacity: 0.75, display: 'block', mt: 0.25 }}>
-                Paid on {fmtDate(salary.paidDate)}
-              </Typography>
-            )}
+            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.75 }}>
+              Employee ID:{' '}
+              <Box component="span" sx={{ color: 'text.primary', fontWeight: 700 }}>
+                {employeeId}
+              </Box>
+            </Typography>
           </Box>
         </Box>
 
@@ -825,53 +863,29 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
           </Box>
         )}
 
-        <Divider sx={{ mx: 4 }} />
-
-        {/* ── Signatures ── */}
-        <Box
-          sx={{
-            px: 4,
-            py: 3,
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: 4,
-          }}
-        >
-          {['Employee Signature', 'Authorized Signatory'].map((label) => (
-            <Box key={label} textAlign="center">
-              <Box
-                sx={{
-                  height: 48,
-                  borderBottom: '1.5px solid',
-                  borderColor: 'text.secondary',
-                  mb: 0.75,
-                }}
-              />
-              <Typography variant="caption" color="text.secondary" fontWeight={500}>
-                {label}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
-
         {/* ── Footer ── */}
         <Box
           sx={{
             px: 4,
-            py: 1.75,
+            py: 2,
             bgcolor: (t) => alpha(t.palette.grey[100], 0.6),
             borderTop: '1px solid',
             borderColor: 'divider',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            gap: 2,
           }}
         >
-          <Typography variant="caption" color="text.disabled">
-            This is a computer-generated document and does not require a physical signature.
+          <Typography variant="caption" color="text.disabled" sx={{ lineHeight: 1.5 }}>
+            This is a system-generated salary slip and does not require a signature.
+            <br />
+            For any discrepancies, please contact the HR / Accounts department.
           </Typography>
-          <Typography variant="caption" color="text.disabled">
+          <Typography variant="caption" color="text.disabled" sx={{ textAlign: 'right', lineHeight: 1.5 }}>
             Generated: {format(new Date(), 'dd MMM yyyy, hh:mm a')}
+            <br />
+            Confidential &middot; Page 1 of 1
           </Typography>
         </Box>
       </Paper>

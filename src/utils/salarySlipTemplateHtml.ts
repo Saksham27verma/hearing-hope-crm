@@ -14,6 +14,7 @@ export type SalarySlipTemplateData = {
   companyAddress: string;
   companyPhone?: string;
   companyEmail?: string;
+  companyGst?: string;
   monthLabel: string;
   employeeId: string;
   paymentStatus: string;
@@ -70,6 +71,8 @@ export function buildSalarySlipHtmlString(
       COMPANY_ADDRESS: data.companyAddress,
       COMPANY_PHONE: data.companyPhone || '',
       COMPANY_EMAIL: data.companyEmail || '',
+      COMPANY_GST: data.companyGst || '',
+      COMPANY_GSTIN: data.companyGst || '',
       SALARY_MONTH: data.monthLabel,
       EMPLOYEE_ID: data.employeeId,
       PAYMENT_STATUS: data.paymentStatus,

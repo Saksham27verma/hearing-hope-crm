@@ -48,6 +48,7 @@ import {
 
 // Define job roles
 const JOB_ROLES = [
+  'Director',
   'Manager',
   'Audiologist',
   'Sales Executive',

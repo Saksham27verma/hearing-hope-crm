@@ -130,19 +130,26 @@ export async function GET(req: Request) {
       );
     }
 
-    // ── Fetch company settings (optional — for company address/phone) ────────
-    let companyName = 'Hearing Hope';
-    let companyAddress = 'New Delhi, India';
+    // ── Company branding (Hope Digital Innovations Pvt Ltd) ─────────────────
+    let companyName = 'Hope Digital Innovations Pvt Ltd';
+    let companyAddress = 'G-14, Kings Mall, Rohini, Sector-13, New Delhi, Delhi-110085';
     let companyPhone = '';
     let companyEmail = '';
+    let companyGst = '07AAHCH3320A1Z9';
     try {
       const settingsSnap = await db.collection('settings').doc('company').get();
       if (settingsSnap.exists) {
         const s = settingsSnap.data() as Record<string, unknown>;
-        companyName = String(s.companyName || s.name || companyName);
-        companyAddress = String(s.address || s.companyAddress || companyAddress);
-        companyPhone = String(s.phone || s.companyPhone || '');
-        companyEmail = String(s.email || s.companyEmail || '');
+        const overrideName = String(s.companyName || s.name || '').trim();
+        const overrideAddress = String(s.address || s.companyAddress || '').trim();
+        const overridePhone = String(s.phone || s.companyPhone || '').trim();
+        const overrideEmail = String(s.email || s.companyEmail || '').trim();
+        const overrideGst = String(s.gst || s.gstin || s.companyGst || s.companyGstin || '').trim();
+        if (overrideName) companyName = overrideName;
+        if (overrideAddress) companyAddress = overrideAddress;
+        if (overridePhone) companyPhone = overridePhone;
+        if (overrideEmail) companyEmail = overrideEmail;
+        if (overrideGst) companyGst = overrideGst;
       }
     } catch {
       // Company settings are optional — silently fall back to defaults
@@ -190,6 +197,7 @@ export async function GET(req: Request) {
       companyAddress,
       companyPhone,
       companyEmail,
+      companyGst,
       logoUrl,
     };
 
@@ -203,6 +211,7 @@ export async function GET(req: Request) {
           companyAddress,
           companyPhone,
           companyEmail,
+          companyGst,
           monthLabel: fmtMonth(month),
           employeeId: staffData.staffNumber
             ? String(staffData.staffNumber)
