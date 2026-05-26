@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { persistWhatsAppInboundMessage } from '@/server/notifications/persistWhatsAppInbound';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,16 +33,28 @@ function getVerifyToken(): string | null {
  * Wire up email, Slack, or push when you are ready.
  */
 async function triggerNotification(
+  waMessageId: string,
   customerName: string,
   customerPhone: string,
   messageBody: string,
 ): Promise<void> {
   try {
     console.log('[WhatsApp inbound]', {
+      waMessageId,
       customerName,
       customerPhone,
       messageBody,
     });
+
+    const { stored, notified } = await persistWhatsAppInboundMessage({
+      waMessageId,
+      customerName,
+      customerPhone,
+      messageBody,
+    });
+    if (stored) {
+      console.log('[WhatsApp inbound] saved to CRM inbox, admins notified:', notified);
+    }
 
     // --- Email via existing CRM SMTP (Nodemailer) ---
     // import { isSmtpConfigured, sendSimpleSmtpMail } from '@/server/sendStaffPaymentNotifyEmail';
@@ -153,7 +166,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, skipped: 'incomplete_message' });
     }
 
-    await triggerNotification(customerName, customerPhone, messageBody);
+    const waMessageId = String(message.id || '').trim() || `anon-${Date.now()}`;
+
+    await triggerNotification(waMessageId, customerName, customerPhone, messageBody);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

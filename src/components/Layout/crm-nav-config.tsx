@@ -27,6 +27,7 @@ import {
   Wallet,
   PackageSearch,
   MessageSquare,
+  Inbox,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -58,6 +59,12 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
     text: 'WhatsApp Approvals',
     path: '/whatsapp-invoice-approvals',
     icon: MessageSquare,
+    adminOnly: true,
+  },
+  {
+    text: 'WhatsApp Inbox',
+    path: '/whatsapp-inbox',
+    icon: Inbox,
     adminOnly: true,
   },
   { text: 'Receipts', path: '/receipts', icon: ScrollText },
