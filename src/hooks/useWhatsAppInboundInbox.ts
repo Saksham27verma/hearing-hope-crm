@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db } from '@/firebase/config';
 import {
   WHATSAPP_INBOUND_MESSAGES_COLLECTION,
   type WhatsAppInboundMessageWithId,
