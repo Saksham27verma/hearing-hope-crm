@@ -20,6 +20,7 @@ const SCOPE_TOOLBAR_HEIGHT_EXPANDED = 88;
 const SCOPE_TOOLBAR_HEIGHT_COLLAPSED = 40;
 import SqueezeLoader from '@/components/ui/loading-indicator';
 import WhatsAppApprovalLiveAlertsHost from '@/components/whatsapp-approvals/WhatsAppApprovalLiveAlertsHost';
+import WhatsAppInboundLiveAlertsHost from '@/components/whatsapp-inbox/WhatsAppInboundLiveAlertsHost';
 
 /** v1: flat JSON arrays only (legacy). v2: `{ order, updatedAt }` for conflict resolution with Firestore. */
 const SIDEBAR_ORDER_STORAGE_PREFIX = 'crm_sidebar_order_v1_';
@@ -632,6 +633,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       </main>
 
       {!shouldHideSidebar && <WhatsAppApprovalLiveAlertsHost />}
+      {!shouldHideSidebar && <WhatsAppInboundLiveAlertsHost />}
     </Box>
   );
 }
