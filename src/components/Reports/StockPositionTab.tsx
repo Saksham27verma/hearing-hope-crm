@@ -30,7 +30,7 @@ import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import {
   buildActiveInvoicedEnquiryVisitKeys,
   buildVoidedEnquiryVisitKeys,
-  enquiryVisitKey,
+  isDerivedEnquiryVisitExcludedFromSales,
   isSaleCancelled,
 } from '@/lib/sales-invoicing/saleCancelled';
 
@@ -141,8 +141,16 @@ export default function StockPositionTab() {
         const data: any = docSnap.data();
         const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
         visits.forEach((visit: any, idx: number) => {
-          const visitKey = enquiryVisitKey(docSnap.id, undefined, idx);
-          if (visitKey && (voidedVisitKeys.has(visitKey) || activeInvoicedVisitKeys.has(visitKey))) return;
+          if (
+            isDerivedEnquiryVisitExcludedFromSales(
+              { enquiryId: docSnap.id, visitIndex: idx },
+              voidedVisitKeys,
+              activeInvoicedVisitKeys,
+              visit as Record<string, unknown>,
+            )
+          ) {
+            return;
+          }
 
           const isSale = !!(
             visit?.hearingAidSale ||

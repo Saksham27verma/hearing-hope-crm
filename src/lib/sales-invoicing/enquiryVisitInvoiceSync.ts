@@ -88,3 +88,35 @@ export async function syncEnquiryVisitInvoiceNumberFromSale(args: {
   patchedVisits[args.visitIndex] = { ...visit, invoiceNumber: normalized };
   await updateDoc(enquiryRef, { visits: patchedVisits });
 }
+
+/** After a `sales` doc is deleted, drop the mirrored invoice # so reports do not treat the visit as uninvoiced. */
+export async function clearEnquiryVisitInvoiceNumberOnSaleDelete(args: {
+  db: Firestore;
+  enquiryId: string;
+  visitIndex: number;
+  invoiceNumber?: string;
+}) {
+  const enquiryRef = doc(args.db, 'enquiries', args.enquiryId);
+  const enquirySnap = await getDoc(enquiryRef);
+  if (!enquirySnap.exists()) return;
+
+  const data = enquirySnap.data() as Record<string, unknown>;
+  const visitsRaw = data.visits;
+  if (!Array.isArray(visitsRaw)) return;
+  const visit = visitsRaw[args.visitIndex] as Record<string, unknown> | undefined;
+  if (!visit) return;
+
+  const normalizedTarget = normalizeInvoiceNumberString(args.invoiceNumber);
+  const onVisit = normalizeInvoiceNumberString(visit.invoiceNumber);
+  if (normalizedTarget && onVisit && onVisit !== normalizedTarget) return;
+
+  const nextVisit = { ...visit };
+  delete nextVisit.invoiceNumber;
+  delete nextVisit.salesInvoiceNumber;
+  delete nextVisit.salesInvoiceNo;
+  delete nextVisit.invoiceNo;
+
+  const patchedVisits = [...visitsRaw];
+  patchedVisits[args.visitIndex] = nextVisit;
+  await updateDoc(enquiryRef, { visits: patchedVisits });
+}

@@ -115,7 +115,10 @@ import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import type { AccountingExportOptions } from '@/lib/sales-invoicing/accountingExport';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
-import { syncEnquiryVisitInvoiceNumberFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
+import {
+  clearEnquiryVisitInvoiceNumberOnSaleDelete,
+  syncEnquiryVisitInvoiceNumberFromSale,
+} from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 // ─── Types ───
@@ -530,8 +533,23 @@ export default function SalesInvoicingPageInner() {
 
   const handleDeleteSale = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this sale?')) return;
+    const sale = sales.find((s) => s.id === id);
     try {
       await deleteDoc(doc(db, 'sales', id));
+      const eid = (sale?.enquiryId || '').trim();
+      const vIdx = sale?.enquiryVisitIndex;
+      if (eid && typeof vIdx === 'number') {
+        try {
+          await clearEnquiryVisitInvoiceNumberOnSaleDelete({
+            db,
+            enquiryId: eid,
+            visitIndex: vIdx,
+            invoiceNumber: sale?.invoiceNumber,
+          });
+        } catch (syncErr) {
+          console.warn('Could not clear enquiry visit invoice after delete:', syncErr);
+        }
+      }
       setSales((prev) => prev.filter((s) => s.id !== id));
       setSuccessMsg('Sale deleted successfully');
     } catch (e) {

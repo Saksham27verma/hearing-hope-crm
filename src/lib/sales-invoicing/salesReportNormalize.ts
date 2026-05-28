@@ -343,9 +343,18 @@ export function mapUnifiedRowsToRecords(
 
     if (r.kind === 'enquiry_pending' && r.derivedEnquiry) {
       const d = r.derivedEnquiry;
-      if (isDerivedEnquiryVisitExcludedFromSales(d, voidedVisitKeys, activeInvoicedVisitKeys)) continue;
       const e = d.enquiryId ? enquiryById.get(d.enquiryId) : undefined;
       const visit = e ? resolveVisitAtIndex(e, d.visitIndex) : {};
+      if (
+        isDerivedEnquiryVisitExcludedFromSales(
+          d,
+          voidedVisitKeys,
+          activeInvoicedVisitKeys,
+          visit as Record<string, unknown>,
+        )
+      ) {
+        continue;
+      }
       const date = tsToDate(d.visitDate);
       const visitAny = visit as Record<string, unknown>;
       const enqAny = e as Record<string, unknown> | undefined;

@@ -4,8 +4,8 @@
 /**
  * Sales report — same merge rules as Sales & Invoicing:
  * - Saved rows from `sales` (invoiced)
- * - Enquiry visit sale rows from `deriveEnquirySalesFromDocs` when not covered by a non-void invoice
- * Voided invoices are excluded from totals. No double-counting.
+ * - Enquiry visit sale rows from `deriveEnquirySalesFromDocs` when not covered by a live invoice
+ * Cancelled / deleted invoices and stale visit invoice numbers are excluded. No double-counting.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -68,6 +68,10 @@ const formatCurrency = (amount: number) =>
     currency: 'INR',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(amount) ? amount : 0);
+
+/** Mean taxable (pre-GST selling) per sale row in a bucket. */
+const avgSellingPerRecord = (subtotal: number, count: number): number | null =>
+  count > 0 && Number.isFinite(subtotal) ? subtotal / count : null;
 
 const formatAxisInr = (n: number) => {
   if (!Number.isFinite(n)) return '0';
@@ -635,7 +639,17 @@ export default function SalesReportsTab() {
     const discountOffMrp = weekWiseRows.reduce((a, r) => a + r.discountOffMrp, 0);
     const avgDiscountPct =
       discountMrpBasis > 0 ? (100 * discountOffMrp) / discountMrpBasis : null;
-    return { subtotal, gst, total, count, discountMrpBasis, discountOffMrp, avgDiscountPct };
+    const avgSellingPrice = avgSellingPerRecord(subtotal, count);
+    return {
+      subtotal,
+      gst,
+      total,
+      count,
+      discountMrpBasis,
+      discountOffMrp,
+      avgDiscountPct,
+      avgSellingPrice,
+    };
   }, [weekWiseRows]);
 
   const weekChartData = useMemo(() => {
@@ -779,6 +793,7 @@ export default function SalesReportsTab() {
   }, []);
 
   const totals = useMemo(() => {
+    const count = filteredRecords.length;
     const subtotal = filteredRecords.reduce((sum, s) => sum + (s.subtotal || 0), 0);
     const gst = filteredRecords.reduce((sum, s) => sum + (s.gstAmount || 0), 0);
     const total = filteredRecords.reduce((sum, s) => sum + (s.total || 0), 0);
@@ -786,7 +801,19 @@ export default function SalesReportsTab() {
     const discountOffMrp = filteredRecords.reduce((sum, s) => sum + (s.discountOffMrp || 0), 0);
     const avgDiscountPct =
       discountMrpBasis > 0 ? (100 * discountOffMrp) / discountMrpBasis : null;
-    return { subtotal, gst, total, discountMrpBasis, discountOffMrp, avgDiscountPct };
+    const avgSellingPrice = avgSellingPerRecord(subtotal, count);
+    const avgGrandPerSale = count > 0 && Number.isFinite(total) ? total / count : null;
+    return {
+      count,
+      subtotal,
+      gst,
+      total,
+      discountMrpBasis,
+      discountOffMrp,
+      avgDiscountPct,
+      avgSellingPrice,
+      avgGrandPerSale,
+    };
   }, [filteredRecords]);
 
   const exportCenterWise = () => {
@@ -794,13 +821,15 @@ export default function SalesReportsTab() {
       'Center',
       'Record count',
       'Taxable / selling (INR)',
+      'Avg. selling price (INR)',
       'Avg. discount % vs MRP',
       'Grand total (INR)',
     ];
     const rows = centerWise.map((r) => {
       const pct =
         r.discountMrpBasis > 0 ? ((100 * r.discountOffMrp) / r.discountMrpBasis).toFixed(1) : '';
-      return [r.center, r.count, r.subtotal, pct ? `${pct}%` : '', r.total];
+      const asp = avgSellingPerRecord(r.subtotal, r.count);
+      return [r.center, r.count, r.subtotal, asp != null ? Math.round(asp) : '', pct ? `${pct}%` : '', r.total];
     });
     downloadCsv(`center-wise-sales-${dateFrom || 'all'}-to-${dateTo || 'all'}.csv`, headers, rows);
   };
@@ -810,13 +839,15 @@ export default function SalesReportsTab() {
       'Salesperson',
       'Record count',
       'Taxable / selling (INR)',
+      'Avg. selling price (INR)',
       'Avg. discount % vs MRP',
       'Grand total (INR)',
     ];
     const rows = execWise.map((r) => {
       const pct =
         r.discountMrpBasis > 0 ? ((100 * r.discountOffMrp) / r.discountMrpBasis).toFixed(1) : '';
-      return [r.executive, r.count, r.subtotal, pct ? `${pct}%` : '', r.total];
+      const asp = avgSellingPerRecord(r.subtotal, r.count);
+      return [r.executive, r.count, r.subtotal, asp != null ? Math.round(asp) : '', pct ? `${pct}%` : '', r.total];
     });
     downloadCsv(`executive-wise-sales-${dateFrom || 'all'}-to-${dateTo || 'all'}.csv`, headers, rows);
   };
@@ -881,13 +912,22 @@ export default function SalesReportsTab() {
       'Reference / source',
       'Record count',
       'Taxable / selling (INR)',
+      'Avg. selling price (INR)',
       'Avg. discount % vs MRP',
       'Grand total (INR)',
     ];
     const rows = sourceWise.map((r) => {
       const pct =
         r.discountMrpBasis > 0 ? ((100 * r.discountOffMrp) / r.discountMrpBasis).toFixed(1) : '';
-      return [r.referenceLabel, r.count, r.subtotal, pct ? `${pct}%` : '', r.total];
+      const asp = avgSellingPerRecord(r.subtotal, r.count);
+      return [
+        r.referenceLabel,
+        r.count,
+        r.subtotal,
+        asp != null ? Math.round(asp) : '',
+        pct ? `${pct}%` : '',
+        r.total,
+      ];
     });
     downloadCsv(`source-wise-sales-${dateFrom || 'all'}-to-${dateTo || 'all'}.csv`, headers, rows);
   };
@@ -938,6 +978,7 @@ export default function SalesReportsTab() {
       'Week band (1–5)',
       'Records',
       'Taxable (INR)',
+      'Avg. selling price (INR)',
       'GST (INR)',
       'Grand total (INR)',
       'Avg. discount % vs MRP',
@@ -945,12 +986,14 @@ export default function SalesReportsTab() {
     const rows = weekWiseRows.map((r) => {
       const pct =
         r.discountMrpBasis > 0 ? ((100 * r.discountOffMrp) / r.discountMrpBasis).toFixed(1) : '';
+      const asp = avgSellingPerRecord(r.subtotal, r.count);
       return [
         r.monthTitle,
         r.dayRangeLabel,
         String(r.weekIndex + 1),
         r.count,
         r.subtotal,
+        asp != null ? Math.round(asp) : '',
         r.gstAmount,
         r.total,
         pct ? `${pct}%` : '',
@@ -971,7 +1014,8 @@ export default function SalesReportsTab() {
     <Box>
       <Paper elevation={0} variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Combines <strong>saved invoices</strong> (<code>sales</code>) with <strong>uninvoiced sale visits</strong>{' '}
+          Combines <strong>saved invoices</strong> (<code>sales</code>) with <strong>genuine uninvoiced sale visits</strong>{' '}
+          (excludes cancelled/deleted invoices and visits that still reference a removed invoice).{' '}
           on enquiries — same merge as <strong>Sales &amp; Invoicing</strong>. Voided invoices are excluded; visits
           already covered by an invoice are not duplicated.
         </Typography>
@@ -1090,6 +1134,17 @@ export default function SalesReportsTab() {
           </Grid>
           <Grid item xs={6} sm={4} md={2}>
             <Typography variant="caption" color="text.secondary">
+              Avg. selling price
+            </Typography>
+            <Typography variant="h6" sx={{ fontWeight: 800 }} title="Taxable ÷ record count">
+              {totals.avgSellingPrice != null ? formatCurrency(totals.avgSellingPrice) : '—'}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block">
+              Per sale (pre-GST)
+            </Typography>
+          </Grid>
+          <Grid item xs={6} sm={4} md={2}>
+            <Typography variant="caption" color="text.secondary">
               GST
             </Typography>
             <Typography variant="h6">{formatCurrency(totals.gst)}</Typography>
@@ -1165,6 +1220,7 @@ export default function SalesReportsTab() {
                   <TableCell>Center</TableCell>
                   <TableCell align="right">Records</TableCell>
                   <TableCell align="right">Taxable (selling)</TableCell>
+                  <TableCell align="right">Avg. selling</TableCell>
                   <TableCell align="right">Avg. disc. %</TableCell>
                   <TableCell align="right">Grand total</TableCell>
                 </TableRow>
@@ -1177,11 +1233,15 @@ export default function SalesReportsTab() {
                         r.discountMrpBasis > 0
                           ? (100 * r.discountOffMrp) / r.discountMrpBasis
                           : null;
+                      const asp = avgSellingPerRecord(r.subtotal, r.count);
                       return (
                         <TableRow key={r.centerKey} hover>
                           <TableCell>{r.center}</TableCell>
                           <TableCell align="right">{r.count}</TableCell>
                           <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {asp != null ? formatCurrency(asp) : '—'}
+                          </TableCell>
                           <TableCell align="right" sx={discPctTableCellSx}>
                             {pct != null ? `${pct.toFixed(1)}%` : '—'}
                           </TableCell>
@@ -1199,6 +1259,9 @@ export default function SalesReportsTab() {
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
                         {formatCurrency(totals.subtotal)}
                       </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                        {totals.avgSellingPrice != null ? formatCurrency(totals.avgSellingPrice) : '—'}
+                      </TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
                         {totals.avgDiscountPct != null ? `${totals.avgDiscountPct.toFixed(1)}%` : '—'}
                       </TableCell>
@@ -1209,7 +1272,7 @@ export default function SalesReportsTab() {
                   </>
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                    <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
                       No records in this date range for the selected filters.
                     </TableCell>
                   </TableRow>
@@ -1246,6 +1309,7 @@ export default function SalesReportsTab() {
                   <TableCell>Salesperson</TableCell>
                   <TableCell align="right">Records</TableCell>
                   <TableCell align="right">Taxable (selling)</TableCell>
+                  <TableCell align="right">Avg. selling</TableCell>
                   <TableCell align="right">Avg. disc. %</TableCell>
                   <TableCell align="right">Grand total</TableCell>
                 </TableRow>
@@ -1258,11 +1322,15 @@ export default function SalesReportsTab() {
                         r.discountMrpBasis > 0
                           ? (100 * r.discountOffMrp) / r.discountMrpBasis
                           : null;
+                      const asp = avgSellingPerRecord(r.subtotal, r.count);
                       return (
                         <TableRow key={r.executive} hover>
                           <TableCell>{r.executive}</TableCell>
                           <TableCell align="right">{r.count}</TableCell>
                           <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {asp != null ? formatCurrency(asp) : '—'}
+                          </TableCell>
                           <TableCell align="right" sx={discPctTableCellSx}>
                             {pct != null ? `${pct.toFixed(1)}%` : '—'}
                           </TableCell>
@@ -1280,6 +1348,9 @@ export default function SalesReportsTab() {
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
                         {formatCurrency(totals.subtotal)}
                       </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                        {totals.avgSellingPrice != null ? formatCurrency(totals.avgSellingPrice) : '—'}
+                      </TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
                         {totals.avgDiscountPct != null ? `${totals.avgDiscountPct.toFixed(1)}%` : '—'}
                       </TableCell>
@@ -1290,7 +1361,7 @@ export default function SalesReportsTab() {
                   </>
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                    <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
                       No records in this date range for the selected filters.
                     </TableCell>
                   </TableRow>
@@ -1357,6 +1428,7 @@ export default function SalesReportsTab() {
                   <TableCell>Reference / source</TableCell>
                   <TableCell align="right">Records</TableCell>
                   <TableCell align="right">Taxable (selling)</TableCell>
+                  <TableCell align="right">Avg. selling</TableCell>
                   <TableCell align="right">Avg. disc. %</TableCell>
                   <TableCell align="right">Grand total</TableCell>
                 </TableRow>
@@ -1369,11 +1441,15 @@ export default function SalesReportsTab() {
                         r.discountMrpBasis > 0
                           ? (100 * r.discountOffMrp) / r.discountMrpBasis
                           : null;
+                      const asp = avgSellingPerRecord(r.subtotal, r.count);
                       return (
                         <TableRow key={r.referenceKey} hover>
                           <TableCell>{r.referenceLabel}</TableCell>
                           <TableCell align="right">{r.count}</TableCell>
                           <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {asp != null ? formatCurrency(asp) : '—'}
+                          </TableCell>
                           <TableCell align="right" sx={discPctTableCellSx}>
                             {pct != null ? `${pct.toFixed(1)}%` : '—'}
                           </TableCell>
@@ -1391,6 +1467,9 @@ export default function SalesReportsTab() {
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
                         {formatCurrency(totals.subtotal)}
                       </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                        {totals.avgSellingPrice != null ? formatCurrency(totals.avgSellingPrice) : '—'}
+                      </TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
                         {totals.avgDiscountPct != null ? `${totals.avgDiscountPct.toFixed(1)}%` : '—'}
                       </TableCell>
@@ -1401,7 +1480,7 @@ export default function SalesReportsTab() {
                   </>
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ py: 3 }}>
+                    <TableCell colSpan={6} align="center" sx={{ py: 3 }}>
                       No records in this date range for the selected filters.
                     </TableCell>
                   </TableRow>
@@ -1509,6 +1588,14 @@ export default function SalesReportsTab() {
                   Taxable
                 </Typography>
                 <Typography variant="h6">{formatCurrency(weekTotals.subtotal)}</Typography>
+              </Grid>
+              <Grid item xs={6} sm={4} md={2}>
+                <Typography variant="caption" color="text.secondary">
+                  Avg. selling price
+                </Typography>
+                <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                  {weekTotals.avgSellingPrice != null ? formatCurrency(weekTotals.avgSellingPrice) : '—'}
+                </Typography>
               </Grid>
               <Grid item xs={6} sm={4} md={2}>
                 <Typography variant="caption" color="text.secondary">
@@ -1659,6 +1746,7 @@ export default function SalesReportsTab() {
                   <TableCell>Band</TableCell>
                   <TableCell align="right">Records</TableCell>
                   <TableCell align="right">Taxable (selling)</TableCell>
+                  <TableCell align="right">Avg. selling</TableCell>
                   <TableCell align="right">Avg. disc. %</TableCell>
                   <TableCell align="right">Grand total</TableCell>
                 </TableRow>
@@ -1671,6 +1759,7 @@ export default function SalesReportsTab() {
                         r.discountMrpBasis > 0
                           ? (100 * r.discountOffMrp) / r.discountMrpBasis
                           : null;
+                      const asp = avgSellingPerRecord(r.subtotal, r.count);
                       return (
                         <TableRow key={r.sortKey} hover>
                           <TableCell>{r.monthTitle}</TableCell>
@@ -1678,6 +1767,9 @@ export default function SalesReportsTab() {
                           <TableCell>Week {r.weekIndex + 1} of month</TableCell>
                           <TableCell align="right">{r.count}</TableCell>
                           <TableCell align="right">{formatCurrency(r.subtotal)}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 600 }}>
+                            {asp != null ? formatCurrency(asp) : '—'}
+                          </TableCell>
                           <TableCell align="right" sx={discPctTableCellSx}>
                             {pct != null ? `${pct.toFixed(1)}%` : '—'}
                           </TableCell>
@@ -1697,6 +1789,11 @@ export default function SalesReportsTab() {
                       <TableCell align="right" sx={{ fontWeight: 700 }}>
                         {formatCurrency(weekTotals.subtotal)}
                       </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>
+                        {weekTotals.avgSellingPrice != null
+                          ? formatCurrency(weekTotals.avgSellingPrice)
+                          : '—'}
+                      </TableCell>
                       <TableCell align="right" sx={{ fontWeight: 700, ...discPctTableCellSx }}>
                         {weekTotals.avgDiscountPct != null ? `${weekTotals.avgDiscountPct.toFixed(1)}%` : '—'}
                       </TableCell>
@@ -1707,7 +1804,7 @@ export default function SalesReportsTab() {
                   </>
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={7} align="center" sx={{ py: 3 }}>
+                    <TableCell colSpan={8} align="center" sx={{ py: 3 }}>
                       No rows for this range / filters.
                     </TableCell>
                   </TableRow>

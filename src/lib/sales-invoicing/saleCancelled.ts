@@ -1,4 +1,5 @@
 import type { SaleRecord } from './types';
+import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 /** Firestore soft-void flag on `sales` documents. */
 export function isSaleCancelled(sale: { cancelled?: unknown } | null | undefined): boolean {
@@ -43,14 +44,29 @@ export function buildActiveInvoicedEnquiryVisitKeys(sales: SaleRecord[]): Set<st
   return keys;
 }
 
+/** Visit still stores an invoice # after the `sales` doc was deleted or voided. */
+export function visitHasBillableInvoiceNumber(visit: Record<string, unknown> | null | undefined): boolean {
+  if (!visit || typeof visit !== 'object') return false;
+  const raw =
+    visit.invoiceNumber ?? visit.salesInvoiceNumber ?? visit.salesInvoiceNo ?? visit.invoiceNo;
+  return saleHasBillableInvoiceNumber(raw);
+}
+
+/**
+ * Exclude enquiry visit rows from sales aggregates when voided, already invoiced,
+ * or the visit still references an invoice whose `sales` doc was removed.
+ */
 export function isDerivedEnquiryVisitExcludedFromSales(
   derived: { enquiryId?: string; visitorId?: string; visitIndex: number },
   voidedKeys: Set<string>,
   activeInvoicedKeys: Set<string>,
+  visit?: Record<string, unknown> | null,
 ): boolean {
   const k = enquiryVisitKey(derived.enquiryId, derived.visitorId, derived.visitIndex);
-  if (!k) return false;
-  if (voidedKeys.has(k)) return true;
-  if (activeInvoicedKeys.has(k)) return true;
+  if (k && voidedKeys.has(k)) return true;
+  if (k && activeInvoicedKeys.has(k)) return true;
+  if (visitHasBillableInvoiceNumber(visit)) {
+    if (!k || !activeInvoicedKeys.has(k)) return true;
+  }
   return false;
 }

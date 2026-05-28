@@ -32,7 +32,7 @@ import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import {
   buildActiveInvoicedEnquiryVisitKeys,
   buildVoidedEnquiryVisitKeys,
-  enquiryVisitKey,
+  isDerivedEnquiryVisitExcludedFromSales,
   isSaleCancelled,
 } from '@/lib/sales-invoicing/saleCancelled';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
@@ -156,8 +156,16 @@ export default function GSTReportTab() {
         const visits: any[] = Array.isArray(e.visits) ? e.visits : [];
         const customerName = (e.name || e.patientName || e.fullName || '—').toString();
         visits.forEach((visit: any, idx: number) => {
-          const visitKey = enquiryVisitKey(docSnap.id, undefined, idx);
-          if (visitKey && (voidedVisitKeys.has(visitKey) || activeInvoicedVisitKeys.has(visitKey))) return;
+          if (
+            isDerivedEnquiryVisitExcludedFromSales(
+              { enquiryId: docSnap.id, visitIndex: idx },
+              voidedVisitKeys,
+              activeInvoicedVisitKeys,
+              visit as Record<string, unknown>,
+            )
+          ) {
+            return;
+          }
 
           const isSale = !!(
             visit?.hearingAidSale ||
