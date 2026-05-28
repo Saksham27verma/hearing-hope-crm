@@ -1,5 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import type { DerivedEnquirySale, PaymentStatus, SaleRecord, UnifiedInvoiceRow } from './types';
+import { isSaleCancelled } from './saleCancelled';
 import { saleInvoiceFaceTotal } from './saleInvoiceFaceTotal';
 import { timestampToMs } from './timestamps';
 
@@ -36,7 +37,7 @@ function isDerivedCoveredBySale(sale: SaleRecord, d: DerivedEnquirySale): boolea
     if (sale.enquiryId && d.enquiryId && sale.enquiryId === d.enquiryId) return true;
     if (sale.visitorId && d.visitorId && sale.visitorId === d.visitorId) return true;
   }
-  if (sale.cancelled) return false;
+  if (isSaleCancelled(sale)) return false;
   const saleTs = sale.saleDate?.seconds;
   const dTs = d.visitDate?.seconds;
   if (saleTs && dTs) {
@@ -54,7 +55,7 @@ export function buildUnifiedInvoiceRows(sales: SaleRecord[], derived: DerivedEnq
   const rows: UnifiedInvoiceRow[] = [];
 
   for (const s of sales) {
-    if (s.cancelled) {
+    if (isSaleCancelled(s)) {
       rows.push({
         kind: 'saved',
         rowId: `sale-${s.id}`,

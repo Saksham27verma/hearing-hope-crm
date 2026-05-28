@@ -7,6 +7,12 @@
 import type { Timestamp } from 'firebase/firestore';
 import type { SaleRecord, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import {
+  buildActiveInvoicedEnquiryVisitKeys,
+  buildVoidedEnquiryVisitKeys,
+  isDerivedEnquiryVisitExcludedFromSales,
+  isSaleCancelled,
+} from '@/lib/sales-invoicing/saleCancelled';
 
 export type NormalizedSale = {
   rowId: string;
@@ -276,12 +282,17 @@ export function mapUnifiedRowsToRecords(
   enquiryById: Map<string, any>,
 ): NormalizedSale[] {
   const out: NormalizedSale[] = [];
+  const allSales = unified
+    .filter((row) => row.kind === 'saved' && row.savedSale)
+    .map((row) => row.savedSale as SaleRecord);
+  const voidedVisitKeys = buildVoidedEnquiryVisitKeys(allSales);
+  const activeInvoicedVisitKeys = buildActiveInvoicedEnquiryVisitKeys(allSales);
 
   for (const r of unified) {
     if (r.kind === 'saved' && r.savedSale) {
       if (r.isCancelled) continue;
       const s = r.savedSale;
-      if (s.cancelled) continue;
+      if (isSaleCancelled(s)) continue;
       const date = tsToDate(s.saleDate);
       const branch = (s.branch || '').toString();
       const eid = s.enquiryId != null ? String(s.enquiryId) : '';
@@ -332,6 +343,7 @@ export function mapUnifiedRowsToRecords(
 
     if (r.kind === 'enquiry_pending' && r.derivedEnquiry) {
       const d = r.derivedEnquiry;
+      if (isDerivedEnquiryVisitExcludedFromSales(d, voidedVisitKeys, activeInvoicedVisitKeys)) continue;
       const e = d.enquiryId ? enquiryById.get(d.enquiryId) : undefined;
       const visit = e ? resolveVisitAtIndex(e, d.visitIndex) : {};
       const date = tsToDate(d.visitDate);

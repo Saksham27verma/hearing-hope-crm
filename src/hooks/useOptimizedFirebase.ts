@@ -213,16 +213,19 @@ export function useOptimizedDashboard() {
       const monthlySalesSnap = await getDocs(monthlySalesQuery);
       
       let monthlyRevenue = 0;
+      let monthlySalesCount = 0;
       monthlySalesSnap.forEach(doc => {
         const saleData = doc.data();
+        if (saleData.cancelled === true) return;
         monthlyRevenue += saleData.totalAmount || 0;
+        monthlySalesCount += 1;
       });
 
       const newStats = {
         totalProducts: productsSnap.size,
         totalVisitors: visitorsSnap.size,
         totalSales: salesSnap.size,
-        monthlySales: monthlySalesSnap.size,
+        monthlySales: monthlySalesCount,
         monthlyRevenue
       };
 

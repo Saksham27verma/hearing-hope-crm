@@ -26,6 +26,13 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import {
+  buildActiveInvoicedEnquiryVisitKeys,
+  buildVoidedEnquiryVisitKeys,
+  enquiryVisitKey,
+  isSaleCancelled,
+} from '@/lib/sales-invoicing/saleCancelled';
 
 // Format currency
 const formatCurrency = (amount: number) => {
@@ -112,10 +119,18 @@ export default function StockPositionTab() {
         });
       });
 
-      // Sold serials (sales collection + enquiry sales)
+      // Sold serials (sales collection + enquiry sales; exclude cancelled invoices)
+      const saleRecords: SaleRecord[] = salesSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as object),
+      })) as SaleRecord[];
+      const voidedVisitKeys = buildVoidedEnquiryVisitKeys(saleRecords);
+      const activeInvoicedVisitKeys = buildActiveInvoicedEnquiryVisitKeys(saleRecords);
+
       const soldSerials = new Set<string>();
       salesSnap.docs.forEach((docSnap) => {
         const data: any = docSnap.data();
+        if (isSaleCancelled(data)) return;
         (data.products || []).forEach((prod: any) => {
           const productId = prod.productId || prod.id || '';
           const serialNumber = prod.serialNumber || '';
@@ -125,7 +140,10 @@ export default function StockPositionTab() {
       enquiriesSnap.docs.forEach((docSnap) => {
         const data: any = docSnap.data();
         const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
-        visits.forEach((visit: any) => {
+        visits.forEach((visit: any, idx: number) => {
+          const visitKey = enquiryVisitKey(docSnap.id, undefined, idx);
+          if (visitKey && (voidedVisitKeys.has(visitKey) || activeInvoicedVisitKeys.has(visitKey))) return;
+
           const isSale = !!(
             visit?.hearingAidSale ||
             (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||

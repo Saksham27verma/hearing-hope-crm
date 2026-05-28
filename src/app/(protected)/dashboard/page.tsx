@@ -44,6 +44,9 @@ import {
   saleMatchesDataScope,
   stockTransferMatchesDataScope,
 } from '@/lib/tenant/centerScope';
+import { isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
+import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import { useRouter } from 'next/navigation';
 import { openInNewTab } from '@/utils/openInNewTab';
 import { alpha, useTheme } from '@mui/material/styles';
@@ -465,8 +468,9 @@ export default function DashboardPage() {
       let monthlyRevenue = 0;
       monthlySalesSnapshot.forEach((doc) => {
         const saleData = doc.data() as Record<string, unknown>;
+        if (isSaleCancelled(saleData)) return;
         if (!saleMatchesDataScope(saleData, effectiveScopeCenterId, allowedCenterIds)) return;
-        monthlyRevenue += Number(saleData.totalAmount) || 0;
+        monthlyRevenue += saleInvoiceFaceTotal(saleData as SaleRecord);
       });
 
       const { start: dayStart, end: dayEnd } = getLocalDayBounds();
@@ -485,6 +489,7 @@ export default function DashboardPage() {
 
       const todaysSalesData = salesSnapshot.docs
         .map((doc) => ({ id: doc.id, ...doc.data() } as Record<string, unknown> & { id: string }))
+        .filter((row) => !isSaleCancelled(row))
         .filter((row) => saleMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds))
         .filter((row) => inLocalDay(tsToMs(row.saleDate)))
         .sort((a, b) => (tsToMs(b.saleDate) || 0) - (tsToMs(a.saleDate) || 0))

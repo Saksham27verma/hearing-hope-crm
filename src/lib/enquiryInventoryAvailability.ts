@@ -120,7 +120,7 @@ export function applySalesCollectionToAvailabilityMaps(
 ): void {
   for (const doc of salesDocs) {
     const data = doc.data() as Record<string, unknown>;
-    if (data.cancelled === true) continue;
+    if (data.cancelled === true || data.cancelled === 'true') continue;
     const products = (Array.isArray(data.products) ? data.products : Array.isArray(data.items) ? data.items : []) as Record<
       string,
       unknown

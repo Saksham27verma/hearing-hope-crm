@@ -28,6 +28,7 @@ import { extractBookingVisitCommercials } from '@/utils/bookingVisitDetails';
 import { fetchAllCenters } from '@/utils/centerUtils';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import { isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
 import {
   Bar,
   CartesianGrid,
@@ -224,7 +225,7 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
 
       allSalesSnap.docs.forEach((docSnap) => {
         const s = docSnap.data() as Record<string, unknown>;
-        if (s.cancelled) return;
+        if (isSaleCancelled(s)) return;
         if (!saleMatchesDataScope(s, effectiveScopeCenterId, allowedCenterIds)) return;
 
         const gt = saleGrandTotal(s);

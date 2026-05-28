@@ -28,6 +28,14 @@ import {
 import { collection, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import EnquiryProfileLink from '@/components/common/EnquiryProfileLink';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import {
+  buildActiveInvoicedEnquiryVisitKeys,
+  buildVoidedEnquiryVisitKeys,
+  enquiryVisitKey,
+  isSaleCancelled,
+} from '@/lib/sales-invoicing/saleCancelled';
+import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 // Format currency
 const formatCurrency = (amount: number) => {
@@ -96,15 +104,9 @@ export default function GSTReportTab() {
       const end = new Date(start);
       end.setMonth(end.getMonth() + 1);
 
-      // Fetch sales + purchases within month
+      // Fetch sales (all, for invoice/void dedupe) + purchases in month + enquiries
       const [salesSnap, purchasesSnap, enquiriesSnap] = await Promise.all([
-        getDocs(
-          query(
-            collection(db, 'sales'),
-            where('saleDate', '>=', Timestamp.fromDate(start)),
-            where('saleDate', '<', Timestamp.fromDate(end))
-          )
-        ),
+        getDocs(collection(db, 'sales')),
         getDocs(
           query(
             collection(db, 'purchases'),
@@ -112,20 +114,28 @@ export default function GSTReportTab() {
             where('purchaseDate', '<', Timestamp.fromDate(end))
           )
         ),
-        // Enquiry sale dates are stored as strings in visits, so we fetch and filter client-side
         getDocs(collection(db, 'enquiries')),
       ]);
 
+      const saleRecords: SaleRecord[] = salesSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as object),
+      })) as SaleRecord[];
+      const voidedVisitKeys = buildVoidedEnquiryVisitKeys(saleRecords);
+      const activeInvoicedVisitKeys = buildActiveInvoicedEnquiryVisitKeys(saleRecords);
+
       const salesGST: SalesGSTItem[] = [];
 
-      // Sales collection
+      // Invoiced sales in `sales` collection (exclude cancelled voids)
       salesSnap.docs.forEach((docSnap) => {
         const data: any = docSnap.data();
+        if (isSaleCancelled(data)) return;
         const ts: Timestamp | undefined = data.saleDate;
         const date = ts?.toDate ? ts.toDate() : start;
+        if (date < start || date >= end) return;
         const subtotal = Number(data.totalAmount || 0);
         const gstAmount = Number(data.gstAmount || 0);
-        const total = subtotal + gstAmount;
+        const total = saleInvoiceFaceTotal(data as SaleRecord);
         const gstPercentage = Number(data.gstPercentage || (subtotal ? (gstAmount * 100) / subtotal : 0));
         const saleEnquiryId = (data.enquiryId || '').toString().trim();
         salesGST.push({
@@ -140,12 +150,15 @@ export default function GSTReportTab() {
         });
       });
 
-      // Enquiries (sales recorded in visits)
+      // Uninvoiced enquiry visits only (skip voided or already invoiced visits)
       enquiriesSnap.docs.forEach((docSnap) => {
         const e: any = docSnap.data();
         const visits: any[] = Array.isArray(e.visits) ? e.visits : [];
         const customerName = (e.name || e.patientName || e.fullName || '—').toString();
         visits.forEach((visit: any, idx: number) => {
+          const visitKey = enquiryVisitKey(docSnap.id, undefined, idx);
+          if (visitKey && (voidedVisitKeys.has(visitKey) || activeInvoicedVisitKeys.has(visitKey))) return;
+
           const isSale = !!(
             visit?.hearingAidSale ||
             (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||

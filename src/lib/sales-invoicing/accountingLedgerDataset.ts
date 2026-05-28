@@ -1,5 +1,6 @@
 import type { PatientPaymentLine, SaleRecord, UnifiedInvoiceRow } from './types';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import { isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
 
 export interface AccountingExportOptions {
   organizationName?: string;
@@ -167,7 +168,7 @@ export function buildAccountingLedgerDataset(opts: AccountingExportOptions): Acc
 
   for (const r of savedRows) {
     const s = r.savedSale!;
-    const voided = Boolean(s.cancelled || r.isCancelled);
+    const voided = Boolean(r.isCancelled || isSaleCancelled(s));
     if (voided) cancelledCount += 1;
     else {
       activeCount += 1;
