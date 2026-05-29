@@ -19,6 +19,7 @@ import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
 import { allocateNextReceiptNumberAdmin, type ReceiptNumberKind } from '@/server/allocateReceiptNumber';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { visitAccessoryToSaleAccessories } from '@/lib/sales-invoicing/visitAccessoryInvoice';
 
 /** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
 export const maxDuration = 60;
@@ -88,40 +89,9 @@ function buildSalesDocFromStaffInvoice(args: {
   const visitDate = firstNonEmptyString(args.visit.purchaseDate, args.visit.visitDate);
   const saleDate = visitDate ? Timestamp.fromDate(new Date(`${visitDate}T00:00:00+05:30`)) : Timestamp.now();
 
-  const accessoryName = firstNonEmptyString(args.visit.accessoryName, (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryName);
-  const accessoryQty = Math.max(
-    1,
-    Number(
-      (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryQuantity ??
-        args.visit.accessoryQuantity ??
-        1
-    ) || 1
-  );
-  const accessoryFOC = Boolean(
-    (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryFOC ?? args.visit.accessoryFOC
-  );
-  const accessoryUnitAmount = accessoryFOC
-    ? 0
-    : Math.max(
-        0,
-        Number(
-          (args.visit.accessoryDetails as Record<string, unknown> | undefined)?.accessoryAmount ??
-            args.visit.accessoryAmount ??
-            0
-        ) || 0
-      );
-  const accessories =
-    args.visit.accessory && accessoryName
-      ? [
-          {
-            id: 'visit-accessory',
-            name: accessoryName,
-            isFree: accessoryFOC,
-            quantity: accessoryQty,
-            price: accessoryUnitAmount,
-          },
-        ]
-      : [];
+  const accessories = args.visit.accessory
+    ? visitAccessoryToSaleAccessories(args.visit as Record<string, unknown>)
+    : [];
 
   return {
     invoiceNumber: normalizeInvoiceNumberString(args.visit.invoiceNumber),

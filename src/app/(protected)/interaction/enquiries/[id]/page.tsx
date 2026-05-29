@@ -118,6 +118,10 @@ import {
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
+import {
+  normalizeAccessoryEntriesFromSavedVisit,
+  sumAccessoryEntryPrices,
+} from '@/lib/sales-invoicing/visitAccessoryInvoice';
 import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiryPayments';
 import { formatPtaTestDateForDisplay } from '@/lib/ptaIntegration';
 import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator';
@@ -1924,17 +1928,78 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       {(activeVisit.accessory ||
                         hasValue(activeVisit.accessoryName) ||
                         hasValue(activeVisit.accessoryAmount) ||
-                        hasValue(activeVisit.accessoryDetails)) && (
+                        hasValue(activeVisit.accessoryDetails)) && (() => {
+                        const accessoryLines = normalizeAccessoryEntriesFromSavedVisit(
+                          activeVisit as Record<string, unknown>
+                        ).filter((e) => String(e.accessoryName || '').trim());
+                        const visitNotes =
+                          typeof activeVisit.accessoryDetails === 'string'
+                            ? activeVisit.accessoryDetails
+                            : String(
+                                (activeVisit.accessoryDetails as Record<string, unknown> | undefined)
+                                  ?.accessoryDetails ?? ''
+                              ).trim();
+                        const accessoryTotal = sumAccessoryEntryPrices(
+                          activeVisit as Record<string, unknown>
+                        );
+                        return (
                         <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)') }}>
                           <SectionHeading icon={<NotesIcon fontSize="small" />} title="Accessory Details" />
-                          <Grid container spacing={2}>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Accessory', activeVisit.accessoryName)}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Quantity', hasValue(activeVisit.accessoryQuantity) ? String(activeVisit.accessoryQuantity) : undefined)}</Grid>
-                            <Grid item xs={12} sm={6}>{renderVisitField('Amount', activeVisit.accessoryFOC ? 'Free of Cost' : formatCurrency(activeVisit.accessoryAmount))}</Grid>
-                            <Grid item xs={12}>{renderVisitField('Details', activeVisit.accessoryDetails)}</Grid>
-                          </Grid>
+                          {accessoryLines.length > 0 ? (
+                            <TableContainer sx={{ mb: visitNotes ? 2 : 0 }}>
+                              <Table size="small">
+                                <TableHead>
+                                  <TableRow>
+                                    <TableCell>Accessory</TableCell>
+                                    <TableCell>Qty</TableCell>
+                                    <TableCell>Amount</TableCell>
+                                    <TableCell>Serial</TableCell>
+                                  </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                  {accessoryLines.map((line) => (
+                                    <TableRow key={line.id}>
+                                      <TableCell>{line.accessoryName}</TableCell>
+                                      <TableCell>{line.accessoryQuantity ?? 1}</TableCell>
+                                      <TableCell>
+                                        {line.accessoryFOC
+                                          ? 'Free of Cost'
+                                          : formatCurrency(
+                                              (line.accessoryAmount || 0) *
+                                                (line.accessoryQuantity || 1)
+                                            )}
+                                      </TableCell>
+                                      <TableCell>
+                                        {line.accessorySerialNumber?.trim() || '—'}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </TableContainer>
+                          ) : (
+                            <Grid container spacing={2} sx={{ mb: visitNotes ? 2 : 0 }}>
+                              <Grid item xs={12} sm={6}>{renderVisitField('Accessory', activeVisit.accessoryName)}</Grid>
+                              <Grid item xs={12} sm={6}>{renderVisitField('Quantity', hasValue(activeVisit.accessoryQuantity) ? String(activeVisit.accessoryQuantity) : undefined)}</Grid>
+                              <Grid item xs={12} sm={6}>{renderVisitField('Amount', activeVisit.accessoryFOC ? 'Free of Cost' : formatCurrency(activeVisit.accessoryAmount))}</Grid>
+                            </Grid>
+                          )}
+                          {accessoryLines.length > 1 && (
+                            <Typography variant="body2" sx={{ mb: visitNotes ? 2 : 0, fontWeight: 600 }}>
+                              Total:{' '}
+                              {accessoryTotal === 0 && accessoryLines.every((e) => e.accessoryFOC)
+                                ? 'Free of Cost'
+                                : formatCurrency(accessoryTotal)}
+                            </Typography>
+                          )}
+                          {visitNotes ? (
+                            <Grid container spacing={2}>
+                              <Grid item xs={12}>{renderVisitField('Notes', visitNotes)}</Grid>
+                            </Grid>
+                          ) : null}
                         </Paper>
-                      )}
+                        );
+                      })()}
 
                       {(activeVisit.programming ||
                         hasValue(activeVisit.programmingReason) ||

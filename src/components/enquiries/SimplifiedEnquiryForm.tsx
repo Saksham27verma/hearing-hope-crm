@@ -39,6 +39,13 @@ import { formatPtaTestDateForDisplay, type ExternalPtaReportLink } from '@/lib/p
 import { sumHearingTestEntryPrices } from '@/lib/hearingTestPricing';
 import { sumEntProcedurePrices } from '@/lib/entServicePricing';
 import {
+  newAccessoryEntryId,
+  normalizeAccessoryEntriesFromSavedVisit,
+  sumAccessoryEntryPrices,
+  syncAccessoryFlatFieldsFromEntries,
+  type VisitAccessoryEntry,
+} from '@/lib/sales-invoicing/visitAccessoryInvoice';
+import {
   composeEnquiryAddress,
   normalizeEnquiryAddressTextInput,
   normalizeEnquiryPincode,
@@ -1034,6 +1041,8 @@ interface Visit {
   returnOriginalSaleDate: string;
   returnOriginalSaleVisitId: string;
   returnNotes: string;
+  /** Multiple accessories per visit — each row: name, qty, pricing */
+  accessoryEntries: VisitAccessoryEntry[];
   accessoryName: string;
   accessorySerialNumber: string;
   accessoryDetails: string;
@@ -2668,18 +2677,23 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 mergedVisit.linkedSaleId ??
                 ''
             ).trim() || undefined,
-          accessoryName: nestedAccessoryDetails.accessoryName || mergedVisit.accessoryName || '',
-          accessorySerialNumber:
-            nestedAccessoryDetails.accessorySerialNumber ||
-            (typeof mergedVisit.accessorySerialNumber === 'string' ? mergedVisit.accessorySerialNumber : '') ||
-            '',
-          accessoryDetails:
-            nestedAccessoryDetails.accessoryDetails ||
-            (typeof mergedVisit.accessoryDetails === 'string' ? mergedVisit.accessoryDetails : '') ||
-            '',
-          accessoryFOC: nestedAccessoryDetails.accessoryFOC || Boolean(mergedVisit.accessoryFOC),
-          accessoryAmount: nestedAccessoryDetails.accessoryAmount || mergedVisit.accessoryAmount || 0,
-          accessoryQuantity: nestedAccessoryDetails.accessoryQuantity || mergedVisit.accessoryQuantity || 1,
+          ...(() => {
+            const accessoryEntries = normalizeAccessoryEntriesFromSavedVisit(mergedVisit);
+            const flat = syncAccessoryFlatFieldsFromEntries(accessoryEntries);
+            const visitNotes =
+              typeof mergedVisit.accessoryDetails === 'string'
+                ? mergedVisit.accessoryDetails
+                : String(nestedAccessoryDetails.accessoryDetails ?? '').trim();
+            return {
+              accessoryEntries,
+              accessoryName: flat.accessoryName,
+              accessorySerialNumber: flat.accessorySerialNumber,
+              accessoryDetails: visitNotes,
+              accessoryFOC: flat.accessoryFOC,
+              accessoryAmount: flat.accessoryAmount,
+              accessoryQuantity: flat.accessoryQuantity,
+            };
+          })(),
           programmingReason: nestedProgrammingDetails.programmingReason || mergedVisit.programmingReason || '',
           hearingAidPurchaseDate: nestedProgrammingDetails.hearingAidPurchaseDate || mergedVisit.hearingAidPurchaseDate || '',
           hearingAidName: nestedProgrammingDetails.hearingAidName || mergedVisit.hearingAidName || '',
@@ -2821,12 +2835,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           item.serialNumbers && item.serialNumbers.length > 0
             ? item.serialNumbers.join(', ')
             : String(item.serialNumber || '').trim();
-        updateVisitFields(activeVisit, {
+        const newEntry: VisitAccessoryEntry = {
+          id: newAccessoryEntryId(),
           accessoryName: name,
           accessorySerialNumber: selectedAccessorySerial,
           accessoryFOC: !!isFree,
           accessoryAmount: isFree ? 0 : roundInrRupee(item.mrp || master?.mrp || 0),
           accessoryQuantity: 1,
+        };
+        const nextEntries = [...(visit?.accessoryEntries || []), newEntry];
+        updateVisitFields(activeVisit, {
+          accessoryEntries: nextEntries,
+          ...syncAccessoryFlatFieldsFromEntries(nextEntries),
         });
         return;
       }
@@ -3164,6 +3184,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       returnOriginalSaleDate: '',
       returnOriginalSaleVisitId: '',
       returnNotes: '',
+      accessoryEntries: [],
       accessoryName: '',
       accessorySerialNumber: '',
       accessoryDetails: '',
@@ -3483,8 +3504,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         total += netPayableAfterHearingAidExchange(visit as unknown as Record<string, unknown>);
       }
 
-      if (visit.accessory && !visit.accessoryFOC) {
-        total += (visit.accessoryAmount || 0) * (visit.accessoryQuantity || 1);
+      if (visit.accessory) {
+        total += sumAccessoryEntryPrices(visit);
       }
 
       if (visit.programming) {
@@ -3579,13 +3600,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         });
       }
       
-      if (visit.accessory && !visit.accessoryFOC && visit.accessoryAmount > 0) {
-        const totalAccessoryAmount = (visit.accessoryAmount || 0) * (visit.accessoryQuantity || 1);
+      const totalAccessoryAmount = sumAccessoryEntryPrices(visit);
+      if (visit.accessory && totalAccessoryAmount > 0) {
+        const accNames = (visit.accessoryEntries || [])
+          .filter((e) => String(e.accessoryName || '').trim())
+          .map((e) => e.accessoryName)
+          .join(', ');
         options.push({
           value: 'accessory',
           label: 'Accessory',
           amount: totalAccessoryAmount,
-          description: visit.accessoryName || 'Accessory item'
+          description: accNames || visit.accessoryName || 'Accessory item',
         });
       }
       
@@ -3852,14 +3877,25 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     const outstanding = calculateOutstanding();
 
     const visitsForSave = dataRest.visits.map((visit) => {
+      let next = visit;
       const items = visit.salesReturnItems;
       if (visit.salesReturn && Array.isArray(items) && items.length > 0) {
-        return {
-          ...visit,
+        next = {
+          ...next,
           returnSerialNumber: linesToLegacyReturnSerialString(items),
         };
       }
-      return visit;
+      if (visit.accessory) {
+        const accFiltered = (visit.accessoryEntries || []).filter((e) =>
+          String(e.accessoryName || '').trim()
+        );
+        next = {
+          ...next,
+          accessoryEntries: accFiltered,
+          ...syncAccessoryFlatFieldsFromEntries(accFiltered),
+        };
+      }
+      return next;
     });
 
     const normalizedPaymentRecords = (dataRest.payments || []).map((payment) => ({
@@ -4054,14 +4090,32 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           returnOriginalSaleVisitId: visit.returnOriginalSaleVisitId,
           returnNotes: visit.returnNotes
         }),
-        accessoryDetails: removeUndefined({
-          accessoryName: visit.accessoryName,
-          accessorySerialNumber: visit.accessorySerialNumber,
-          accessoryDetails: visit.accessoryDetails,
-          accessoryFOC: visit.accessoryFOC,
-          accessoryAmount: visit.accessoryAmount,
-          accessoryQuantity: visit.accessoryQuantity
-        }),
+        accessoryDetails: (() => {
+          const accFiltered = (visit.accessoryEntries || []).filter((e) =>
+            String(e.accessoryName || '').trim()
+          );
+          const accFlat = syncAccessoryFlatFieldsFromEntries(accFiltered);
+          return removeUndefined({
+            accessoryEntries:
+              accFiltered.length > 0
+                ? accFiltered.map((e) => ({
+                    id: e.id,
+                    accessoryName: String(e.accessoryName).trim(),
+                    accessorySerialNumber: String(e.accessorySerialNumber || '').trim() || undefined,
+                    accessoryDetails: String(e.accessoryDetails || '').trim() || undefined,
+                    accessoryFOC: Boolean(e.accessoryFOC),
+                    accessoryAmount: Math.max(0, Number(e.accessoryAmount) || 0),
+                    accessoryQuantity: Math.max(1, Math.floor(Number(e.accessoryQuantity) || 1)),
+                  }))
+                : undefined,
+            accessoryName: accFlat.accessoryName || undefined,
+            accessorySerialNumber: accFlat.accessorySerialNumber || undefined,
+            accessoryDetails: visit.accessoryDetails || undefined,
+            accessoryFOC: accFlat.accessoryFOC,
+            accessoryAmount: accFlat.accessoryAmount || undefined,
+            accessoryQuantity: accFlat.accessoryQuantity || undefined,
+          });
+        })(),
         programmingDetails: removeUndefined({
           programmingReason: visit.programmingReason,
           hearingAidPurchaseDate: visit.hearingAidPurchaseDate,
@@ -8447,360 +8501,297 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         accent="success"
                         icon={<MedicalIcon sx={{ fontSize: 22 }} />}
                         title="Accessory"
-                        subtitle="Pick from stock or enter ad-hoc lines, quantity, and pricing."
+                        subtitle="Add multiple accessories from stock or catalog — quantity and pricing per line."
                       >
                           <Grid container spacing={2}>
-                            <Grid item xs={12} md={6}>
-                              <Stack spacing={1.5}>
-                                <Button
-                                  fullWidth
-                                  variant="outlined"
-                                  size="small"
-                                  startIcon={<InventoryIcon />}
-                                  onClick={() => {
-                                    setInventoryPickerMode('accessory');
-                                    setInventoryDialogOpen(true);
-                                  }}
-                                  sx={{ textTransform: 'none', borderRadius: 2 }}
-                                >
-                                  Select from accessory stock ({accessoryInventory.length} lines)
-                                </Button>
-                              <FormControl fullWidth>
-                                <InputLabel>Name of Accessory</InputLabel>
-                                <Select
-                                  value={(() => {
-                                    const visits = getValues('visits');
-                                    const visit = visits[activeVisit];
-                                    const accessoryName = visit?.accessoryName || '';
-                                    console.log('Current accessory value:', accessoryName, 'from visit:', visit?.id);
-                                    return accessoryName;
-                                  })()}
-                                  MenuProps={mergeMenuPropsForReselectClear(
-                                    getValues('visits')[activeVisit]?.accessoryName || '',
-                                    () => {
-                                      const currentVisits = getValues('visits');
-                                      const updatedVisits = [...currentVisits];
-                                      updatedVisits[activeVisit] = {
-                                        ...updatedVisits[activeVisit],
-                                        accessoryName: '',
-                                        accessorySerialNumber: '',
-                                        accessoryAmount: 0,
-                                        accessoryFOC: false,
-                                      };
-                                      setValue('visits', updatedVisits);
-                                    },
-                                    undefined
-                                  )}
-                                  onChange={(e) => {
-                                    const currentVisits = getValues('visits');
-                                    const selectedValue = String(e.target.value);
-                                    console.log('=== ACCESSORY SELECTION START ===');
-                                    console.log('Selected value:', selectedValue);
-                                    console.log('Active visit index:', activeVisit);
-                                    
-                                    console.log('Current visits state:', currentVisits);
-                                    
-                                    if (!selectedValue) {
-                                      console.log('Resetting accessory fields');
-                                      // Reset all accessory fields when no selection
-                                      const updatedVisits = [...currentVisits];
-                                      updatedVisits[activeVisit] = {
-                                        ...updatedVisits[activeVisit],
-                                        accessoryName: '',
-                                        accessorySerialNumber: '',
-                                        accessoryAmount: 0,
-                                        accessoryFOC: false
-                                      };
-                                      setValue('visits', updatedVisits);
-                                      console.log('Reset complete');
-                                      return;
-                                    }
-                                    
-                                    const selectedAccessory = products.find(p => 
-                                      p.name === selectedValue && 
-                                      isAccessoryCatalogProductType(p)
-                                    );
-                                    console.log('Found accessory in products:', selectedAccessory);
-                                    
-                                    // Update visit with all changes at once
-                                    const updatedVisits = [...currentVisits];
-                                    const currentVisitData = updatedVisits[activeVisit];
-                                    
-                                    if (selectedAccessory) {
-                                      const isFreeProduct = selectedAccessory.mrp === 0 || selectedAccessory.isFreeOfCost;
-                                      
-                                      updatedVisits[activeVisit] = {
-                                        ...currentVisitData,
-                                        accessoryName: selectedValue,
-                                        accessorySerialNumber: '',
-                                        accessoryFOC: isFreeProduct,
-                                        accessoryAmount: isFreeProduct ? 0 : (selectedAccessory.mrp || 0)
-                                      };
-                                      
-                                      console.log('Auto-populated accessory:', {
-                                        name: selectedValue,
-                                        amount: isFreeProduct ? 0 : (selectedAccessory.mrp || 0),
-                                        isFOC: isFreeProduct,
-                                        product: selectedAccessory
-                                      });
-                                    } else {
-                                      updatedVisits[activeVisit] = {
-                                        ...currentVisitData,
-                                        accessoryName: selectedValue,
-                                        accessorySerialNumber: '',
-                                        accessoryAmount: 0,
-                                        accessoryFOC: false
-                                      };
-                                      console.log('Fallback: product not found in database');
-                                    }
-                                    
-                                    setValue('visits', updatedVisits);
-                                    console.log('Updated visits state:', updatedVisits);
-                                    console.log('=== ACCESSORY SELECTION END ===');
-                                  }}
-                                  label="Name of Accessory"
-                                  sx={{ borderRadius: 2 }}
-                                  displayEmpty
-                                >
-                                  <MenuItem value="">
-                                    <Typography color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                      Select an accessory...
-                                    </Typography>
-                                  </MenuItem>
-                                  {products
-                                    .filter((product) => isAccessoryCatalogProductType(product))
-                                    .length === 0 ? (
-                                    <MenuItem disabled>
-                                      <Typography color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                        No accessory products available
-                                      </Typography>
-                                    </MenuItem>
-                                  ) : (
-                                    products
-                                      .filter((product) => isAccessoryCatalogProductType(product))
-                                      .map(product => (
-                                        <MenuItem key={product.id} value={product.name}>
-                                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                                            <Typography>{product.name}{product.company ? ` - ${product.company}` : ''}</Typography>
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                              <Chip 
-                                                label={product.type} 
-                                                size="small" 
-                                                color={accessoryServiceProductChipColor(product.type)} 
-                                                variant="outlined"
-                                                sx={{ fontSize: '0.7rem' }}
-                                              />
-                                              {product.mrp > 0 && (
-                                                <Typography variant="body2" color="text.secondary">
-                                                  {formatCurrency(product.mrp)}
-                                                </Typography>
-                                              )}
-                                            </Box>
-                                          </Box>
-                                        </MenuItem>
-                                      ))
-                                  )}
-                                </Select>
-                              </FormControl>
-                              </Stack>
-                            </Grid>
-                            <Grid item xs={12} md={6}>
-                              <TextField
-                                fullWidth
-                                label="Details of Accessory"
-                                placeholder="Additional notes or specifications..."
-                                value={(() => {
-                                  const visits = getValues('visits');
-                                  const visit = visits[activeVisit];
-                                  return visit?.accessoryDetails || '';
-                                })()}
-                                onChange={(e) => {
-                                  const currentVisits = getValues('visits');
-                                  const updatedVisits = [...currentVisits];
-                                  updatedVisits[activeVisit] = {
-                                    ...updatedVisits[activeVisit],
-                                    accessoryDetails: e.target.value
-                                  };
-                                  setValue('visits', updatedVisits);
+                            <Grid item xs={12}>
+                              <Button
+                                variant="outlined"
+                                size="small"
+                                startIcon={<InventoryIcon />}
+                                onClick={() => {
+                                  setInventoryPickerMode('accessory');
+                                  setInventoryDialogOpen(true);
                                 }}
-                                sx={enquiryFormFieldSx}
-                              />
+                                sx={{ textTransform: 'none', borderRadius: 2 }}
+                              >
+                                Add from accessory stock ({accessoryInventory.length} lines)
+                              </Button>
                             </Grid>
-                            <Grid item xs={12} md={3}>
-                              <FormControlLabel
-                                control={
-                                  <Switch
-                                    checked={(() => {
-                                      const visits = getValues('visits');
-                                      const visit = visits[activeVisit];
-                                      return visit?.accessoryFOC || false;
-                                    })()}
-                                    onChange={(e) => {
-                                      const isChecked = e.target.checked;
-                                      console.log('FOC toggled:', isChecked);
-                                      
-                                      const currentVisits = getValues('visits');
-                                      const updatedVisits = [...currentVisits];
-                                      const currentVisitData = updatedVisits[activeVisit];
-                                      
-                                      if (isChecked) {
-                                        // Set amount to 0 when FOC is enabled
-                                        updatedVisits[activeVisit] = {
-                                          ...currentVisitData,
-                                          accessoryFOC: true,
-                                          accessoryAmount: 0
-                                        };
-                                      } else {
-                                        // If unchecking FOC and an accessory is selected, restore its MRP
-                                        const selectedAccessory = products.find(p => 
-                                          p.name === currentVisitData?.accessoryName && 
-                                          isAccessoryCatalogProductType(p)
-                                        );
-                                        updatedVisits[activeVisit] = {
-                                          ...currentVisitData,
-                                          accessoryFOC: false,
-                                          accessoryAmount: selectedAccessory?.mrp || 0
-                                        };
-                                      }
-                                      
-                                      setValue('visits', updatedVisits);
-                                      console.log('FOC updated, new state:', updatedVisits[activeVisit]);
+                            <Grid item xs={12}>
+                              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
+                                Accessories (this visit)
+                              </Typography>
+                              <Stack spacing={1.25}>
+                                {(currentVisit.accessoryEntries || []).map((entry) => (
+                                  <Box
+                                    key={entry.id}
+                                    sx={{
+                                      display: 'flex',
+                                      gap: 1,
+                                      alignItems: 'flex-start',
+                                      flexWrap: 'wrap',
+                                      p: 1.5,
+                                      borderRadius: 2,
+                                      border: 1,
+                                      borderColor: 'divider',
                                     }}
-                                    color="success"
-                                  />
-                                }
-                                label="FOC (Free of Charge)"
-                              />
-                            </Grid>
-                            <Grid item xs={12} md={3}>
-                              <TextField
-                                fullWidth
-                                label="Quantity"
-                                type="number"
-                                value={(() => {
-                                  const visits = getValues('visits');
-                                  const visit = visits[activeVisit];
-                                  return visit?.accessoryQuantity || 1;
-                                })()}
-                                onChange={(e) => {
-                                  const currentVisits = getValues('visits');
-                                  const updatedVisits = [...currentVisits];
-                                  updatedVisits[activeVisit] = {
-                                    ...updatedVisits[activeVisit],
-                                    accessoryQuantity: Math.max(1, Number(e.target.value))
-                                  };
-                                  setValue('visits', updatedVisits);
-                                }}
-                                inputProps={{ min: 1 }}
-                                sx={enquiryFormFieldSx}
-                              />
-                            </Grid>
-                            <Grid item xs={12} md={6}>
-                              <TextField
-                                fullWidth
-                                label={(() => {
-                                  const visits = getValues('visits');
-                                  const visit = visits[activeVisit];
-                                  return visit?.accessoryFOC ? "Amount (Free)" : "Amount of Accessory";
-                                })()}
-                                type="number"
-                                value={(() => {
-                                  const visits = getValues('visits');
-                                  const visit = visits[activeVisit];
-                                  return visit?.accessoryFOC ? 0 : (visit?.accessoryAmount || 0);
-                                })()}
-                                onChange={(e) => {
-                                  const currentVisits = getValues('visits');
-                                  const updatedVisits = [...currentVisits];
-                                  updatedVisits[activeVisit] = {
-                                    ...updatedVisits[activeVisit],
-                                    accessoryAmount: Math.max(0, Number(e.target.value))
-                                  };
-                                  setValue('visits', updatedVisits);
-                                }}
-                                disabled={(() => {
-                                  const visits = getValues('visits');
-                                  const visit = visits[activeVisit];
-                                  return visit?.accessoryFOC || false;
-                                })()}
-                                InputProps={{
-                                  startAdornment: (
-                                    <InputAdornment position="start">
-                                      <RupeeIcon />
-                                    </InputAdornment>
-                                  ),
-                                }}
-                                sx={{ 
-                                  ...enquiryFormFieldSx,
-                                  '& .MuiInputBase-input': {
-                                    color: (() => {
-                                      const visits = getValues('visits');
-                                      const visit = visits[activeVisit];
-                                      return visit?.accessoryFOC ? 'text.secondary' : 'text.primary';
-                                    })()
-                                  }
-                                }}
-                              />
-                            </Grid>
-                          </Grid>
-
-                          {/* Accessory Summary */}
-                          {(() => {
-                            const visits = getValues('visits');
-                            const visit = visits[activeVisit];
-                            const accessoryName = visit?.accessoryName;
-                            
-                            if (!accessoryName || accessoryName.trim() === '') return null;
-                            
-                            return (
-                              <Box sx={{ mt: 3, p: 2, bgcolor: 'background.paper', borderRadius: 2, border: 1, borderColor: 'success.200' }}>
-                                <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, color: 'success.main' }}>
-                                  Accessory Summary
-                                </Typography>
-                                <Grid container spacing={2}>
-                                  <Grid item xs={12}>
-                                    <Typography variant="body2" color="text.secondary">Selected Accessory</Typography>
-                                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                                      {accessoryName}
-                                    </Typography>
-                                    {visit?.accessorySerialNumber?.trim() && (
+                                  >
+                                    <FormControl size="small" sx={{ minWidth: 200, flex: 1, maxWidth: 420 }}>
+                                      <InputLabel id={`acc-name-${entry.id}`}>Accessory</InputLabel>
+                                      <Select
+                                        labelId={`acc-name-${entry.id}`}
+                                        label="Accessory"
+                                        value={entry.accessoryName || ''}
+                                        MenuProps={mergeMenuPropsForReselectClear(
+                                          entry.accessoryName || '',
+                                          () => {
+                                            const next = (currentVisit.accessoryEntries || []).map((x) =>
+                                              x.id === entry.id
+                                                ? {
+                                                    ...x,
+                                                    accessoryName: '',
+                                                    accessorySerialNumber: '',
+                                                    accessoryAmount: 0,
+                                                    accessoryFOC: false,
+                                                  }
+                                                : x
+                                            );
+                                            updateVisitFields(activeVisit, {
+                                              accessoryEntries: next,
+                                              ...syncAccessoryFlatFieldsFromEntries(next),
+                                            });
+                                          },
+                                          undefined
+                                        )}
+                                        onChange={(e) => {
+                                          const selectedValue = String(e.target.value);
+                                          const selectedAccessory = products.find(
+                                            (p) =>
+                                              p.name === selectedValue &&
+                                              isAccessoryCatalogProductType(p)
+                                          );
+                                          const isFreeProduct =
+                                            selectedAccessory?.mrp === 0 ||
+                                            selectedAccessory?.isFreeOfCost;
+                                          const next = (currentVisit.accessoryEntries || []).map((x) =>
+                                            x.id === entry.id
+                                              ? {
+                                                  ...x,
+                                                  accessoryName: selectedValue,
+                                                  accessorySerialNumber: '',
+                                                  accessoryFOC: isFreeProduct,
+                                                  accessoryAmount: isFreeProduct
+                                                    ? 0
+                                                    : selectedAccessory?.mrp || 0,
+                                                }
+                                              : x
+                                          );
+                                          updateVisitFields(activeVisit, {
+                                            accessoryEntries: next,
+                                            ...syncAccessoryFlatFieldsFromEntries(next),
+                                          });
+                                        }}
+                                        displayEmpty
+                                      >
+                                        <MenuItem value="">
+                                          <em>Select accessory</em>
+                                        </MenuItem>
+                                        {products
+                                          .filter((product) => isAccessoryCatalogProductType(product))
+                                          .map((product) => (
+                                            <MenuItem key={product.id} value={product.name}>
+                                              <Box
+                                                sx={{
+                                                  display: 'flex',
+                                                  alignItems: 'center',
+                                                  justifyContent: 'space-between',
+                                                  width: '100%',
+                                                }}
+                                              >
+                                                <Typography>
+                                                  {product.name}
+                                                  {product.company ? ` - ${product.company}` : ''}
+                                                </Typography>
+                                                {product.mrp > 0 && (
+                                                  <Typography variant="body2" color="text.secondary">
+                                                    {formatCurrency(product.mrp)}
+                                                  </Typography>
+                                                )}
+                                              </Box>
+                                            </MenuItem>
+                                          ))}
+                                        {entry.accessoryName &&
+                                          !products.some(
+                                            (p) =>
+                                              p.name === entry.accessoryName &&
+                                              isAccessoryCatalogProductType(p)
+                                          ) && (
+                                            <MenuItem value={entry.accessoryName}>
+                                              {entry.accessoryName} (saved)
+                                            </MenuItem>
+                                          )}
+                                      </Select>
+                                    </FormControl>
+                                    {entry.accessorySerialNumber?.trim() && (
                                       <Chip
-                                        label={`S/N: ${visit.accessorySerialNumber}`}
+                                        label={`S/N: ${entry.accessorySerialNumber}`}
                                         size="small"
                                         color="info"
                                         variant="outlined"
-                                        sx={{ mt: 1 }}
+                                        sx={{ mt: 0.5 }}
                                       />
                                     )}
-                                    {products.find(p => p.name === accessoryName && isAccessoryCatalogProductType(p)) && (
-                                      <Chip 
-                                        label="From Product Catalog" 
-                                        size="small" 
-                                        color="success" 
-                                        variant="outlined"
-                                        sx={{ mt: 1 }}
-                                      />
-                                    )}
-                                  </Grid>
-                                  <Grid item xs={6}>
-                                    <Typography variant="body2" color="text.secondary">Total Quantity</Typography>
-                                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                                      {visit?.accessoryQuantity || 1} pc(s)
-                                    </Typography>
-                                  </Grid>
-                                  <Grid item xs={6}>
-                                    <Typography variant="body2" color="text.secondary">Total Amount</Typography>
-                                    <Typography variant="h6" sx={{ 
-                                      fontWeight: 600, 
-                                      color: visit?.accessoryFOC ? 'success.main' : 'primary.main' 
-                                    }}>
-                                      {visit?.accessoryFOC ? 'FREE' : formatCurrency((visit?.accessoryAmount || 0) * (visit?.accessoryQuantity || 1))}
-                                    </Typography>
-                                  </Grid>
-                                </Grid>
-                              </Box>
-                            );
-                          })()}
+                                    <FormControlLabel
+                                      control={
+                                        <Switch
+                                          size="small"
+                                          checked={Boolean(entry.accessoryFOC)}
+                                          onChange={(e) => {
+                                            const isChecked = e.target.checked;
+                                            const selectedAccessory = products.find(
+                                              (p) =>
+                                                p.name === entry.accessoryName &&
+                                                isAccessoryCatalogProductType(p)
+                                            );
+                                            const next = (currentVisit.accessoryEntries || []).map((x) =>
+                                              x.id === entry.id
+                                                ? {
+                                                    ...x,
+                                                    accessoryFOC: isChecked,
+                                                    accessoryAmount: isChecked
+                                                      ? 0
+                                                      : selectedAccessory?.mrp || x.accessoryAmount || 0,
+                                                  }
+                                                : x
+                                            );
+                                            updateVisitFields(activeVisit, {
+                                              accessoryEntries: next,
+                                              ...syncAccessoryFlatFieldsFromEntries(next),
+                                            });
+                                          }}
+                                          color="success"
+                                        />
+                                      }
+                                      label="FOC"
+                                      sx={{ mt: 0.25 }}
+                                    />
+                                    <TextField
+                                      size="small"
+                                      label="Qty"
+                                      type="number"
+                                      value={entry.accessoryQuantity ?? 1}
+                                      onChange={(e) => {
+                                        const qty = Math.max(1, Math.floor(Number(e.target.value) || 1));
+                                        const next = (currentVisit.accessoryEntries || []).map((x) =>
+                                          x.id === entry.id ? { ...x, accessoryQuantity: qty } : x
+                                        );
+                                        updateVisitFields(activeVisit, {
+                                          accessoryEntries: next,
+                                          ...syncAccessoryFlatFieldsFromEntries(next),
+                                        });
+                                      }}
+                                      sx={{ width: 72 }}
+                                      inputProps={{ min: 1 }}
+                                    />
+                                    <TextField
+                                      size="small"
+                                      label={entry.accessoryFOC ? 'Amount (Free)' : 'Amount'}
+                                      type="number"
+                                      value={entry.accessoryFOC ? 0 : entry.accessoryAmount ?? 0}
+                                      onChange={(e) => {
+                                        const amt = Math.max(0, Number(e.target.value) || 0);
+                                        const next = (currentVisit.accessoryEntries || []).map((x) =>
+                                          x.id === entry.id ? { ...x, accessoryAmount: amt } : x
+                                        );
+                                        updateVisitFields(activeVisit, {
+                                          accessoryEntries: next,
+                                          ...syncAccessoryFlatFieldsFromEntries(next),
+                                        });
+                                      }}
+                                      disabled={Boolean(entry.accessoryFOC)}
+                                      sx={{ width: 120 }}
+                                      InputProps={{
+                                        startAdornment: (
+                                          <InputAdornment position="start">
+                                            <RupeeIcon sx={{ fontSize: 18 }} />
+                                          </InputAdornment>
+                                        ),
+                                      }}
+                                    />
+                                    <IconButton
+                                      aria-label="Remove accessory"
+                                      size="small"
+                                      onClick={() => {
+                                        const next = (currentVisit.accessoryEntries || []).filter(
+                                          (x) => x.id !== entry.id
+                                        );
+                                        updateVisitFields(activeVisit, {
+                                          accessoryEntries: next,
+                                          ...syncAccessoryFlatFieldsFromEntries(next),
+                                        });
+                                      }}
+                                      sx={{ mt: 0.5 }}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </Box>
+                                ))}
+                                <Button
+                                  type="button"
+                                  variant="outlined"
+                                  size="small"
+                                  startIcon={<AddIcon />}
+                                  onClick={() => {
+                                    const next = [
+                                      ...(currentVisit.accessoryEntries || []),
+                                      {
+                                        id: newAccessoryEntryId(),
+                                        accessoryName: '',
+                                        accessorySerialNumber: '',
+                                        accessoryFOC: false,
+                                        accessoryAmount: 0,
+                                        accessoryQuantity: 1,
+                                      },
+                                    ];
+                                    updateVisitFields(activeVisit, {
+                                      accessoryEntries: next,
+                                      ...syncAccessoryFlatFieldsFromEntries(next),
+                                    });
+                                  }}
+                                >
+                                  Add accessory
+                                </Button>
+                              </Stack>
+                            </Grid>
+                            <Grid item xs={12}>
+                              <TextField
+                                fullWidth
+                                label="Visit notes (accessories)"
+                                placeholder="Additional notes or specifications for this visit..."
+                                value={currentVisit.accessoryDetails || ''}
+                                onChange={(e) =>
+                                  updateVisit(activeVisit, 'accessoryDetails', e.target.value)
+                                }
+                                sx={enquiryFormFieldSx}
+                              />
+                            </Grid>
+                            {(currentVisit.accessoryEntries || []).filter((e) =>
+                              String(e.accessoryName || '').trim()
+                            ).length > 0 && (
+                              <Grid item xs={12}>
+                                <Typography variant="body2" color="text.secondary">
+                                  Total (accessories):{' '}
+                                  <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                                    {sumAccessoryEntryPrices(currentVisit) === 0 &&
+                                    (currentVisit.accessoryEntries || []).every((e) => e.accessoryFOC)
+                                      ? 'FREE'
+                                      : formatCurrency(sumAccessoryEntryPrices(currentVisit))}
+                                  </Box>
+                                </Typography>
+                              </Grid>
+                            )}
+                          </Grid>
                       </VisitServiceDetailPanel>
                     )}
 
@@ -10102,17 +10093,29 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         </Typography>
                       </Grid>
                     )}
-                    {visit.accessory && visit.accessoryName && visit.accessoryName.trim() !== '' && (
+                    {visit.accessory &&
+                      (visit.accessoryEntries || []).some((e) =>
+                        String(e.accessoryName || '').trim()
+                      ) && (
                       <Grid item xs={12} md={6}>
                         <Typography variant="body2" color="text.secondary">Accessory</Typography>
                         <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                          {visit.accessoryName} ({visit.accessoryQuantity} pc{visit.accessoryQuantity > 1 ? 's' : ''})
+                          {(visit.accessoryEntries || [])
+                            .filter((e) => String(e.accessoryName || '').trim())
+                            .map((e) => `${e.accessoryName} (×${e.accessoryQuantity || 1})`)
+                            .join(', ')}
                         </Typography>
-                        <Typography variant="body2" sx={{ 
-                          color: visit.accessoryFOC ? 'success.main' : 'primary.main',
-                          fontWeight: 600
-                        }}>
-                          {visit.accessoryFOC ? 'FREE' : `${formatCurrency(visit.accessoryAmount * visit.accessoryQuantity)}`}
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            color: 'primary.main',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {sumAccessoryEntryPrices(visit) === 0 &&
+                          (visit.accessoryEntries || []).every((e) => e.accessoryFOC)
+                            ? 'FREE'
+                            : formatCurrency(sumAccessoryEntryPrices(visit))}
                         </Typography>
                       </Grid>
                     )}
