@@ -2,10 +2,8 @@
 'use client';
 
 /**
- * Sales report — same merge rules as Sales & Invoicing:
- * - Saved rows from `sales` (invoiced)
- * - Enquiry visit sale rows from `deriveEnquirySalesFromDocs` when not covered by a live invoice
- * Cancelled / deleted invoices and stale visit invoice numbers are excluded. No double-counting.
+ * Sales report — invoiced rows only from the `sales` collection.
+ * Cancelled / deleted invoices and duplicate visit invoices are excluded.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -36,7 +34,6 @@ import { Download as DownloadIcon, Refresh as RefreshIcon } from '@mui/icons-mat
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import EnquiryProfileLink from '@/components/common/EnquiryProfileLink';
-import { deriveEnquirySalesFromDocs } from '@/lib/sales-invoicing/enquiryDerivation';
 import { buildUnifiedInvoiceRows } from '@/lib/sales-invoicing/mergeUnifiedRows';
 import {
   type Center,
@@ -513,8 +510,8 @@ export default function SalesReportsTab() {
         ...(d.data() as object),
       })) as SaleRecord[];
 
-      const derived = deriveEnquirySalesFromDocs(enquiryDocs, 'enquiry');
-      const unified = buildUnifiedInvoiceRows(saleRecords, derived);
+      // Invoiced sales only — do not merge enquiry visit rows that lack a `sales` document.
+      const unified = buildUnifiedInvoiceRows(saleRecords, []);
       const mapped = mapUnifiedRowsToRecords(unified, resolveCtx, enquiryById);
       setRecords(mapped);
     } catch (err) {
@@ -955,7 +952,7 @@ export default function SalesReportsTab() {
       const rowPct = basis > 0 ? (100 * (r.discountOffMrp || 0)) / basis : null;
       return [
         r.date.toLocaleDateString(),
-        r.recordKind === 'invoiced' ? 'Invoiced' : 'Uninvoiced (enquiry)',
+        'Invoiced',
         r.invoiceNumber || '',
         r.patientName,
         r.centerName,
@@ -1014,10 +1011,8 @@ export default function SalesReportsTab() {
     <Box>
       <Paper elevation={0} variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Combines <strong>saved invoices</strong> (<code>sales</code>) with <strong>genuine uninvoiced sale visits</strong>{' '}
-          (excludes cancelled/deleted invoices and visits that still reference a removed invoice).{' '}
-          on enquiries — same merge as <strong>Sales &amp; Invoicing</strong>. Voided invoices are excluded; visits
-          already covered by an invoice are not duplicated.
+          Counts <strong>invoiced sales only</strong> from the <code>sales</code> collection. Cancelled, deleted, and
+          duplicate visit invoices are excluded. Enquiry visits without a saved invoice are not included.
         </Typography>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={2.5}>
@@ -1820,7 +1815,7 @@ export default function SalesReportsTab() {
           <Box>
             <Typography variant="h6">All records</Typography>
             <Typography variant="body2" color="text.secondary">
-              Every invoiced and uninvoiced sale row in the selected range (same filters as above).
+              Every invoiced sale in the selected range (same filters as above).
             </Typography>
           </Box>
           <Button variant="contained" startIcon={<DownloadIcon />} onClick={exportAllRecords}>
@@ -1852,8 +1847,8 @@ export default function SalesReportsTab() {
                     <TableCell>
                       <Chip
                         size="small"
-                        label={r.recordKind === 'invoiced' ? 'Invoiced' : 'Uninvoiced'}
-                        color={r.recordKind === 'invoiced' ? 'primary' : 'warning'}
+                        label="Invoiced"
+                        color="primary"
                         variant="outlined"
                       />
                     </TableCell>
