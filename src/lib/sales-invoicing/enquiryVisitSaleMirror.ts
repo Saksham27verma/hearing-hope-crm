@@ -151,6 +151,8 @@ function fingerprintsEqual(
   b: SaleMirrorFingerprint,
   opts?: { ignoreVisitIndex?: boolean },
 ): boolean {
+  const dateOk =
+    !a.saleDateKey || !b.saleDateKey || a.saleDateKey === b.saleDateKey;
   return (
     (opts?.ignoreVisitIndex || a.visitIndex === b.visitIndex) &&
     a.grossSalesBeforeTax === b.grossSalesBeforeTax &&
@@ -159,7 +161,7 @@ function fingerprintsEqual(
     a.exchangeCredit === b.exchangeCredit &&
     a.exchangePriorVisitIndex === b.exchangePriorVisitIndex &&
     a.productsKey === b.productsKey &&
-    a.saleDateKey === b.saleDateKey &&
+    dateOk &&
     a.patientName === b.patientName &&
     a.phone === b.phone
   );
@@ -183,4 +185,85 @@ export function visitInvoiceNumberFromVisit(visit: Record<string, unknown>): str
   const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
   const raw = visit.invoiceNumber ?? details?.invoiceNumber ?? visit.salesInvoiceNumber;
   return normalizeInvoiceNumberString(raw);
+}
+
+export function visitLinkedSaleIdFromVisit(visit: Record<string, unknown>): string {
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  return String(visit.linkedSaleId ?? details?.linkedSaleId ?? '').trim();
+}
+
+export function readVisitSaleTotals(visit: Record<string, unknown>): {
+  grossSalesBeforeTax: number;
+  gstAmount: number;
+  salesAfterTax: number;
+} {
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax ?? details?.grossSalesBeforeTax) || 0;
+  const gstAmount = Number(visit.taxAmount ?? details?.taxAmount) || 0;
+  const salesAfterTax =
+    Number(visit.salesAfterTax ?? details?.salesAfterTax) ||
+    grossSalesBeforeTax + gstAmount;
+  return { grossSalesBeforeTax, gstAmount, salesAfterTax };
+}
+
+function productSerialSet(products: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(products)) return out;
+  for (const raw of products) {
+    const p = raw as Record<string, unknown>;
+    const sn = String(p.serialNumber || '').trim();
+    if (sn) out.add(sn.toLowerCase());
+  }
+  return out;
+}
+
+export function productSerialSetFromVisit(visit: Record<string, unknown>): Set<string> {
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const fromFlat = productSerialSet(visit.products);
+  if (fromFlat.size > 0) return fromFlat;
+  return productSerialSet(details?.products);
+}
+
+export function productSerialsOverlap(a: Set<string>, products: unknown): boolean {
+  if (a.size === 0) return false;
+  const b = productSerialSet(products);
+  if (b.size === 0) return false;
+  for (const sn of a) {
+    if (b.has(sn)) return true;
+  }
+  return false;
+}
+
+/** Loose match when totals shifted (e.g. exchange credit added after first invoice). */
+export function saleLooselyMatchesEnquiryVisit(
+  sale: SaleRecord,
+  visit: Record<string, unknown>,
+  visitIndex: number,
+): boolean {
+  const wantIdx = normalizeEnquiryVisitIndex(visitIndex);
+  const saleIdx = normalizeEnquiryVisitIndex(sale.enquiryVisitIndex);
+  const hasSaleIdx = saleHasStoredVisitIndex(sale);
+  if (hasSaleIdx && saleIdx !== wantIdx) return false;
+
+  const visitSerials = productSerialSetFromVisit(visit);
+  if (productSerialsOverlap(visitSerials, sale.products)) return true;
+
+  const { grossSalesBeforeTax, gstAmount, salesAfterTax } = readVisitSaleTotals(visit);
+  const saleGross = Number(sale.totalAmount) || 0;
+  const saleGst = Number(sale.gstAmount) || 0;
+  const saleGrand = Math.round(Number(sale.grandTotal) || saleGross + saleGst);
+  const visitGrand = saleGrandTotalFromVisit(visit);
+  const visitBase = Math.round(salesAfterTax || grossSalesBeforeTax + gstAmount);
+
+  if (saleGross === grossSalesBeforeTax && saleGst === gstAmount) return true;
+  if (saleGrand === visitGrand || saleGrand === visitBase) return true;
+
+  const { exchangeCredit } = readExchangeFieldsFromVisit(visit);
+  if (exchangeCredit > 0) {
+    const saleEx = Math.max(0, Number(sale.exchangeCreditInr) || 0);
+    if (saleEx > 0 && Math.abs(saleEx - exchangeCredit) <= 1) return true;
+    if (Math.abs(saleGrand - visitBase) <= 1) return true;
+  }
+
+  return false;
 }

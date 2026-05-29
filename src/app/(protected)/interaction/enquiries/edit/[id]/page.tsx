@@ -116,6 +116,22 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
     fetchEnquiry();
   }, [resolvedParams]);
 
+  const getSavedVisitSnapshot = (source: { visits?: unknown[]; visitSchedules?: unknown[] }, index: number) => {
+    const flat = (Array.isArray(source.visits) ? source.visits[index] : null) as Record<string, unknown> | null;
+    const sched = (Array.isArray(source.visitSchedules) ? source.visitSchedules[index] : null) as
+      | Record<string, unknown>
+      | null;
+    const had = (sched?.hearingAidDetails as Record<string, unknown> | undefined) || {};
+    return {
+      ...(sched || {}),
+      ...(flat || {}),
+      ...had,
+      hearingAidDetails: had,
+      invoiceNumber: flat?.invoiceNumber ?? had.invoiceNumber,
+      linkedSaleId: flat?.linkedSaleId ?? had.linkedSaleId,
+    };
+  };
+
   // Helper function to find new sales (products that didn't exist before)
   const findNewSales = (oldVisits: any[], newVisits: any[]) => {
     const newSales: any[] = [];
@@ -324,6 +340,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         const visit = visits[visitIndex] || {};
         if (!isInvoicableEnquirySaleVisit(visit) || !resolvedParams?.id) continue;
 
+        const savedVisit = getSavedVisitSnapshot(enquiry || {}, visitIndex);
         const upsert = await upsertSaleForEnquiryVisit({
           db,
           enquiryId: resolvedParams.id,
@@ -331,14 +348,27 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           visit,
           enquiry: data,
           actor,
-          priorVisitInvoice:
-            oldVisits?.[visitIndex]?.invoiceNumber ??
-            (oldVisits?.[visitIndex]?.hearingAidDetails as { invoiceNumber?: string } | undefined)
-              ?.invoiceNumber,
+          priorVisitInvoice: savedVisit.invoiceNumber,
           onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });
-        if (upsert.visitInvoicePatched) {
-          visits[visitIndex] = { ...visit, invoiceNumber: upsert.invoiceNumber };
+        visits[visitIndex] = {
+          ...visit,
+          invoiceNumber: upsert.invoiceNumber,
+          linkedSaleId: upsert.saleId,
+        };
+        if (visitSchedules[visitIndex]) {
+          const sched = visitSchedules[visitIndex] as Record<string, unknown>;
+          const had = (sched.hearingAidDetails as Record<string, unknown> | undefined) || {};
+          visitSchedules[visitIndex] = {
+            ...sched,
+            invoiceNumber: upsert.invoiceNumber,
+            linkedSaleId: upsert.saleId,
+            hearingAidDetails: {
+              ...had,
+              invoiceNumber: upsert.invoiceNumber,
+              linkedSaleId: upsert.saleId,
+            },
+          };
         }
       }
 

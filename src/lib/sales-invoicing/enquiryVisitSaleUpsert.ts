@@ -16,12 +16,12 @@ import {
 } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 import {
   readExchangeFieldsFromVisit,
+  readVisitSaleTotals,
   saleGrandTotalFromVisit,
-  saleRecordMatchesVisitMirror,
   visitInvoiceNumberFromVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleMirror';
-import { syncEnquiryVisitInvoiceNumberFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
-import { normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
+import { syncEnquiryVisitSaleLinkFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
+import { isSaleCancelled, normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
@@ -70,16 +70,17 @@ export type UpsertEnquiryVisitSaleResult = {
   skippedUnchanged: boolean;
 };
 
-function salespersonMatchesSale(
+function resolveSaleDateForUpsert(
   visit: Record<string, unknown>,
-  sale: { salesperson?: { id?: string; name?: string } },
-): boolean {
-  const fromVisit = resolveSalespersonFromEnquiryVisit(visit);
-  const fromSale = sale.salesperson || { id: '', name: '' };
-  return (
-    String(fromSale.id || '').trim() === fromVisit.id &&
-    String(fromSale.name || '').trim() === fromVisit.name
-  );
+  existingSale: Record<string, unknown> | undefined,
+): ReturnType<typeof enquiryVisitSaleDateToTimestamp> {
+  const raw = visit.purchaseDate || visit.visitDate;
+  if (raw != null && String(raw).trim() !== '') {
+    return enquiryVisitSaleDateToTimestamp(raw);
+  }
+  const existing = existingSale?.saleDate;
+  if (existing) return existing as ReturnType<typeof enquiryVisitSaleDateToTimestamp>;
+  return enquiryVisitSaleDateToTimestamp(raw);
 }
 
 /**
@@ -93,10 +94,9 @@ export async function upsertSaleForEnquiryVisit(
   const data = args.enquiry;
   const products = Array.isArray(visit.products) ? visit.products : [];
 
-  const saleDateRaw = visit.purchaseDate || visit.visitDate;
-  const saleDate = enquiryVisitSaleDateToTimestamp(saleDateRaw);
-  const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
-  const gstAmount = Number(visit.taxAmount) || 0;
+  const totals = readVisitSaleTotals(visit);
+  const grossSalesBeforeTax = totals.grossSalesBeforeTax;
+  const gstAmount = totals.gstAmount;
   const { exchangeCredit, exchangePriorVisitIndex } = readExchangeFieldsFromVisit(visit);
   const grandTotal = saleGrandTotalFromVisit(visit);
   const hasExchangeCredit = exchangeCredit > 0;
@@ -109,8 +109,9 @@ export async function upsertSaleForEnquiryVisit(
     visitIndex,
     visit,
     data,
+    { priorVisitInvoice: args.priorVisitInvoice },
   );
-  const activeSales = existingSales.filter((s) => s.cancelled !== true && s.cancelled !== 'true');
+  const activeSales = existingSales.filter((s) => !isSaleCancelled(s));
   const canonical = chooseCanonicalSaleRecord(
     activeSales.length > 0 ? activeSales : existingSales,
   );
@@ -138,8 +139,6 @@ export async function upsertSaleForEnquiryVisit(
 
   const mirrorUnchanged =
     Boolean(canonical?.id) &&
-    saleRecordMatchesVisitMirror(canonical, visit, data, visitIndex) &&
-    salespersonMatchesSale(visit, canonical) &&
     normalizeInvoiceNumberString(canonical.invoiceNumber) ===
       normalizeInvoiceNumberString(invoiceNumber) &&
     !needsIndexBackfill;
@@ -149,15 +148,15 @@ export async function upsertSaleForEnquiryVisit(
       actorUid: args.actor.uid,
       visit,
       enquiry: data,
+      priorVisitInvoice: args.priorVisitInvoice,
     });
-    if (saleHasBillableInvoiceNumber(invoiceNumber) && visitInvoicePatched) {
-      await syncEnquiryVisitInvoiceNumberFromSale({
-        db: args.db,
-        enquiryId: args.enquiryId,
-        visitIndex,
-        invoiceNumber,
-      });
-    }
+    await syncEnquiryVisitSaleLinkFromSale({
+      db: args.db,
+      enquiryId: args.enquiryId,
+      visitIndex,
+      saleId: canonical!.id!,
+      invoiceNumber,
+    });
     return {
       saleId: canonical!.id!,
       invoiceNumber,
@@ -166,6 +165,11 @@ export async function upsertSaleForEnquiryVisit(
       skippedUnchanged: true,
     };
   }
+
+  const saleDate = resolveSaleDateForUpsert(
+    visit,
+    existingData as Record<string, unknown> | undefined,
+  );
 
   const basePayload: Record<string, unknown> = {
     invoiceNumber,
@@ -230,16 +234,16 @@ export async function upsertSaleForEnquiryVisit(
     actorUid: args.actor.uid,
     visit,
     enquiry: data,
+    priorVisitInvoice: args.priorVisitInvoice,
   });
 
-  if (saleHasBillableInvoiceNumber(invoiceNumber)) {
-    await syncEnquiryVisitInvoiceNumberFromSale({
-      db: args.db,
-      enquiryId: args.enquiryId,
-      visitIndex,
-      invoiceNumber,
-    });
-  }
+  await syncEnquiryVisitSaleLinkFromSale({
+    db: args.db,
+    enquiryId: args.enquiryId,
+    visitIndex,
+    saleId: saleId!,
+    invoiceNumber,
+  });
 
   return {
     saleId: saleId!,

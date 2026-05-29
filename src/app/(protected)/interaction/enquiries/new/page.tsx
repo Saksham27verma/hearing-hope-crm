@@ -302,10 +302,12 @@ export default function NewEnquiryPage() {
           actor,
           onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });
-        if (upsert.visitInvoicePatched) {
-          visits[visitIndex] = { ...visit, invoiceNumber: upsert.invoiceNumber };
-          visitsPatched = true;
-        }
+        visits[visitIndex] = {
+          ...visit,
+          invoiceNumber: upsert.invoiceNumber,
+          linkedSaleId: upsert.saleId,
+        };
+        visitsPatched = true;
       }
 
       if (visitsPatched) {

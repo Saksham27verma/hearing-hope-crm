@@ -2654,6 +2654,20 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                 savedFlat?.exchangeCreditAmount ??
                 (mergedVisit as { exchangeCreditAmount?: number }).exchangeCreditAmount
             ) || 0,
+          invoiceNumber:
+            String(
+              savedFlat?.invoiceNumber ??
+                visit.hearingAidDetails?.invoiceNumber ??
+                mergedVisit.invoiceNumber ??
+                ''
+            ).trim() || undefined,
+          linkedSaleId:
+            String(
+              savedFlat?.linkedSaleId ??
+                visit.hearingAidDetails?.linkedSaleId ??
+                mergedVisit.linkedSaleId ??
+                ''
+            ).trim() || undefined,
           accessoryName: nestedAccessoryDetails.accessoryName || mergedVisit.accessoryName || '',
           accessorySerialNumber:
             nestedAccessoryDetails.accessorySerialNumber ||

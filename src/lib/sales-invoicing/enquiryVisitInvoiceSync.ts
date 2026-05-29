@@ -40,6 +40,38 @@ function chooseCanonicalSaleForVisit(sales: SaleLike[]): SaleLike | null {
   return billable[0] ?? null;
 }
 
+function patchVisitWithSaleLink(
+  visit: Record<string, unknown>,
+  saleId: string,
+  invoiceNumber: string,
+): Record<string, unknown> {
+  const had = (visit.hearingAidDetails as Record<string, unknown> | undefined) || {};
+  return {
+    ...visit,
+    invoiceNumber,
+    linkedSaleId: saleId,
+    saleInvoiceDeleted: false,
+    hearingAidDetails: {
+      ...had,
+      invoiceNumber,
+      linkedSaleId: saleId,
+    },
+  };
+}
+
+function visitNeedsSaleLinkPatch(
+  visit: Record<string, unknown>,
+  saleId: string,
+  invoiceNumber: string,
+): boolean {
+  const inv = normalizeInvoiceNumberString(visit.invoiceNumber);
+  const linked = String(visit.linkedSaleId || '').trim();
+  const had = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const hadInv = normalizeInvoiceNumberString(had?.invoiceNumber);
+  const hadLinked = String(had?.linkedSaleId || '').trim();
+  return inv !== invoiceNumber || linked !== saleId || hadInv !== invoiceNumber || hadLinked !== saleId;
+}
+
 export async function getCanonicalInvoiceNumberForEnquiryVisit(
   db: Firestore,
   enquiryId: string,
@@ -64,6 +96,51 @@ export async function getCanonicalInvoiceNumberForEnquiryVisit(
     : { invoiceNumber: '' };
 }
 
+/** Persist invoice # and `linkedSaleId` on enquiry `visits` and `visitSchedules`. */
+export async function syncEnquiryVisitSaleLinkFromSale(args: {
+  db: Firestore;
+  enquiryId: string;
+  visitIndex: number;
+  saleId: string;
+  invoiceNumber: string;
+}) {
+  const normalized = normalizeInvoiceNumberString(args.invoiceNumber);
+  const saleId = String(args.saleId || '').trim();
+  if (!saleHasBillableInvoiceNumber(normalized) || !saleId) return;
+
+  const enquiryRef = doc(args.db, 'enquiries', args.enquiryId);
+  const enquirySnap = await getDoc(enquiryRef);
+  if (!enquirySnap.exists()) return;
+
+  const data = enquirySnap.data() as Record<string, unknown>;
+  const patch: Record<string, unknown> = {};
+
+  const visitsRaw = data.visits;
+  if (Array.isArray(visitsRaw)) {
+    const visit = visitsRaw[args.visitIndex] as Record<string, unknown> | undefined;
+    if (visit && visitNeedsSaleLinkPatch(visit, saleId, normalized)) {
+      const patchedVisits = [...visitsRaw];
+      patchedVisits[args.visitIndex] = patchVisitWithSaleLink(visit, saleId, normalized);
+      patch.visits = patchedVisits;
+    }
+  }
+
+  const schedulesRaw = data.visitSchedules;
+  if (Array.isArray(schedulesRaw)) {
+    const sched = schedulesRaw[args.visitIndex] as Record<string, unknown> | undefined;
+    if (sched && visitNeedsSaleLinkPatch(sched, saleId, normalized)) {
+      const patchedSchedules = [...schedulesRaw];
+      patchedSchedules[args.visitIndex] = patchVisitWithSaleLink(sched, saleId, normalized);
+      patch.visitSchedules = patchedSchedules;
+    }
+  }
+
+  if (Object.keys(patch).length > 0) {
+    await updateDoc(enquiryRef, patch);
+  }
+}
+
+/** @deprecated Use `syncEnquiryVisitSaleLinkFromSale` */
 export async function syncEnquiryVisitInvoiceNumberFromSale(args: {
   db: Firestore;
   enquiryId: string;
@@ -72,25 +149,19 @@ export async function syncEnquiryVisitInvoiceNumberFromSale(args: {
 }) {
   const normalized = normalizeInvoiceNumberString(args.invoiceNumber);
   if (!saleHasBillableInvoiceNumber(normalized)) return;
-
-  const enquiryRef = doc(args.db, 'enquiries', args.enquiryId);
-  const enquirySnap = await getDoc(enquiryRef);
-  if (!enquirySnap.exists()) return;
-
-  const data = enquirySnap.data() as Record<string, unknown>;
-  const visitsRaw = data.visits;
-  if (!Array.isArray(visitsRaw)) return;
-  const visit = visitsRaw[args.visitIndex] as Record<string, unknown> | undefined;
-  if (!visit) return;
-  if (normalizeInvoiceNumberString(visit.invoiceNumber) === normalized) return;
-
-  const patchedVisits = [...visitsRaw];
-  patchedVisits[args.visitIndex] = {
-    ...visit,
+  const { saleId } = await getCanonicalInvoiceNumberForEnquiryVisit(
+    args.db,
+    args.enquiryId,
+    args.visitIndex,
+  );
+  if (!saleId) return;
+  await syncEnquiryVisitSaleLinkFromSale({
+    db: args.db,
+    enquiryId: args.enquiryId,
+    visitIndex: args.visitIndex,
+    saleId,
     invoiceNumber: normalized,
-    saleInvoiceDeleted: false,
-  };
-  await updateDoc(enquiryRef, { visits: patchedVisits });
+  });
 }
 
 /** After a `sales` doc is deleted, drop the mirrored invoice # so reports do not treat the visit as uninvoiced. */
@@ -105,23 +176,48 @@ export async function clearEnquiryVisitInvoiceNumberOnSaleDelete(args: {
   if (!enquirySnap.exists()) return;
 
   const data = enquirySnap.data() as Record<string, unknown>;
+  const patch: Record<string, unknown> = {};
+
+  const clearVisit = (visit: Record<string, unknown>) => {
+    const normalizedTarget = normalizeInvoiceNumberString(args.invoiceNumber);
+    const onVisit = normalizeInvoiceNumberString(visit.invoiceNumber);
+    if (normalizedTarget && onVisit && onVisit !== normalizedTarget) return visit;
+
+    const nextVisit = { ...visit };
+    delete nextVisit.invoiceNumber;
+    delete nextVisit.salesInvoiceNumber;
+    delete nextVisit.salesInvoiceNo;
+    delete nextVisit.invoiceNo;
+    delete nextVisit.linkedSaleId;
+    nextVisit.saleInvoiceDeleted = true;
+    const had = { ...((nextVisit.hearingAidDetails as Record<string, unknown>) || {}) };
+    delete had.invoiceNumber;
+    delete had.linkedSaleId;
+    nextVisit.hearingAidDetails = had;
+    return nextVisit;
+  };
+
   const visitsRaw = data.visits;
-  if (!Array.isArray(visitsRaw)) return;
-  const visit = visitsRaw[args.visitIndex] as Record<string, unknown> | undefined;
-  if (!visit) return;
+  if (Array.isArray(visitsRaw)) {
+    const visit = visitsRaw[args.visitIndex] as Record<string, unknown> | undefined;
+    if (visit) {
+      const patchedVisits = [...visitsRaw];
+      patchedVisits[args.visitIndex] = clearVisit(visit);
+      patch.visits = patchedVisits;
+    }
+  }
 
-  const normalizedTarget = normalizeInvoiceNumberString(args.invoiceNumber);
-  const onVisit = normalizeInvoiceNumberString(visit.invoiceNumber);
-  if (normalizedTarget && onVisit && onVisit !== normalizedTarget) return;
+  const schedulesRaw = data.visitSchedules;
+  if (Array.isArray(schedulesRaw)) {
+    const sched = schedulesRaw[args.visitIndex] as Record<string, unknown> | undefined;
+    if (sched) {
+      const patchedSchedules = [...schedulesRaw];
+      patchedSchedules[args.visitIndex] = clearVisit(sched);
+      patch.visitSchedules = patchedSchedules;
+    }
+  }
 
-  const nextVisit = { ...visit };
-  delete nextVisit.invoiceNumber;
-  delete nextVisit.salesInvoiceNumber;
-  delete nextVisit.salesInvoiceNo;
-  delete nextVisit.invoiceNo;
-  nextVisit.saleInvoiceDeleted = true;
-
-  const patchedVisits = [...visitsRaw];
-  patchedVisits[args.visitIndex] = nextVisit;
-  await updateDoc(enquiryRef, { visits: patchedVisits });
+  if (Object.keys(patch).length > 0) {
+    await updateDoc(enquiryRef, patch);
+  }
 }
