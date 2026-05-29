@@ -34,11 +34,8 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
-import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
 import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
-import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
-import { getCanonicalInvoiceNumberForEnquiryVisit } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import { logActivity, computeChanges } from '@/lib/activityLogger';
 import {
   collectSaleVisitIndicesVoidedByReturns,
@@ -46,7 +43,10 @@ import {
 } from '@/lib/enquiries/salesReturnVisitTargets';
 import { buildExchangeInventoryRestores } from '@/lib/enquiries/exchangeInventoryRestore';
 import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInventoryForSalesReturn';
-import { dedupeEnquiryVisitSales } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
+import {
+  isInvoicableEnquirySaleVisit,
+  upsertSaleForEnquiryVisit,
+} from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -319,121 +319,23 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         }
       }
 
-      // Upsert sale visits into `sales` collection and ensure invoice numbers.
+      // One `sales` invoice per sale visit — update in place on re-save (no duplicate invoice numbers).
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
-        const products = Array.isArray(visit.products) ? visit.products : [];
-        // Only treat as invoicable "sale" when the visit is explicitly marked as a sale.
-        // This prevents "booking-only" visits (which can still carry amounts/products) from
-        // being mirrored into `sales` and getting invoice numbers.
-        const isSale = Boolean(
-          visit?.hearingAidSale ||
-            visit?.purchaseFromTrial ||
-            visit?.hearingAidStatus === 'sold'
-        );
-        if (!isSale || !resolvedParams?.id) continue;
+        if (!isInvoicableEnquirySaleVisit(visit) || !resolvedParams?.id) continue;
 
-        const saleDateRaw = visit.purchaseDate || visit.visitDate;
-        const saleDate = enquiryVisitSaleDateToTimestamp(saleDateRaw);
-        const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
-        const gstAmount = Number(visit.taxAmount) || 0;
-        const baseGrand =
-          Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
-        const exchangeCredit = Math.min(
-          Math.max(0, Number(visit.exchangeCreditAmount) || 0),
-          baseGrand
-        );
-        const grandTotal = Math.round(baseGrand - exchangeCredit);
-        const exPrior =
-          visit.exchangePriorVisitIndex === '' || visit.exchangePriorVisitIndex == null
-            ? undefined
-            : Number(visit.exchangePriorVisitIndex);
-
-        const existing = await getDocs(
-          query(
-            collection(db, 'sales'),
-            where('enquiryId', '==', resolvedParams.id),
-            where('enquiryVisitIndex', '==', visitIndex),
-            limit(25)
-          )
-        );
-        const canonical = await getCanonicalInvoiceNumberForEnquiryVisit(db, resolvedParams.id, visitIndex);
-        const existingSaleDoc = existing.empty
-          ? null
-          : (existing.docs.find((saleDoc) => saleDoc.id === canonical.saleId) ?? existing.docs[0]);
-        const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
-        const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
+        const upsert = await upsertSaleForEnquiryVisit({
           db,
-          existingVisitInvoice,
-          existingSalesInvoice: canonical.invoiceNumber || existingSaleDoc?.data()?.invoiceNumber,
-          priorVisitInvoice: oldVisits?.[visitIndex]?.invoiceNumber,
-          currentSaleId: existingSaleDoc?.id,
-        });
-        if (invoiceNumber !== existingVisitInvoice) {
-          visits[visitIndex] = { ...visit, invoiceNumber };
-        }
-
-        const hasExchangeCredit = exchangeCredit > 0;
-        const hasExchangePrior =
-          typeof exPrior === 'number' && !Number.isNaN(exPrior) && exPrior >= 0;
-
-        const basePayload = {
-          invoiceNumber,
-          patientName: data.name || 'Patient',
-          phone: data.phone || '',
-          email: data.email || '',
-          address: data.address || '',
-          customerGstNumber: data.customerGstNumber || '',
-          products,
-          accessories: [],
-          manualLineItems: [],
-          referenceDoctor: { name: '' },
-          salesperson: { id: '', name: '' },
-          totalAmount: grossSalesBeforeTax,
-          gstAmount,
-          gstPercentage: 0,
-          grandTotal,
-          netProfit: 0,
-          branch: '',
-          centerId: visit.centerId || data.visitingCenter || data.center || '',
-          paymentMethod: 'cash',
-          paymentStatus: 'pending',
-          notes: visit.visitNotes || '',
-          saleDate,
-          source: 'enquiry',
           enquiryId: resolvedParams.id,
-          enquiryVisitIndex: visitIndex,
-          createdByUid: existingSaleDoc?.data()?.createdByUid ?? actor.uid,
-          createdByName: existingSaleDoc?.data()?.createdByName ?? actor.name,
-          createdByEmail: existingSaleDoc?.data()?.createdByEmail ?? actor.email,
-          createdByRole: existingSaleDoc?.data()?.createdByRole ?? actor.role,
-          updatedByUid: actor.uid,
-          updatedByName: actor.name,
-          updatedByEmail: actor.email,
-          updatedByRole: actor.role,
-          updatedAt: serverTimestamp(),
-        } as Record<string, unknown>;
-
-        const targetSaleId = existingSaleDoc?.id ?? null;
-
-        if (targetSaleId == null) {
-          const newDocPayload: Record<string, unknown> = {
-            ...basePayload,
-            createdAt: serverTimestamp(),
-          };
-          if (hasExchangeCredit) newDocPayload.exchangeCreditInr = exchangeCredit;
-          if (hasExchangePrior) newDocPayload.exchangePriorVisitIndex = exPrior;
-          const saleRef = await addDoc(collection(db, 'sales'), newDocPayload);
-          void notifyAdminsNewSale(saleRef.id);
-          await dedupeEnquiryVisitSales(db, resolvedParams.id, visitIndex, { actorUid: actor.uid });
-        } else {
-          const updatePayload: Record<string, unknown> = {
-            ...basePayload,
-            exchangeCreditInr: hasExchangeCredit ? exchangeCredit : deleteField(),
-            exchangePriorVisitIndex: hasExchangePrior ? exPrior : deleteField(),
-          };
-          await updateDoc(doc(db, 'sales', targetSaleId), updatePayload);
-          await dedupeEnquiryVisitSales(db, resolvedParams.id, visitIndex, { actorUid: actor.uid });
+          visitIndex,
+          visit,
+          enquiry: data,
+          actor,
+          priorVisitInvoice: oldVisits?.[visitIndex]?.invoiceNumber,
+          onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
+        });
+        if (upsert.visitInvoicePatched) {
+          visits[visitIndex] = { ...visit, invoiceNumber: upsert.invoiceNumber };
         }
       }
 

@@ -54,6 +54,16 @@ export async function resolveEnquirySaleInvoiceNumber({
   currentSaleId,
   allocationRetryLimit = DEFAULT_ALLOCATION_RETRY_LIMIT,
 }: ResolveEnquirySaleInvoiceNumberArgs): Promise<string> {
+  // Updating an existing sale row: keep its invoice # even if a duplicate row shares the number.
+  if (currentSaleId) {
+    const locked = collectCandidateInvoiceNumbers([
+      existingSalesInvoice,
+      existingVisitInvoice,
+      priorVisitInvoice,
+    ]);
+    if (locked.length > 0) return locked[0];
+  }
+
   const invoiceCandidates = collectCandidateInvoiceNumbers([
     existingVisitInvoice,
     existingSalesInvoice,

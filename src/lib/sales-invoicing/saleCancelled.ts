@@ -8,17 +8,35 @@ export function isSaleCancelled(sale: { cancelled?: unknown } | null | undefined
   return c === true || c === 'true';
 }
 
+export function normalizeEnquiryVisitIndex(raw: unknown): number {
+  const n = normalizeVisitIndexForKey(raw);
+  return n ?? 0;
+}
+
+function normalizeVisitIndexForKey(raw: unknown): number | null {
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const n = Math.floor(raw);
+    return n >= 0 ? n : null;
+  }
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = parseInt(raw, 10);
+    if (!Number.isNaN(n) && n >= 0) return n;
+  }
+  return null;
+}
+
 /** Stable key for enquiry/visitor visit tied to an invoice (`enquiryVisitIndex`). */
 export function enquiryVisitKey(
   enquiryId: string | undefined,
   visitorId: string | undefined,
   visitIndex: number | undefined,
 ): string | null {
-  if (typeof visitIndex !== 'number' || visitIndex < 0) return null;
+  const idx = normalizeVisitIndexForKey(visitIndex);
+  if (idx == null) return null;
   const eid = (enquiryId || '').trim();
   const vid = (visitorId || '').trim();
-  if (eid) return `e:${eid}:${visitIndex}`;
-  if (vid) return `v:${vid}:${visitIndex}`;
+  if (eid) return `e:${eid}:${idx}`;
+  if (vid) return `v:${vid}:${idx}`;
   return null;
 }
 

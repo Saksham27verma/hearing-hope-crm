@@ -31,9 +31,11 @@ import {
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
-import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
+import {
+  isInvoicableEnquirySaleVisit,
+  upsertSaleForEnquiryVisit,
+} from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
 import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
-import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { logActivity } from '@/lib/activityLogger';
 
@@ -289,79 +291,21 @@ export default function NewEnquiryPage() {
       let visitsPatched = false;
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
-        const products = Array.isArray(visit.products) ? visit.products : [];
-        // Only treat as invoicable "sale" when the visit is explicitly marked as a sale.
-        // This prevents "booking-only" visits (which can still carry amounts/products) from
-        // being mirrored into `sales` and getting invoice numbers.
-        const isSale = Boolean(
-          visit?.hearingAidSale ||
-            visit?.purchaseFromTrial ||
-            visit?.hearingAidStatus === 'sold'
-        );
-        if (!isSale) continue;
+        if (!isInvoicableEnquirySaleVisit(visit)) continue;
 
-        const saleDateRaw = visit.purchaseDate || visit.visitDate;
-        const saleDate = enquiryVisitSaleDateToTimestamp(saleDateRaw);
-        const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
-        const gstAmount = Number(visit.taxAmount) || 0;
-        const grandTotal = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
-
-        // No mirrored `sales` row can exist yet for this brand-new enquiryId (avoids a
-        // compound Firestore query that requires a composite index).
-        const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
-        const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
+        const upsert = await upsertSaleForEnquiryVisit({
           db,
-          existingVisitInvoice,
-          existingSalesInvoice: undefined,
-          currentSaleId: undefined,
+          enquiryId: docRef.id,
+          visitIndex,
+          visit,
+          enquiry: data,
+          actor,
+          onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });
-        if (invoiceNumber !== existingVisitInvoice) {
-          visits[visitIndex] = { ...visit, invoiceNumber };
+        if (upsert.visitInvoicePatched) {
+          visits[visitIndex] = { ...visit, invoiceNumber: upsert.invoiceNumber };
           visitsPatched = true;
         }
-
-        const payload = {
-          invoiceNumber,
-          patientName: data.name || 'Patient',
-          phone: data.phone || '',
-          email: data.email || '',
-          address: data.address || '',
-          customerGstNumber: data.customerGstNumber || '',
-          products,
-          accessories: [],
-          manualLineItems: [],
-          referenceDoctor: { name: '' },
-          salesperson: { id: '', name: '' },
-          totalAmount: grossSalesBeforeTax,
-          gstAmount,
-          gstPercentage: 0,
-          grandTotal,
-          netProfit: 0,
-          branch: '',
-          centerId: visit.centerId || data.visitingCenter || data.center || '',
-          paymentMethod: 'cash',
-          paymentStatus: 'pending',
-          notes: visit.visitNotes || '',
-          saleDate,
-          source: 'enquiry',
-          enquiryId: docRef.id,
-          enquiryVisitIndex: visitIndex,
-          createdByUid: actor.uid,
-          createdByName: actor.name,
-          createdByEmail: actor.email,
-          createdByRole: actor.role,
-          updatedByUid: actor.uid,
-          updatedByName: actor.name,
-          updatedByEmail: actor.email,
-          updatedByRole: actor.role,
-          updatedAt: serverTimestamp(),
-        } as Record<string, unknown>;
-
-        const saleRef = await addDoc(collection(db, 'sales'), {
-          ...payload,
-          createdAt: serverTimestamp(),
-        });
-        void notifyAdminsNewSale(saleRef.id);
       }
 
       if (visitsPatched) {

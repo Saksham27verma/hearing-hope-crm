@@ -11,7 +11,11 @@ import {
 } from 'firebase/firestore';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
-import { enquiryVisitKey, isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
+import {
+  enquiryVisitKey,
+  isSaleCancelled,
+  normalizeEnquiryVisitIndex,
+} from '@/lib/sales-invoicing/saleCancelled';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 function timestampScore(ts: { seconds?: number; nanoseconds?: number } | null | undefined): number {
@@ -69,15 +73,13 @@ export async function fetchSalesForEnquiryVisit(
   enquiryId: string,
   visitIndex: number,
 ): Promise<SaleRecord[]> {
+  const wantIdx = normalizeEnquiryVisitIndex(visitIndex);
   const snap = await getDocs(
-    query(
-      collection(db, 'sales'),
-      where('enquiryId', '==', enquiryId),
-      where('enquiryVisitIndex', '==', visitIndex),
-      limit(50),
-    ),
+    query(collection(db, 'sales'), where('enquiryId', '==', enquiryId), limit(100)),
   );
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as SaleRecord[];
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) } as SaleRecord))
+    .filter((s) => normalizeEnquiryVisitIndex(s.enquiryVisitIndex) === wantIdx);
 }
 
 /** Void duplicate `sales` docs so only one invoice exists per enquiry visit. */

@@ -199,8 +199,10 @@ export function resolveVisitAtIndex(e: any, index: number): any {
 export function getWhoSoldFromVisit(visit: any): string {
   if (!visit || typeof visit !== 'object') return '';
   const nested = String(visit.hearingAidDetails?.whoSold || '').trim();
+  const whoSold = String(visit.whoSold || '').trim();
+  const whoSoldName = String(visit.whoSoldName || '').trim();
   const flat = String(visit.hearingAidBrand || '').trim();
-  return nested || flat || '';
+  return nested || whoSold || whoSoldName || flat || '';
 }
 
 function aggregateDiscountFromProductLines(products: unknown[] | undefined): { mrpSum: number; discountSum: number } {
@@ -318,11 +320,9 @@ export function mapUnifiedRowsToRecords(
         branchForResolve,
         resolveCtx,
       );
+      const fromVisit = getWhoSoldFromVisit(visit);
       let exec = getSalespersonNameFromSaleDoc(s);
-      if (eid && typeof vIdx === 'number') {
-        const fromVisit = getWhoSoldFromVisit(visit);
-        if (fromVisit) exec = fromVisit;
-      }
+      if (fromVisit) exec = fromVisit;
       if (!exec) exec = '—';
       const productLines = getSaleProductLines(s);
       const discAgg = aggregateDiscountFromProductLines(productLines);
