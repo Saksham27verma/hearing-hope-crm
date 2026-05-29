@@ -1,5 +1,7 @@
 import {
   collection,
+  doc,
+  getDoc,
   getDocs,
   limit,
   query,
@@ -24,10 +26,10 @@ interface ResolveEnquirySaleInvoiceNumberArgs {
 async function hasDuplicateInvoiceNumber(
   db: Firestore,
   invoiceNumber: string,
-  currentSaleId?: string
+  currentSaleId?: string,
 ): Promise<boolean> {
   const dupSnap = await getDocs(
-    query(collection(db, 'sales'), where('invoiceNumber', '==', invoiceNumber), limit(50))
+    query(collection(db, 'sales'), where('invoiceNumber', '==', invoiceNumber), limit(50)),
   );
   return dupSnap.docs.some((d) => d.id !== currentSaleId);
 }
@@ -54,7 +56,7 @@ export async function resolveEnquirySaleInvoiceNumber({
   currentSaleId,
   allocationRetryLimit = DEFAULT_ALLOCATION_RETRY_LIMIT,
 }: ResolveEnquirySaleInvoiceNumberArgs): Promise<string> {
-  // Updating an existing sale row: keep its invoice # even if a duplicate row shares the number.
+  // Updating an existing sale row: never allocate a new number — reuse the sale doc's invoice.
   if (currentSaleId) {
     const locked = collectCandidateInvoiceNumbers([
       existingSalesInvoice,
@@ -62,6 +64,12 @@ export async function resolveEnquirySaleInvoiceNumber({
       priorVisitInvoice,
     ]);
     if (locked.length > 0) return locked[0];
+
+    const snap = await getDoc(doc(db, 'sales', currentSaleId));
+    const fromDoc = normalizeInvoiceNumberString(snap.data()?.invoiceNumber);
+    if (saleHasBillableInvoiceNumber(fromDoc)) return fromDoc;
+
+    throw new Error('Existing sale is missing a billable invoice number.');
   }
 
   const invoiceCandidates = collectCandidateInvoiceNumbers([

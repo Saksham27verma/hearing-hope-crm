@@ -331,7 +331,10 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           visit,
           enquiry: data,
           actor,
-          priorVisitInvoice: oldVisits?.[visitIndex]?.invoiceNumber,
+          priorVisitInvoice:
+            oldVisits?.[visitIndex]?.invoiceNumber ??
+            (oldVisits?.[visitIndex]?.hearingAidDetails as { invoiceNumber?: string } | undefined)
+              ?.invoiceNumber,
           onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });
         if (upsert.visitInvoicePatched) {

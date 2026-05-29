@@ -12,8 +12,14 @@ import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVi
 import {
   chooseCanonicalSaleRecord,
   dedupeEnquiryVisitSales,
-  fetchSalesForEnquiryVisit,
+  findSalesForEnquiryVisitMirror,
 } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
+import {
+  readExchangeFieldsFromVisit,
+  saleGrandTotalFromVisit,
+  saleRecordMatchesVisitMirror,
+  visitInvoiceNumberFromVisit,
+} from '@/lib/sales-invoicing/enquiryVisitSaleMirror';
 import { syncEnquiryVisitInvoiceNumberFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import { normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
@@ -61,7 +67,20 @@ export type UpsertEnquiryVisitSaleResult = {
   invoiceNumber: string;
   created: boolean;
   visitInvoicePatched: boolean;
+  skippedUnchanged: boolean;
 };
+
+function salespersonMatchesSale(
+  visit: Record<string, unknown>,
+  sale: { salesperson?: { id?: string; name?: string } },
+): boolean {
+  const fromVisit = resolveSalespersonFromEnquiryVisit(visit);
+  const fromSale = sale.salesperson || { id: '', name: '' };
+  return (
+    String(fromSale.id || '').trim() === fromVisit.id &&
+    String(fromSale.name || '').trim() === fromVisit.name
+  );
+}
 
 /**
  * One `sales` document per enquiry visit — update in place, never add a second invoice on re-save.
@@ -78,22 +97,25 @@ export async function upsertSaleForEnquiryVisit(
   const saleDate = enquiryVisitSaleDateToTimestamp(saleDateRaw);
   const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
   const gstAmount = Number(visit.taxAmount) || 0;
-  const baseGrand = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
-  const exchangeCredit = Math.min(Math.max(0, Number(visit.exchangeCreditAmount) || 0), baseGrand);
-  const grandTotal = Math.round(baseGrand - exchangeCredit);
-  const exPriorRaw = visit.exchangePriorVisitIndex;
-  const exPrior =
-    exPriorRaw === '' || exPriorRaw == null ? undefined : Number(exPriorRaw);
+  const { exchangeCredit, exchangePriorVisitIndex } = readExchangeFieldsFromVisit(visit);
+  const grandTotal = saleGrandTotalFromVisit(visit);
   const hasExchangeCredit = exchangeCredit > 0;
-  const hasExchangePrior = typeof exPrior === 'number' && !Number.isNaN(exPrior) && exPrior >= 0;
+  const hasExchangePrior =
+    typeof exchangePriorVisitIndex === 'number' && exchangePriorVisitIndex >= 0;
 
-  const existingSales = await fetchSalesForEnquiryVisit(args.db, args.enquiryId, visitIndex);
+  const existingSales = await findSalesForEnquiryVisitMirror(
+    args.db,
+    args.enquiryId,
+    visitIndex,
+    visit,
+    data,
+  );
   const activeSales = existingSales.filter((s) => s.cancelled !== true && s.cancelled !== 'true');
   const canonical = chooseCanonicalSaleRecord(
     activeSales.length > 0 ? activeSales : existingSales,
   );
 
-  const existingVisitInvoice = String(visit.invoiceNumber || '').trim();
+  const existingVisitInvoice = visitInvoiceNumberFromVisit(visit);
   const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
     db: args.db,
     existingVisitInvoice,
@@ -106,6 +128,44 @@ export async function upsertSaleForEnquiryVisit(
   const existingData = canonical?.id
     ? existingSales.find((s) => s.id === canonical.id)
     : undefined;
+
+  const visitInvoicePatched =
+    visitInvoiceNumberFromVisit(visit) !== normalizeInvoiceNumberString(invoiceNumber);
+
+  const needsIndexBackfill =
+    Boolean(canonical?.id) &&
+    normalizeEnquiryVisitIndex(canonical.enquiryVisitIndex) !== visitIndex;
+
+  const mirrorUnchanged =
+    Boolean(canonical?.id) &&
+    saleRecordMatchesVisitMirror(canonical, visit, data, visitIndex) &&
+    salespersonMatchesSale(visit, canonical) &&
+    normalizeInvoiceNumberString(canonical.invoiceNumber) ===
+      normalizeInvoiceNumberString(invoiceNumber) &&
+    !needsIndexBackfill;
+
+  if (mirrorUnchanged) {
+    await dedupeEnquiryVisitSales(args.db, args.enquiryId, visitIndex, {
+      actorUid: args.actor.uid,
+      visit,
+      enquiry: data,
+    });
+    if (saleHasBillableInvoiceNumber(invoiceNumber) && visitInvoicePatched) {
+      await syncEnquiryVisitInvoiceNumberFromSale({
+        db: args.db,
+        enquiryId: args.enquiryId,
+        visitIndex,
+        invoiceNumber,
+      });
+    }
+    return {
+      saleId: canonical!.id!,
+      invoiceNumber,
+      created: false,
+      visitInvoicePatched,
+      skippedUnchanged: true,
+    };
+  }
 
   const basePayload: Record<string, unknown> = {
     invoiceNumber,
@@ -151,7 +211,7 @@ export async function upsertSaleForEnquiryVisit(
     await updateDoc(doc(args.db, 'sales', saleId), {
       ...basePayload,
       exchangeCreditInr: hasExchangeCredit ? exchangeCredit : deleteField(),
-      exchangePriorVisitIndex: hasExchangePrior ? exPrior : deleteField(),
+      exchangePriorVisitIndex: hasExchangePrior ? exchangePriorVisitIndex : deleteField(),
     });
   } else {
     const newDocPayload: Record<string, unknown> = {
@@ -159,7 +219,7 @@ export async function upsertSaleForEnquiryVisit(
       createdAt: serverTimestamp(),
     };
     if (hasExchangeCredit) newDocPayload.exchangeCreditInr = exchangeCredit;
-    if (hasExchangePrior) newDocPayload.exchangePriorVisitIndex = exPrior;
+    if (hasExchangePrior) newDocPayload.exchangePriorVisitIndex = exchangePriorVisitIndex;
     const saleRef = await addDoc(collection(args.db, 'sales'), newDocPayload);
     saleId = saleRef.id;
     created = true;
@@ -168,6 +228,8 @@ export async function upsertSaleForEnquiryVisit(
 
   await dedupeEnquiryVisitSales(args.db, args.enquiryId, visitIndex, {
     actorUid: args.actor.uid,
+    visit,
+    enquiry: data,
   });
 
   if (saleHasBillableInvoiceNumber(invoiceNumber)) {
@@ -179,14 +241,11 @@ export async function upsertSaleForEnquiryVisit(
     });
   }
 
-  const visitInvoicePatched =
-    normalizeInvoiceNumberString(visit.invoiceNumber) !==
-    normalizeInvoiceNumberString(invoiceNumber);
-
   return {
     saleId: saleId!,
     invoiceNumber,
     created,
     visitInvoicePatched,
+    skippedUnchanged: false,
   };
 }

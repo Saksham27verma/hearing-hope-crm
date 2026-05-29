@@ -17,6 +17,10 @@ import {
   normalizeEnquiryVisitIndex,
 } from '@/lib/sales-invoicing/saleCancelled';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import {
+  saleRecordMatchesVisitMirror,
+  visitInvoiceNumberFromVisit,
+} from '@/lib/sales-invoicing/enquiryVisitSaleMirror';
 
 function timestampScore(ts: { seconds?: number; nanoseconds?: number } | null | undefined): number {
   if (!ts || typeof ts.seconds !== 'number') return 0;
@@ -68,18 +72,47 @@ export function isCanonicalSaleForVisit(
   return sale.id === canonicalId;
 }
 
+export async function fetchAllSalesForEnquiry(db: Firestore, enquiryId: string): Promise<SaleRecord[]> {
+  const snap = await getDocs(
+    query(collection(db, 'sales'), where('enquiryId', '==', enquiryId), limit(100)),
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as SaleRecord[];
+}
+
 export async function fetchSalesForEnquiryVisit(
   db: Firestore,
   enquiryId: string,
   visitIndex: number,
 ): Promise<SaleRecord[]> {
   const wantIdx = normalizeEnquiryVisitIndex(visitIndex);
-  const snap = await getDocs(
-    query(collection(db, 'sales'), where('enquiryId', '==', enquiryId), limit(100)),
+  const all = await fetchAllSalesForEnquiry(db, enquiryId);
+  return all.filter((s) => normalizeEnquiryVisitIndex(s.enquiryVisitIndex) === wantIdx);
+}
+
+/** Match by visit index, invoice # on visit, or sale/visit fingerprint (legacy rows missing index). */
+export async function findSalesForEnquiryVisitMirror(
+  db: Firestore,
+  enquiryId: string,
+  visitIndex: number,
+  visit: Record<string, unknown>,
+  enquiry: Record<string, unknown>,
+): Promise<SaleRecord[]> {
+  const wantIdx = normalizeEnquiryVisitIndex(visitIndex);
+  const all = await fetchAllSalesForEnquiry(db, enquiryId);
+  const byIndex = all.filter((s) => normalizeEnquiryVisitIndex(s.enquiryVisitIndex) === wantIdx);
+  if (byIndex.length > 0) return byIndex;
+
+  const visitInv = visitInvoiceNumberFromVisit(visit);
+  if (visitInv) {
+    const byInv = all.filter(
+      (s) => normalizeInvoiceNumberString(s.invoiceNumber) === visitInv,
+    );
+    if (byInv.length > 0) return byInv;
+  }
+
+  return all.filter(
+    (s) => !isSaleCancelled(s) && saleRecordMatchesVisitMirror(s, visit, enquiry, visitIndex),
   );
-  return snap.docs
-    .map((d) => ({ id: d.id, ...(d.data() as object) } as SaleRecord))
-    .filter((s) => normalizeEnquiryVisitIndex(s.enquiryVisitIndex) === wantIdx);
 }
 
 /** Void duplicate `sales` docs so only one invoice exists per enquiry visit. */
@@ -87,9 +120,16 @@ export async function dedupeEnquiryVisitSales(
   db: Firestore,
   enquiryId: string,
   visitIndex: number,
-  opts?: { actorUid?: string | null },
+  opts?: {
+    actorUid?: string | null;
+    visit?: Record<string, unknown>;
+    enquiry?: Record<string, unknown>;
+  },
 ): Promise<{ keptId: string | null; voidedIds: string[] }> {
-  const sales = await fetchSalesForEnquiryVisit(db, enquiryId, visitIndex);
+  const sales =
+    opts?.visit && opts?.enquiry
+      ? await findSalesForEnquiryVisitMirror(db, enquiryId, visitIndex, opts.visit, opts.enquiry)
+      : await fetchSalesForEnquiryVisit(db, enquiryId, visitIndex);
   const chosen = chooseCanonicalSaleRecord(sales);
   if (!chosen?.id) return { keptId: null, voidedIds: [] };
 

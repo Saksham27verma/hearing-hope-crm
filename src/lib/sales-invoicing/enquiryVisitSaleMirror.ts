@@ -1,0 +1,186 @@
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import { normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
+import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
+
+/** Calendar date in IST — matches `enquiryVisitSaleDateToTimestamp` for YYYY-MM-DD inputs. */
+export function toIstCalendarDateKey(value: Date | string | null | undefined): string {
+  if (value == null) return '';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) return trimmed.slice(0, 10);
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    }
+    return '';
+  }
+  if (!Number.isNaN(value.getTime())) {
+    return value.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  }
+  return '';
+}
+
+export type ExchangeFields = {
+  exchangeCredit: number;
+  exchangePriorVisitIndex: number | undefined;
+};
+
+/** Read exchange credit from flat visit or nested `hearingAidDetails`. */
+export function readExchangeFieldsFromVisit(visit: Record<string, unknown>): ExchangeFields {
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const baseGrand =
+    Number(visit.salesAfterTax) ||
+    Number(visit.grossSalesBeforeTax || 0) + Number(visit.taxAmount || 0) ||
+    Number(details?.salesAfterTax) ||
+    0;
+  const rawCredit = visit.exchangeCreditAmount ?? details?.exchangeCreditAmount ?? 0;
+  const exchangeCredit = Math.min(Math.max(0, Number(rawCredit) || 0), baseGrand);
+  const priorRaw = visit.exchangePriorVisitIndex ?? details?.exchangePriorVisitIndex;
+  const exchangePriorVisitIndex =
+    priorRaw === '' || priorRaw == null
+      ? undefined
+      : normalizeEnquiryVisitIndex(priorRaw);
+  return { exchangeCredit, exchangePriorVisitIndex };
+}
+
+export function saleGrandTotalFromVisit(visit: Record<string, unknown>): number {
+  const { exchangeCredit } = readExchangeFieldsFromVisit(visit);
+  const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
+  const gstAmount = Number(visit.taxAmount) || 0;
+  const baseGrand = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
+  return Math.round(baseGrand - exchangeCredit);
+}
+
+function stableProductsKey(products: unknown): string {
+  if (!Array.isArray(products)) return '[]';
+  const rows = products.map((raw) => {
+    const p = raw as Record<string, unknown>;
+    return {
+      id: String(p.productId || p.id || '').trim(),
+      sn: String(p.serialNumber || '').trim(),
+      sp: Number(p.sellingPrice ?? p.finalAmount ?? 0) || 0,
+      q: Number(p.quantity ?? 1) || 1,
+    };
+  });
+  rows.sort((a, b) => `${a.id}|${a.sn}`.localeCompare(`${b.id}|${b.sn}`));
+  return JSON.stringify(rows);
+}
+
+export type SaleMirrorFingerprint = {
+  visitIndex: number;
+  grossSalesBeforeTax: number;
+  gstAmount: number;
+  grandTotal: number;
+  exchangeCredit: number;
+  exchangePriorVisitIndex: number | null;
+  productsKey: string;
+  saleDateKey: string;
+  patientName: string;
+  phone: string;
+};
+
+export function buildSaleMirrorFingerprint(
+  visit: Record<string, unknown>,
+  enquiry: Record<string, unknown>,
+  visitIndex: number,
+): SaleMirrorFingerprint {
+  const { exchangeCredit, exchangePriorVisitIndex } = readExchangeFieldsFromVisit(visit);
+  const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
+  const gstAmount = Number(visit.taxAmount) || 0;
+  const saleDateRaw = visit.purchaseDate || visit.visitDate;
+  return {
+    visitIndex: normalizeEnquiryVisitIndex(visitIndex),
+    grossSalesBeforeTax,
+    gstAmount,
+    grandTotal: saleGrandTotalFromVisit(visit),
+    exchangeCredit,
+    exchangePriorVisitIndex:
+      typeof exchangePriorVisitIndex === 'number' ? exchangePriorVisitIndex : null,
+    productsKey: stableProductsKey(visit.products),
+    saleDateKey: toIstCalendarDateKey(
+      typeof saleDateRaw === 'string' || saleDateRaw instanceof Date ? saleDateRaw : String(saleDateRaw || ''),
+    ),
+    patientName: String(enquiry.name || enquiry.patientName || '').trim(),
+    phone: String(enquiry.phone || '').trim(),
+  };
+}
+
+export function fingerprintFromSaleRecord(
+  sale: SaleRecord,
+  enquiry: Record<string, unknown>,
+): SaleMirrorFingerprint | null {
+  const visitIndex = normalizeEnquiryVisitIndex(sale.enquiryVisitIndex);
+  const grossSalesBeforeTax = Number(sale.totalAmount) || 0;
+  const gstAmount = Number(sale.gstAmount) || 0;
+  const exchangeCredit = Math.max(0, Number(sale.exchangeCreditInr) || 0);
+  const grandTotal = Math.round(Number(sale.grandTotal) || grossSalesBeforeTax + gstAmount);
+  const sd = sale.saleDate as { toDate?: () => Date; seconds?: number } | undefined;
+  let saleDate: Date | null = null;
+  if (sd && typeof sd.toDate === 'function') {
+    saleDate = sd.toDate();
+  } else if (sd && typeof sd.seconds === 'number') {
+    saleDate = new Date(sd.seconds * 1000);
+  }
+  const saleDateKey = saleDate ? toIstCalendarDateKey(saleDate) : '';
+  return {
+    visitIndex,
+    grossSalesBeforeTax,
+    gstAmount,
+    grandTotal,
+    exchangeCredit,
+    exchangePriorVisitIndex:
+      typeof sale.exchangePriorVisitIndex === 'number'
+        ? normalizeEnquiryVisitIndex(sale.exchangePriorVisitIndex)
+        : null,
+    productsKey: stableProductsKey(sale.products),
+    saleDateKey,
+    patientName: String(sale.patientName || enquiry.name || '').trim(),
+    phone: String(sale.phone || enquiry.phone || '').trim(),
+  };
+}
+
+function saleHasStoredVisitIndex(sale: SaleRecord): boolean {
+  const raw = sale.enquiryVisitIndex;
+  if (raw === null || raw === undefined) return false;
+  if (typeof raw === 'string' && !raw.trim()) return false;
+  return true;
+}
+
+function fingerprintsEqual(
+  a: SaleMirrorFingerprint,
+  b: SaleMirrorFingerprint,
+  opts?: { ignoreVisitIndex?: boolean },
+): boolean {
+  return (
+    (opts?.ignoreVisitIndex || a.visitIndex === b.visitIndex) &&
+    a.grossSalesBeforeTax === b.grossSalesBeforeTax &&
+    a.gstAmount === b.gstAmount &&
+    a.grandTotal === b.grandTotal &&
+    a.exchangeCredit === b.exchangeCredit &&
+    a.exchangePriorVisitIndex === b.exchangePriorVisitIndex &&
+    a.productsKey === b.productsKey &&
+    a.saleDateKey === b.saleDateKey &&
+    a.patientName === b.patientName &&
+    a.phone === b.phone
+  );
+}
+
+export function saleRecordMatchesVisitMirror(
+  sale: SaleRecord,
+  visit: Record<string, unknown>,
+  enquiry: Record<string, unknown>,
+  visitIndex: number,
+): boolean {
+  const target = buildSaleMirrorFingerprint(visit, enquiry, visitIndex);
+  const fromSale = fingerprintFromSaleRecord(sale, enquiry);
+  if (!fromSale) return false;
+  return fingerprintsEqual(target, fromSale, {
+    ignoreVisitIndex: !saleHasStoredVisitIndex(sale),
+  });
+}
+
+export function visitInvoiceNumberFromVisit(visit: Record<string, unknown>): string {
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const raw = visit.invoiceNumber ?? details?.invoiceNumber ?? visit.salesInvoiceNumber;
+  return normalizeInvoiceNumberString(raw);
+}
