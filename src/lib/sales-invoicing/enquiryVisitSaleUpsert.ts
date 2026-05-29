@@ -18,8 +18,10 @@ import {
   readExchangeFieldsFromVisit,
   readVisitSaleTotals,
   saleGrandTotalFromVisit,
+  saleRecordMatchesVisitMirror,
   visitInvoiceNumberFromVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleMirror';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import { syncEnquiryVisitSaleLinkFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import { isSaleCancelled, normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
@@ -131,15 +133,16 @@ export async function upsertSaleForEnquiryVisit(
   const visitInvoicePatched =
     visitInvoiceNumberFromVisit(visit) !== normalizeInvoiceNumberString(invoiceNumber);
 
-  const needsIndexBackfill =
-    Boolean(canonical?.id) &&
-    normalizeEnquiryVisitIndex(canonical.enquiryVisitIndex) !== visitIndex;
-
   const mirrorUnchanged =
     Boolean(canonical?.id) &&
     normalizeInvoiceNumberString(canonical.invoiceNumber) ===
       normalizeInvoiceNumberString(invoiceNumber) &&
-    !needsIndexBackfill;
+    saleRecordMatchesVisitMirror(
+      canonical as SaleRecord,
+      visit,
+      data,
+      visitIndex,
+    );
 
   if (mirrorUnchanged) {
     await dedupeEnquiryVisitSales(args.db, args.enquiryId, visitIndex, {

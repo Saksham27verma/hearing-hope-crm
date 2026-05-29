@@ -77,7 +77,23 @@ export type SaleMirrorFingerprint = {
   saleDateKey: string;
   patientName: string;
   phone: string;
+  email: string;
+  address: string;
+  customerGstNumber: string;
+  centerId: string;
+  notes: string;
+  salespersonId: string;
+  salespersonName: string;
 };
+
+function salespersonFromVisit(visit: Record<string, unknown>): { id: string; name: string } {
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const name = String(
+    details?.whoSold ?? visit.whoSold ?? visit.whoSoldName ?? visit.hearingAidBrand ?? '',
+  ).trim();
+  const id = String(visit.salespersonId ?? details?.salespersonId ?? '').trim();
+  return { id, name };
+}
 
 export function buildSaleMirrorFingerprint(
   visit: Record<string, unknown>,
@@ -88,6 +104,7 @@ export function buildSaleMirrorFingerprint(
   const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
   const gstAmount = Number(visit.taxAmount) || 0;
   const saleDateRaw = visit.purchaseDate || visit.visitDate;
+  const salesperson = salespersonFromVisit(visit);
   return {
     visitIndex: normalizeEnquiryVisitIndex(visitIndex),
     grossSalesBeforeTax,
@@ -102,6 +119,13 @@ export function buildSaleMirrorFingerprint(
     ),
     patientName: String(enquiry.name || enquiry.patientName || '').trim(),
     phone: String(enquiry.phone || '').trim(),
+    email: String(enquiry.email || '').trim(),
+    address: String(enquiry.address || '').trim(),
+    customerGstNumber: String(enquiry.customerGstNumber || '').trim(),
+    centerId: String(visit.centerId || enquiry.visitingCenter || enquiry.center || '').trim(),
+    notes: String(visit.visitNotes || '').trim(),
+    salespersonId: salesperson.id,
+    salespersonName: salesperson.name,
   };
 }
 
@@ -122,6 +146,7 @@ export function fingerprintFromSaleRecord(
     saleDate = new Date(sd.seconds * 1000);
   }
   const saleDateKey = saleDate ? toIstCalendarDateKey(saleDate) : '';
+  const sp = sale.salesperson;
   return {
     visitIndex,
     grossSalesBeforeTax,
@@ -136,6 +161,13 @@ export function fingerprintFromSaleRecord(
     saleDateKey,
     patientName: String(sale.patientName || enquiry.name || '').trim(),
     phone: String(sale.phone || enquiry.phone || '').trim(),
+    email: String(sale.email || '').trim(),
+    address: String(sale.address || '').trim(),
+    customerGstNumber: String(sale.customerGstNumber || '').trim(),
+    centerId: String(sale.centerId || '').trim(),
+    notes: String(sale.notes || '').trim(),
+    salespersonId: String(sp?.id || '').trim(),
+    salespersonName: String(sp?.name || '').trim(),
   };
 }
 
@@ -163,7 +195,14 @@ function fingerprintsEqual(
     a.productsKey === b.productsKey &&
     dateOk &&
     a.patientName === b.patientName &&
-    a.phone === b.phone
+    a.phone === b.phone &&
+    a.email === b.email &&
+    a.address === b.address &&
+    a.customerGstNumber === b.customerGstNumber &&
+    a.centerId === b.centerId &&
+    a.notes === b.notes &&
+    a.salespersonId === b.salespersonId &&
+    a.salespersonName === b.salespersonName
   );
 }
 
