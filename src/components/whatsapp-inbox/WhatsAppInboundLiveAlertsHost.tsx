@@ -20,7 +20,7 @@ export default function WhatsAppInboundLiveAlertsHost() {
       exitingIds={exitingIds}
       onDismiss={dismiss}
       onOpenInbox={(item: WhatsAppInboundAlertItem) => {
-        dismiss(item.toastId);
+        dismiss(item.toastId, item.id);
         router.push('/whatsapp-inbox');
       }}
     />

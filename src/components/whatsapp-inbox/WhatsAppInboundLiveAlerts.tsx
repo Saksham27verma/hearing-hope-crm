@@ -139,7 +139,7 @@ export default function WhatsAppInboundLiveAlerts({
 }: {
   visible: WhatsAppInboundAlertItem[];
   exitingIds: Set<string>;
-  onDismiss: (toastId: string) => void;
+  onDismiss: (toastId: string, messageId: string) => void;
   onOpenInbox: (item: WhatsAppInboundAlertItem) => void;
 }) {
   if (visible.length === 0) return null;
@@ -165,7 +165,7 @@ export default function WhatsAppInboundLiveAlerts({
             key={item.toastId}
             item={item}
             exiting={exitingIds.has(item.toastId)}
-            onDismiss={() => onDismiss(item.toastId)}
+            onDismiss={() => onDismiss(item.toastId, item.id)}
             onOpenInbox={() => onOpenInbox(item)}
           />
         ))}
