@@ -18,6 +18,7 @@ import {
   normalizeEnquiryVisitIndex,
 } from '@/lib/sales-invoicing/saleCancelled';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { filterSalesForExchangeUpgradeVisit } from '@/lib/sales-invoicing/exchangePriorSale';
 import {
   productSerialSetFromVisit,
   productSerialsOverlap,
@@ -140,15 +141,25 @@ export async function findSalesForEnquiryVisitMirror(
   const linkedId = visitLinkedSaleIdFromVisit(visit);
   if (linkedId) {
     const linked = active.find((s) => s.id === linkedId);
-    if (linked) return [linked];
+    if (
+      linked &&
+      normalizeEnquiryVisitIndex(linked.enquiryVisitIndex) === wantIdx
+    ) {
+      return [linked];
+    }
     try {
       const snap = await getDoc(doc(db, 'sales', linkedId));
       if (snap.exists()) {
         const row = { id: snap.id, ...(snap.data() as object) } as SaleRecord;
-        if (!isSaleCancelled(row)) return [row];
+        if (
+          !isSaleCancelled(row) &&
+          normalizeEnquiryVisitIndex(row.enquiryVisitIndex) === wantIdx
+        ) {
+          return [row];
+        }
       }
     } catch {
-      /* ignore */
+      /* ignore — wrong-index linkedSaleId from prior visit */
     }
   }
 
@@ -180,7 +191,8 @@ export async function findSalesForEnquiryVisitMirror(
 
   const byLoose = active.filter((s) => saleLooselyMatchesEnquiryVisit(s, visit, visitIndex));
 
-  return mergeSalesById(byIndex, byInvoice, bySerials, byExchange, byFingerprint, byLoose);
+  const merged = mergeSalesById(byIndex, byInvoice, bySerials, byExchange, byFingerprint, byLoose);
+  return filterSalesForExchangeUpgradeVisit(merged, visitIndex, visit);
 }
 
 /** Void duplicate `sales` docs so only one invoice exists per enquiry visit. */

@@ -8,9 +8,11 @@ function serialTokens(raw: string): string[] {
 }
 
 function priorVisitIndexFromExchangeVisit(visit: Record<string, unknown>): number | null {
-  const credit = Number(visit.exchangeCreditAmount) || 0;
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const credit =
+    Number(visit.exchangeCreditAmount ?? details?.exchangeCreditAmount) || 0;
   if (credit <= 0) return null;
-  const raw = visit.exchangePriorVisitIndex;
+  const raw = visit.exchangePriorVisitIndex ?? details?.exchangePriorVisitIndex;
   if (raw === '' || raw == null) return null;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return null;
@@ -35,7 +37,12 @@ export function buildExchangeInventoryRestores(
     const priorVisit = arr[priorIdx] as Record<string, unknown>;
     if (!isInvoicableSaleVisit(priorVisit)) continue;
 
-    const prods = Array.isArray(priorVisit.products) ? priorVisit.products : [];
+    const priorHad = priorVisit.hearingAidDetails as Record<string, unknown> | undefined;
+    const prods = Array.isArray(priorVisit.products)
+      ? priorVisit.products
+      : Array.isArray(priorHad?.products)
+        ? priorHad.products
+        : [];
     const centerFromVisit = String(visit.centerId || priorVisit.centerId || '').trim();
     for (const p of prods) {
       const rec = p as Record<string, unknown>;

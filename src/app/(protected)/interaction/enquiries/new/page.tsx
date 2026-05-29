@@ -32,9 +32,15 @@ import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import {
+  applyExchangePriorSaleCancellation,
+  isVisitSupersededByLaterExchange,
+} from '@/lib/sales-invoicing/exchangePriorSale';
+import {
   isInvoicableEnquirySaleVisit,
   upsertSaleForEnquiryVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
+import { buildExchangeInventoryRestores } from '@/lib/enquiries/exchangeInventoryRestore';
+import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInventoryForSalesReturn';
 import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { logActivity } from '@/lib/activityLogger';
@@ -288,10 +294,19 @@ export default function NewEnquiryPage() {
         : Array.isArray(data.visits)
           ? [...data.visits]
           : [];
+      await applyExchangePriorSaleCancellation({
+        db,
+        enquiryId: docRef.id,
+        visits: visits as Record<string, unknown>[],
+        enquiry: data,
+        actorUid: actor.uid,
+      });
+
       let visitsPatched = false;
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
         if (!isInvoicableEnquirySaleVisit(visit)) continue;
+        if (isVisitSupersededByLaterExchange(visits, visitIndex)) continue;
 
         const upsert = await upsertSaleForEnquiryVisit({
           db,
@@ -315,6 +330,12 @@ export default function NewEnquiryPage() {
           visits,
           updatedAt: serverTimestamp(),
         });
+      }
+
+      const centerFallback = String(data.visitingCenter || data.center || '').trim();
+      const exchangeRestoreRows = buildExchangeInventoryRestores(visits, centerFallback);
+      if (exchangeRestoreRows.length > 0) {
+        await restoreInventoryForSalesReturnRows(db, exchangeRestoreRows);
       }
       
       // Reduce inventory for any sales in the visits

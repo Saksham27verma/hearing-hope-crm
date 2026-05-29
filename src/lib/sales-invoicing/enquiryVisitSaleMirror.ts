@@ -245,25 +245,24 @@ export function saleLooselyMatchesEnquiryVisit(
   const hasSaleIdx = saleHasStoredVisitIndex(sale);
   if (hasSaleIdx && saleIdx !== wantIdx) return false;
 
-  const visitSerials = productSerialSetFromVisit(visit);
-  if (productSerialsOverlap(visitSerials, sale.products)) return true;
-
-  const { grossSalesBeforeTax, gstAmount, salesAfterTax } = readVisitSaleTotals(visit);
-  const saleGross = Number(sale.totalAmount) || 0;
-  const saleGst = Number(sale.gstAmount) || 0;
-  const saleGrand = Math.round(Number(sale.grandTotal) || saleGross + saleGst);
-  const visitGrand = saleGrandTotalFromVisit(visit);
-  const visitBase = Math.round(salesAfterTax || grossSalesBeforeTax + gstAmount);
-
-  if (saleGross === grossSalesBeforeTax && saleGst === gstAmount) return true;
-  if (saleGrand === visitGrand || saleGrand === visitBase) return true;
-
   const { exchangeCredit } = readExchangeFieldsFromVisit(visit);
   if (exchangeCredit > 0) {
     const saleEx = Math.max(0, Number(sale.exchangeCreditInr) || 0);
     if (saleEx > 0 && Math.abs(saleEx - exchangeCredit) <= 1) return true;
-    if (Math.abs(saleGrand - visitBase) <= 1) return true;
+    return false;
   }
+
+  const visitSerials = productSerialSetFromVisit(visit);
+  if (productSerialsOverlap(visitSerials, sale.products)) return true;
+
+  const { grossSalesBeforeTax, gstAmount } = readVisitSaleTotals(visit);
+  const saleGross = Number(sale.totalAmount) || 0;
+  const saleGst = Number(sale.gstAmount) || 0;
+  const saleGrand = Math.round(Number(sale.grandTotal) || saleGross + saleGst);
+  const visitGrand = saleGrandTotalFromVisit(visit);
+
+  if (saleGross === grossSalesBeforeTax && saleGst === gstAmount) return true;
+  if (saleGrand === visitGrand) return true;
 
   return false;
 }

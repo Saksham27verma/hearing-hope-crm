@@ -44,6 +44,10 @@ import {
 import { buildExchangeInventoryRestores } from '@/lib/enquiries/exchangeInventoryRestore';
 import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInventoryForSalesReturn';
 import {
+  applyExchangePriorSaleCancellation,
+  isVisitSupersededByLaterExchange,
+} from '@/lib/sales-invoicing/exchangePriorSale';
+import {
   isInvoicableEnquirySaleVisit,
   upsertSaleForEnquiryVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
@@ -335,10 +339,31 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         }
       }
 
+      // Exchange upgrade: void prior visit invoice(s) and return traded-in serials to stock.
+      if (resolvedParams?.id) {
+        await applyExchangePriorSaleCancellation({
+          db,
+          enquiryId: resolvedParams.id,
+          visits: visits as Record<string, unknown>[],
+          enquiry: data,
+          actorUid: actor.uid,
+        });
+        for (let vi = 0; vi < visitSchedules.length; vi++) {
+          const flat = visits[vi] as Record<string, unknown> | undefined;
+          if (flat?.hearingAidSaleSuperseded && visitSchedules[vi]) {
+            visitSchedules[vi] = {
+              ...(visitSchedules[vi] as Record<string, unknown>),
+              ...flat,
+            };
+          }
+        }
+      }
+
       // One `sales` invoice per sale visit — update in place on re-save (no duplicate invoice numbers).
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
         if (!isInvoicableEnquirySaleVisit(visit) || !resolvedParams?.id) continue;
+        if (isVisitSupersededByLaterExchange(visits, visitIndex)) continue;
 
         const savedVisit = getSavedVisitSnapshot(enquiry || {}, visitIndex);
         const upsert = await upsertSaleForEnquiryVisit({
