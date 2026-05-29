@@ -32,10 +32,6 @@ import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import {
-  applyExchangePriorSaleCancellation,
-  isVisitSupersededByLaterExchange,
-} from '@/lib/sales-invoicing/exchangePriorSale';
-import {
   isInvoicableEnquirySaleVisit,
   upsertSaleForEnquiryVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
@@ -294,19 +290,10 @@ export default function NewEnquiryPage() {
         : Array.isArray(data.visits)
           ? [...data.visits]
           : [];
-      await applyExchangePriorSaleCancellation({
-        db,
-        enquiryId: docRef.id,
-        visits: visits as Record<string, unknown>[],
-        enquiry: data,
-        actorUid: actor.uid,
-      });
-
       let visitsPatched = false;
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
         if (!isInvoicableEnquirySaleVisit(visit)) continue;
-        if (isVisitSupersededByLaterExchange(visits, visitIndex)) continue;
 
         const upsert = await upsertSaleForEnquiryVisit({
           db,

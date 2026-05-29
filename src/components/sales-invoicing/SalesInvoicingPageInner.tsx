@@ -124,6 +124,7 @@ import {
   findExistingActiveSaleForVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import { restoreCancelledSale } from '@/lib/sales-invoicing/restoreCancelledSale';
 
 // ─── Types ───
 
@@ -280,6 +281,8 @@ export default function SalesInvoicingPageInner() {
   const [cancelDialogRow, setCancelDialogRow] = useState<UnifiedInvoiceRow | null>(null);
   const [cancelReasonInput, setCancelReasonInput] = useState('');
   const [cancellingInvoice, setCancellingInvoice] = useState(false);
+  const [restoreDialogRow, setRestoreDialogRow] = useState<UnifiedInvoiceRow | null>(null);
+  const [restoringInvoice, setRestoringInvoice] = useState(false);
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
   const [exportExcelLoading, setExportExcelLoading] = useState(false);
 
@@ -484,6 +487,44 @@ export default function SalesInvoicingPageInner() {
     });
     resetProductForm();
     setOpenDialog(true);
+  };
+
+  const handleConfirmRestoreInvoice = async () => {
+    const id = restoreDialogRow?.savedSale?.id;
+    if (!id || restoringInvoice || !restoreDialogRow?.savedSale?.cancelled) return;
+    try {
+      setRestoringInvoice(true);
+      await restoreCancelledSale({ db, saleId: id, actorUid: user?.uid });
+      setSales((prev) =>
+        prev.map((s) =>
+          s.id === id
+            ? {
+                ...s,
+                cancelled: false,
+                cancelledAt: undefined,
+                cancelledByUid: undefined,
+                cancelReason: undefined,
+              }
+            : s,
+        ),
+      );
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'UPDATE',
+        module: 'Sales',
+        entityId: id,
+        entityName: restoreDialogRow?.savedSale?.invoiceNumber || id,
+        description: `Restored cancelled invoice ${restoreDialogRow?.savedSale?.invoiceNumber || id}`,
+        changes: { status: { before: 'cancelled', after: 'active' } },
+        metadata: { invoiceNumber: restoreDialogRow?.savedSale?.invoiceNumber },
+      }, user);
+      setSuccessMsg('Invoice restored (uncancelled)');
+      setRestoreDialogRow(null);
+    } catch (e) {
+      console.error('Error restoring invoice:', e);
+      setErrorMsg('Failed to restore invoice');
+    } finally {
+      setRestoringInvoice(false);
+    }
   };
 
   const handleConfirmCancelInvoice = async () => {
@@ -1171,6 +1212,13 @@ export default function SalesInvoicingPageInner() {
               setCancelReasonInput('');
             } : undefined
           }
+          onRestoreSaved={
+            isAdmin
+              ? (row) => {
+                  setRestoreDialogRow(row);
+                }
+              : undefined
+          }
         />
 
         <Dialog
@@ -1223,6 +1271,49 @@ export default function SalesInvoicingPageInner() {
             </Button>
             <Button variant="contained" color="warning" onClick={handleConfirmCancelInvoice} disabled={cancellingInvoice}>
               {cancellingInvoice ? 'Cancelling…' : 'Cancel invoice'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <Dialog
+          open={!!restoreDialogRow}
+          onClose={() => {
+            if (!restoringInvoice) setRestoreDialogRow(null);
+          }}
+          maxWidth="sm"
+          fullWidth
+          PaperProps={{ sx: { borderRadius: 2 } }}
+        >
+          <DialogTitle fontWeight={700}>Restore cancelled invoice</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              This reactivates the invoice for reporting, printing, and editing. Use this if a visit invoice was
+              cancelled by mistake (including exchange workflows).
+            </Typography>
+            {restoreDialogRow && (
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                <strong>{restoreDialogRow.invoiceNumber || '—'}</strong>
+                {' · '}
+                {restoreDialogRow.clientName}
+              </Typography>
+            )}
+            {restoreDialogRow?.savedSale?.cancelReason && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                Cancel reason: {String(restoreDialogRow.savedSale.cancelReason)}
+              </Typography>
+            )}
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => !restoringInvoice && setRestoreDialogRow(null)} disabled={restoringInvoice}>
+              Back
+            </Button>
+            <Button
+              variant="contained"
+              color="success"
+              onClick={handleConfirmRestoreInvoice}
+              disabled={restoringInvoice}
+            >
+              {restoringInvoice ? 'Restoring…' : 'Restore invoice'}
             </Button>
           </DialogActions>
         </Dialog>

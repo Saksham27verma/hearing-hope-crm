@@ -30,6 +30,7 @@ import {
   PostAdd as PostAddIcon,
   OpenInNew as OpenInNewIcon,
   HighlightOff as VoidInvoiceIcon,
+  Undo as RestoreInvoiceIcon,
 } from '@mui/icons-material';
 import type { PatientPaymentLine, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import { Timestamp } from 'firebase/firestore';
@@ -154,6 +155,8 @@ interface SalesInvoicesDataTableProps {
   highlightedRowId?: string | null;
   /** Admin-only: soft-void invoice (Firestore `cancelled`). */
   onCancelSaved?: (row: UnifiedInvoiceRow) => void;
+  /** Admin-only: reactivate a cancelled invoice. */
+  onRestoreSaved?: (row: UnifiedInvoiceRow) => void;
 }
 
 export default function SalesInvoicesDataTable({
@@ -175,6 +178,7 @@ export default function SalesInvoicesDataTable({
   isAdmin,
   highlightedRowId,
   onCancelSaved,
+  onRestoreSaved,
 }: SalesInvoicesDataTableProps) {
   const theme = useTheme();
   const compact = useMediaQuery(theme.breakpoints.down('md'));
@@ -345,9 +349,23 @@ export default function SalesInvoicesDataTable({
                         </>
                       )}
                       {r.kind === 'saved' && voided && (
-                        <Typography variant="caption" color="text.secondary" sx={{ py: 0.5, px: 0.5 }}>
-                          Voided
-                        </Typography>
+                        <Box display="flex" alignItems="center" gap={0.5} flexWrap="wrap" justifyContent="flex-end">
+                          <Typography variant="caption" color="text.secondary" sx={{ py: 0.5, px: 0.5 }}>
+                            Voided
+                          </Typography>
+                          {isAdmin && onRestoreSaved && r.savedSale?.id && (
+                            <Tooltip title="Restore invoice (uncancel)">
+                              <IconButton size="small" color="success" onClick={() => onRestoreSaved(r)}>
+                                <RestoreInvoiceIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          <Tooltip title="Preview PDF">
+                            <IconButton size="small" onClick={() => onPreview(r)}>
+                              <VisibilityIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
                       )}
                       {r.kind === 'enquiry_pending' && (
                         <>

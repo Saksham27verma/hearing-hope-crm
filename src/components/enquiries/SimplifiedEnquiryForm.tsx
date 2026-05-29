@@ -6926,6 +6926,44 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 />
                               </Grid>
                             </Grid>
+                            {(() => {
+                              const credit = Number(currentVisit.exchangeCreditAmount) || 0;
+                              const priorRaw = currentVisit.exchangePriorVisitIndex;
+                              if (credit <= 0 || priorRaw === '' || priorRaw == null) return null;
+                              const priorIdx = Number(priorRaw);
+                              if (!Number.isFinite(priorIdx) || priorIdx < 0) return null;
+                              const prior = watchedVisits[priorIdx];
+                              const priorInv = String(
+                                prior?.invoiceNumber ||
+                                  (prior as { linkedSaleId?: string })?.linkedSaleId ||
+                                  ''
+                              ).trim();
+                              return (
+                                <Alert severity="warning" sx={{ mt: 2, borderRadius: 2 }}>
+                                  <Typography variant="body2" component="div" sx={{ mb: 1 }}>
+                                    <strong>Exchange recorded.</strong> Visit #{priorIdx + 1} invoice
+                                    {priorInv ? ` (${priorInv})` : ''} is the prior sale. The CRM does{' '}
+                                    <strong>not</strong> cancel it automatically — cancel it yourself in{' '}
+                                    <strong>Sales &amp; Invoicing</strong> only if your accounts process requires
+                                    voiding the old bill. Traded-in devices are returned to stock when you save this
+                                    enquiry.
+                                  </Typography>
+                                  {enquiry?.id && (
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      color="warning"
+                                      href="/sales"
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
+                                    >
+                                      Open Sales &amp; Invoicing
+                                    </Button>
+                                  )}
+                                </Alert>
+                              );
+                            })()}
                           </Box>
 
                           {/* Show device names from Trial and Booking journeys when auto-population is not used */}

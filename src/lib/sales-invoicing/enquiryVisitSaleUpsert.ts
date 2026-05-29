@@ -112,9 +112,7 @@ export async function upsertSaleForEnquiryVisit(
     { priorVisitInvoice: args.priorVisitInvoice },
   );
   const activeSales = existingSales.filter((s) => !isSaleCancelled(s));
-  const canonical = chooseCanonicalSaleRecord(
-    activeSales.length > 0 ? activeSales : existingSales,
-  );
+  const canonical = chooseCanonicalSaleRecord(activeSales);
 
   const existingVisitInvoice = visitInvoiceNumberFromVisit(visit);
   const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
