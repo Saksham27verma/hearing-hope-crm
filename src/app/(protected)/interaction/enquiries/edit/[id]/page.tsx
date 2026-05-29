@@ -44,7 +44,9 @@ import {
   collectSaleVisitIndicesVoidedByReturns,
   buildSalesReturnInventoryRestores,
 } from '@/lib/enquiries/salesReturnVisitTargets';
+import { buildExchangeInventoryRestores } from '@/lib/enquiries/exchangeInventoryRestore';
 import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInventoryForSalesReturn';
+import { dedupeEnquiryVisitSales } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -412,9 +414,9 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           updatedAt: serverTimestamp(),
         } as Record<string, unknown>;
 
-        if (existingSaleDoc == null) {
-          // addDoc() does not allow deleteField() sentinels; only include
-          // exchange fields when there is an actual value to write.
+        const targetSaleId = existingSaleDoc?.id ?? null;
+
+        if (targetSaleId == null) {
           const newDocPayload: Record<string, unknown> = {
             ...basePayload,
             createdAt: serverTimestamp(),
@@ -423,14 +425,15 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           if (hasExchangePrior) newDocPayload.exchangePriorVisitIndex = exPrior;
           const saleRef = await addDoc(collection(db, 'sales'), newDocPayload);
           void notifyAdminsNewSale(saleRef.id);
+          await dedupeEnquiryVisitSales(db, resolvedParams.id, visitIndex, { actorUid: actor.uid });
         } else {
-          // updateDoc() supports deleteField() to clear stale exchange data.
           const updatePayload: Record<string, unknown> = {
             ...basePayload,
             exchangeCreditInr: hasExchangeCredit ? exchangeCredit : deleteField(),
             exchangePriorVisitIndex: hasExchangePrior ? exPrior : deleteField(),
           };
-          await updateDoc(doc(db, 'sales', existingSaleDoc.id), updatePayload);
+          await updateDoc(doc(db, 'sales', targetSaleId), updatePayload);
+          await dedupeEnquiryVisitSales(db, resolvedParams.id, visitIndex, { actorUid: actor.uid });
         }
       }
 
@@ -476,11 +479,14 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         });
       }
 
-      const restoreRows = buildSalesReturnInventoryRestores(visits, centerFallback);
+      const restoreRows = [
+        ...buildSalesReturnInventoryRestores(visits, centerFallback),
+        ...buildExchangeInventoryRestores(visits, centerFallback),
+      ];
       if (restoreRows.length > 0) {
         const invResult = await restoreInventoryForSalesReturnRows(db, restoreRows);
         if (invResult.errors.length > 0) {
-          console.error('Sales return inventory restore:', invResult.errors);
+          console.error('Sales return / exchange inventory restore:', invResult.errors);
         }
       }
 

@@ -78,6 +78,7 @@ import { collection, query, getDocs, where, orderBy, addDoc, updateDoc, deleteDo
 import { db } from '@/firebase/config';
 import { getHeadOfficeId } from '@/utils/centerUtils';
 import { businessCompanyChipColor } from '@/utils/businessCompanies';
+import { buildExchangeInventoryRestores } from '@/lib/enquiries/exchangeInventoryRestore';
 import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 import { useAuth } from '@/context/AuthContext';
 import { useCenterScope } from '@/hooks/useCenterScope';
@@ -782,6 +783,28 @@ export default function InventoryPage() {
                 });
               });
             }
+          });
+
+          buildExchangeInventoryRestores(visits, String(data.center || '')).forEach((row) => {
+            const { productId, productName } = getJourneyProductInfo({
+              productId: row.productId,
+              name: row.productName,
+            });
+            addJourneyEvent(row.serialNumber, {
+              id: `exchange-return-${docSnap.id}-${row.serialNumber}`,
+              productId,
+              productName,
+              eventType: 'sale-return',
+              title: 'Exchange trade-in',
+              description: `Prior device returned via exchange for ${patientName}`,
+              date: data.updatedAt || data.createdAt,
+              location: row.soldFromCenterId || data.center || '',
+              counterparty: patientName,
+              referenceNo: '',
+              notes: 'Exchange credit on a later sale visit',
+              sourceLabel: 'Enquiry',
+              sourcePath: `/interaction/enquiries/${docSnap.id}`,
+            });
           });
         });
 

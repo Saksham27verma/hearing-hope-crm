@@ -12,7 +12,12 @@ import {
   buildVoidedEnquiryVisitKeys,
   isDerivedEnquiryVisitExcludedFromSales,
   isSaleCancelled,
+  isVisitSaleInvoiceDeleted,
 } from '@/lib/sales-invoicing/saleCancelled';
+import {
+  buildCanonicalSaleIdByVisitKey,
+  isCanonicalSaleForVisit,
+} from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 
 export type NormalizedSale = {
   rowId: string;
@@ -287,18 +292,21 @@ export function mapUnifiedRowsToRecords(
     .map((row) => row.savedSale as SaleRecord);
   const voidedVisitKeys = buildVoidedEnquiryVisitKeys(allSales);
   const activeInvoicedVisitKeys = buildActiveInvoicedEnquiryVisitKeys(allSales);
+  const canonicalSaleIdByVisitKey = buildCanonicalSaleIdByVisitKey(allSales);
 
   for (const r of unified) {
     if (r.kind === 'saved' && r.savedSale) {
       if (r.isCancelled) continue;
       const s = r.savedSale;
       if (isSaleCancelled(s)) continue;
+      if (!isCanonicalSaleForVisit(s, canonicalSaleIdByVisitKey)) continue;
       const date = tsToDate(s.saleDate);
       const branch = (s.branch || '').toString();
       const eid = s.enquiryId != null ? String(s.enquiryId) : '';
       const vIdx = s.enquiryVisitIndex;
       const enq = eid ? enquiryById.get(eid) : undefined;
       const visit = enq && typeof vIdx === 'number' ? resolveVisitAtIndex(enq, vIdx) : {};
+      if (isVisitSaleInvoiceDeleted(visit as Record<string, unknown>)) continue;
       const visitAny = visit as Record<string, unknown>;
       const enqAny = enq as Record<string, unknown> | undefined;
       const centerFallback = String(

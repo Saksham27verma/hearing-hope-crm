@@ -687,7 +687,7 @@ interface StaffMember {
 }
 
 const DEFAULT_ENQUIRY_STAFF_ROLES: Record<
-  'telecaller' | 'assignedTo' | 'testBy' | 'programmingBy' | 'sales' | 'general',
+  'telecaller' | 'assignedTo' | 'testBy' | 'programmingBy' | 'sales' | 'general' | 'sessionBy',
   string[]
 > = {
   telecaller: ['Telecaller', 'Customer Support'],
@@ -696,6 +696,7 @@ const DEFAULT_ENQUIRY_STAFF_ROLES: Record<
   programmingBy: ['Audiologist', 'Technician'],
   sales: ['Sales Executive', 'Manager'],
   general: JOB_ROLES,
+  sessionBy: JOB_ROLES,
 };
 
 function normalizeEnquiryStaffRoleConfig(
@@ -1045,6 +1046,7 @@ interface Visit {
   underWarranty: boolean;
   programmingAmount: number;
   programmingDoneBy: string;
+  counsellingDoneBy: string;
   products: HearingAidProduct[];
   grossMRP: number;
   grossSalesBeforeTax: number;
@@ -1396,7 +1398,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       const saved = localStorage.getItem('enquiryStaffRoles');
       if (saved) {
         try {
-          return JSON.parse(saved);
+          return normalizeEnquiryStaffRoleConfig(JSON.parse(saved));
         } catch (e) {
           console.error('Failed to parse saved roles:', e);
         }
@@ -1902,6 +1904,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       } else if (fieldName === 'programmingBy') {
         (watchedVisits || []).forEach((v) => extras.push(v.programmingDoneBy));
         enqVisits.forEach((v: { programmingDoneBy?: string }) => extras.push(v.programmingDoneBy));
+      } else if (fieldName === 'sessionBy') {
+        (watchedVisits || []).forEach((v) => extras.push(v.counsellingDoneBy, v.testDoneBy));
+        enqVisits.forEach((v: { counsellingDoneBy?: string; testDoneBy?: string }) => {
+          extras.push(v.counsellingDoneBy, v.testDoneBy);
+        });
       }
       // Who Sold (sales): options must be staff only. Do not merge visit.hearingAidBrand — that is
       // often the device manufacturer (Signia, Phonak) on trial/booking, not a salesperson.
@@ -1918,7 +1925,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       extras.forEach((s) => push(s));
       staffForField.forEach((s) => push(s));
 
-      if (merged.length > 0) return merged;
+      if (fieldName === 'sessionBy') {
+        staffMembers
+          .filter((staff) => staff.status !== 'inactive')
+          .forEach((staff) => push(staff.name));
+      }
+
+      if (merged.length > 0) return merged.sort((a, b) => a.localeCompare(b));
       if (fieldName === 'telecaller') {
         const dn = userProfile?.displayName?.trim();
         if (dn && !isGenericLoginDisplayName(dn)) return [dn];
@@ -2659,6 +2672,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           underWarranty: nestedProgrammingDetails.underWarranty || Boolean(mergedVisit.underWarranty),
           programmingAmount: nestedProgrammingDetails.programmingAmount || mergedVisit.programmingAmount || 0,
           programmingDoneBy: nestedProgrammingDetails.programmingDoneBy || mergedVisit.programmingDoneBy || '',
+          counsellingDoneBy: (() => {
+            const saved = String(mergedVisit.counsellingDoneBy || '').trim();
+            if (saved) return saved;
+            const counsellingOnly =
+              Boolean(mergedVisit.counselling) && !mergedVisit.hearingTest;
+            return counsellingOnly ? String(mergedVisit.testDoneBy || '').trim() : '';
+          })(),
           ...(() => {
             const raw = visit.hearingAidDetails?.products || mergedVisit.products || [];
             const products = raw.map((p: any) => ({
@@ -3142,6 +3162,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       underWarranty: false,
       programmingAmount: 0,
       programmingDoneBy: '',
+      counsellingDoneBy: '',
       products: [],
       grossMRP: 0,
       grossSalesBeforeTax: 0,
@@ -4034,7 +4055,9 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           underWarranty: visit.underWarranty,
           programmingAmount: visit.programmingAmount,
           programmingDoneBy: visit.programmingDoneBy
-        })
+        }),
+        counselling: visit.counselling,
+        counsellingDoneBy: visit.counselling ? visit.counsellingDoneBy || null : null,
         });
       })
     };
@@ -8986,19 +9009,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 <FormControl fullWidth>
                                   <InputLabel>Session By</InputLabel>
                                   <Select
-                                    value={currentVisit.testDoneBy}
+                                    value={currentVisit.counsellingDoneBy}
                                     onChange={(e) =>
-                                      updateVisit(activeVisit, 'testDoneBy', e.target.value)
+                                      updateVisit(activeVisit, 'counsellingDoneBy', e.target.value)
                                     }
                                     label="Session By"
                                     sx={{ borderRadius: 2, minWidth: '200px' }}
                                     MenuProps={mergeMenuPropsForReselectClear(
-                                      currentVisit.testDoneBy,
-                                      () => updateVisit(activeVisit, 'testDoneBy', ''),
+                                      currentVisit.counsellingDoneBy,
+                                      () => updateVisit(activeVisit, 'counsellingDoneBy', ''),
                                       undefined
                                     )}
                                   >
-                                    {getStaffOptionsForField('testBy').map(option => (
+                                    {getStaffOptionsForField('sessionBy').map((option) => (
                                       <MenuItem key={option} value={option}>
                                         {option}
                                       </MenuItem>

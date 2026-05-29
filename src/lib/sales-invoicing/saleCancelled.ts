@@ -44,6 +44,12 @@ export function buildActiveInvoicedEnquiryVisitKeys(sales: SaleRecord[]): Set<st
   return keys;
 }
 
+/** User deleted the invoice from Sales & Invoicing — exclude visit from revenue / uninvoiced rows. */
+export function isVisitSaleInvoiceDeleted(visit: Record<string, unknown> | null | undefined): boolean {
+  if (!visit || typeof visit !== 'object') return false;
+  return visit.saleInvoiceDeleted === true || visit.saleInvoiceDeleted === 'true';
+}
+
 /** Visit still stores an invoice # after the `sales` doc was deleted or voided. */
 export function visitHasBillableInvoiceNumber(visit: Record<string, unknown> | null | undefined): boolean {
   if (!visit || typeof visit !== 'object') return false;
@@ -62,6 +68,7 @@ export function isDerivedEnquiryVisitExcludedFromSales(
   activeInvoicedKeys: Set<string>,
   visit?: Record<string, unknown> | null,
 ): boolean {
+  if (isVisitSaleInvoiceDeleted(visit)) return true;
   const k = enquiryVisitKey(derived.enquiryId, derived.visitorId, derived.visitIndex);
   if (k && voidedKeys.has(k)) return true;
   if (k && activeInvoicedKeys.has(k)) return true;

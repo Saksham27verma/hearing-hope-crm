@@ -1,3 +1,4 @@
+import { collectExchangeReturnedSerialNorms } from '@/lib/enquiries/exchangeInventoryRestore';
 import { expandSalesReturnLinesFromVisit } from '@/utils/salesReturnFromVisit';
 
 /**
@@ -148,7 +149,7 @@ export function applyEnquiryVisitsSalesToAvailabilityMaps(
   for (const doc of enquiryDocs) {
     const data = doc.data();
     const visits = Array.isArray(data.visits) ? (data.visits as Record<string, unknown>[]) : [];
-    const returnedNorms = new Set<string>();
+    const returnedNorms = new Set<string>(collectExchangeReturnedSerialNorms(visits));
     for (const v of visits) {
       if (!v?.salesReturn) continue;
       expandSalesReturnLinesFromVisit(

@@ -56,6 +56,62 @@ type EnquiryDoc = {
   reference: string;
   createdAt: Date | null;
   statusKey: EnquiryStatusKey | null;
+  messagesNotes: string;
+};
+
+const getSchedules = (enquiry: Record<string, unknown>): unknown[] => {
+  if (Array.isArray(enquiry.visitSchedules) && enquiry.visitSchedules.length > 0) {
+    return enquiry.visitSchedules;
+  }
+  if (Array.isArray(enquiry.visits) && enquiry.visits.length > 0) {
+    return enquiry.visits;
+  }
+  return [];
+};
+
+const getLatestVisitNotes = (enquiry: Record<string, unknown>): string => {
+  const schedules = getSchedules(enquiry);
+  if (!schedules.length) return '';
+  const sorted = [...schedules].sort((a, b) => {
+    const aRec = a as Record<string, unknown>;
+    const bRec = b as Record<string, unknown>;
+    const da = String(aRec.visitDate || aRec.date || '').trim();
+    const db = String(bRec.visitDate || bRec.date || '').trim();
+    return db.localeCompare(da);
+  });
+  const first = sorted[0] as Record<string, unknown>;
+  return String(first?.visitNotes ?? first?.notes ?? '').trim();
+};
+
+const buildFollowUpsNotesText = (enquiry: Record<string, unknown>): string => {
+  const list = Array.isArray(enquiry.followUps) ? enquiry.followUps : [];
+  if (!list.length) return '';
+  const sorted = [...list].sort((a, b) => {
+    const aRec = a as Record<string, unknown>;
+    const bRec = b as Record<string, unknown>;
+    return String(aRec.date || '').localeCompare(String(bRec.date || ''));
+  });
+  return sorted
+    .map((f) => {
+      const entry = f as Record<string, unknown>;
+      const parts = [entry.date, entry.callerName, entry.remarks].filter((x) =>
+        String(x || '').trim(),
+      );
+      return parts.join(' · ');
+    })
+    .filter(Boolean)
+    .join('\n');
+};
+
+const buildMessagesNotesText = (enquiry: Record<string, unknown>): string => {
+  const parts: string[] = [];
+  const message = String(enquiry.message || '').trim();
+  if (message) parts.push(`Enquiry: ${message}`);
+  const followUp = buildFollowUpsNotesText(enquiry);
+  if (followUp) parts.push(`Follow-ups:\n${followUp}`);
+  const visit = getLatestVisitNotes(enquiry);
+  if (visit) parts.push(`Last visit: ${visit}`);
+  return parts.join('\n\n');
 };
 
 const formatReference = (value: unknown): string => {
@@ -195,6 +251,7 @@ export default function ExecutiveAnalysisReportTab() {
           reference: formatReference(raw.reference),
           createdAt: asDate(raw.createdAt),
           statusKey: normalizeStatus(statusMeta.key),
+          messagesNotes: buildMessagesNotesText(raw),
         };
       });
       setEnquiries(normalized);
@@ -291,6 +348,7 @@ export default function ExecutiveAnalysisReportTab() {
       'Center',
       'Reference',
       'Status',
+      'Messages / Notes',
     ];
     const detailRows = executiveFilteredEnquiries
       .slice()
@@ -306,6 +364,7 @@ export default function ExecutiveAnalysisReportTab() {
         row.center,
         row.reference,
         statusLabel(row.statusKey),
+        row.messagesNotes,
       ]);
 
     const summaryHeaders = [

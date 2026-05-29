@@ -119,6 +119,10 @@ import {
   clearEnquiryVisitInvoiceNumberOnSaleDelete,
   syncEnquiryVisitInvoiceNumberFromSale,
 } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
+import {
+  dedupeEnquiryVisitSales,
+  findExistingActiveSaleForVisit,
+} from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 
 // ─── Types ───
@@ -550,6 +554,13 @@ export default function SalesInvoicingPageInner() {
           console.warn('Could not clear enquiry visit invoice after delete:', syncErr);
         }
       }
+      if (eid && typeof vIdx === 'number') {
+        try {
+          await dedupeEnquiryVisitSales(db, eid, vIdx, { actorUid: user?.uid });
+        } catch (dedupeErr) {
+          console.warn('Dedupe after delete:', dedupeErr);
+        }
+      }
       setSales((prev) => prev.filter((s) => s.id !== id));
       setSuccessMsg('Sale deleted successfully');
     } catch (e) {
@@ -585,7 +596,7 @@ export default function SalesInvoicingPageInner() {
         }
       : {};
 
-    if (saleToSave.id) {
+      if (saleToSave.id) {
       await updateDoc(doc(db, 'sales', saleToSave.id), {
         ...saveData,
         ...auditPatch,
@@ -597,6 +608,9 @@ export default function SalesInvoicingPageInner() {
         saleToSave.enquiryId &&
         typeof saleToSave.enquiryVisitIndex === 'number'
       ) {
+        await dedupeEnquiryVisitSales(db, saleToSave.enquiryId, saleToSave.enquiryVisitIndex, {
+          actorUid: user?.uid,
+        });
         await syncEnquiryVisitInvoiceNumberFromSale({
           db,
           enquiryId: saleToSave.enquiryId,
@@ -617,11 +631,49 @@ export default function SalesInvoicingPageInner() {
       }, user);
       setSuccessMsg('Sale updated');
     } else {
-      const docRef = await addDoc(collection(db, 'sales'), {
-        ...saveData,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      let targetId: string | undefined;
+      let createdNewDoc = false;
+      if (
+        saleToSave.source === 'enquiry' &&
+        typeof saleToSave.enquiryId === 'string' &&
+        saleToSave.enquiryId &&
+        typeof saleToSave.enquiryVisitIndex === 'number'
+      ) {
+        const existing = await findExistingActiveSaleForVisit(
+          db,
+          saleToSave.enquiryId,
+          saleToSave.enquiryVisitIndex,
+        );
+        if (existing?.id) {
+          targetId = existing.id;
+          await updateDoc(doc(db, 'sales', existing.id), {
+            ...saveData,
+            updatedAt: serverTimestamp(),
+          });
+          await dedupeEnquiryVisitSales(db, saleToSave.enquiryId, saleToSave.enquiryVisitIndex, {
+            actorUid: user?.uid,
+          });
+        }
+      }
+      if (!targetId) {
+        const docRef = await addDoc(collection(db, 'sales'), {
+          ...saveData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        targetId = docRef.id;
+        createdNewDoc = true;
+        if (
+          saleToSave.source === 'enquiry' &&
+          typeof saleToSave.enquiryId === 'string' &&
+          saleToSave.enquiryId &&
+          typeof saleToSave.enquiryVisitIndex === 'number'
+        ) {
+          await dedupeEnquiryVisitSales(db, saleToSave.enquiryId, saleToSave.enquiryVisitIndex, {
+            actorUid: user?.uid,
+          });
+        }
+      }
       if (
         saleToSave.source === 'enquiry' &&
         typeof saleToSave.enquiryId === 'string' &&
@@ -636,19 +688,19 @@ export default function SalesInvoicingPageInner() {
         });
       }
       setSales((prev) => [
-        { ...saleToSave, id: docRef.id, createdAt: Timestamp.now(), updatedAt: Timestamp.now() },
-        ...prev,
+        { ...saleToSave, id: targetId, createdAt: Timestamp.now(), updatedAt: Timestamp.now() },
+        ...prev.filter((s) => s.id !== targetId),
       ]);
       void logActivity(db, userProfile, userProfile?.centerId, {
         action: 'CREATE',
         module: 'Sales',
-        entityId: docRef.id,
-        entityName: saleToSave.invoiceNumber || docRef.id,
-        description: `Created invoice ${saleToSave.invoiceNumber || docRef.id} for ${saleToSave.patientName || 'patient'} — ₹${saleToSave.grandTotal || 0}`,
+        entityId: targetId,
+        entityName: saleToSave.invoiceNumber || targetId,
+        description: `Created invoice ${saleToSave.invoiceNumber || targetId} for ${saleToSave.patientName || 'patient'} — ₹${saleToSave.grandTotal || 0}`,
         metadata: { invoiceNumber: saleToSave.invoiceNumber, grandTotal: saleToSave.grandTotal, patientName: saleToSave.patientName },
       }, user);
-      setSuccessMsg('Sale created');
-      void notifyAdminsNewSale(docRef.id);
+      if (createdNewDoc && targetId) void notifyAdminsNewSale(targetId);
+      setSuccessMsg(createdNewDoc ? 'Sale created' : 'Sale updated');
     }
     return true;
   };

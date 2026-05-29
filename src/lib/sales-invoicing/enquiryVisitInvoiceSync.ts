@@ -85,7 +85,11 @@ export async function syncEnquiryVisitInvoiceNumberFromSale(args: {
   if (normalizeInvoiceNumberString(visit.invoiceNumber) === normalized) return;
 
   const patchedVisits = [...visitsRaw];
-  patchedVisits[args.visitIndex] = { ...visit, invoiceNumber: normalized };
+  patchedVisits[args.visitIndex] = {
+    ...visit,
+    invoiceNumber: normalized,
+    saleInvoiceDeleted: false,
+  };
   await updateDoc(enquiryRef, { visits: patchedVisits });
 }
 
@@ -115,6 +119,7 @@ export async function clearEnquiryVisitInvoiceNumberOnSaleDelete(args: {
   delete nextVisit.salesInvoiceNumber;
   delete nextVisit.salesInvoiceNo;
   delete nextVisit.invoiceNo;
+  nextVisit.saleInvoiceDeleted = true;
 
   const patchedVisits = [...visitsRaw];
   patchedVisits[args.visitIndex] = nextVisit;
