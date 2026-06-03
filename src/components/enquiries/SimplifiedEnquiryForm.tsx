@@ -759,9 +759,70 @@ const HEARING_AID_SALE_WARRANTY_OPTIONS = [
   '48 Months',
 ] as const;
 
+function SaleLineWarrantySelect({
+  value,
+  onChange,
+  labelId,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  labelId: string;
+}) {
+  const v = value || '';
+  return (
+    <FormControl fullWidth size="small" sx={{ minWidth: 120 }}>
+      <InputLabel id={labelId}>Warranty</InputLabel>
+      <Select
+        labelId={labelId}
+        label="Warranty"
+        value={v}
+        onChange={(e) => onChange(String(e.target.value))}
+        displayEmpty
+        MenuProps={mergeMenuPropsForReselectClear(v, () => onChange(''), undefined)}
+      >
+        <MenuItem value="">
+          <em>None</em>
+        </MenuItem>
+        {v &&
+          !(HEARING_AID_SALE_WARRANTY_OPTIONS as readonly string[]).includes(v) && (
+            <MenuItem value={v}>
+              {v} (other)
+            </MenuItem>
+          )}
+        {HEARING_AID_SALE_WARRANTY_OPTIONS.map((opt) => (
+          <MenuItem key={opt} value={opt}>
+            {opt}
+          </MenuItem>
+        ))}
+      </Select>
+    </FormControl>
+  );
+}
+
 /** Max 2 decimal places for discount % (display + stored values). */
 const roundDiscountPercent = (value: number) =>
   Math.round(Math.max(0, Math.min(100, Number(value) || 0)) * 100) / 100;
+
+/** Recompute discount / GST / final from MRP + selling price (per unit). */
+function recalculateHearingAidProductLine(p: HearingAidProduct): HearingAidProduct {
+  const mrp = roundInrRupee(Number(p.mrp) || 0);
+  const sellingPrice = roundInrRupee(Number(p.sellingPrice) || 0);
+  const gstPercent = Number(p.gstPercent) || 0;
+  const discountAmount = roundInrRupee(Math.max(0, mrp - sellingPrice));
+  const discountPercent = mrp > 0 ? roundDiscountPercent((discountAmount / mrp) * 100) : 0;
+  const gstAmount =
+    gstPercent > 0 ? roundInrRupee((sellingPrice * gstPercent) / 100) : 0;
+  const finalAmount = roundInrRupee(sellingPrice + gstAmount);
+  return {
+    ...p,
+    mrp,
+    sellingPrice,
+    discountAmount,
+    discountPercent,
+    gstAmount,
+    finalAmount,
+  };
+}
 
 /** Display `yyyy-MM-dd'T'HH:mm` or date-only legacy for follow-ups / telecalling parity. */
 function formatEnquiryFollowUpWhen(dateTime: string | undefined, fallbackYmd: string): string {
@@ -1062,6 +1123,9 @@ interface Visit {
   taxAmount: number;
   salesAfterTax: number;
   totalDiscountPercent: number;
+  /** Mirrored from `sales` after enquiry save. */
+  invoiceNumber?: string;
+  linkedSaleId?: string;
   createdByUid?: string | null;
   createdByName?: string | null;
   createdByEmail?: string | null;
@@ -1483,6 +1547,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const [saleSerialSecondary, setSaleSerialSecondary] = useState('');
   /** When selling one device from a bonded pair row, both serials — user picks which to sell. */
   const [salePairSerialOptions, setSalePairSerialOptions] = useState<[string, string] | null>(null);
+  /** Index in `currentVisit.products` being edited in the add-line form; null = add mode. */
+  const [editingSaleLineIndex, setEditingSaleLineIndex] = useState<number | null>(null);
 
   const [currentPayment, setCurrentPayment] = useState<{
     paymentDate: string;
@@ -2709,11 +2775,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           })(),
           ...(() => {
             const raw = visit.hearingAidDetails?.products || mergedVisit.products || [];
-            const products = raw.map((p: any) => ({
-              ...p,
-              quantity: hearingAidLineQty({ quantity: p.quantity }),
-              discountPercent: roundDiscountPercent(Number(p.discountPercent) || 0),
-            }));
+            const products = raw.map((p: any) =>
+              recalculateHearingAidProductLine({
+                ...p,
+                warranty: String(p.warranty ?? ''),
+                quantity: hearingAidLineQty({ quantity: p.quantity }),
+                discountPercent: roundDiscountPercent(Number(p.discountPercent) || 0),
+              })
+            );
             const t = sumHearingAidVisitTotals(products);
             return {
               products,
@@ -3271,8 +3340,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           : 0;
       const finalAmount = roundInrRupee(sellingPrice + gstAmount);
 
-      const newProduct: HearingAidProduct = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      const newProduct: HearingAidProduct = recalculateHearingAidProductLine({
+        id:
+          editingSaleLineIndex != null
+            ? watchedVisits[activeVisit]?.products[editingSaleLineIndex]?.id ||
+              `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+            : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         inventoryId: currentProduct.inventoryId,
         productId: currentProduct.productId,
         name: currentProduct.name,
@@ -3295,10 +3368,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         company: currentProduct.company,
         location: currentProduct.location,
         soldFromCenterId: currentProduct.soldFromCenterId || '',
-      };
+      });
 
       const updatedVisits = [...watchedVisits];
-      updatedVisits[activeVisit].products.push(newProduct);
+      if (editingSaleLineIndex != null) {
+        const products = [...updatedVisits[activeVisit].products];
+        products[editingSaleLineIndex] = newProduct;
+        updatedVisits[activeVisit].products = products;
+      } else {
+        updatedVisits[activeVisit].products.push(newProduct);
+      }
 
       const products = updatedVisits[activeVisit].products;
       const totals = sumHearingAidVisitTotals(products);
@@ -3308,39 +3387,16 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       updatedVisits[activeVisit].salesAfterTax = totals.salesAfterTax;
 
       setValue('visits', updatedVisits);
-
-      setCurrentProduct({
-        inventoryId: '',
-        productId: '',
-        name: '',
-        hsnCode: '',
-        serialNumber: '',
-        unit: 'piece',
-        quantity: 1,
-        saleDate: new Date().toISOString().split('T')[0],
-        mrp: 0,
-        dealerPrice: 0,
-        sellingPrice: 0,
-        discountPercent: 0,
-        discountAmount: 0,
-        gstPercent: 18,
-        gstAmount: 0,
-        finalAmount: 0,
-        gstApplicable: true,
-        gstType: 'IGST',
-        warranty: '',
-        company: '',
-        location: '',
-        soldFromCenterId: '',
-      });
-      setSalePairSaleMode('pair');
-      setSaleSerialPrimary('');
-      setSaleSerialSecondary('');
-      setSalePairSerialOptions(null);
+      resetSaleLineComposer();
     }
   };
 
   const removeProduct = (productIndex: number) => {
+    if (editingSaleLineIndex === productIndex) {
+      resetSaleLineComposer();
+    } else if (editingSaleLineIndex != null && editingSaleLineIndex > productIndex) {
+      setEditingSaleLineIndex(editingSaleLineIndex - 1);
+    }
     const updatedVisits = [...watchedVisits];
     updatedVisits[activeVisit].products.splice(productIndex, 1);
 
@@ -3354,17 +3410,56 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     setValue('visits', updatedVisits);
   };
 
+  const resetSaleLineComposer = () => {
+    setCurrentProduct({
+      inventoryId: '',
+      productId: '',
+      name: '',
+      hsnCode: '',
+      serialNumber: '',
+      unit: 'piece',
+      quantity: 1,
+      saleDate: new Date().toISOString().split('T')[0],
+      mrp: 0,
+      dealerPrice: 0,
+      sellingPrice: 0,
+      discountPercent: 0,
+      discountAmount: 0,
+      gstPercent: 18,
+      gstAmount: 0,
+      finalAmount: 0,
+      gstApplicable: true,
+      gstType: 'IGST',
+      warranty: '',
+      company: '',
+      location: '',
+      soldFromCenterId: '',
+    });
+    setSalePairSaleMode('pair');
+    setSaleSerialPrimary('');
+    setSaleSerialSecondary('');
+    setSalePairSerialOptions(null);
+    setEditingSaleLineIndex(null);
+  };
+
   const updateSaleProductLine = (productIndex: number, patch: Partial<HearingAidProduct>) => {
     const updatedVisits = [...getValues('visits')];
     const visit = { ...updatedVisits[activeVisit] };
     const products = [...visit.products];
     const prev = products[productIndex];
     if (!prev) return;
-    const merged = { ...prev, ...patch };
+    let merged = { ...prev, ...patch };
     if (merged.serialNumber?.trim()) {
       merged.quantity = 1;
     } else if (patch.quantity !== undefined) {
       merged.quantity = hearingAidLineQty({ quantity: patch.quantity });
+    }
+    if (
+      patch.sellingPrice !== undefined ||
+      patch.mrp !== undefined ||
+      patch.gstPercent !== undefined
+    ) {
+      merged = recalculateHearingAidProductLine(merged);
     }
     products[productIndex] = merged;
     visit.products = products;
@@ -3375,6 +3470,49 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     visit.salesAfterTax = totals.salesAfterTax;
     updatedVisits[activeVisit] = visit;
     setValue('visits', updatedVisits);
+  };
+
+  const startEditSaleProductLine = (productIndex: number) => {
+    const visit = getValues('visits')[activeVisit];
+    const p = visit?.products?.[productIndex];
+    if (!p) return;
+    setEditingSaleLineIndex(productIndex);
+    const sns = splitSerialStringIntoTokens(p.serialNumber);
+    if (sns.length >= 2) {
+      setSalePairSaleMode('pair');
+      setSaleSerialPrimary(sns[0]);
+      setSaleSerialSecondary(sns[1]);
+      setSalePairSerialOptions(null);
+    } else {
+      setSalePairSaleMode('pair');
+      setSaleSerialPrimary(sns[0] || '');
+      setSaleSerialSecondary('');
+      setSalePairSerialOptions(null);
+    }
+    setCurrentProduct({
+      inventoryId: p.inventoryId || '',
+      productId: p.productId || '',
+      name: p.name || '',
+      hsnCode: p.hsnCode || '',
+      serialNumber: p.serialNumber || '',
+      unit: p.unit || 'piece',
+      quantity: hearingAidLineQty(p),
+      saleDate: p.saleDate || new Date().toISOString().split('T')[0],
+      mrp: p.mrp || 0,
+      dealerPrice: p.dealerPrice || 0,
+      sellingPrice: p.sellingPrice || 0,
+      discountPercent: p.discountPercent || 0,
+      discountAmount: p.discountAmount || 0,
+      gstPercent: p.gstPercent ?? 18,
+      gstAmount: p.gstAmount || 0,
+      finalAmount: p.finalAmount || 0,
+      gstApplicable: p.gstApplicable !== false,
+      gstType: p.gstType || 'IGST',
+      warranty: p.warranty || '',
+      company: p.company || '',
+      location: p.location || '',
+      soldFromCenterId: p.soldFromCenterId || '',
+    });
   };
 
   // Handle follow-up changes
@@ -7646,8 +7784,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           >
                             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ sm: 'center' }} sx={{ mb: 2 }}>
                               <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                                Add sale line
+                                {editingSaleLineIndex != null ? 'Edit sale line' : 'Add sale line'}
                               </Typography>
+                              {editingSaleLineIndex != null && (
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  onClick={resetSaleLineComposer}
+                                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                                >
+                                  Cancel edit
+                                </Button>
+                              )}
                             </Stack>
                             <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
                               <strong>Same model, multiple devices:</strong> if stock has{' '}
@@ -7925,47 +8073,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 />
                               </Grid>
                               <Grid item xs={12} sm={6} md={2}>
-                                <FormControl fullWidth size="small">
-                                  <InputLabel id="sale-line-warranty-label">Warranty</InputLabel>
-                                  <Select
-                                    labelId="sale-line-warranty-label"
-                                    label="Warranty"
-                                    value={currentProduct.warranty || ''}
-                                    onChange={(e) =>
-                                      setCurrentProduct((prev) => ({
-                                        ...prev,
-                                        warranty: String(e.target.value),
-                                      }))
-                                    }
-                                    displayEmpty
-                                    MenuProps={mergeMenuPropsForReselectClear(
-                                      currentProduct.warranty || '',
-                                      () =>
-                                        setCurrentProduct((prev) => ({
-                                          ...prev,
-                                          warranty: '',
-                                        })),
-                                      undefined
-                                    )}
-                                  >
-                                    <MenuItem value="">
-                                      <em>None</em>
-                                    </MenuItem>
-                                    {currentProduct.warranty &&
-                                      !(
-                                        HEARING_AID_SALE_WARRANTY_OPTIONS as readonly string[]
-                                      ).includes(currentProduct.warranty) && (
-                                        <MenuItem value={currentProduct.warranty}>
-                                          {currentProduct.warranty} (other)
-                                        </MenuItem>
-                                      )}
-                                    {HEARING_AID_SALE_WARRANTY_OPTIONS.map((opt) => (
-                                      <MenuItem key={opt} value={opt}>
-                                        {opt}
-                                      </MenuItem>
-                                    ))}
-                                  </Select>
-                                </FormControl>
+                                <SaleLineWarrantySelect
+                                  labelId="sale-line-warranty-label"
+                                  value={currentProduct.warranty || ''}
+                                  onChange={(warranty) =>
+                                    setCurrentProduct((prev) => ({ ...prev, warranty }))
+                                  }
+                                />
                               </Grid>
                             </Grid>
 
@@ -8017,7 +8131,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       disabled={!currentProduct.name || currentProduct.mrp <= 0}
                                       sx={{ borderRadius: 2, py: 1.25 }}
                                     >
-                                      Add line
+                                      {editingSaleLineIndex != null ? 'Update line' : 'Add line'}
                                     </Button>
                                   </Grid>
                                 </Grid>
@@ -8033,13 +8147,19 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   disabled={!currentProduct.name || currentProduct.mrp <= 0}
                                   sx={{ borderRadius: 2 }}
                                 >
-                                  Add line
+                                  {editingSaleLineIndex != null ? 'Update line' : 'Add line'}
                                 </Button>
                               </Box>
                             )}
                           </Box>
 
                           {currentVisit.products.length > 0 && (
+                            <>
+                              <Alert severity="info" sx={{ mb: 2, borderRadius: 2 }}>
+                                Adjust <strong>warranty</strong> and <strong>selling price</strong> on saved lines in the
+                                table below (same as staff mobile invoicing). Use <strong>Edit</strong> to change serial
+                                or stock on a line. Saving the enquiry updates the linked sales invoice.
+                              </Alert>
                             <TableContainer component={Paper} sx={{ borderRadius: 2, boxShadow: 2, mb: 2 }}>
                               <Table size="small">
                                 <TableHead>
@@ -8056,6 +8176,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     <TableCell align="right" sx={{ fontWeight: 700 }}>
                                       Sell (ea.)
                                     </TableCell>
+                                    <TableCell sx={{ fontWeight: 700 }}>Warranty</TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 700 }}>
                                       Disc. %
                                     </TableCell>
@@ -8072,8 +8193,18 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   {currentVisit.products.map((product, index) => {
                                     const q = hearingAidLineQty(product);
                                     const discPct = roundDiscountPercent(product.discountPercent);
+                                    const isEditingRow = editingSaleLineIndex === index;
                                     return (
-                                      <TableRow key={product.id} hover>
+                                      <TableRow
+                                        key={product.id}
+                                        hover
+                                        selected={isEditingRow}
+                                        sx={
+                                          isEditingRow
+                                            ? { bgcolor: (t) => alpha(t.palette.primary.main, 0.08) }
+                                            : undefined
+                                        }
+                                      >
                                         <TableCell>
                                           <Typography variant="body2" fontWeight={600}>
                                             {product.name}
@@ -8105,7 +8236,29 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                           )}
                                         </TableCell>
                                         <TableCell align="right">{formatCurrencySale(product.mrp)}</TableCell>
-                                        <TableCell align="right">{formatCurrencySale(product.sellingPrice)}</TableCell>
+                                        <TableCell align="right" sx={{ minWidth: 108 }}>
+                                          <TextField
+                                            size="small"
+                                            type="number"
+                                            value={product.sellingPrice}
+                                            onChange={(e) =>
+                                              updateSaleProductLine(index, {
+                                                sellingPrice: roundInrRupee(Number(e.target.value) || 0),
+                                              })
+                                            }
+                                            inputProps={{ min: 0, step: 1, style: { textAlign: 'right' } }}
+                                            sx={{ width: 96 }}
+                                          />
+                                        </TableCell>
+                                        <TableCell sx={{ minWidth: 140 }}>
+                                          <SaleLineWarrantySelect
+                                            labelId={`sale-line-warranty-row-${index}`}
+                                            value={product.warranty || ''}
+                                            onChange={(warranty) =>
+                                              updateSaleProductLine(index, { warranty })
+                                            }
+                                          />
+                                        </TableCell>
                                         <TableCell align="right">{discPct.toFixed(2)}%</TableCell>
                                         <TableCell
                                           sx={{
@@ -8118,7 +8271,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         <TableCell align="right" sx={{ fontWeight: 700 }}>
                                           {formatCurrencySale(product.finalAmount * q)}
                                         </TableCell>
-                                        <TableCell align="right">
+                                        <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+                                          <IconButton
+                                            size="small"
+                                            onClick={() => startEditSaleProductLine(index)}
+                                            color="primary"
+                                            title="Edit line (serial, stock, amounts)"
+                                          >
+                                            <EditIcon fontSize="small" />
+                                          </IconButton>
                                           <IconButton size="small" onClick={() => removeProduct(index)} color="error">
                                             <DeleteIcon />
                                           </IconButton>
@@ -8139,6 +8300,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       {formatCurrencySale(currentVisit.grossSalesBeforeTax)}
                                     </TableCell>
                                     <TableCell align="right">—</TableCell>
+                                    <TableCell align="right">—</TableCell>
                                     <TableCell align="right" sx={{ fontWeight: 800 }}>
                                       {formatCurrencySale(currentVisit.taxAmount)}
                                     </TableCell>
@@ -8150,6 +8312,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                 </TableBody>
                               </Table>
                             </TableContainer>
+                            </>
                           )}
                       </VisitServiceDetailPanel>
                     )}
