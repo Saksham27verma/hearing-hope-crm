@@ -1,6 +1,12 @@
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { serialsFromLineProduct } from '@/lib/enquiryInventoryAvailability';
+import { stripSerialPairsFromProductLines } from '@/utils/stripSerialPairsForFirestore';
+
+export type SerialTypoRename = {
+  oldSerial: string;
+  newSerial: string;
+};
 
 export type PurchaseLineProduct = {
   productId: string;
@@ -52,6 +58,110 @@ export function diffRemovedPurchaseSerials(
   });
 
   return removed;
+}
+
+/**
+ * Only true typo renames: same row, same serial count, exactly one removed and one added.
+ * Avoids treating "4 serials → keep 2" as renames by position index.
+ */
+export function collectPurchaseSerialTypoRenames(
+  beforeProducts: PurchaseLineProduct[],
+  afterProducts: PurchaseLineProduct[],
+): SerialTypoRename[] {
+  const changes: SerialTypoRename[] = [];
+  const seen = new Set<string>();
+  const rowCount = Math.min(beforeProducts.length, afterProducts.length);
+
+  for (let rowIdx = 0; rowIdx < rowCount; rowIdx += 1) {
+    const beforeLine = beforeProducts[rowIdx];
+    const afterLine = afterProducts[rowIdx];
+    if (!beforeLine || !afterLine) continue;
+    if (String(beforeLine.productId || '') !== String(afterLine.productId || '')) continue;
+
+    const beforeSerials = serialsFromLineProduct(beforeLine).map(normalizeSerial).filter(Boolean);
+    const afterSerials = serialsFromLineProduct(afterLine).map(normalizeSerial).filter(Boolean);
+    if (beforeSerials.length === 0 || beforeSerials.length !== afterSerials.length) continue;
+
+    const afterSet = new Set(afterSerials);
+    const removed = beforeSerials.filter((sn) => !afterSet.has(sn));
+    const beforeSet = new Set(beforeSerials);
+    const added = afterSerials.filter((sn) => !beforeSet.has(sn));
+
+    if (removed.length !== 1 || added.length !== 1) continue;
+
+    const key = `${removed[0]}=>${added[0]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    changes.push({ oldSerial: removed[0], newSerial: added[0] });
+  }
+
+  return changes;
+}
+
+function stripRemovedSerialsFromProductLine(
+  prod: Record<string, unknown>,
+  removedSet: Set<string>,
+): Record<string, unknown> | null {
+  const priorSerials = serialsFromLineProduct(prod as Parameters<typeof serialsFromLineProduct>[0]);
+  if (priorSerials.length === 0) return prod;
+
+  const kept = priorSerials.filter((sn) => !removedSet.has(normalizeSerial(sn)));
+  if (kept.length === 0) return null;
+
+  const isPair =
+    String(prod.type || '') === 'Hearing Aid' && String(prod.quantityType || '') === 'pair';
+  const quantity = isPair ? Math.max(1, kept.length / 2) : kept.length;
+
+  const { serialPairs: _pairs, serialNumber: _one, ...rest } = prod;
+  return {
+    ...rest,
+    serialNumbers: kept,
+    quantity,
+  };
+}
+
+/**
+ * Deletes removed serial numbers from material-inward lines (does not rename or reassign).
+ */
+export async function purgeRemovedSerialsFromMaterialInward(
+  serialsToRemove: string[],
+): Promise<number> {
+  const removedSet = new Set(serialsToRemove.map(normalizeSerial).filter(Boolean));
+  if (removedSet.size === 0) return 0;
+
+  const snap = await getDocs(collection(db, 'materialInward'));
+  let updatedDocs = 0;
+
+  for (const docSnap of snap.docs) {
+    const data = docSnap.data() as Record<string, unknown>;
+    const products = Array.isArray(data.products) ? (data.products as Record<string, unknown>[]) : [];
+    if (products.length === 0) continue;
+
+    let changed = false;
+    const nextProducts = products
+      .map((line) => {
+        const next = stripRemovedSerialsFromProductLine(line, removedSet);
+        if (next === null) {
+          changed = true;
+          return null;
+        }
+        const beforeSerials = serialsFromLineProduct(line as Parameters<typeof serialsFromLineProduct>[0]);
+        const afterSerials = serialsFromLineProduct(next as Parameters<typeof serialsFromLineProduct>[0]);
+        if (beforeSerials.length !== afterSerials.length) changed = true;
+        return next;
+      })
+      .filter((line): line is Record<string, unknown> => line !== null);
+
+    if (!changed) continue;
+
+    await updateDoc(doc(db, 'materialInward', docSnap.id), {
+      products: stripSerialPairsFromProductLines(nextProducts),
+      updatedAt: serverTimestamp(),
+    });
+    updatedDocs += 1;
+  }
+
+  return updatedDocs;
 }
 
 export type RemovedSerialUsageWarning = {
@@ -205,8 +315,8 @@ export function buildRemovedSerialConfirmationMessage(warnings: RemovedSerialUsa
     '',
     list + more,
     '',
-    'Removing them from this purchase will take them out of purchase-based inventory.',
-    'Other records listed above will not be changed automatically.',
+    'Removing them will update this purchase and delete those serials from material-in records.',
+    'Material-out, sales, and other records above will not be changed automatically.',
     '',
     'Do you want to continue?',
   ].join('\n');

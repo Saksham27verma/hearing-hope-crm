@@ -74,6 +74,8 @@ import {
 import {
   diffRemovedPurchaseSerials,
   confirmRemovedPurchaseSerials,
+  collectPurchaseSerialTypoRenames,
+  purgeRemovedSerialsFromMaterialInward,
 } from '@/lib/inventory/purchaseEditDiff';
 
 // Types
@@ -135,57 +137,6 @@ interface Purchase {
 }
 
 type CompanyRecord = CompanyMasterRow;
-type SerialChangePair = {
-  oldSerial: string;
-  newSerial: string;
-};
-
-const normalizeSerial = (value: string): string => String(value || '').trim();
-
-const collectSerialChanges = (
-  beforeProducts: PurchaseProduct[],
-  afterProducts: PurchaseProduct[],
-): SerialChangePair[] => {
-  const changes: SerialChangePair[] = [];
-  const seen = new Set<string>();
-  const beforeByRow = new Map<string, string[]>();
-  const afterByRow = new Map<string, string[]>();
-
-  beforeProducts.forEach((product) => {
-    beforeByRow.set(
-      `${product.productId}#${beforeByRow.size}`,
-      Array.isArray(product.serialNumbers)
-        ? product.serialNumbers.map(normalizeSerial).filter(Boolean)
-        : [],
-    );
-  });
-  afterProducts.forEach((product) => {
-    afterByRow.set(
-      `${product.productId}#${afterByRow.size}`,
-      Array.isArray(product.serialNumbers)
-        ? product.serialNumbers.map(normalizeSerial).filter(Boolean)
-        : [],
-    );
-  });
-
-  for (const [rowKey, beforeSerials] of beforeByRow.entries()) {
-    const afterSerials = afterByRow.get(rowKey);
-    if (!afterSerials) continue;
-    const sharedLen = Math.min(beforeSerials.length, afterSerials.length);
-    for (let i = 0; i < sharedLen; i += 1) {
-      const oldSerial = beforeSerials[i];
-      const newSerial = afterSerials[i];
-      if (!oldSerial || !newSerial || oldSerial === newSerial) continue;
-      const key = `${oldSerial}=>${newSerial}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      changes.push({ oldSerial, newSerial });
-    }
-  }
-
-  return changes;
-};
-
 export default function PurchaseManagement() {
   const { user, userProfile, isAllowedModule } = useAuth();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -493,7 +444,16 @@ export default function PurchaseManagement() {
           return;
         }
 
-        const serialChanges = collectSerialChanges(currentPurchase.products, purchaseData.products);
+        if (removedSerials.length > 0) {
+          await purgeRemovedSerialsFromMaterialInward(
+            removedSerials.map((entry) => entry.serial),
+          );
+        }
+
+        const serialChanges = collectPurchaseSerialTypoRenames(
+          currentPurchase.products,
+          purchaseData.products,
+        );
         if (serialChanges.length > 0) {
           const token = await user?.getIdToken();
           if (!token) {
