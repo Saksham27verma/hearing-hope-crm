@@ -71,6 +71,10 @@ import {
   type CompanyMasterRow,
   type PartyMasterRow,
 } from '@/utils/purchaseInvoicePrintHtml';
+import {
+  diffRemovedPurchaseSerials,
+  validateRemovedPurchaseSerials,
+} from '@/lib/inventory/purchaseEditDiff';
 
 // Types
 interface Product {
@@ -480,6 +484,15 @@ export default function PurchaseManagement() {
       setSavingPurchase(true);
       
       if (currentPurchase?.id) {
+        const removedSerials = diffRemovedPurchaseSerials(
+          currentPurchase.products,
+          purchaseData.products,
+        );
+        const removalError = await validateRemovedPurchaseSerials(removedSerials);
+        if (removalError) {
+          throw new Error(removalError);
+        }
+
         const serialChanges = collectSerialChanges(currentPurchase.products, purchaseData.products);
         if (serialChanges.length > 0) {
           const token = await user?.getIdToken();
@@ -588,9 +601,13 @@ export default function PurchaseManagement() {
       setCurrentPurchase(null);
     } catch (error) {
       console.error('Error saving purchase:', error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Failed to save purchase';
       setSnackbar({
         open: true,
-        message: 'Failed to save purchase',
+        message,
         severity: 'error'
       });
     } finally {

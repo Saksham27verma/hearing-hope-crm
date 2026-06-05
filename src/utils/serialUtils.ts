@@ -43,6 +43,13 @@ const extractSerialsFromProducts = (
   });
 };
 
+export type FetchExistingSerialNumbersOptions = {
+  /** When editing a purchase, ignore serials on that document so removed units can be re-added. */
+  excludePurchaseId?: string;
+  /** When editing material inward, ignore serials on that document. */
+  excludeMaterialInwardId?: string;
+};
+
 /**
  * Fetches all known serial numbers from key transactional collections.
  *
@@ -53,8 +60,12 @@ const extractSerialsFromProducts = (
  * Returns a SerialIndex mapping serial -> list of product names
  * where that serial has appeared.
  */
-export const fetchExistingSerialNumbers = async (): Promise<SerialIndex> => {
+export const fetchExistingSerialNumbers = async (
+  options?: FetchExistingSerialNumbersOptions,
+): Promise<SerialIndex> => {
   const index: SerialIndex = new Map();
+  const excludePurchaseId = String(options?.excludePurchaseId || '').trim();
+  const excludeMaterialInwardId = String(options?.excludeMaterialInwardId || '').trim();
 
   try {
     const [
@@ -73,15 +84,16 @@ export const fetchExistingSerialNumbers = async (): Promise<SerialIndex> => {
       getDocs(collection(db, 'stockTransfers')),
     ]);
 
-    const processSnapshot = (snap: any) => {
+    const processSnapshot = (snap: any, skipDocId?: string) => {
       snap.docs.forEach((docSnap: any) => {
+        if (skipDocId && docSnap.id === skipDocId) return;
         const data: any = docSnap.data();
         extractSerialsFromProducts(data?.products, index);
       });
     };
 
-    processSnapshot(materialInSnap);
-    processSnapshot(purchasesSnap);
+    processSnapshot(materialInSnap, excludeMaterialInwardId || undefined);
+    processSnapshot(purchasesSnap, excludePurchaseId || undefined);
     processSnapshot(salesSnap);
     processSnapshot(distributionsSnap);
     processSnapshot(materialsOutSnap);
