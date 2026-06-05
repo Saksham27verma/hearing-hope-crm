@@ -137,6 +137,8 @@ const PRODUCT_TYPES = ['Hearing Aid', 'Battery', 'Accessory', 'Charger', 'Remote
 
 interface PurchaseFormProps {
   initialData?: Purchase;
+  /** Firestore document id when editing an existing purchase */
+  purchaseId?: string;
   products: Product[];
   parties: Party[];
   onSave: (purchase: Purchase) => Promise<void> | void;
@@ -163,6 +165,7 @@ const buildSerialPairs = (
 
 const PurchaseForm: React.FC<PurchaseFormProps> = ({
   initialData,
+  purchaseId,
   products,
   parties,
   onSave,
@@ -294,14 +297,29 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     }
   }, [centers, initialData?.id, initialData?.location]);
 
-  const isEditingPurchase = Boolean(initialData?.id);
+  const resolvedPurchaseId = purchaseId || initialData?.id;
+
+  const isEditingPurchase = Boolean(resolvedPurchaseId);
+
+  useEffect(() => {
+    if (initialData) {
+      setPurchaseData({
+        ...initialData,
+        id: resolvedPurchaseId || initialData.id,
+      });
+      setActiveStep(0);
+      setErrors({});
+      setSerialEditIndex(null);
+      setLineEditIndex(null);
+    }
+  }, [initialData, resolvedPurchaseId]);
 
   // Load all existing serial numbers once so we can prevent duplicates
   useEffect(() => {
     const loadSerials = async () => {
       try {
         const index = await fetchExistingSerialNumbers(
-          initialData?.id ? { excludePurchaseId: initialData.id } : undefined,
+          resolvedPurchaseId ? { excludePurchaseId: resolvedPurchaseId } : undefined,
         );
         setExistingSerials(index);
       } catch (error) {
@@ -310,7 +328,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     };
 
     loadSerials();
-  }, [initialData?.id]);
+  }, [resolvedPurchaseId]);
 
   // Helper functions
   const formatCurrency = (amount: number) => {
@@ -746,26 +764,19 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     const priorCount = target.serialNumbers.length;
     const isPairLine = target.type === 'Hearing Aid' && target.quantityType === 'pair';
 
-    if (!isEditingPurchase && parsed.length !== priorCount) {
+    if (parsed.length === 0) {
+      setSerialEditError('Keep at least one serial number, or remove the entire product row.');
+      return;
+    }
+    if (parsed.length > priorCount) {
       setSerialEditError(
-        `You must keep exactly ${priorCount} serial number(s). This editor is for typo fixes only.`,
+        `You can only remove serials here (had ${priorCount}). Add new units from the product form above.`,
       );
       return;
     }
-
-    if (isEditingPurchase) {
-      if (parsed.length === 0) {
-        setSerialEditError('Keep at least one serial number, or remove the entire product row.');
-        return;
-      }
-      if (parsed.length > priorCount) {
-        setSerialEditError(`You can only remove serials here (max ${priorCount}). Add new units from the product form above.`);
-        return;
-      }
-      if (isPairLine && parsed.length % 2 !== 0) {
-        setSerialEditError('Hearing-aid pairs need an even number of serial numbers.');
-        return;
-      }
+    if (isPairLine && parsed.length % 2 !== 0) {
+      setSerialEditError('Hearing-aid pairs need an even number of serial numbers.');
+      return;
     }
 
     const uniqueCount = new Set(parsed).size;
@@ -1811,9 +1822,11 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
           <Alert severity="info" sx={{ m: 2 }}>
             <Typography variant="body2" sx={{ mb: 1 }}>
               Editing serials for <strong>{purchaseData.products[serialEditIndex].name}</strong>.
+              {' '}
+              Remove serial numbers you no longer want (down to 1), or fix typos.
               {isEditingPurchase
-                ? ' Remove serial numbers you no longer want on this invoice, or fix typos. Removed units leave inventory when you save.'
-                : ' Keep the same count and fix typos only.'}
+                ? ' Removed units leave inventory when you save this purchase.'
+                : ' Save the purchase to apply changes.'}
             </Typography>
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
               <TextField
@@ -1825,9 +1838,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
                 error={!!serialEditError}
                 helperText={
                   serialEditError ||
-                  (isEditingPurchase
-                    ? `Current: ${purchaseData.products[serialEditIndex].serialNumbers.length} — you may remove serials (min 1) or fix typos`
-                    : `Required count: ${purchaseData.products[serialEditIndex].serialNumbers.length}`)
+                  `Had ${purchaseData.products[serialEditIndex].serialNumbers.length} — enter fewer to remove units (minimum 1), or fix typos`
                 }
               />
               <Button variant="contained" size="small" onClick={handleSaveSerialEdit}>

@@ -984,7 +984,9 @@ export default function PurchaseManagement() {
             {currentPurchase ? 'Edit Purchase' : 'New Purchase'}
           </Typography>
           <PurchaseForm
+            key={currentPurchase?.id ?? 'new-purchase'}
             initialData={currentPurchase || undefined}
+            purchaseId={currentPurchase?.id}
             products={products}
             parties={parties}
             onSave={handleSavePurchase}
