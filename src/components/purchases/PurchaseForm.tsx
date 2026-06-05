@@ -330,6 +330,32 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     loadSerials();
   }, [resolvedPurchaseId]);
 
+  const normalizeSerialKey = (value: string) => String(value || '').trim();
+
+  /** Serials already on this invoice (form + original load when editing). */
+  const serialsOnThisPurchaseInvoice = useMemo(() => {
+    const set = new Set<string>();
+    const addFromLines = (lines: PurchaseProduct[] | undefined) => {
+      (lines || []).forEach((line) => {
+        (line.serialNumbers || []).forEach((sn) => {
+          const key = normalizeSerialKey(String(sn));
+          if (key) set.add(key);
+        });
+      });
+    };
+    addFromLines(purchaseData.products);
+    addFromLines(initialData?.products);
+    return set;
+  }, [purchaseData.products, initialData?.products]);
+
+  /** Block only serials that exist elsewhere and are not already on this invoice. */
+  const isSerialBlockedOutsideThisPurchase = (serial: string): boolean => {
+    const key = normalizeSerialKey(serial);
+    if (!key || !existingSerials?.has(key)) return false;
+    if (serialsOnThisPurchaseInvoice.has(key)) return false;
+    return true;
+  };
+
   // Helper functions
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -550,7 +576,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
         duplicateInPurchase.push(cleaned);
         return;
       }
-      if (existingSerials && existingSerials.size > 0 && existingSerials.has(cleaned)) {
+      if (isSerialBlockedOutsideThisPurchase(cleaned)) {
         duplicateInInventory.push(cleaned);
         return;
       }
@@ -653,25 +679,21 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
         return;
       }
 
-      if (existingSerials && existingSerials.size > 0) {
-        const duplicatesInInventory = serialNumbers
-          .map((sn) => sn.trim())
-          .filter((sn) => sn && existingSerials.has(sn))
-          .map((sn) => {
-            const entry = existingSerials.get(sn);
-            const products = entry?.products || [];
-            return products.length
-              ? `${sn} (in: ${products.join(' / ')})`
-              : sn;
-          });
+      const duplicatesInInventory = serialNumbers
+        .map((sn) => sn.trim())
+        .filter((sn) => sn && isSerialBlockedOutsideThisPurchase(sn))
+        .map((sn) => {
+          const entry = existingSerials?.get(sn);
+          const products = entry?.products || [];
+          return products.length ? `${sn} (in: ${products.join(' / ')})` : sn;
+        });
 
-        if (duplicatesInInventory.length > 0) {
-          setErrors({
-            ...errors,
-            productEntry: `These serial numbers already exist in inventory: ${duplicatesInInventory.join(', ')}`,
-          });
-          return;
-        }
+      if (duplicatesInInventory.length > 0) {
+        setErrors({
+          ...errors,
+          productEntry: `These serial numbers already exist in inventory: ${duplicatesInInventory.join(', ')}`,
+        });
+        return;
       }
     }
 
@@ -795,16 +817,17 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       return;
     }
 
-    if (existingSerials && existingSerials.size > 0) {
-      const duplicatesInInventory = parsed
-        .map((sn) => sn.trim())
-        .filter((sn) => sn && existingSerials.has(sn));
-      if (duplicatesInInventory.length > 0) {
-        setSerialEditError(
-          `These serial(s) already exist elsewhere in inventory: ${duplicatesInInventory.join(', ')}`,
-        );
-        return;
-      }
+    const priorOnThisRow = new Set(
+      (target.serialNumbers || []).map((sn) => normalizeSerialKey(String(sn))).filter(Boolean),
+    );
+    const duplicatesInInventory = parsed
+      .map((sn) => normalizeSerialKey(sn))
+      .filter((sn) => sn && !priorOnThisRow.has(sn) && isSerialBlockedOutsideThisPurchase(sn));
+    if (duplicatesInInventory.length > 0) {
+      setSerialEditError(
+        `These serial(s) already exist elsewhere in inventory: ${duplicatesInInventory.join(', ')}`,
+      );
+      return;
     }
 
     const nextQuantity = isPairLine ? Math.max(1, parsed.length / 2) : parsed.length;
