@@ -54,24 +54,31 @@ export function diffRemovedPurchaseSerials(
   return removed;
 }
 
-type SerialUsage = {
+export type RemovedSerialUsageWarning = {
   serial: string;
   reason: string;
 };
 
 function noteUsage(
-  usages: Map<string, SerialUsage>,
+  usages: Map<string, RemovedSerialUsageWarning>,
   serial: string,
   reason: string,
 ): void {
   const normalized = normalizeSerial(serial);
-  if (!normalized || usages.has(normalized)) return;
+  if (!normalized) return;
+  const existing = usages.get(normalized);
+  if (existing) {
+    if (!existing.reason.includes(reason)) {
+      existing.reason = `${existing.reason}; ${reason}`;
+    }
+    return;
+  }
   usages.set(normalized, { serial: normalized, reason });
 }
 
 function scanProductsArray(
   products: unknown,
-  usages: Map<string, SerialUsage>,
+  usages: Map<string, RemovedSerialUsageWarning>,
   removedSet: Set<string>,
   reason: string,
 ): void {
@@ -99,7 +106,7 @@ function scanProductsArray(
 
 function scanEnquiryVisits(
   data: Record<string, unknown>,
-  usages: Map<string, SerialUsage>,
+  usages: Map<string, RemovedSerialUsageWarning>,
   removedSet: Set<string>,
 ): void {
   const visits = Array.isArray(data.visits) ? data.visits : [];
@@ -119,30 +126,42 @@ function scanEnquiryVisits(
 }
 
 /**
- * Ensures removed purchase serials are not still sold, dispatched, or transferred elsewhere.
- * Returns a user-facing error message, or null if safe to save.
+ * Finds other records that still reference serials being removed from a purchase.
+ * Used to show a confirmation before saving (does not block save).
  */
-export async function validateRemovedPurchaseSerials(
+export async function findRemovedPurchaseSerialWarnings(
   removed: RemovedPurchaseSerial[],
-): Promise<string | null> {
-  if (removed.length === 0) return null;
+): Promise<RemovedSerialUsageWarning[]> {
+  if (removed.length === 0) return [];
 
   const removedSet = new Set(removed.map((r) => normalizeSerial(r.serial)).filter(Boolean));
-  const usages = new Map<string, SerialUsage>();
+  const usages = new Map<string, RemovedSerialUsageWarning>();
 
   const [
+    materialInSnap,
     salesSnap,
     materialsOutSnap,
     distributionsSnap,
     stockTransferSnap,
     enquiriesSnap,
   ] = await Promise.all([
+    getDocs(collection(db, 'materialInward')),
     getDocs(collection(db, 'sales')),
     getDocs(collection(db, 'materialsOut')),
     getDocs(collection(db, 'distributions')),
     getDocs(collection(db, 'stockTransfers')),
     getDocs(collection(db, 'enquiries')),
   ]);
+
+  materialInSnap.docs.forEach((docSnap) => {
+    const data = docSnap.data();
+    scanProductsArray(
+      (data as { products?: unknown }).products,
+      usages,
+      removedSet,
+      'on a material-in record',
+    );
+  });
 
   salesSnap.docs.forEach((docSnap) => {
     const data = docSnap.data() as Record<string, unknown>;
@@ -171,10 +190,33 @@ export async function validateRemovedPurchaseSerials(
     scanEnquiryVisits(docSnap.data() as Record<string, unknown>, usages, removedSet);
   });
 
-  if (usages.size === 0) return null;
+  return Array.from(usages.values()).sort((a, b) => a.serial.localeCompare(b.serial));
+}
 
-  const first = usages.values().next().value as SerialUsage;
-  const more = usages.size - 1;
-  const suffix = more > 0 ? ` (+${more} more)` : '';
-  return `Cannot remove serial ${first.serial} from this purchase — it is ${first.reason}${suffix}.`;
+export function buildRemovedSerialConfirmationMessage(warnings: RemovedSerialUsageWarning[]): string {
+  if (warnings.length === 0) return '';
+
+  const lines = warnings.map((w) => `• ${w.serial}: ${w.reason}`);
+  const list = lines.slice(0, 8).join('\n');
+  const more = warnings.length > 8 ? `\n…and ${warnings.length - 8} more.` : '';
+
+  return [
+    'The following serial number(s) you are removing from this purchase also appear elsewhere:',
+    '',
+    list + more,
+    '',
+    'Removing them from this purchase will take them out of purchase-based inventory.',
+    'Other records listed above will not be changed automatically.',
+    '',
+    'Do you want to continue?',
+  ].join('\n');
+}
+
+export async function confirmRemovedPurchaseSerials(
+  removed: RemovedPurchaseSerial[],
+): Promise<boolean> {
+  const warnings = await findRemovedPurchaseSerialWarnings(removed);
+  if (warnings.length === 0) return true;
+  const message = buildRemovedSerialConfirmationMessage(warnings);
+  return window.confirm(message);
 }

@@ -73,7 +73,7 @@ import {
 } from '@/utils/purchaseInvoicePrintHtml';
 import {
   diffRemovedPurchaseSerials,
-  validateRemovedPurchaseSerials,
+  confirmRemovedPurchaseSerials,
 } from '@/lib/inventory/purchaseEditDiff';
 
 // Types
@@ -488,9 +488,9 @@ export default function PurchaseManagement() {
           currentPurchase.products,
           purchaseData.products,
         );
-        const removalError = await validateRemovedPurchaseSerials(removedSerials);
-        if (removalError) {
-          throw new Error(removalError);
+        const proceedAfterRemovalWarning = await confirmRemovedPurchaseSerials(removedSerials);
+        if (!proceedAfterRemovalWarning) {
+          return;
         }
 
         const serialChanges = collectSerialChanges(currentPurchase.products, purchaseData.products);
