@@ -45,6 +45,11 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
 import { fetchExistingSerialNumbers, SerialIndex } from '@/utils/serialUtils';
 import {
+  buildPurgeSerialsConfirmationMessage,
+  purgeRemovedSerialsEverywhere,
+  serialsRemovedBetweenPurchaseProducts,
+} from '@/lib/inventory/purchaseEditDiff';
+import {
   getHeadOfficeId,
   fetchAllCenters,
   getCentersForProfile,
@@ -172,7 +177,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   onCancel,
   isSaving = false
 }) => {
-  const { userProfile } = useAuth();
+  const { user, userProfile } = useAuth();
   console.log('PurchaseForm rendered with multi-step design');
   // Steps for the form
   const steps = ['Invoice Details', 'Product Details', 'Review & Summary'];
@@ -223,6 +228,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
 
   // All serial numbers that already exist anywhere in the system
   const [existingSerials, setExistingSerials] = useState<SerialIndex | null>(null);
+  const [purgedSerialsCache, setPurgedSerialsCache] = useState<Set<string>>(() => new Set());
   
   // Add a state variable for barcode scanner mode 
   const [scannerMode, setScannerMode] = useState(false);
@@ -311,26 +317,35 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       setErrors({});
       setSerialEditIndex(null);
       setLineEditIndex(null);
+      setPurgedSerialsCache(new Set());
     }
   }, [initialData, resolvedPurchaseId]);
 
+  const reloadExistingSerials = async () => {
+    try {
+      const index = await fetchExistingSerialNumbers(
+        resolvedPurchaseId ? { excludePurchaseId: resolvedPurchaseId } : undefined,
+      );
+      setExistingSerials(index);
+    } catch (error) {
+      console.error('Failed to load existing serial numbers for Purchase:', error);
+    }
+  };
+
   // Load all existing serial numbers once so we can prevent duplicates
   useEffect(() => {
-    const loadSerials = async () => {
-      try {
-        const index = await fetchExistingSerialNumbers(
-          resolvedPurchaseId ? { excludePurchaseId: resolvedPurchaseId } : undefined,
-        );
-        setExistingSerials(index);
-      } catch (error) {
-        console.error('Failed to load existing serial numbers for Purchase:', error);
-      }
-    };
-
-    loadSerials();
+    void reloadExistingSerials();
   }, [resolvedPurchaseId]);
 
   const normalizeSerialKey = (value: string) => String(value || '').trim();
+
+  /** Serials removed from this invoice during the current edit (may be re-added). */
+  const serialsRemovedFromThisInvoice = useMemo(() => {
+    if (!initialData?.products) return new Set<string>();
+    return new Set(
+      serialsRemovedBetweenPurchaseProducts(initialData.products, purchaseData.products),
+    );
+  }, [initialData?.products, purchaseData.products]);
 
   /** Serials already on this invoice (form + original load when editing). */
   const serialsOnThisPurchaseInvoice = useMemo(() => {
@@ -353,6 +368,28 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
     const key = normalizeSerialKey(serial);
     if (!key || !existingSerials?.has(key)) return false;
     if (serialsOnThisPurchaseInvoice.has(key)) return false;
+    if (serialsRemovedFromThisInvoice.has(key)) return false;
+    if (purgedSerialsCache.has(key)) return false;
+    return true;
+  };
+
+  const purgeBlockedSerialsIfConfirmed = async (serials: string[]): Promise<boolean> => {
+    const blocked = serials
+      .map((sn) => normalizeSerialKey(sn))
+      .filter((sn) => sn && isSerialBlockedOutsideThisPurchase(sn));
+    const uniqueBlocked = [...new Set(blocked)];
+    if (uniqueBlocked.length === 0) return true;
+
+    const confirmed = window.confirm(buildPurgeSerialsConfirmationMessage(uniqueBlocked));
+    if (!confirmed) return false;
+
+    await purgeRemovedSerialsEverywhere(uniqueBlocked, async () => (user ? user.getIdToken() : undefined));
+    setPurgedSerialsCache((prev) => {
+      const next = new Set(prev);
+      uniqueBlocked.forEach((sn) => next.add(sn));
+      return next;
+    });
+    await reloadExistingSerials();
     return true;
   };
 
@@ -551,14 +588,12 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   };
 
   // Handle adding serial number(s) — supports "SN1, SN2" or "SN1/SN2"
-  const handleAddSerialNumber = () => {
+  const handleAddSerialNumber = async () => {
     const raw = (serialNumber || '').trim();
     if (!raw) return;
 
     const parts = parseSerialInput(raw);
-    const toAdd: string[] = [];
     const duplicateInPurchase: string[] = [];
-    const duplicateInInventory: string[] = [];
 
     const existingInPurchase = new Set<string>();
     purchaseData.products.forEach((p) => {
@@ -568,21 +603,44 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       });
     });
 
+    const candidateParts: string[] = [];
     parts.forEach((part) => {
       const cleaned = cleanSerialPart(part);
       if (!cleaned) return;
-      if (serialNumbers.includes(cleaned) || toAdd.includes(cleaned)) return;
+      if (serialNumbers.includes(cleaned) || candidateParts.includes(cleaned)) return;
       if (existingInPurchase.has(cleaned)) {
         duplicateInPurchase.push(cleaned);
         return;
       }
-      if (isSerialBlockedOutsideThisPurchase(cleaned)) {
-        duplicateInInventory.push(cleaned);
-        return;
-      }
-      toAdd.push(cleaned);
+      candidateParts.push(cleaned);
     });
 
+    if (candidateParts.length === 0) {
+      if (duplicateInPurchase.length > 0) {
+        setErrors((prev) => ({
+          ...prev,
+          productEntry: `Already in this purchase: ${duplicateInPurchase.join(', ')}`,
+        }));
+      }
+      return;
+    }
+
+    try {
+      const ok = await purgeBlockedSerialsIfConfirmed(candidateParts);
+      if (!ok) {
+        setErrors((prev) => ({
+          ...prev,
+          productEntry: 'Serial number(s) were not added. Confirm removal from other records to continue.',
+        }));
+        return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to clear serial numbers from inventory.';
+      setErrors((prev) => ({ ...prev, productEntry: message }));
+      return;
+    }
+
+    const toAdd = candidateParts.filter((cleaned) => !isSerialBlockedOutsideThisPurchase(cleaned));
     if (toAdd.length > 0) {
       setSerialNumbers([...serialNumbers, ...toAdd]);
       setSerialNumber('');
@@ -593,11 +651,11 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
       });
     }
 
-    if (duplicateInPurchase.length > 0 || duplicateInInventory.length > 0) {
-      const msgs: string[] = [];
-      if (duplicateInPurchase.length > 0) msgs.push(`Already in this purchase: ${duplicateInPurchase.join(', ')}`);
-      if (duplicateInInventory.length > 0) msgs.push(`Already in inventory: ${duplicateInInventory.join(', ')}`);
-      setErrors((prev) => ({ ...prev, productEntry: msgs.join('. ') }));
+    if (duplicateInPurchase.length > 0) {
+      setErrors((prev) => ({
+        ...prev,
+        productEntry: `Already in this purchase: ${duplicateInPurchase.join(', ')}`,
+      }));
     }
   };
   
@@ -609,7 +667,7 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
   };
   
   // Handle adding a product to the purchase
-  const handleAddProductToPurchase = () => {
+  const handleAddProductToPurchase = async () => {
     if (!currentProduct) {
       return;
     }
@@ -679,21 +737,38 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
         return;
       }
 
-      const duplicatesInInventory = serialNumbers
+      const blockedSerials = serialNumbers
         .map((sn) => sn.trim())
-        .filter((sn) => sn && isSerialBlockedOutsideThisPurchase(sn))
-        .map((sn) => {
-          const entry = existingSerials?.get(sn);
-          const products = entry?.products || [];
-          return products.length ? `${sn} (in: ${products.join(' / ')})` : sn;
-        });
+        .filter((sn) => sn && isSerialBlockedOutsideThisPurchase(sn));
 
-      if (duplicatesInInventory.length > 0) {
-        setErrors({
-          ...errors,
-          productEntry: `These serial numbers already exist in inventory: ${duplicatesInInventory.join(', ')}`,
-        });
-        return;
+      if (blockedSerials.length > 0) {
+        try {
+          const ok = await purgeBlockedSerialsIfConfirmed(blockedSerials);
+          if (!ok) {
+            setErrors({
+              ...errors,
+              productEntry:
+                'These serial numbers exist in other records. Confirm removal from inventory to add them here.',
+            });
+            return;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Failed to clear serial numbers from inventory.';
+          setErrors({ ...errors, productEntry: message });
+          return;
+        }
+
+        const stillBlocked = serialNumbers
+          .map((sn) => sn.trim())
+          .filter((sn) => sn && isSerialBlockedOutsideThisPurchase(sn));
+        if (stillBlocked.length > 0) {
+          setErrors({
+            ...errors,
+            productEntry: `These serial numbers still exist in inventory: ${stillBlocked.join(', ')}`,
+          });
+          return;
+        }
       }
     }
 

@@ -75,7 +75,7 @@ import {
   diffRemovedPurchaseSerials,
   confirmRemovedPurchaseSerials,
   collectPurchaseSerialTypoRenames,
-  purgeRemovedSerialsFromMaterialInward,
+  purgeRemovedSerialsEverywhere,
 } from '@/lib/inventory/purchaseEditDiff';
 
 // Types
@@ -445,8 +445,9 @@ export default function PurchaseManagement() {
         }
 
         if (removedSerials.length > 0) {
-          await purgeRemovedSerialsFromMaterialInward(
+          await purgeRemovedSerialsEverywhere(
             removedSerials.map((entry) => entry.serial),
+            async () => (user ? user.getIdToken() : undefined),
           );
         }
 
