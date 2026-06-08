@@ -416,6 +416,15 @@ const CashRegisterPage = () => {
     [allSheets],
   );
 
+  const suggestedOpeningForEntry = useMemo(() => {
+    if (!selectedCenter) return { opening: 0, priorSheet: null as { id: string; doc: DailySheetDoc } | null };
+    return suggestOpeningCashBalance(centerSheetsAllTime, selectedCenter.id, entryDate);
+  }, [selectedCenter, centerSheetsAllTime, entryDate]);
+
+  const effectiveOpeningCashBalance = openingManuallyEdited
+    ? Math.max(0, Number(openingCashBalance) || 0)
+    : suggestedOpeningForEntry.opening;
+
   const applySuggestedOpening = useCallback(
     (date: Date, force = false) => {
       if (!selectedCenter) return;
@@ -452,11 +461,11 @@ const CashRegisterPage = () => {
     setter((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   };
 
-  const dailyTotals = () => buildTotalsPayload(cashInRows, cashOutRows, openingCashBalance);
+  const dailyTotals = () => buildTotalsPayload(cashInRows, cashOutRows, effectiveOpeningCashBalance);
 
   const expectedClosingCash = () => {
     const t = dailyTotals();
-    return t.closingCashBalance ?? computeClosingCashBalance(openingCashBalance, t.cashIn, t.cashOut);
+    return t.closingCashBalance ?? computeClosingCashBalance(effectiveOpeningCashBalance, t.cashIn, t.cashOut);
   };
 
   const resetDailyForm = () => {
@@ -498,18 +507,12 @@ const CashRegisterPage = () => {
       return;
     }
     try {
-      const totals = dailyTotals();
-      const { opening: suggestedOpening, priorSheet } = suggestOpeningCashBalance(
-        centerSheetsAllTime,
-        selectedCenter.id,
-        entryDate,
-      );
-      const opening = openingManuallyEdited
-        ? Math.max(0, Number(openingCashBalance) || 0)
-        : suggestedOpening;
+      const { opening: suggestedOpening, priorSheet } = suggestedOpeningForEntry;
+      const opening = effectiveOpeningCashBalance;
+      const totals = buildTotalsPayload(cashInRows, cashOutRows, opening);
       const openingSource =
         openingManuallyEdited || (priorSheet && opening !== suggestedOpening) ? 'manual' : 'carried_forward';
-      const closingCashBalance = totals.closingCashBalance ?? computeClosingCashBalance(opening, totals.cashIn, totals.cashOut);
+      const closingCashBalance = totals.closingCashBalance;
       const cashInNormalized = cashInRows.map((r) => normalizeDailyRow(r as unknown as Record<string, unknown>, 'in'));
       const cashOutNormalized = cashOutRows.map((r) => normalizeDailyRow(r as unknown as Record<string, unknown>, 'out'));
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1054,12 +1057,12 @@ const CashRegisterPage = () => {
       ? `Opening equals ${carriedForwardFromDate.toLocaleDateString('en-IN')} closing cash balance`
       : 'No prior sheet — opening cash balance is ₹0';
 
-    const formulaParts: string[] = [formatCurrency(openingCashBalance)];
+    const formulaParts: string[] = [formatCurrency(effectiveOpeningCashBalance)];
     if (t.cashIn > 0) formulaParts.push(`+ ${formatCurrency(t.cashIn)} received`);
     if (t.cashOut > 0) formulaParts.push(`− ${formatCurrency(t.cashOut)} paid`);
     const formulaLine =
       t.cashOut > 0 && t.cashIn === 0
-        ? `${formatCurrency(openingCashBalance)} − ${formatCurrency(t.cashOut)} = ${formatCurrency(closing)}`
+        ? `${formatCurrency(effectiveOpeningCashBalance)} − ${formatCurrency(t.cashOut)} = ${formatCurrency(closing)}`
         : `${formulaParts.join(' ')} = ${formatCurrency(closing)}`;
 
     const statementRow = (label: string, value: string, opts?: { bold?: boolean; success?: boolean }) => (
@@ -1105,7 +1108,7 @@ const CashRegisterPage = () => {
           fullWidth
           type="number"
           label="Cash opening balance"
-          value={openingCashBalance}
+          value={effectiveOpeningCashBalance}
           onChange={(e) => {
             setOpeningCashBalance(Math.max(0, Number(e.target.value) || 0));
             setOpeningManuallyEdited(true);
@@ -1126,7 +1129,7 @@ const CashRegisterPage = () => {
         )}
 
         <Box sx={{ borderRadius: 2, border: '1px solid', borderColor: 'divider', bgcolor: 'background.paper', px: 2 }}>
-          {statementRow('Cash opening balance', formatCurrency(openingCashBalance))}
+          {statementRow('Cash opening balance', formatCurrency(effectiveOpeningCashBalance))}
           {statementRow('Net cash in (today)', formatCurrency(t.cashIn - t.cashOut), {
             success: t.cashIn - t.cashOut >= 0,
           })}
@@ -1226,7 +1229,7 @@ const CashRegisterPage = () => {
       >
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'stretch', sm: 'center' }} justifyContent="flex-end">
           <Stack direction="row" flexWrap="wrap" gap={1} justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}>
-            <Chip label={`Cash opening: ${formatCurrency(openingCashBalance)}`} variant="outlined" size="small" />
+            <Chip label={`Cash opening: ${formatCurrency(effectiveOpeningCashBalance)}`} variant="outlined" size="small" />
             <Chip
               label={`Net cash in: ${formatCurrency(dailyTotals().cashIn - dailyTotals().cashOut)}`}
               variant="outlined"
@@ -1356,13 +1359,18 @@ const CashRegisterPage = () => {
                                 setErrorMsg('You can only edit cash sheets for today or yesterday.');
                                 return;
                               }
-                              const bal = resolveDrawerBalancesForSheet(sheetsForCenterChain(s.doc.centerId), s);
-                              setEntryDate(new Date(s.doc.date.seconds * 1000));
+                              const sheetDate = new Date(s.doc.date.seconds * 1000);
+                              const { opening, priorSheet } = suggestOpeningCashBalance(
+                                centerSheetsAllTime,
+                                s.doc.centerId || selectedCenter?.id || '',
+                                sheetDate,
+                              );
+                              setEntryDate(sheetDate);
                               setCashInRows(normalizeCashInRows(s.doc.cashIn));
                               setCashOutRows(normalizeCashOutRows(s.doc.cashOut));
-                              setOpeningCashBalance(bal.openingCashBalance);
-                              setOpeningManuallyEdited(s.doc.openingSource === 'manual');
-                              setCarriedForwardFromDate(null);
+                              setOpeningCashBalance(opening);
+                              setOpeningManuallyEdited(false);
+                              setCarriedForwardFromDate(priorSheet ? sheetDateFromDoc(priorSheet.doc) : null);
                               setSheetRemarks(typeof s.doc.remarks === 'string' ? s.doc.remarks : '');
                               setEditingSheetId(s.id);
                               setEntryDrawerOpen(true);

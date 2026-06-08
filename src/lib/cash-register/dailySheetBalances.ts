@@ -60,7 +60,7 @@ export function computeClosingCashBalance(opening: number, cashIn: number, cashO
   return o + ci - co;
 }
 
-/** Drawer opening/closing for one sheet; priorClosing = previous day's closing (cash balance). */
+/** Drawer opening/closing for one sheet; priorClosing = previous day's closing cash balance. */
 export function resolveDrawerBalances(
   doc: DailySheetDoc,
   priorClosing: number | null = null,
@@ -78,16 +78,14 @@ export function resolveDrawerBalances(
   const hasStoredOpening =
     typeof doc.openingCashBalance === 'number' && Number.isFinite(doc.openingCashBalance);
 
+  // Opening always equals prior day's closing cash balance when a prior sheet exists.
   let openingCashBalance: number;
-  if (hasStoredOpening && doc.openingCashBalance! > 0) {
-    openingCashBalance = doc.openingCashBalance!;
-  } else if (priorClosing != null && priorClosing > 0) {
-    // Opening equals prior day's cash balance (closing), including legacy sheets without opening field
+  if (priorClosing != null) {
     openingCashBalance = priorClosing;
-  } else if (hasStoredClosing) {
-    openingCashBalance = doc.closingCashBalance! - cashIn + cashOut;
   } else if (hasStoredOpening) {
     openingCashBalance = doc.openingCashBalance!;
+  } else if (hasStoredClosing) {
+    openingCashBalance = doc.closingCashBalance! - cashIn + cashOut;
   } else {
     openingCashBalance = 0;
   }
@@ -106,7 +104,9 @@ export function resolveDrawerBalancesForSheet(
   const centerId = sheet.doc.centerId;
   if (!centerId) return resolveDrawerBalances(sheet.doc, null);
   const prior = findPriorSheetForCenter(sheets, centerId, sheetDateFromDoc(sheet.doc));
-  const priorClosing = prior ? resolveDrawerBalancesForSheet(sheets, prior).closingCashBalance : 0;
+  const priorClosing = prior
+    ? resolveDrawerBalancesForSheet(sheets, prior).closingCashBalance
+    : null;
   return resolveDrawerBalances(sheet.doc, priorClosing);
 }
 
