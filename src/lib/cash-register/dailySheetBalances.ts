@@ -73,26 +73,21 @@ export function resolveDrawerBalances(
   const cashOut = Number(doc.totals?.cashOut) || 0;
   const cashMovement = Number(doc.totals?.cashBalance) ?? cashIn - cashOut;
 
-  const hasStoredClosing =
-    typeof doc.closingCashBalance === 'number' && Number.isFinite(doc.closingCashBalance);
   const hasStoredOpening =
     typeof doc.openingCashBalance === 'number' && Number.isFinite(doc.openingCashBalance);
 
-  // Opening always equals prior day's closing cash balance when a prior sheet exists.
+  // Opening = prior day's closing cash balance (drawer balance at start of this day).
   let openingCashBalance: number;
   if (priorClosing != null) {
     openingCashBalance = priorClosing;
   } else if (hasStoredOpening) {
     openingCashBalance = doc.openingCashBalance!;
-  } else if (hasStoredClosing) {
-    openingCashBalance = doc.closingCashBalance! - cashIn + cashOut;
   } else {
     openingCashBalance = 0;
   }
 
-  const closingCashBalance = hasStoredClosing
-    ? doc.closingCashBalance!
-    : computeClosingCashBalance(openingCashBalance, cashIn, cashOut);
+  // Always derive closing so each day's opening matches the previous day's cash balance.
+  const closingCashBalance = computeClosingCashBalance(openingCashBalance, cashIn, cashOut);
 
   return { openingCashBalance, closingCashBalance, cashMovement };
 }
@@ -231,10 +226,12 @@ export function suggestOpeningCashBalance(
   sheets: CashDailySheetRef[],
   centerId: string,
   entryDate: Date,
+  excludeSheetId?: string | null,
 ): { opening: number; priorSheet: CashDailySheetRef | null } {
-  const prior = findPriorSheetForCenter(sheets, centerId, entryDate);
+  const chain = excludeSheetId ? sheets.filter((s) => s.id !== excludeSheetId) : sheets;
+  const prior = findPriorSheetForCenter(chain, centerId, entryDate);
   if (!prior) return { opening: 0, priorSheet: null };
-  const opening = getPriorDrawerClosing(sheets, centerId, entryDate);
+  const opening = getPriorDrawerClosing(chain, centerId, entryDate);
   return { opening, priorSheet: prior };
 }
 
