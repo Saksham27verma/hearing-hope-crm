@@ -292,8 +292,11 @@ export function findLatestSheetForCenter(
   return best;
 }
 
-/** Period opening/closing for a filtered set of sheets (single center or mixed). */
-export function computePeriodDrawerBalances(sheets: CashDailySheetRef[]): {
+/** Period opening/closing for a filtered set of sheets (single center). */
+export function computePeriodDrawerBalances(
+  sheets: CashDailySheetRef[],
+  chainSheets?: CashDailySheetRef[],
+): {
   periodOpening: number;
   periodClosing: number;
   isSingleDay: boolean;
@@ -303,6 +306,7 @@ export function computePeriodDrawerBalances(sheets: CashDailySheetRef[]): {
     return { periodOpening: 0, periodClosing: 0, isSingleDay: false, sheetCount: 0 };
   }
 
+  const chain = chainSheets ?? sheets;
   const sorted = [...sheets].sort(
     (a, b) => sheetDateFromDoc(a.doc).getTime() - sheetDateFromDoc(b.doc).getTime(),
   );
@@ -313,8 +317,8 @@ export function computePeriodDrawerBalances(sheets: CashDailySheetRef[]): {
     (s) => startOfDay(sheetDateFromDoc(s.doc)).getTime() === firstDay,
   );
 
-  const firstBalances = resolveDrawerBalancesForSheet(sheets, sorted[0]);
-  const lastBalances = resolveDrawerBalancesForSheet(sheets, sorted[sorted.length - 1]);
+  const firstBalances = resolveDrawerBalancesForSheet(chain, sorted[0]);
+  const lastBalances = resolveDrawerBalancesForSheet(chain, sorted[sorted.length - 1]);
 
   return {
     periodOpening: firstBalances.openingCashBalance,
@@ -322,4 +326,87 @@ export function computePeriodDrawerBalances(sheets: CashDailySheetRef[]): {
     isSingleDay,
     sheetCount: sheets.length,
   };
+}
+
+export function groupSheetsByCenterId(sheets: CashDailySheetRef[]): Map<string, CashDailySheetRef[]> {
+  const map = new Map<string, CashDailySheetRef[]>();
+  for (const s of sheets) {
+    const cId = s.doc.centerId || '__legacy__';
+    if (!map.has(cId)) map.set(cId, []);
+    map.get(cId)!.push(s);
+  }
+  return map;
+}
+
+/** Effective cash in drawer from a today snapshot (matches center register UI). */
+export function effectiveDrawerCashFromSnapshot(snapshot: TodayDrawerSnapshot): number {
+  return snapshot.closingNotSavedYet
+    ? snapshot.opening
+    : (snapshot.closing ?? snapshot.opening);
+}
+
+/**
+ * Sum per-center drawer balances. Each center maintains its own cash chain;
+ * mixed-center sheets must never be treated as one register.
+ */
+export function computeAggregatedPeriodDrawerBalances(
+  sheets: CashDailySheetRef[],
+  chainSheets?: CashDailySheetRef[],
+): {
+  periodOpening: number;
+  periodClosing: number;
+  isSingleDay: boolean;
+  sheetCount: number;
+  centerCount: number;
+} {
+  const chain = chainSheets ?? sheets;
+  const byCenter = groupSheetsByCenterId(sheets);
+  if (byCenter.size === 0) {
+    return { periodOpening: 0, periodClosing: 0, isSingleDay: false, sheetCount: 0, centerCount: 0 };
+  }
+
+  let periodOpening = 0;
+  let periodClosing = 0;
+  let sheetCount = 0;
+  let allSingleDay = true;
+
+  for (const [, centerSheets] of byCenter) {
+    const centerId = centerSheets[0]?.doc.centerId;
+    const centerChain = centerId
+      ? chain.filter((s) => s.doc.centerId === centerId)
+      : centerSheets;
+    const drawer = computePeriodDrawerBalances(centerSheets, centerChain);
+    periodOpening += drawer.periodOpening;
+    periodClosing += drawer.periodClosing;
+    sheetCount += drawer.sheetCount;
+    if (!drawer.isSingleDay) allSingleDay = false;
+  }
+
+  return {
+    periodOpening,
+    periodClosing,
+    isSingleDay: allSingleDay,
+    sheetCount,
+    centerCount: byCenter.size,
+  };
+}
+
+/** Sum of each center's current drawer balance (as shown on individual center registers). */
+export function computeAggregatedTodayDrawerBalances(
+  chainSheets: CashDailySheetRef[],
+  centerIds: string[],
+  asOfDate: Date = new Date(),
+): { periodOpening: number; periodClosing: number; centerCount: number } {
+  let periodOpening = 0;
+  let periodClosing = 0;
+  let centerCount = 0;
+
+  for (const centerId of centerIds) {
+    const snap = getTodayDrawerSnapshot(chainSheets, centerId, asOfDate);
+    periodOpening += snap.opening;
+    periodClosing += effectiveDrawerCashFromSnapshot(snap);
+    centerCount += 1;
+  }
+
+  return { periodOpening, periodClosing, centerCount };
 }

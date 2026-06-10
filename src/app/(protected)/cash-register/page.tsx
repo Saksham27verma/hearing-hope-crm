@@ -82,8 +82,11 @@ import {
   type DailySheetDoc,
   type TodayDrawerSnapshot,
   buildTotalsPayload,
+  computeAggregatedPeriodDrawerBalances,
+  computeAggregatedTodayDrawerBalances,
   computeClosingCashBalance,
   computePeriodDrawerBalances,
+  effectiveDrawerCashFromSnapshot,
   findLatestSheetForCenter,
   findSheetForCenterOnDate,
   getTodayDrawerSnapshot,
@@ -786,10 +789,8 @@ const CashRegisterPage = () => {
 
     const drawerCashBalance =
       today && (options?.showDrawerBalances || options?.showTodayDrawer)
-        ? today.closingNotSavedYet
-          ? today.opening
-          : (today.closing ?? today.opening)
-        : period?.isSingleDay
+        ? effectiveDrawerCashFromSnapshot(today)
+        : period && period.sheetCount > 0
           ? period.periodClosing
           : null;
 
@@ -1269,7 +1270,12 @@ const CashRegisterPage = () => {
     const totals = computeTotals(totalsFiltered.length > 0 ? totalsFiltered : sheets);
     const todayDrawer = opts?.todayDrawer ?? null;
     const periodDrawerBalances =
-      isAdmin && tableFiltered.length > 0 ? computePeriodDrawerBalances(tableFiltered) : undefined;
+      isAdmin && tableFiltered.length > 0
+        ? computePeriodDrawerBalances(
+            tableFiltered,
+            selectedCenter ? sheetsForCenterChain(selectedCenter.id) : tableFiltered,
+          )
+        : undefined;
 
     return (
       <>
@@ -1602,6 +1608,8 @@ const CashRegisterPage = () => {
   const renderOverallDashboard = () => {
     const rangeFiltered = filterByRange(scopedSheets);
     const overall = computeTotals(rangeFiltered);
+    const hasDateRange = !!(rangeStart || rangeEnd);
+    const chainSheets = scopedSheets;
 
     const byCenterId = new Map<string, { centerName: string; sheets: typeof allSheets }>();
     rangeFiltered.forEach((s) => {
@@ -1611,23 +1619,70 @@ const CashRegisterPage = () => {
       byCenterId.get(cId)!.sheets.push(s);
     });
 
-    const centerSummaries = Array.from(byCenterId.entries())
-      .map(([cId, { centerName, sheets }]) => {
+    const centerSummaries = visibleCenters
+      .map((c) => {
+        const sheets = rangeFiltered.filter((s) => s.doc.centerId === c.id);
         const movement = computeTotals(sheets);
-        const drawer = computePeriodDrawerBalances(sheets);
+        const centerChain = chainSheets.filter((s) => s.doc.centerId === c.id);
+        const drawer = hasDateRange
+          ? computePeriodDrawerBalances(sheets, centerChain)
+          : (() => {
+              const snap = getTodayDrawerSnapshot(centerChain, c.id, new Date());
+              return {
+                periodOpening: snap.opening,
+                periodClosing: effectiveDrawerCashFromSnapshot(snap),
+                sheetCount: sheets.length,
+              };
+            })();
         return {
-          centerId: cId,
-          centerName,
+          centerId: c.id,
+          centerName: c.name,
           ...movement,
           periodOpening: drawer.periodOpening,
           periodClosing: drawer.periodClosing,
-          sheetCount: sheets.length,
+          sheetCount: drawer.sheetCount ?? sheets.length,
         };
       })
+      .concat(
+        Array.from(byCenterId.entries())
+          .filter(([cId]) => cId === '__legacy__' || !visibleCenters.some((c) => c.id === cId))
+          .map(([cId, { centerName, sheets }]) => {
+            const movement = computeTotals(sheets);
+            const drawer = hasDateRange
+              ? computePeriodDrawerBalances(sheets, sheets)
+              : {
+                  periodOpening: 0,
+                  periodClosing: 0,
+                  sheetCount: sheets.length,
+                };
+            return {
+              centerId: cId,
+              centerName,
+              ...movement,
+              periodOpening: drawer.periodOpening,
+              periodClosing: drawer.periodClosing,
+              sheetCount: sheets.length,
+            };
+          }),
+      )
       .sort((a, b) => a.centerName.localeCompare(b.centerName));
 
     const categorizedExpensesTotal = sumCategorizedCashOutExpenses(rangeFiltered);
-    const overallDrawer = computePeriodDrawerBalances(rangeFiltered);
+    const overallDrawer = hasDateRange
+      ? computeAggregatedPeriodDrawerBalances(rangeFiltered, chainSheets)
+      : (() => {
+          const todayAgg = computeAggregatedTodayDrawerBalances(
+            chainSheets,
+            visibleCenters.map((c) => c.id),
+          );
+          return {
+            periodOpening: todayAgg.periodOpening,
+            periodClosing: todayAgg.periodClosing,
+            isSingleDay: true,
+            sheetCount: rangeFiltered.length,
+            centerCount: todayAgg.centerCount,
+          };
+        })();
 
     return (
       <Box>
@@ -1679,12 +1734,16 @@ const CashRegisterPage = () => {
                 {centerSummaries.length === 0 && (
                   <TableRow><TableCell colSpan={6} align="center" sx={{ py: 3 }}>No data found</TableCell></TableRow>
                 )}
-                {centerSummaries.length > 1 && (
+                {centerSummaries.length > 0 && (
                   <TableRow sx={{ bgcolor: 'action.hover' }}>
                     <TableCell sx={{ fontWeight: 700 }}>Total (All Centers)</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700 }}>{rangeFiltered.length}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(overallDrawer.periodOpening)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatCurrency(overallDrawer.periodClosing)}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      {formatCurrency(centerSummaries.reduce((s, c) => s + c.periodOpening, 0))}
+                    </TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>
+                      {formatCurrency(centerSummaries.reduce((s, c) => s + c.periodClosing, 0))}
+                    </TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700, color: 'success.main' }}>{formatCurrency(overall.netIn)}</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700, color: 'error.main' }}>{formatCurrency(overall.netOut)}</TableCell>
                   </TableRow>
