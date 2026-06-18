@@ -144,12 +144,12 @@ export function processInvoiceHtmlTemplate(
   const invoiceRemarks = String(invoiceData.invoiceRemarks || '').trim();
   const invoiceRemarksHtml = buildInvoiceRemarksHtml(invoiceRemarks);
   processed = processed
-    .replace(/\{\{INVOICE_REMARKS_HTML\}\}/g, invoiceRemarksHtml)
-    .replace(/\{\{INVOICE_REMARKS\}\}/g, invoiceRemarks ? escapeHtmlText(invoiceRemarks).replace(/\n/g, '<br/>') : '');
+    .replace(/\{\{\s*INVOICE_REMARKS_HTML\s*\}\}/gi, invoiceRemarksHtml)
+    .replace(/\{\{\s*INVOICE_REMARKS\s*\}\}/gi, invoiceRemarks ? escapeHtmlText(invoiceRemarks).replace(/\n/g, '<br/>') : '');
 
   if (
     invoiceRemarksHtml &&
-    !/\{\{INVOICE_REMARKS(_HTML)?\}\}/.test(html) &&
+    !/\{\{\s*INVOICE_REMARKS(_HTML)?\s*\}\}/i.test(html) &&
     /<div[^>]*class=["'][^"']*terms-section/i.test(processed)
   ) {
     processed = processed.replace(

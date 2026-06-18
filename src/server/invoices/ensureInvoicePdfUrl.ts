@@ -8,7 +8,7 @@ import {
   type InvoiceWhatsAppRequestDoc,
 } from '@/lib/invoices/invoiceWhatsAppRequestTypes';
 import {
-  convertSaleToInvoiceData,
+  buildInvoiceDataForPdf,
   resolveInvoicePaymentMethodLabel,
   saleHasBillableInvoiceNumber,
 } from '@/utils/invoiceSaleToData';
@@ -83,7 +83,7 @@ export async function ensureInvoicePdfUrl(
     throw new Error('Invoice HTML template is not configured in Invoice Manager.');
   }
 
-  const invoiceData = convertSaleToInvoiceData(saleForInvoice, { enquiry });
+  const invoiceData = buildInvoiceDataForPdf(saleForInvoice, enquiry);
   const html = processInvoiceHtmlTemplate(template.htmlContent, invoiceData, template);
   const buffer = await renderHtmlToPdfBuffer(html);
 

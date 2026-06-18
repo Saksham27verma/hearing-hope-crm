@@ -84,7 +84,11 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import PDFInvoiceGenerator from '@/components/invoices/PDFInvoiceGenerator';
-import { convertSaleToInvoiceData } from '@/services/invoiceService';
+import { buildInvoiceDataForPdf } from '@/utils/invoiceSaleToData';
+import {
+  buildInvoiceRemarksByEnquiryId,
+  mergeEnquiryInvoiceRemarksOntoSale,
+} from '@/lib/sales-invoicing/syncInvoiceRemarksToSales';
 import SalesInvoicingCommandBar from '@/components/sales-invoicing/SalesInvoicingCommandBar';
 import SalesInvoiceCommandPalette from '@/components/sales-invoicing/SalesInvoiceCommandPalette';
 import SalesInvoiceFiltersPanel from '@/components/sales-invoicing/SalesInvoiceFiltersPanel';
@@ -252,6 +256,7 @@ export default function SalesInvoicingPageInner() {
   const [patientPaymentsByEnquiryId, setPatientPaymentsByEnquiryId] = useState<
     Record<string, PatientPaymentLine[]>
   >({});
+  const [invoiceRemarksByEnquiryId, setInvoiceRemarksByEnquiryId] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(0);
@@ -274,7 +279,7 @@ export default function SalesInvoicingPageInner() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
   const [printModalOpen, setPrintModalOpen] = useState(false);
-  const [printInvoiceData, setPrintInvoiceData] = useState<ReturnType<typeof convertSaleToInvoiceData> | null>(null);
+  const [printInvoiceData, setPrintInvoiceData] = useState<ReturnType<typeof buildInvoiceDataForPdf> | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
@@ -375,6 +380,7 @@ export default function SalesInvoicingPageInner() {
       const vList = visitorSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const eList = enquirySnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }));
       setPatientPaymentsByEnquiryId(buildPatientPaymentsIndexFromEnquiryDocs(enquirySnap.docs));
+      setInvoiceRemarksByEnquiryId(buildInvoiceRemarksByEnquiryId(enquirySnap.docs));
       const fromVisitors = deriveEnquirySalesFromDocs(vList, 'visitor');
       const fromEnquiries = deriveEnquirySalesFromDocs(eList, 'enquiry');
       const uniq = new Map<string, DerivedEnquirySale>();
@@ -1011,16 +1017,19 @@ export default function SalesInvoicingPageInner() {
     }
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
-    const saleWithPaymentMode = { ...raw } as Record<string, unknown>;
+    const saleWithPaymentMode = mergeEnquiryInvoiceRemarksOntoSale(
+      { ...(raw as Record<string, unknown>) },
+      invoiceRemarksByEnquiryId,
+    ) as Record<string, unknown>;
     if (row.patientPayments?.length) {
       const uniqueModes = [...new Set(
         row.patientPayments.map((p) => p.mode).filter((m) => m && m !== '—')
       )];
       if (uniqueModes.length) saleWithPaymentMode.paymentMethod = uniqueModes.join(', ');
     }
-    setPrintInvoiceData(convertSaleToInvoiceData(saleWithPaymentMode));
+    setPrintInvoiceData(buildInvoiceDataForPdf(saleWithPaymentMode));
     setPrintModalOpen(true);
-  }, []);
+  }, [invoiceRemarksByEnquiryId]);
 
   const openPreviewFlow = useCallback((row: UnifiedInvoiceRow) => {
     if (row.isCancelled) {
@@ -1029,7 +1038,10 @@ export default function SalesInvoicingPageInner() {
     }
     const raw = row.kind === 'saved' ? row.savedSale : row.derivedEnquiry;
     if (!raw) return;
-    const saleWithPaymentMode = { ...raw } as Record<string, unknown>;
+    const saleWithPaymentMode = mergeEnquiryInvoiceRemarksOntoSale(
+      { ...(raw as Record<string, unknown>) },
+      invoiceRemarksByEnquiryId,
+    ) as Record<string, unknown>;
     if (row.patientPayments?.length) {
       const uniqueModes = [...new Set(
         row.patientPayments.map((p) => p.mode).filter((m) => m && m !== '—')
@@ -1038,7 +1050,7 @@ export default function SalesInvoicingPageInner() {
     }
     setInvoiceSale(saleWithPaymentMode);
     setInvoiceOpen(true);
-  }, []);
+  }, [invoiceRemarksByEnquiryId]);
 
   const handleCreateInvoiceFromEnquiryRow = useCallback(
     async (row: UnifiedInvoiceRow) => {
@@ -1918,7 +1930,7 @@ export default function SalesInvoicingPageInner() {
         <PDFInvoiceGenerator
           open={invoiceOpen}
           onClose={() => { setInvoiceOpen(false); setInvoiceSale(null); }}
-          invoiceData={convertSaleToInvoiceData(invoiceSale)}
+          invoiceData={buildInvoiceDataForPdf(invoiceSale as Record<string, unknown>)}
           template="modern"
         />
       )}

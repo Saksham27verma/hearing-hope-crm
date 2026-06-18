@@ -107,6 +107,7 @@ import {
 } from '@mui/icons-material';
 import { collection, addDoc, getDocs, Timestamp, query, orderBy, doc, updateDoc, getDoc, where, deleteDoc, arrayUnion, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/firebase/config';
+import { syncInvoiceRemarksToLinkedSales } from '@/lib/sales-invoicing/syncInvoiceRemarksToSales';
 import { v4 as uuidv4 } from 'uuid';
 import SimplifiedEnquiryForm from '@/components/enquiries/SimplifiedEnquiryForm';
 import { HotEnquiryBadgeChip } from '@/components/enquiries/HotEnquiryIndicator';
@@ -2406,6 +2407,7 @@ export default function EnquiriesPage() {
           ...enquiryData,
           createdAt: editingEnquiry.createdAt
         });
+        await syncInvoiceRemarksToLinkedSales(db, editingEnquiry.id, enquiryData.invoiceRemarks);
         void logActivity(db, userProfile, activityCenterId, {
           action: 'UPDATE',
           module: 'Enquiries',

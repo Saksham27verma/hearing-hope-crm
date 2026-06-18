@@ -80,6 +80,7 @@ export interface DerivedEnquirySale {
   email?: string;
   address?: string;
   customerGstNumber?: string;
+  invoiceRemarks?: string;
   visitDate: Timestamp;
   products: unknown[];
   totalAmount: number;

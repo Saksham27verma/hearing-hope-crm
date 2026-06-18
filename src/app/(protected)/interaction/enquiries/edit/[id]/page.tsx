@@ -47,6 +47,7 @@ import {
   isInvoicableEnquirySaleVisit,
   upsertSaleForEnquiryVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
+import { syncInvoiceRemarksToLinkedSales } from '@/lib/sales-invoicing/syncInvoiceRemarksToSales';
 
 interface EditEnquiryPageProps {
   params: Promise<{ id: string }>;
@@ -389,6 +390,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
 
       // Update in Firestore
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
+      await syncInvoiceRemarksToLinkedSales(db, resolvedParams.id, data.invoiceRemarks);
 
       const voidVisitIndices = collectSaleVisitIndicesVoidedByReturns(visits);
       const centerFallback = String(

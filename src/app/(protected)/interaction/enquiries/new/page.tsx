@@ -40,6 +40,7 @@ import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInven
 import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { logActivity } from '@/lib/activityLogger';
+import { syncInvoiceRemarksToLinkedSales } from '@/lib/sales-invoicing/syncInvoiceRemarksToSales';
 
 export default function NewEnquiryPage() {
   const router = useRouter();
@@ -329,6 +330,8 @@ export default function NewEnquiryPage() {
       if (data.visits && data.visits.length > 0) {
         await reduceInventoryForSales(data.visits);
       }
+
+      await syncInvoiceRemarksToLinkedSales(db, docRef.id, data.invoiceRemarks);
       
       void logActivity(db, userProfile, userProfile?.centerId, {
         action: 'CREATE',

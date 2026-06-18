@@ -14,6 +14,7 @@ import {
 import {
   enquiryVisitToInvoiceSalePayload,
   convertSaleToInvoiceData,
+  buildInvoiceDataForPdf,
   mergeInvoiceConfigIntoData,
   saleHasBillableInvoiceNumber,
 } from '@/utils/invoiceSaleToData';
@@ -116,7 +117,7 @@ export async function buildStaffCrmStyleReceiptPdfBuffer(args: StaffCrmPdfArgs):
       if (!saleHasBillableInvoiceNumber(sale.invoiceNumber)) {
         throw new Error('Invoice number is missing or invalid — cannot render staff invoice PDF.');
       }
-      let invoiceData = convertSaleToInvoiceData(sale, { enquiry: args.enquiry });
+      let invoiceData = buildInvoiceDataForPdf(sale, args.enquiry);
       invoiceData = mergeInvoiceConfigIntoData(invoiceData, DEFAULT_INVOICE_PDF_CONFIG);
       invoiceData = {
         ...invoiceData,

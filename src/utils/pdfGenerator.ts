@@ -13,6 +13,7 @@ import {
   convertSaleToInvoiceData,
   mergeInvoiceConfigIntoData,
   enquiryVisitToInvoiceSalePayload as enquiryVisitToInvoiceSalePayloadImpl,
+  buildInvoiceDataForPdf,
   saleHasBillableInvoiceNumber,
 } from '@/utils/invoiceSaleToData';
 
@@ -57,7 +58,7 @@ export async function downloadEnquirySaleInvoicePDF(
   return downloadInvoicePDF(payload, safeName, opts);
 }
 
-export { mergeInvoiceConfigIntoData, convertSaleToInvoiceData } from '@/utils/invoiceSaleToData';
+export { mergeInvoiceConfigIntoData, convertSaleToInvoiceData, buildInvoiceDataForPdf } from '@/utils/invoiceSaleToData';
 
 export function createInvoicePdfElement(data: InvoiceData, rendererId: 'classic' | 'modern'): ReactElement {
   if (rendererId === 'modern') {

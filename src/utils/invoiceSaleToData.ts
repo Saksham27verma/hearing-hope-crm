@@ -15,11 +15,13 @@ export function resolveInvoiceRemarks(
 ): string {
   const fromSale = String(sale.invoiceRemarks || '').trim();
   if (fromSale) return fromSale;
-  if (!enquiry) return '';
-  return String(enquiry.invoiceRemarks || enquiry.remarksInInvoice || '').trim();
+  if (enquiry) {
+    const fromEnquiry = String(enquiry.invoiceRemarks || enquiry.remarksInInvoice || '').trim();
+    if (fromEnquiry) return fromEnquiry;
+  }
+  return '';
 }
 
-/** Non-empty and not a provisional (PROV-*) placeholder — required before accountant-facing PDFs. */
 export function saleHasBillableInvoiceNumber(inv: unknown): boolean {
   const s = normalizeInvoiceNumberString(inv);
   return s.length > 0 && !isProvisionalInvoiceNumber(s);
@@ -262,6 +264,18 @@ export const convertSaleToInvoiceData = (
     terms: getDefaultTermsAndConditions(),
   };
 };
+
+/** Single entry point for HTML/React invoice PDFs — always resolves enquiry remarks. */
+export function buildInvoiceDataForPdf(
+  sale: Record<string, unknown>,
+  enquiry?: Record<string, unknown> | null,
+): InvoiceData {
+  const enriched = {
+    ...sale,
+    invoiceRemarks: resolveInvoiceRemarks(sale, enquiry),
+  };
+  return convertSaleToInvoiceData(enriched, { enquiry });
+}
 
 export function mergeInvoiceConfigIntoData(data: InvoiceData, config: InvoiceConfig): InvoiceData {
   const next = { ...data };

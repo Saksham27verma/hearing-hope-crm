@@ -92,7 +92,7 @@ import {
   sumEnquiryPaymentLedgerNetPaid,
   sumEnquiryPaymentLedgerOutgoing,
 } from '@/utils/enquiryPaymentLedger';
-import { convertSaleToInvoiceData, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
+import { convertSaleToInvoiceData, buildInvoiceDataForPdf, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
@@ -363,7 +363,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const [telecallerDialogOptions, setTelecallerDialogOptions] = useState<string[]>([]);
   const [enquiryAppointments, setEnquiryAppointments] = useState<any[]>([]);
   const [invoicePdfOpen, setInvoicePdfOpen] = useState(false);
-  const [invoicePdfData, setInvoicePdfData] = useState<ReturnType<typeof convertSaleToInvoiceData> | null>(null);
+  const [invoicePdfData, setInvoicePdfData] = useState<ReturnType<typeof buildInvoiceDataForPdf> | null>(null);
 
   const fetchEnquiry = async (id: string) => {
     try {
@@ -2423,7 +2423,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                                 ...visit,
                                 invoiceNumber,
                               });
-                              setInvoicePdfData(convertSaleToInvoiceData(payload));
+                              setInvoicePdfData(
+                                buildInvoiceDataForPdf(payload, enquiry as Record<string, unknown>),
+                              );
                               setInvoicePdfOpen(true);
                             } catch (e) {
                               console.error('Failed to prepare invoice PDF number:', e);

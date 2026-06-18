@@ -12,6 +12,7 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
     const address = rec.address || rec.location || '';
     const customerGstNumber =
       rec.customerGstNumber || rec.customerGSTIN || rec.customerGSTNumber || rec.customerGST || rec.gstNumber || '';
+    const invoiceRemarks = String(rec.invoiceRemarks || rec.remarksInInvoice || '').trim();
     const visits: any[] = Array.isArray(rec.visits) ? rec.visits : [];
     visits.forEach((visit: any, idx: number) => {
       // Only treat as invoicable "sale" when the visit is explicitly marked as a sale.
@@ -53,6 +54,7 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
         email,
         address,
         ...(customerGstNumber ? { customerGstNumber } : {}),
+        ...(invoiceRemarks ? { invoiceRemarks } : {}),
       };
       if (source === 'visitor') base.visitorId = rec.id;
       else base.enquiryId = rec.id;
