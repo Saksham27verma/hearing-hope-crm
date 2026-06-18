@@ -83,6 +83,8 @@ export async function POST(req: Request) {
           phone: String(data.phone || data.mobile || ''),
           email: String(data.email || ''),
           address: String(data.address || data.location || ''),
+          customerGstNumber: String(data.customerGstNumber || data.customerGSTIN || '').trim(),
+          invoiceRemarks: String(data.invoiceRemarks || data.remarksInInvoice || '').trim(),
           products,
           accessories: [],
           manualLineItems: [],

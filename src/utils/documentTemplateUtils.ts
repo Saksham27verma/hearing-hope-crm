@@ -413,7 +413,7 @@ export const DOCUMENT_TEMPLATE_META: Record<ManagedDocumentType, {
     placeholderSections: [
       { title: 'Company', tokens: ['{{COMPANY_NAME}}', '{{COMPANY_ADDRESS}}', '{{COMPANY_PHONE}}', '{{COMPANY_EMAIL}}'] },
       { title: 'Customer', tokens: ['{{CUSTOMER_NAME}}', '{{CUSTOMER_ADDRESS}}', '{{CUSTOMER_PHONE}}', '{{CUSTOMER_EMAIL}}', '{{CUSTOMER_GSTIN}}'] },
-      { title: 'Invoice', tokens: ['{{INVOICE_NUMBER}}', '{{INVOICE_DATE}}', '{{DUE_DATE}}', '{{PAYMENT_MODE}}'] },
+      { title: 'Invoice', tokens: ['{{INVOICE_NUMBER}}', '{{INVOICE_DATE}}', '{{DUE_DATE}}', '{{PAYMENT_MODE}}', '{{INVOICE_REMARKS}}', '{{INVOICE_REMARKS_HTML}}'] },
       { title: 'Amounts', tokens: ['{{SUBTOTAL}}', '{{TAX_RATE}}', '{{TAX_AMOUNT}}', '{{TOTAL}}', '{{TERMS_TEXT}}'] },
       { title: 'Items', tokens: ['{{ITEMS_PLACEHOLDER}}'] },
       { title: 'Images', tokens: ['{{LOGO_PLACEHOLDER}}', '{{SIGNATURE_PLACEHOLDER}}'] },

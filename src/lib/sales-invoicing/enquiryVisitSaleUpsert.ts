@@ -179,6 +179,7 @@ export async function upsertSaleForEnquiryVisit(
     email: data.email || '',
     address: data.address || '',
     customerGstNumber: data.customerGstNumber || '',
+    invoiceRemarks: String(data.invoiceRemarks || data.remarksInInvoice || '').trim(),
     products,
     accessories: [],
     manualLineItems: [],

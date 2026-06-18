@@ -80,6 +80,7 @@ export type SaleMirrorFingerprint = {
   email: string;
   address: string;
   customerGstNumber: string;
+  invoiceRemarks: string;
   centerId: string;
   notes: string;
   salespersonId: string;
@@ -122,6 +123,7 @@ export function buildSaleMirrorFingerprint(
     email: String(enquiry.email || '').trim(),
     address: String(enquiry.address || '').trim(),
     customerGstNumber: String(enquiry.customerGstNumber || '').trim(),
+    invoiceRemarks: String(enquiry.invoiceRemarks || enquiry.remarksInInvoice || '').trim(),
     centerId: String(visit.centerId || enquiry.visitingCenter || enquiry.center || '').trim(),
     notes: String(visit.visitNotes || '').trim(),
     salespersonId: salesperson.id,
@@ -163,7 +165,10 @@ export function fingerprintFromSaleRecord(
     phone: String(sale.phone || enquiry.phone || '').trim(),
     email: String(sale.email || '').trim(),
     address: String(sale.address || '').trim(),
-    customerGstNumber: String(sale.customerGstNumber || '').trim(),
+    customerGstNumber: String(sale.customerGstNumber || enquiry.customerGstNumber || '').trim(),
+    invoiceRemarks: String(
+      sale.invoiceRemarks || enquiry.invoiceRemarks || enquiry.remarksInInvoice || '',
+    ).trim(),
     centerId: String(sale.centerId || '').trim(),
     notes: String(sale.notes || '').trim(),
     salespersonId: String(sp?.id || '').trim(),
@@ -199,6 +204,7 @@ function fingerprintsEqual(
     a.email === b.email &&
     a.address === b.address &&
     a.customerGstNumber === b.customerGstNumber &&
+    a.invoiceRemarks === b.invoiceRemarks &&
     a.centerId === b.centerId &&
     a.notes === b.notes &&
     a.salespersonId === b.salespersonId &&

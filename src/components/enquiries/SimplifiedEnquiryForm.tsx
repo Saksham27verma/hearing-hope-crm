@@ -1375,6 +1375,7 @@ interface FormData {
   name: string;
   customerName: string;
   customerGstNumber: string;
+  invoiceRemarks: string;
   phone: string;
   email: string;
   addressLine: string;
@@ -1688,6 +1689,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       name: '',
       customerName: '',
       customerGstNumber: '',
+      invoiceRemarks: '',
       phone: '',
       email: '',
       addressLine: '',
@@ -2822,6 +2824,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           customerName: enquiry.customerName || '',
           customerGstNumber:
             enquiry.customerGstNumber || enquiry.customerGSTNumber || enquiry.customerGSTIN || '',
+          invoiceRemarks: enquiry.invoiceRemarks || enquiry.remarksInInvoice || '',
           phone: enquiry.phone || '',
           email: enquiry.email || '',
           addressLine: parsedAddr.line,
@@ -4068,6 +4071,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       ...dataRest,
       address: composeEnquiryAddress(addressLine, addressState, addressPincode),
       leadOutcome: (dataRest.leadOutcome || '').trim() || null,
+      invoiceRemarks: (dataRest.invoiceRemarks || '').trim() || null,
       visits: visitsForSave,
       followUps,
       status: 'active',
@@ -4694,6 +4698,30 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               value={(field.value || '').toUpperCase()}
                               onChange={(e) => field.onChange((e.target.value || '').toUpperCase())}
                               helperText="Used on tax invoices when provided."
+                              sx={enquiryFormFieldSx}
+                            />
+                          </Box>
+                        )}
+                      />
+                      <Controller
+                        name="invoiceRemarks"
+                        control={control}
+                        render={({ field }) => (
+                          <Box sx={{ gridColumn: { xs: '1', sm: '1 / -1' } }}>
+                            <EnquiryFieldLabel htmlFor="enquiry-invoice-remarks">
+                              Remarks in invoice
+                            </EnquiryFieldLabel>
+                            <TextField
+                              {...field}
+                              id="enquiry-invoice-remarks"
+                              fullWidth
+                              size="small"
+                              hiddenLabel
+                              multiline
+                              minRows={2}
+                              placeholder="Optional — shown on the tax invoice (e.g. warranty note, exchange details)"
+                              disabled={isAudiologist}
+                              helperText="Printed on HDIPL / tax invoice PDFs when filled. Edit anytime — including past enquiries."
                               sx={enquiryFormFieldSx}
                             />
                           </Box>

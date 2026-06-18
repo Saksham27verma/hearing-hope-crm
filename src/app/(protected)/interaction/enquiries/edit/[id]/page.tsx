@@ -426,7 +426,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       }
 
       const ENQUIRY_SCALAR_FIELDS = [
-        'name', 'customerName', 'customerGstNumber', 'phone', 'email', 'address', 'status',
+        'name', 'customerName', 'customerGstNumber', 'invoiceRemarks', 'phone', 'email', 'address', 'status',
         'reference', 'enquiryType', 'assignedTo', 'telecaller', 'subject',
         'message', 'notes', 'visitingCenter', 'visitorType', 'companyName',
         'contactPerson', 'purposeOfVisit', 'priority', 'source',

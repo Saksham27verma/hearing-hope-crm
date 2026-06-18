@@ -8,6 +8,17 @@ import { isProvisionalInvoiceNumber, normalizeInvoiceNumberString } from '@/lib/
 import { resolveInvoicePdfGrandTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 import { extractPatientPaymentsFromEnquiryDoc } from '@/lib/sales-invoicing/enquiryPayments';
 
+/** Enquiry-level remarks printed on tax invoices when the template supports them. */
+export function resolveInvoiceRemarks(
+  sale: Record<string, unknown>,
+  enquiry?: Record<string, unknown> | null,
+): string {
+  const fromSale = String(sale.invoiceRemarks || '').trim();
+  if (fromSale) return fromSale;
+  if (!enquiry) return '';
+  return String(enquiry.invoiceRemarks || enquiry.remarksInInvoice || '').trim();
+}
+
 /** Non-empty and not a provisional (PROV-*) placeholder — required before accountant-facing PDFs. */
 export function saleHasBillableInvoiceNumber(inv: unknown): boolean {
   const s = normalizeInvoiceNumberString(inv);
@@ -51,6 +62,7 @@ export function enquiryVisitToInvoiceSalePayload(
     invoiceNumber,
     paymentMethod,
     notes: visit?.saleNotes || visit?.notes || '',
+    invoiceRemarks: resolveInvoiceRemarks({}, enquiry),
   };
 }
 
@@ -246,6 +258,7 @@ export const convertSaleToInvoiceData = (
     branch: (sale.branch as string) || '',
     paymentMethod,
     notes: (sale.notes as string) || '',
+    invoiceRemarks: resolveInvoiceRemarks(sale, options?.enquiry),
     terms: getDefaultTermsAndConditions(),
   };
 };

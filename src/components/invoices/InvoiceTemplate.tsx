@@ -296,6 +296,8 @@ export interface InvoiceData {
   
   // Additional Information
   notes?: string;
+  /** Optional free-text shown on tax invoice templates (enquiry-level). */
+  invoiceRemarks?: string;
   terms?: string;
   /** Replaces default thank-you lines in the PDF footer when set (billing style). */
   footerNote?: string;

@@ -26,6 +26,8 @@ export interface SaleRecord {
   email?: string;
   address?: string;
   customerGstNumber?: string;
+  /** Enquiry-level remarks shown on tax invoice PDFs. */
+  invoiceRemarks?: string;
   products: unknown[];
   accessories?: unknown[];
   manualLineItems?: ManualLineItem[];

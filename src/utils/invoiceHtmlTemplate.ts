@@ -63,6 +63,25 @@ function lineGstAndTotalForHtmlRow(
  * Discount % for display in HTML tables. Never use `discount` (rupees) as a percentage —
  * when discountPercent is 0, `item.discountPercent || item.discount` wrongly treated rupees as %.
  */
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Renders enquiry invoice remarks as an HTML block, or empty when none. */
+export function buildInvoiceRemarksHtml(remarks: string | undefined): string {
+  const text = String(remarks || '').trim();
+  if (!text) return '';
+  const body = escapeHtmlText(text).replace(/\n/g, '<br/>');
+  return `<div class="invoice-remarks-section" style="margin-top: 12px; margin-bottom: 12px;">
+  <div class="section-title" style="font-size: 9px; font-weight: 700; color: #1a202c; margin-bottom: 4px; text-transform: uppercase;">Remarks</div>
+  <div style="font-size: 10px; color: #4a5568; white-space: pre-wrap; line-height: 1.4;">${body}</div>
+</div>`;
+}
+
 export function lineItemDiscountPercent(item: InvoiceLineItem): number {
   if (typeof item.discountPercent === 'number' && !Number.isNaN(item.discountPercent)) {
     return Math.max(0, Math.min(100, Math.round(item.discountPercent)));
@@ -121,6 +140,23 @@ export function processInvoiceHtmlTemplate(
     .replace(/\{\{TERMS_TEXT\}\}/g, (invoiceData.terms || '').replace(/\n/g, '<br/>'))
     .replace(/\{\{SALESPERSON\}\}/g, invoiceData.salesperson || '')
     .replace(/\{\{REFERENCE_DOCTOR\}\}/g, invoiceData.referenceDoctor || '');
+
+  const invoiceRemarks = String(invoiceData.invoiceRemarks || '').trim();
+  const invoiceRemarksHtml = buildInvoiceRemarksHtml(invoiceRemarks);
+  processed = processed
+    .replace(/\{\{INVOICE_REMARKS_HTML\}\}/g, invoiceRemarksHtml)
+    .replace(/\{\{INVOICE_REMARKS\}\}/g, invoiceRemarks ? escapeHtmlText(invoiceRemarks).replace(/\n/g, '<br/>') : '');
+
+  if (
+    invoiceRemarksHtml &&
+    !/\{\{INVOICE_REMARKS(_HTML)?\}\}/.test(html) &&
+    /<div[^>]*class=["'][^"']*terms-section/i.test(processed)
+  ) {
+    processed = processed.replace(
+      /(<div[^>]*class=["'][^"']*terms-section[^"']*["'][^>]*>)/i,
+      `${invoiceRemarksHtml}$1`,
+    );
+  }
 
   if (invoiceData.items && invoiceData.items.length > 0) {
     const isSixColumnInvoiceTemplate =

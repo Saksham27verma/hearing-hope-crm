@@ -642,6 +642,7 @@ export const convertSaleToInvoiceData = (sale: any): InvoiceData => {
     branch: sale.branch || '',
     paymentMethod: resolveInvoicePaymentMethodLabel(sale),
     notes: sale.notes || '',
+    invoiceRemarks: String(sale.invoiceRemarks || '').trim(),
     terms: 'Payment is due within 30 days of invoice date.',
   };
 };
