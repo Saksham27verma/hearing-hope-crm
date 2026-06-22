@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
+import type { UserRecord } from 'firebase-admin/auth';
 import { adminAuth, adminDb } from '@/server/firebaseAdmin';
+import { sendPasswordResetEmailServer } from '@/server/admin/passwordReset';
+import { deleteStaleUserDocsForEmail } from '@/server/admin/userFirestore';
 import {
   assertAdmin,
   assertCanSetCenter,
@@ -40,15 +43,36 @@ export async function POST(req: Request) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return jsonError('Invalid email format', 400);
     if (!['admin', 'staff', 'audiologist'].includes(role)) return jsonError('Invalid role', 400);
 
-    // Create Auth user with a random temporary password; user will set their own via password reset email.
+    const auth = adminAuth();
+    const resolvedDisplayName = displayName || email.split('@')[0];
+
+    // Create Auth user, or reprovision when Firebase Auth still has this email (e.g. incomplete delete).
     const tempPassword = `Temp@${Math.random().toString(36).slice(2, 10)}A1!`;
-    const newUser = await adminAuth().createUser({
-      email,
-      displayName: displayName || email.split('@')[0],
-      password: tempPassword,
-      emailVerified: false,
-      disabled: false,
-    });
+    let newUser: UserRecord;
+    let reprovisioned = false;
+    try {
+      newUser = await auth.createUser({
+        email,
+        displayName: resolvedDisplayName,
+        password: tempPassword,
+        emailVerified: false,
+        disabled: false,
+      });
+    } catch (createErr: unknown) {
+      const code = String((createErr as { code?: string }).code || '');
+      if (!code.includes('email-already-exists') && !code.includes('auth/email-already-exists')) {
+        throw createErr;
+      }
+      newUser = await auth.getUserByEmail(email);
+      reprovisioned = true;
+      await auth.updateUser(newUser.uid, {
+        displayName: resolvedDisplayName,
+        disabled: false,
+        password: tempPassword,
+      });
+    }
+
+    await deleteStaleUserDocsForEmail(db, email, newUser.uid);
 
     // Default module access (can be refined later in Users module)
     const defaultAllowedModulesByRole: Record<UserRole, string[]> = {
@@ -110,7 +134,18 @@ export async function POST(req: Request) {
       isSuperAdmin: role === 'admin' ? isSuperAdmin : false,
     };
 
-    await db.collection('users').doc(newUser.uid).set(userProfile, { merge: true });
+    await db.collection('users').doc(newUser.uid).set(userProfile);
+
+    let passwordResetSent = false;
+    let passwordResetError: string | null = null;
+    try {
+      await sendPasswordResetEmailServer(email);
+      passwordResetSent = true;
+    } catch (resetErr: unknown) {
+      passwordResetError =
+        resetErr instanceof Error ? resetErr.message : 'Failed to send password reset email';
+      console.error('create-user password reset error:', resetErr);
+    }
 
     try {
       await db.collection('activityLogs').add({
@@ -129,13 +164,17 @@ export async function POST(req: Request) {
       });
     } catch { /* silent */ }
 
-    return NextResponse.json({ ok: true, uid: newUser.uid, email });
+    return NextResponse.json({
+      ok: true,
+      uid: newUser.uid,
+      email,
+      reprovisioned,
+      passwordResetSent,
+      passwordResetError,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to create user';
     console.error('create-user error:', err);
-    if (String((err as { code?: string }).code || '').includes('auth/email-already-exists')) {
-      return jsonError('A user with this email already exists', 409);
-    }
     if (message === 'Forbidden') return jsonError(message, 403);
     return jsonError(message, 500);
   }

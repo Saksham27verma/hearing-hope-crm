@@ -96,7 +96,7 @@ function mapUserSnapshot(docSnap: { id: string; data: () => Record<string, unkno
 }
 
 export default function UserManagementPage() {
-  const { user, userProfile, changePassword, changeEmail, resetUserPassword, updateUserPassword, updateUserEmail, loading: authLoading } = useAuth();
+  const { user, userProfile, changePassword, changeEmail, updateUserPassword, updateUserEmail, loading: authLoading } = useAuth();
   const { enqueueSnackbar } = useSnackbar();
   const { effectiveScopeCenterId, allowedCenterIds, centers, lockedCenterId } = useCenterScope();
   const scopeHeaderCenterId = effectiveScopeCenterId ?? null;
@@ -346,7 +346,10 @@ export default function UserManagementPage() {
     try {
       setActionLoading(true);
 
-      await resetUserPassword(selectedUser.email);
+      await adminApi('/api/admin/send-password-reset', {
+        method: 'POST',
+        body: JSON.stringify({ email: selectedUser.email.trim().toLowerCase() }),
+      });
 
       enqueueSnackbar(`Password reset email sent to ${selectedUser.email}`, { variant: 'success' });
       setResetDialogOpen(false);
@@ -496,16 +499,34 @@ export default function UserManagementPage() {
         body: JSON.stringify(payload),
       });
 
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        passwordResetSent?: boolean;
+        passwordResetError?: string;
+        reprovisioned?: boolean;
+      };
       if (!res.ok || !data?.ok) {
         enqueueSnackbar(data?.error || 'Failed to create user', { variant: 'error' });
         setActionLoading(false);
         return;
       }
 
-      await resetUserPassword(email);
-
-      enqueueSnackbar(`User created: ${email}. Password setup email sent.`, { variant: 'success' });
+      if (data.passwordResetSent) {
+        enqueueSnackbar(
+          data.reprovisioned
+            ? `User restored: ${email}. Password setup email sent.`
+            : `User created: ${email}. Password setup email sent.`,
+          { variant: 'success' },
+        );
+      } else {
+        enqueueSnackbar(
+          data.passwordResetError
+            ? `User saved but password email failed: ${data.passwordResetError}`
+            : `User saved but password setup email could not be sent.`,
+          { variant: 'warning' },
+        );
+      }
       setCreateUserDialogOpen(false);
       setCreateUserEmail('');
       setCreateUserName('');

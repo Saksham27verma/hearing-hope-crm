@@ -96,13 +96,6 @@ export async function DELETE(req: Request) {
     }
 
     const data = targetSnap.data() as UserDoc;
-    const authUid =
-      typeof data.uid === 'string' && data.uid.trim() ? data.uid.trim() : docId;
-
-    if (authUid === decoded.uid) {
-      return jsonError('You cannot delete your own account', 400);
-    }
-
     const docIdsToDelete = await collectDuplicateUserDocIds(db, docId, data);
 
     const docsToVerify = await Promise.all(
@@ -112,10 +105,35 @@ export async function DELETE(req: Request) {
     if (scopeErr) return jsonError(scopeErr, 403);
 
     const auth = adminAuth();
-    await auth.deleteUser(authUid).catch((e: { code?: string }) => {
-      if (String(e?.code || '').includes('user-not-found')) return;
-      throw e;
-    });
+    const emailRaw = typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
+    const fallbackUid =
+      typeof data.uid === 'string' && data.uid.trim() ? data.uid.trim() : docId;
+
+    let authUid: string | null = null;
+    if (emailRaw) {
+      try {
+        authUid = (await auth.getUserByEmail(emailRaw)).uid;
+      } catch (e: unknown) {
+        const code = String((e as { code?: string }).code || '');
+        if (!code.includes('user-not-found')) throw e;
+      }
+    }
+    if (!authUid && fallbackUid) {
+      try {
+        authUid = (await auth.getUser(fallbackUid)).uid;
+      } catch (e: unknown) {
+        const code = String((e as { code?: string }).code || '');
+        if (!code.includes('user-not-found')) throw e;
+      }
+    }
+
+    if (authUid === decoded.uid) {
+      return jsonError('You cannot delete your own account', 400);
+    }
+
+    if (authUid) {
+      await auth.deleteUser(authUid);
+    }
 
     for (const id of docIdsToDelete) {
       await db.collection('users').doc(id).delete();
@@ -141,7 +159,12 @@ export async function DELETE(req: Request) {
       });
     } catch { /* silent */ }
 
-    return NextResponse.json({ ok: true, deletedDocIds: [...docIdsToDelete], authUid });
+    return NextResponse.json({
+      ok: true,
+      deletedDocIds: [...docIdsToDelete],
+      authUid: authUid || null,
+      authDeleted: Boolean(authUid),
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Failed to delete user';
     console.error('delete-user error:', err);
