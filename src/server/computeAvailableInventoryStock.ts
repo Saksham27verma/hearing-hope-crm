@@ -32,6 +32,7 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     enquiriesSnap,
     stockTransfersSnap,
     staffTrialCustodyByProduct,
+    purchaseReturnsSnap,
   ] = await Promise.all([
     db.collection('products').get(),
     db.collection('materialInward').get(),
@@ -41,6 +42,7 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
     db.collection('enquiries').get(),
     db.collection('stockTransfers').orderBy('createdAt', 'asc').get(),
     loadStaffTrialCustodySerialsByProduct(db),
+    db.collection('purchaseReturns').get(),
   ]);
 
   const productById = new Map<string, Record<string, unknown>>();
@@ -125,6 +127,35 @@ export async function listAvailableHearingAidSerialRows(): Promise<StaffInventor
       } else {
         const q = Number(p.quantity ?? 0);
         qtyInByProduct.set(productId, (qtyInByProduct.get(productId) || 0) + (Number.isNaN(q) ? 0 : q));
+      }
+    });
+  });
+
+  // Remove purchase-returned serials/quantities from available stock (permanently stocked out)
+  purchaseReturnsSnap.docs.forEach((docSnap) => {
+    const data = docSnap.data() as Record<string, unknown>;
+    const products = (data.products as unknown[]) || [];
+    products.forEach((prod: unknown) => {
+      const p = prod as Record<string, unknown>;
+      const productId = String(p.productId || p.id || '');
+      if (!productId) return;
+      const serialArray: string[] = Array.isArray(p.serialNumbers)
+        ? (p.serialNumbers as string[])
+        : p.serialNumber
+          ? [String(p.serialNumber)]
+          : [];
+      if (serialArray.length > 0) {
+        const set = serialsInByProduct.get(productId);
+        if (set) {
+          serialArray.forEach((sn) => {
+            if (sn) set.delete(sn);
+          });
+        }
+      } else {
+        const q = Number(p.quantity ?? 0);
+        if (!Number.isNaN(q) && q > 0) {
+          qtyInByProduct.set(productId, Math.max(0, (qtyInByProduct.get(productId) || 0) - q));
+        }
       }
     });
   });

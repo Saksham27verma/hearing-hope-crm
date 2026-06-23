@@ -263,7 +263,7 @@ export default function MaterialOutPage() {
   // Build available inventory (only items in stock)
   const loadAvailableInventory = async () => {
     try {
-      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, stockTransfersSnap] = await Promise.all([
+      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, stockTransfersSnap, purchaseReturnsSnap] = await Promise.all([
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'materialInward')),
         getDocs(collection(db, 'purchases')),
@@ -271,6 +271,7 @@ export default function MaterialOutPage() {
         getDocs(collection(db, 'sales')),
         getDocs(collection(db, 'enquiries')),
         getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
+        getDocs(collection(db, 'purchaseReturns')),
       ]);
 
       const prodMap: Record<string, any> = {};
@@ -301,6 +302,28 @@ export default function MaterialOutPage() {
 
       addInbound(materialInSnap.docs);
       addInbound(purchasesSnap.docs);
+
+      // Subtract purchase-returned items (permanently stocked out to supplier)
+      purchaseReturnsSnap.docs.forEach((docSnap: any) => {
+        const data: any = docSnap.data();
+        (data.products || []).forEach((p: any) => {
+          const productId = p.productId || p.id;
+          if (!productId) return;
+          const serialArray: string[] = Array.isArray(p.serialNumbers) ? p.serialNumbers : (p.serialNumber ? [p.serialNumber] : []);
+          if (serialArray.length > 0) {
+            if (serialsByProduct[productId]) {
+              serialArray.forEach((sn: string) => {
+                if (sn) serialsByProduct[productId].delete(String(sn));
+              });
+            }
+          } else {
+            const q = Number(p.quantity ?? 0);
+            if (!isNaN(q) && q > 0) {
+              qtyByProduct[productId] = Math.max(0, (qtyByProduct[productId] || 0) - q);
+            }
+          }
+        });
+      });
 
       // Authoritative safety pass from stockTransfers: materialize serials even if
       // transfer movement docs (materialIn/materialOut) are partially missing.

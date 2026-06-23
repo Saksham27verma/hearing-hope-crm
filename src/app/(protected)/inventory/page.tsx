@@ -430,6 +430,7 @@ export default function InventoryPage() {
           enquiriesRes,
           stockTransfersRes,
           staffTrialCustodyRes,
+          purchaseReturnsRes,
         ] = await Promise.allSettled([
           getDocs(collection(db, 'products')),
           getDocs(collection(db, 'materialInward')),
@@ -443,6 +444,7 @@ export default function InventoryPage() {
           // created in the same browser session.
           getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
           getDocs(collection(db, 'staffTrialCustody')),
+          getDocs(collection(db, 'purchaseReturns')),
         ]);
 
         const toDocs = (res: PromiseSettledResult<any>, label: string) => {
@@ -459,6 +461,30 @@ export default function InventoryPage() {
         const enquiriesSnap = toDocs(enquiriesRes, 'enquiries');
         const stockTransfersSnap = toDocs(stockTransfersRes, 'stockTransfers');
         const staffTrialCustodySnap = toDocs(staffTrialCustodyRes, 'staffTrialCustody');
+        const purchaseReturnsSnap = toDocs(purchaseReturnsRes, 'purchaseReturns');
+
+        // Build purchase-returned serials set: these are permanently stocked out
+        const purchaseReturnedSerials = new Set<string>();
+        const purchaseReturnedQtyByProduct = new Map<string, number>();
+        purchaseReturnsSnap.docs.forEach((docSnap: any) => {
+          const data: any = docSnap.data();
+          (data.products || []).forEach((prod: any) => {
+            const productId = String(prod.productId || prod.id || '');
+            if (!productId) return;
+            const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+            if (serials.length > 0) {
+              serials.forEach((sn: string) => {
+                if (sn) purchaseReturnedSerials.add(makeSerialKey(productId, sn));
+              });
+            } else {
+              const q = Number(prod.quantity ?? 0);
+              purchaseReturnedQtyByProduct.set(
+                productId,
+                (purchaseReturnedQtyByProduct.get(productId) || 0) + (Number.isNaN(q) ? 0 : q),
+              );
+            }
+          });
+        });
 
         // Products map
         const productsList = productsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() as any) }));
@@ -1321,6 +1347,10 @@ export default function InventoryPage() {
             }
             serials.forEach((sn: string) => {
               const key = makeSerialKey(productId, sn);
+
+              // Permanently exclude purchase-returned serials from inventory
+              if (purchaseReturnedSerials.has(key)) return;
+
               const isStockTransferIn = supplierName.includes('Stock Transfer from');
               if (incomingMap.has(key)) {
                 // Stock transfer IN should override the current location/company (move item)
@@ -1424,6 +1454,9 @@ export default function InventoryPage() {
             serials.forEach((sn: string) => {
               const key = makeSerialKey(productId, sn);
               if (incomingMap.has(key)) return; // already from material in (converted)
+
+              // Permanently exclude purchase-returned serials from inventory
+              if (purchaseReturnedSerials.has(key)) return;
               
               const isSold = inventoryRowIsSold(productId, key, sn);
               // Exclude dispatched-out items only when they are not sold.
@@ -1921,11 +1954,13 @@ export default function InventoryPage() {
           const locationOutQty = nonSerialOutByProductAndLocation.get(locationOutKey) || 0;
           // Also subtract global materials out (sales and non-stock-transfer materials out)
           const globalOutQty = nonSerialOutByProduct.get(productId) || 0;
+          // Subtract purchase-returned quantities
+          const returnedQty = purchaseReturnedQtyByProduct.get(productId) || 0;
           // For location-specific stock, only subtract location-specific out, not global
           // But we need to be careful: if there's a stock transfer out from this location,
           // we should subtract it. If there's a sale, it should also reduce stock at this location.
           // Actually, sales should reduce stock globally, so we should subtract both.
-          const remainingQty = Math.max(0, inQty - locationOutQty - globalOutQty);
+          const remainingQty = Math.max(0, inQty - locationOutQty - globalOutQty - returnedQty);
           
           if (remainingQty > 0) {
             nonSerialItems.push({
@@ -1970,7 +2005,8 @@ export default function InventoryPage() {
           // This is legacy data without location tracking, use global calculation
           const inQty = inInfo.qty || 0;
           const outQty = nonSerialOutByProduct.get(productId) || 0;
-          const remainingQty = Math.max(0, inQty - outQty);
+          const returnedQty = purchaseReturnedQtyByProduct.get(productId) || 0;
+          const remainingQty = Math.max(0, inQty - outQty - returnedQty);
           
           if (remainingQty > 0) {
             nonSerialItems.push({

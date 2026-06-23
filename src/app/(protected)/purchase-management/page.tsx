@@ -29,6 +29,8 @@ import {
   Card,
   CardContent,
   Tooltip,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import RefreshDataButton from '@/components/common/RefreshDataButton';
@@ -43,6 +45,8 @@ import {
   Visibility as PreviewIcon,
   Close as CloseIcon,
   Print as PrintIcon,
+  AssignmentReturn as ReturnIcon,
+  Undo as UndoIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -63,6 +67,7 @@ import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLogger';
 import PurchaseForm from '@/components/purchases/PurchaseForm';
+import PurchaseReturnDialog from '@/components/purchases/PurchaseReturnDialog';
 import {
   buildPurchaseInvoicePrintHtml,
   buildPurchaseInvoicePrintModel,
@@ -137,6 +142,40 @@ interface Purchase {
 }
 
 type CompanyRecord = CompanyMasterRow;
+
+interface PurchaseReturnProduct {
+  productId: string;
+  name: string;
+  type: string;
+  serialNumbers: string[];
+  quantity: number;
+  dealerPrice: number;
+  mrp: number;
+  discountPercent?: number;
+  discountAmount?: number;
+  finalPrice?: number;
+  gstApplicable?: boolean;
+  quantityType?: 'piece' | 'pair';
+}
+
+interface PurchaseReturn {
+  id?: string;
+  returnNumber: string;
+  originalPurchaseId: string;
+  originalInvoiceNo: string;
+  party: { id: string; name: string };
+  company: string;
+  location?: string;
+  returnDate: Timestamp;
+  products: PurchaseReturnProduct[];
+  gstType: string;
+  gstPercentage: number;
+  totalReturnAmount: number;
+  reason?: string;
+  notes?: string;
+  createdAt?: Timestamp;
+}
+
 export default function PurchaseManagement() {
   const { user, userProfile, isAllowedModule } = useAuth();
   const [purchases, setPurchases] = useState<Purchase[]>([]);
@@ -163,6 +202,21 @@ export default function PurchaseManagement() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewPurchase, setPreviewPurchase] = useState<Purchase | null>(null);
 
+  // Tab state: 0 = Purchases, 1 = Purchase Returns
+  const [activeTab, setActiveTab] = useState(0);
+
+  // Purchase Returns state
+  const [purchaseReturns, setPurchaseReturns] = useState<PurchaseReturn[]>([]);
+  const [filteredPurchaseReturns, setFilteredPurchaseReturns] = useState<PurchaseReturn[]>([]);
+  const [returnsPage, setReturnsPage] = useState(0);
+  const [returnsRowsPerPage, setReturnsRowsPerPage] = useState(10);
+  const [returnsSearchTerm, setReturnsSearchTerm] = useState('');
+  const [loadingReturns, setLoadingReturns] = useState(false);
+
+  // Purchase Return dialog state
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false);
+  const [returnTargetPurchase, setReturnTargetPurchase] = useState<Purchase | null>(null);
+
   // Fetch data when component mounts
   useEffect(() => {
     if (!user) return;
@@ -172,6 +226,7 @@ export default function PurchaseManagement() {
       fetchProducts();
       fetchParties();
       fetchCompanies();
+      fetchPurchaseReturns();
     } else {
       setLoading(false);
     }
@@ -308,6 +363,7 @@ export default function PurchaseManagement() {
         fetchProducts(),
         fetchParties(),
         fetchCompanies(),
+        fetchPurchaseReturns(),
       ]);
     } finally {
       setRefreshing(false);
@@ -330,6 +386,21 @@ export default function PurchaseManagement() {
         message: 'Failed to load company data',
         severity: 'error',
       });
+    }
+  };
+
+  const fetchPurchaseReturns = async () => {
+    try {
+      setLoadingReturns(true);
+      const q = query(collection(db, 'purchaseReturns'), orderBy('returnDate', 'desc'));
+      const snapshot = await getDocs(q);
+      const data = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as PurchaseReturn[];
+      setPurchaseReturns(data);
+      setFilteredPurchaseReturns(data);
+    } catch (err) {
+      console.error('Error fetching purchase returns:', err);
+    } finally {
+      setLoadingReturns(false);
     }
   };
 
@@ -621,6 +692,48 @@ export default function PurchaseManagement() {
     });
   };
 
+  // Handle opening purchase return dialog
+  const handleOpenReturnDialog = (purchase: Purchase) => {
+    setReturnTargetPurchase(purchase);
+    setReturnDialogOpen(true);
+  };
+
+  const handleCloseReturnDialog = () => {
+    setReturnDialogOpen(false);
+    setReturnTargetPurchase(null);
+  };
+
+  const handleReturnSuccess = (returnId: string, returnNumber: string) => {
+    setReturnDialogOpen(false);
+    setReturnTargetPurchase(null);
+    fetchPurchaseReturns();
+    setSnackbar({
+      open: true,
+      message: `Purchase return ${returnNumber} created successfully. Items permanently removed from inventory.`,
+      severity: 'success',
+    });
+    setActiveTab(1);
+  };
+
+  // Filter purchase returns
+  const handleReturnsSearch = (term: string) => {
+    setReturnsSearchTerm(term);
+    if (!term.trim()) {
+      setFilteredPurchaseReturns(purchaseReturns);
+      return;
+    }
+    const lower = term.toLowerCase();
+    setFilteredPurchaseReturns(
+      purchaseReturns.filter(
+        (r) =>
+          r.returnNumber.toLowerCase().includes(lower) ||
+          r.originalInvoiceNo.toLowerCase().includes(lower) ||
+          r.party.name.toLowerCase().includes(lower) ||
+          (r.reason || '').toLowerCase().includes(lower),
+      ),
+    );
+  };
+
   // Handle opening the preview dialog
   const handlePreviewPurchase = (purchase: Purchase) => {
     setPreviewPurchase(purchase);
@@ -665,7 +778,7 @@ export default function PurchaseManagement() {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Box sx={{ mb: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Box>
           <Typography variant="h4" component="h1" color="text.primary">
             Purchase Management
@@ -676,66 +789,115 @@ export default function PurchaseManagement() {
         </Box>
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
           <RefreshDataButton onClick={handleRefresh} loading={refreshing} sx={{ borderRadius: 2 }} />
-          <Button 
-            variant="contained" 
-            color="primary" 
-            startIcon={<AddIcon />}
-            onClick={handleAddPurchase}
-            sx={{ borderRadius: 2 }}
-          >
-            New Purchase
-          </Button>
-        </Box>
-      </Box>
-      
-      {/* Search and filters */}
-      <Paper elevation={1} sx={{ p: 2, mb: 4, borderRadius: 2 }}>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
-          <TextField
-            placeholder="Search invoice or supplier..."
-            variant="outlined"
-            size="small"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon />
-                </InputAdornment>
-              ),
-            }}
-            sx={{ flexGrow: 1, minWidth: '200px' }}
-          />
-          
-          <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <DatePicker
-              label="Filter by date"
-              value={dateFilter}
-              onChange={(newValue) => {
-                setDateFilter(newValue);
-              }}
-              slotProps={{ 
-                textField: { 
-                  size: 'small',
-                  sx: { minWidth: '180px' }
-                } 
-              }}
-            />
-          </LocalizationProvider>
-          
-          {dateFilter && (
+          {activeTab === 0 && (
             <Button 
-              variant="outlined" 
-              size="small"
-              onClick={() => setDateFilter(null)}
+              variant="contained" 
+              color="primary" 
+              startIcon={<AddIcon />}
+              onClick={handleAddPurchase}
+              sx={{ borderRadius: 2 }}
             >
-              Clear Date
+              New Purchase
             </Button>
           )}
         </Box>
+      </Box>
+
+      {/* Tabs */}
+      <Paper elevation={0} sx={{ mb: 3, borderRadius: 2, border: '1px solid', borderColor: 'divider' }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{ borderBottom: '1px solid', borderColor: 'divider', px: 2 }}
+        >
+          <Tab
+            label={
+              <Box display="flex" alignItems="center" gap={0.75}>
+                <ReceiptIcon fontSize="small" />
+                <span>Purchases</span>
+                {filteredPurchases.length > 0 && (
+                  <Chip label={filteredPurchases.length} size="small" color="primary" />
+                )}
+              </Box>
+            }
+            value={0}
+          />
+          <Tab
+            label={
+              <Box display="flex" alignItems="center" gap={0.75}>
+                <ReturnIcon fontSize="small" />
+                <span>Purchase Returns</span>
+                {purchaseReturns.length > 0 && (
+                  <Chip label={purchaseReturns.length} size="small" color="warning" />
+                )}
+              </Box>
+            }
+            value={1}
+          />
+        </Tabs>
+
+        {/* Purchases tab content */}
+        {activeTab === 0 && (
+          <Box sx={{ p: 2 }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
+              <TextField
+                placeholder="Search invoice or supplier..."
+                variant="outlined"
+                size="small"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon />
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{ flexGrow: 1, minWidth: '200px' }}
+              />
+              
+              <LocalizationProvider dateAdapter={AdapterDateFns}>
+                <DatePicker
+                  label="Filter by date"
+                  value={dateFilter}
+                  onChange={(newValue) => setDateFilter(newValue)}
+                  slotProps={{ textField: { size: 'small', sx: { minWidth: '180px' } } }}
+                />
+              </LocalizationProvider>
+              
+              {dateFilter && (
+                <Button variant="outlined" size="small" onClick={() => setDateFilter(null)}>
+                  Clear Date
+                </Button>
+              )}
+            </Box>
+          </Box>
+        )}
+
+        {/* Purchase Returns tab search */}
+        {activeTab === 1 && (
+          <Box sx={{ p: 2 }}>
+            <TextField
+              placeholder="Search return #, invoice, supplier or reason..."
+              variant="outlined"
+              size="small"
+              value={returnsSearchTerm}
+              onChange={(e) => handleReturnsSearch(e.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ minWidth: '320px' }}
+            />
+          </Box>
+        )}
       </Paper>
       
       {/* Purchases Table */}
+      {activeTab === 0 && (
       <Paper elevation={1} sx={{ borderRadius: 2 }}>
         <Box
           sx={{
@@ -849,6 +1011,19 @@ export default function PurchaseManagement() {
                               <EditIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          <Tooltip title="Purchase Return">
+                            <IconButton
+                              size="small"
+                              color="warning"
+                              onClick={() => handleOpenReturnDialog(purchase)}
+                              sx={{
+                                bgcolor: 'warning.lighter',
+                                '&:hover': { bgcolor: 'warning.light' },
+                              }}
+                            >
+                              <ReturnIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                           {userProfile?.role === 'admin' && (
                             <Tooltip title="Delete">
                               <IconButton 
@@ -926,6 +1101,200 @@ export default function PurchaseManagement() {
           }}
         />
       </Paper>
+      )}
+
+      {/* Purchase Returns Table */}
+      {activeTab === 1 && (
+      <Paper elevation={1} sx={{ borderRadius: 2 }}>
+        <Box
+          sx={{
+            p: 2,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            bgcolor: (t) =>
+              t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#fff8f0',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
+          <ReturnIcon color="warning" fontSize="small" />
+          <Typography variant="h6" color="text.primary">
+            Purchase Returns
+          </Typography>
+          {filteredPurchaseReturns.length > 0 && (
+            <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 0.5 }}>
+              ({filteredPurchaseReturns.length}{' '}
+              {filteredPurchaseReturns.length === 1 ? 'record' : 'records'})
+            </Typography>
+          )}
+        </Box>
+
+        {loadingReturns ? (
+          <Box display="flex" justifyContent="center" py={6}>
+            <CircularProgress size={32} />
+          </Box>
+        ) : (
+          <>
+            <TableContainer sx={{ maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
+              <Table stickyHeader>
+                <TableHead>
+                  <TableRow
+                    sx={{
+                      '& th': {
+                        fontWeight: 'bold',
+                        bgcolor: (t) =>
+                          t.palette.mode === 'dark'
+                            ? alpha(t.palette.common.white, 0.08)
+                            : '#fff8f0',
+                        color: 'text.primary',
+                      },
+                    }}
+                  >
+                    <TableCell>Return Date</TableCell>
+                    <TableCell>Return #</TableCell>
+                    <TableCell>Original Invoice</TableCell>
+                    <TableCell>Supplier</TableCell>
+                    <TableCell>Items Returned</TableCell>
+                    <TableCell>Reason</TableCell>
+                    <TableCell align="right">Return Value</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredPurchaseReturns.length > 0 ? (
+                    filteredPurchaseReturns
+                      .slice(returnsPage * returnsRowsPerPage, returnsPage * returnsRowsPerPage + returnsRowsPerPage)
+                      .map((ret, rowIndex) => {
+                        const totalSerials = ret.products.reduce(
+                          (sum, p) => sum + (p.serialNumbers?.length || 0),
+                          0,
+                        );
+                        const totalNonSerial = ret.products.reduce(
+                          (sum, p) =>
+                            sum + ((p.serialNumbers?.length || 0) === 0 ? p.quantity : 0),
+                          0,
+                        );
+                        const itemSummary =
+                          totalSerials > 0
+                            ? `${totalSerials} serial(s)${totalNonSerial > 0 ? ` + ${totalNonSerial} pcs` : ''}`
+                            : `${totalNonSerial} pcs`;
+                        return (
+                          <TableRow
+                            key={ret.id}
+                            hover
+                            sx={{
+                              bgcolor: (t) => {
+                                const alt = rowIndex % 2 === 1;
+                                if (t.palette.mode === 'dark')
+                                  return alt ? alpha(t.palette.common.white, 0.05) : t.palette.background.paper;
+                                return alt ? '#fffaf5' : t.palette.background.paper;
+                              },
+                              '&:hover': { bgcolor: 'action.hover' },
+                            }}
+                          >
+                            <TableCell>
+                              {ret.returnDate
+                                ? new Date(
+                                    (ret.returnDate as Timestamp).seconds * 1000,
+                                  ).toLocaleDateString('en-IN', {
+                                    day: '2-digit',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })
+                                : '—'}
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                label={ret.returnNumber}
+                                size="small"
+                                color="warning"
+                                variant="outlined"
+                                icon={<ReturnIcon />}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Box display="flex" alignItems="center">
+                                <ReceiptIcon fontSize="small" color="action" sx={{ mr: 1 }} />
+                                {ret.originalInvoiceNo}
+                              </Box>
+                            </TableCell>
+                            <TableCell>
+                              <Box display="flex" alignItems="center">
+                                <PartyIcon fontSize="small" color="action" sx={{ mr: 1 }} />
+                                {ret.party.name}
+                              </Box>
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                label={itemSummary}
+                                size="small"
+                                color="default"
+                                variant="outlined"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              {ret.reason ? (
+                                <Typography variant="body2" color="text.secondary">
+                                  {ret.reason}
+                                </Typography>
+                              ) : (
+                                <Typography variant="body2" color="text.disabled">
+                                  —
+                                </Typography>
+                              )}
+                            </TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 'medium', color: 'warning.dark' }}>
+                              {formatCurrency(ret.totalReturnAmount)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
+                          <ReturnIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
+                          <Typography variant="h6" color="text.secondary">
+                            {returnsSearchTerm ? 'No returns match your search' : 'No purchase returns yet'}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                            {returnsSearchTerm
+                              ? 'Try different search terms'
+                              : 'Use the return button on any purchase to create a return'}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+            <TablePagination
+              component="div"
+              count={filteredPurchaseReturns.length}
+              page={returnsPage}
+              onPageChange={(_, p) => setReturnsPage(p)}
+              rowsPerPage={returnsRowsPerPage}
+              onRowsPerPageChange={(e) => {
+                setReturnsRowsPerPage(parseInt(e.target.value, 10));
+                setReturnsPage(0);
+              }}
+              rowsPerPageOptions={[5, 10, 25, 50]}
+              sx={{
+                borderTop: '1px solid',
+                borderColor: 'divider',
+                bgcolor: 'background.paper',
+                color: 'text.primary',
+                '& .MuiTablePagination-selectLabel, & .MuiTablePagination-displayedRows': {
+                  color: 'text.primary',
+                },
+                '& .MuiTablePagination-actions button': { color: 'warning.main' },
+              }}
+            />
+          </>
+        )}
+      </Paper>
+      )}
       
       {/* Purchase Form Dialog */}
       <Dialog 
@@ -1254,6 +1623,14 @@ export default function PurchaseManagement() {
         </DialogContent>
       </Dialog>
       
+      {/* Purchase Return Dialog */}
+      <PurchaseReturnDialog
+        open={returnDialogOpen}
+        purchase={returnTargetPurchase}
+        onClose={handleCloseReturnDialog}
+        onSuccess={handleReturnSuccess}
+      />
+
       {/* Snackbar for success/error messages */}
       <Snackbar
         open={snackbar.open}
