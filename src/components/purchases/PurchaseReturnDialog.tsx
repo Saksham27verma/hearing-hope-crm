@@ -35,6 +35,7 @@ import {
   CheckBoxOutlineBlank as CheckBoxBlankIcon,
   Print as PrintIcon,
   CheckCircle as CheckCircleIcon,
+  FileDownload as CsvIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -311,6 +312,45 @@ export default function PurchaseReturnDialog({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleExportCsv = (ret: NonNullable<typeof savedReturn>) => {
+    if (!purchase) return;
+    const rows: string[][] = [['Model Name', 'Serial Number', 'Quantity']];
+
+    purchase.products.forEach((product, idx) => {
+      if (isSerialProduct(product)) {
+        const selected = Array.from(ret.selectedSerials[idx] || new Set<string>());
+        selected.forEach((sn) => rows.push([product.name, sn, '1']));
+      } else {
+        const qty = ret.selectedQtys[idx] || 0;
+        if (qty > 0) rows.push([product.name, '', String(qty)]);
+      }
+    });
+
+    const csvContent = rows
+      .map((row) =>
+        row
+          .map((cell) => {
+            const str = String(cell ?? '');
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+              return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+          })
+          .join(','),
+      )
+      .join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `purchase-return-${ret.returnNumber}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handlePrint = (ret: NonNullable<typeof savedReturn>) => {
@@ -680,12 +720,20 @@ export default function PurchaseReturnDialog({
               </Typography>
             </Box>
             <Button
+              onClick={() => handleExportCsv(savedReturn)}
+              variant="outlined"
+              color="success"
+              startIcon={<CsvIcon />}
+            >
+              Export CSV
+            </Button>
+            <Button
               onClick={() => handlePrint(savedReturn)}
               variant="outlined"
               color="warning"
               startIcon={<PrintIcon />}
             >
-              Print Return PDF
+              Print PDF
             </Button>
             <Button onClick={handleClose} variant="contained" color="success">
               Done

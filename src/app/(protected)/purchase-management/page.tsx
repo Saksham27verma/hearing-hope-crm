@@ -47,6 +47,7 @@ import {
   Print as PrintIcon,
   AssignmentReturn as ReturnIcon,
   Undo as UndoIcon,
+  FileDownload as CsvIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -758,6 +759,46 @@ export default function PurchaseManagement() {
     }
   };
 
+  const handleExportReturnCsv = (ret: PurchaseReturn) => {
+    const rows: string[][] = [['Model Name', 'Serial Number', 'Quantity']];
+
+    ret.products.forEach((product) => {
+      const hasSerials = Array.isArray(product.serialNumbers) && product.serialNumbers.length > 0;
+      if (hasSerials) {
+        product.serialNumbers.forEach((sn) => {
+          rows.push([product.name, sn, '1']);
+        });
+      } else {
+        rows.push([product.name, '', String(product.quantity)]);
+      }
+    });
+
+    const csvContent = rows
+      .map((row) =>
+        row
+          .map((cell) => {
+            const str = String(cell ?? '');
+            // Wrap in quotes if contains comma, quote, or newline
+            if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+              return `"${str.replace(/"/g, '""')}"`;
+            }
+            return str;
+          })
+          .join(','),
+      )
+      .join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `purchase-return-${ret.returnNumber}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   // Filter purchase returns
   const handleReturnsSearch = (term: string) => {
     setReturnsSearchTerm(term);
@@ -1291,16 +1332,28 @@ export default function PurchaseManagement() {
                               {formatCurrency(ret.totalReturnAmount)}
                             </TableCell>
                             <TableCell align="center">
-                              <Tooltip title="Print Return PDF">
-                                <IconButton
-                                  size="small"
-                                  color="warning"
-                                  onClick={() => handlePrintReturn(ret)}
-                                  sx={{ bgcolor: 'warning.lighter', '&:hover': { bgcolor: 'warning.light' } }}
-                                >
-                                  <PrintIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
+                              <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1 }}>
+                                <Tooltip title="Print Return PDF">
+                                  <IconButton
+                                    size="small"
+                                    color="warning"
+                                    onClick={() => handlePrintReturn(ret)}
+                                    sx={{ bgcolor: 'warning.lighter', '&:hover': { bgcolor: 'warning.light' } }}
+                                  >
+                                    <PrintIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Export CSV (model, serial, qty)">
+                                  <IconButton
+                                    size="small"
+                                    color="success"
+                                    onClick={() => handleExportReturnCsv(ret)}
+                                    sx={{ bgcolor: 'success.lighter', '&:hover': { bgcolor: 'success.light' } }}
+                                  >
+                                    <CsvIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
                             </TableCell>
                           </TableRow>
                         );
