@@ -463,29 +463,6 @@ export default function InventoryPage() {
         const staffTrialCustodySnap = toDocs(staffTrialCustodyRes, 'staffTrialCustody');
         const purchaseReturnsSnap = toDocs(purchaseReturnsRes, 'purchaseReturns');
 
-        // Build purchase-returned serials set: these are permanently stocked out
-        const purchaseReturnedSerials = new Set<string>();
-        const purchaseReturnedQtyByProduct = new Map<string, number>();
-        purchaseReturnsSnap.docs.forEach((docSnap: any) => {
-          const data: any = docSnap.data();
-          (data.products || []).forEach((prod: any) => {
-            const productId = String(prod.productId || prod.id || '');
-            if (!productId) return;
-            const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
-            if (serials.length > 0) {
-              serials.forEach((sn: string) => {
-                if (sn) purchaseReturnedSerials.add(makeSerialKey(productId, sn));
-              });
-            } else {
-              const q = Number(prod.quantity ?? 0);
-              purchaseReturnedQtyByProduct.set(
-                productId,
-                (purchaseReturnedQtyByProduct.get(productId) || 0) + (Number.isNaN(q) ? 0 : q),
-              );
-            }
-          });
-        });
-
         // Products map
         const productsList = productsSnap.docs.map((d: any) => ({ id: d.id, ...(d.data() as any) }));
         setProducts(productsList);
@@ -850,6 +827,30 @@ export default function InventoryPage() {
 
         const makeSerialKey = (productId: unknown, serialNumber: unknown): string =>
           `${String(productId || '').trim()}|${normalizeSerialNumber(String(serialNumber || ''))}`;
+
+        // Build purchase-returned serials set — must be after makeSerialKey is defined
+        const purchaseReturnedSerials = new Set<string>();
+        const purchaseReturnedQtyByProduct = new Map<string, number>();
+        purchaseReturnsSnap.docs.forEach((docSnap: any) => {
+          const data: any = docSnap.data();
+          (data.products || []).forEach((prod: any) => {
+            const productId = String(prod.productId || prod.id || '');
+            if (!productId) return;
+            const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : [];
+            if (serials.length > 0) {
+              serials.forEach((sn: string) => {
+                if (sn) purchaseReturnedSerials.add(makeSerialKey(productId, sn));
+              });
+            } else {
+              const q = Number(prod.quantity ?? 0);
+              purchaseReturnedQtyByProduct.set(
+                productId,
+                (purchaseReturnedQtyByProduct.get(productId) || 0) + (Number.isNaN(q) ? 0 : q),
+              );
+            }
+          });
+        });
+
         const makePairGroupKey = (item: InventoryItem): string =>
           [
             item.productId,

@@ -33,6 +33,8 @@ import {
   Receipt as ReceiptIcon,
   CheckBox as CheckBoxIcon,
   CheckBoxOutlineBlank as CheckBoxBlankIcon,
+  Print as PrintIcon,
+  CheckCircle as CheckCircleIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -43,6 +45,16 @@ import {
 import { db } from '@/firebase/config';
 import { logActivity } from '@/lib/activityLogger';
 import { useAuth } from '@/context/AuthContext';
+import {
+  buildPurchaseReturnPrintModel,
+  buildPurchaseReturnPrintHtml,
+  openPurchaseReturnPrintWindow,
+} from '@/utils/purchaseReturnPrintHtml';
+import {
+  findCompanyByPurchaseCompanyName,
+  type CompanyMasterRow,
+  type PartyMasterRow,
+} from '@/utils/purchaseInvoicePrintHtml';
 
 interface PurchaseProduct {
   productId: string;
@@ -77,6 +89,8 @@ interface Purchase {
 interface PurchaseReturnDialogProps {
   open: boolean;
   purchase: Purchase | null;
+  parties: PartyMasterRow[];
+  companies: CompanyMasterRow[];
   onClose: () => void;
   onSuccess: (returnId: string, returnNumber: string) => void;
 }
@@ -102,6 +116,8 @@ const getUnitPrice = (product: PurchaseProduct): number =>
 export default function PurchaseReturnDialog({
   open,
   purchase,
+  parties,
+  companies,
   onClose,
   onSuccess,
 }: PurchaseReturnDialogProps) {
@@ -114,12 +130,23 @@ export default function PurchaseReturnDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Holds the saved return document for printing after success
+  const [savedReturn, setSavedReturn] = useState<{
+    id: string;
+    returnNumber: string;
+    returnDate: Date;
+    products: PurchaseProduct[];
+    selectedSerials: SerialSelection;
+    selectedQtys: QtySelection;
+  } | null>(null);
+
   const resetState = () => {
     setSerialSelections({});
     setQtySelections({});
     setReason('');
     setNotes('');
     setError(null);
+    setSavedReturn(null);
   };
 
   const handleClose = () => {
@@ -268,12 +295,74 @@ export default function PurchaseReturnDialog({
         },
       }, user);
 
-      resetState();
+      // Store saved return so user can print before closing
+      setSavedReturn({
+        id: docRef.id,
+        returnNumber,
+        returnDate: new Date(),
+        products: purchase.products,
+        selectedSerials: { ...serialSelections },
+        selectedQtys: { ...qtySelections },
+      });
+
       onSuccess(docRef.id, returnNumber);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save purchase return. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePrint = (ret: NonNullable<typeof savedReturn>) => {
+    if (!purchase) return;
+    const partyMaster = parties.find((p) => p.id === purchase.party.id) ?? null;
+    const companyMaster = findCompanyByPurchaseCompanyName(companies, purchase.company);
+
+    // Build return products from selections
+    const returnProducts = purchase.products
+      .map((product, idx) => {
+        if (isSerialProduct(product)) {
+          const selected = Array.from(ret.selectedSerials[idx] || new Set<string>());
+          if (selected.length === 0) return null;
+          const isPair = product.type === 'Hearing Aid' && product.quantityType === 'pair';
+          const returnQty = isPair ? Math.ceil(selected.length / 2) : selected.length;
+          return { ...product, serialNumbers: selected, quantity: returnQty };
+        } else {
+          const qty = ret.selectedQtys[idx] || 0;
+          if (qty === 0) return null;
+          return { ...product, serialNumbers: [], quantity: qty };
+        }
+      })
+      .filter(Boolean) as PurchaseProduct[];
+
+    const returnDateLabel = ret.returnDate.toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const model = buildPurchaseReturnPrintModel({
+      purchaseReturn: {
+        returnNumber: ret.returnNumber,
+        originalInvoiceNo: purchase.invoiceNo,
+        party: purchase.party,
+        company: purchase.company,
+        gstType: purchase.gstType,
+        gstPercentage: purchase.gstPercentage,
+        totalReturnAmount,
+        reason,
+        notes,
+        products: returnProducts,
+      },
+      returnDateLabel,
+      partyMaster,
+      companyMaster,
+    });
+
+    const html = buildPurchaseReturnPrintHtml(model);
+    const ok = openPurchaseReturnPrintWindow(html);
+    if (!ok) {
+      setError('Could not open print window. Allow pop-ups for this site and try again.');
     }
   };
 
@@ -582,19 +671,43 @@ export default function PurchaseReturnDialog({
       <DialogActions
         sx={{ px: 3, py: 2, borderTop: '1px solid', borderColor: 'divider', gap: 1 }}
       >
-        <Button onClick={handleClose} disabled={saving} variant="outlined" color="inherit">
-          Cancel
-        </Button>
-        <Button
-          onClick={handleConfirm}
-          disabled={!hasSelection || saving}
-          variant="contained"
-          color="warning"
-          startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <ReturnIcon />}
-          sx={{ minWidth: 160 }}
-        >
-          {saving ? 'Processing...' : `Confirm Return${hasSelection ? ` (${formatCurrency(totalReturnAmount)})` : ''}`}
-        </Button>
+        {savedReturn ? (
+          <>
+            <Box display="flex" alignItems="center" gap={1} sx={{ mr: 'auto' }}>
+              <CheckCircleIcon color="success" fontSize="small" />
+              <Typography variant="body2" color="success.main" fontWeight={600}>
+                Return {savedReturn.returnNumber} created
+              </Typography>
+            </Box>
+            <Button
+              onClick={() => handlePrint(savedReturn)}
+              variant="outlined"
+              color="warning"
+              startIcon={<PrintIcon />}
+            >
+              Print Return PDF
+            </Button>
+            <Button onClick={handleClose} variant="contained" color="success">
+              Done
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={handleClose} disabled={saving} variant="outlined" color="inherit">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirm}
+              disabled={!hasSelection || saving}
+              variant="contained"
+              color="warning"
+              startIcon={saving ? <CircularProgress size={16} color="inherit" /> : <ReturnIcon />}
+              sx={{ minWidth: 160 }}
+            >
+              {saving ? 'Processing...' : `Confirm Return${hasSelection ? ` (${formatCurrency(totalReturnAmount)})` : ''}`}
+            </Button>
+          </>
+        )}
       </DialogActions>
     </Dialog>
   );

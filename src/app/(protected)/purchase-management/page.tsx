@@ -77,6 +77,11 @@ import {
   type PartyMasterRow,
 } from '@/utils/purchaseInvoicePrintHtml';
 import {
+  buildPurchaseReturnPrintModel,
+  buildPurchaseReturnPrintHtml,
+  openPurchaseReturnPrintWindow,
+} from '@/utils/purchaseReturnPrintHtml';
+import {
   diffRemovedPurchaseSerials,
   confirmRemovedPurchaseSerials,
   collectPurchaseSerialTypoRenames,
@@ -715,6 +720,44 @@ export default function PurchaseManagement() {
     setActiveTab(1);
   };
 
+  const handlePrintReturn = (ret: PurchaseReturn) => {
+    const partyMaster = parties.find((p) => p.id === ret.party.id) ?? null;
+    const companyMaster = findCompanyByPurchaseCompanyName(companies, ret.company);
+    const returnDateLabel = ret.returnDate
+      ? new Date((ret.returnDate as Timestamp).seconds * 1000).toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        })
+      : '—';
+    const model = buildPurchaseReturnPrintModel({
+      purchaseReturn: {
+        returnNumber: ret.returnNumber,
+        originalInvoiceNo: ret.originalInvoiceNo,
+        party: ret.party,
+        company: ret.company,
+        gstType: ret.gstType,
+        gstPercentage: ret.gstPercentage,
+        totalReturnAmount: ret.totalReturnAmount,
+        reason: ret.reason,
+        notes: ret.notes,
+        products: ret.products,
+      },
+      returnDateLabel,
+      partyMaster,
+      companyMaster,
+    });
+    const html = buildPurchaseReturnPrintHtml(model);
+    const ok = openPurchaseReturnPrintWindow(html);
+    if (!ok) {
+      setSnackbar({
+        open: true,
+        message: 'Could not open print window. Allow pop-ups for this site and try again.',
+        severity: 'error',
+      });
+    }
+  };
+
   // Filter purchase returns
   const handleReturnsSearch = (term: string) => {
     setReturnsSearchTerm(term);
@@ -1158,6 +1201,7 @@ export default function PurchaseManagement() {
                     <TableCell>Items Returned</TableCell>
                     <TableCell>Reason</TableCell>
                     <TableCell align="right">Return Value</TableCell>
+                    <TableCell align="center">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -1246,12 +1290,24 @@ export default function PurchaseManagement() {
                             <TableCell align="right" sx={{ fontWeight: 'medium', color: 'warning.dark' }}>
                               {formatCurrency(ret.totalReturnAmount)}
                             </TableCell>
+                            <TableCell align="center">
+                              <Tooltip title="Print Return PDF">
+                                <IconButton
+                                  size="small"
+                                  color="warning"
+                                  onClick={() => handlePrintReturn(ret)}
+                                  sx={{ bgcolor: 'warning.lighter', '&:hover': { bgcolor: 'warning.light' } }}
+                                >
+                                  <PrintIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </TableCell>
                           </TableRow>
                         );
                       })
                   ) : (
-                    <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                      <TableRow>
+                      <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
                         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 3 }}>
                           <ReturnIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
                           <Typography variant="h6" color="text.secondary">
@@ -1627,6 +1683,8 @@ export default function PurchaseManagement() {
       <PurchaseReturnDialog
         open={returnDialogOpen}
         purchase={returnTargetPurchase}
+        parties={parties}
+        companies={companies}
         onClose={handleCloseReturnDialog}
         onSuccess={handleReturnSuccess}
       />
