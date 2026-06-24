@@ -178,6 +178,11 @@ export default function MaterialOutPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<MaterialOut | null>(null);
 
+  // Delete confirmation dialog state (admin only)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [materialPendingDelete, setMaterialPendingDelete] = useState<MaterialOut | null>(null);
+  const [deletingMaterial, setDeletingMaterial] = useState(false);
+
   // Fetch data when component mounts
   useEffect(() => {
     if (!user) return;
@@ -804,40 +809,73 @@ export default function MaterialOutPage() {
     }
   };
 
-  // Handle deleting a material
-  const handleDeleteMaterial = async (materialId: string) => {
-    const materialToDelete = materials.find(m => m.id === materialId);
-    
-    if (materialToDelete?.status === 'dispatched') {
-      setErrorMsg("Cannot delete material that has been dispatched");
+  const handleDeleteMaterial = (materialId: string) => {
+    if (userProfile?.role !== 'admin') {
+      setErrorMsg('Only administrators can delete material out records');
       return;
     }
-    
-    if (window.confirm('Are you sure you want to delete this material?')) {
-      try {
-        const deletedMaterial = materials.find(m => m.id === materialId);
-        await deleteDoc(doc(db, 'materialsOut', materialId));
-        void logActivity(db, userProfile, userProfile?.centerId, {
-          action: 'DELETE',
-          module: 'Material Out',
-          entityId: materialId,
-          entityName: (deletedMaterial as any)?.challanNumber || (deletedMaterial as any)?.deliveryNoteNo || materialId,
-          description: `Deleted material out entry ${(deletedMaterial as any)?.challanNumber || materialId}`,
-          changes: {
-            challanNumber:  { before: (deletedMaterial as any)?.challanNumber ?? null,  after: null },
-            deliveryNoteNo: { before: (deletedMaterial as any)?.deliveryNoteNo ?? null, after: null },
-            status:         { before: (deletedMaterial as any)?.status ?? null,         after: null },
-          },
-        }, user);
-        
-        // Update local state
-        setMaterials(prevMaterials => prevMaterials.filter(material => material.id !== materialId));
-        
-        setSuccessMsg('Material deleted successfully');
-      } catch (error) {
-        console.error('Error deleting material:', error);
-        setErrorMsg('Failed to delete material');
-      }
+
+    const materialToDelete = materials.find(m => m.id === materialId);
+    if (!materialToDelete) {
+      setErrorMsg('Material not found');
+      return;
+    }
+
+    setMaterialPendingDelete(materialToDelete);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleCloseDeleteDialog = () => {
+    if (deletingMaterial) return;
+    setDeleteDialogOpen(false);
+    setMaterialPendingDelete(null);
+  };
+
+  const handleConfirmDeleteMaterial = async () => {
+    if (!materialPendingDelete?.id || deletingMaterial) return;
+    if (userProfile?.role !== 'admin') {
+      setErrorMsg('Only administrators can delete material out records');
+      return;
+    }
+
+    const materialId = materialPendingDelete.id;
+    const deletedMaterial = materialPendingDelete;
+    const effectiveStatus = deletedMaterial.status || 'dispatched';
+    const isDispatched = effectiveStatus === 'dispatched';
+
+    try {
+      setDeletingMaterial(true);
+      await deleteDoc(doc(db, 'materialsOut', materialId));
+      void logActivity(db, userProfile, userProfile?.centerId, {
+        action: 'DELETE',
+        module: 'Material Out',
+        entityId: materialId,
+        entityName: deletedMaterial.challanNumber || deletedMaterial.deliveryNoteNo || materialId,
+        description: isDispatched
+          ? `Admin deleted dispatched material out ${deletedMaterial.challanNumber || materialId} (inventory history affected)`
+          : `Deleted material out entry ${deletedMaterial.challanNumber || materialId}`,
+        changes: {
+          challanNumber:  { before: deletedMaterial.challanNumber ?? null,  after: null },
+          deliveryNoteNo: { before: deletedMaterial.deliveryNoteNo ?? null, after: null },
+          status:         { before: deletedMaterial.status ?? null,         after: null },
+        },
+        metadata: { dispatched: isDispatched },
+      }, user);
+
+      setMaterials(prevMaterials => prevMaterials.filter(material => material.id !== materialId));
+      void loadAvailableInventory();
+      setSuccessMsg(
+        isDispatched
+          ? 'Dispatched material out deleted. Inventory calculations will no longer include this challan.'
+          : 'Material deleted successfully',
+      );
+      setDeleteDialogOpen(false);
+      setMaterialPendingDelete(null);
+    } catch (error) {
+      console.error('Error deleting material:', error);
+      setErrorMsg('Failed to delete material');
+    } finally {
+      setDeletingMaterial(false);
     }
   };
 
@@ -1188,7 +1226,13 @@ export default function MaterialOutPage() {
                         </Tooltip>
                         
                         {userProfile?.role === 'admin' && (
-                          <Tooltip title="Delete">
+                          <Tooltip
+                            title={
+                              (material.status || 'dispatched') === 'dispatched'
+                                ? 'Delete dispatched challan (affects inventory history)'
+                                : 'Delete'
+                            }
+                          >
                             <IconButton 
                               size="small" 
                               onClick={() => handleDeleteMaterial(material.id!)}
@@ -1323,6 +1367,71 @@ export default function MaterialOutPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleClosePreview}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete confirmation dialog (admin only) */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={handleCloseDeleteDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          Delete material out
+          {materialPendingDelete?.challanNumber
+            ? `: ${materialPendingDelete.challanNumber}`
+            : ''}
+        </DialogTitle>
+        <DialogContent>
+          {materialPendingDelete && (
+            <Stack spacing={2} sx={{ pt: 0.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                You are about to permanently delete this material out record
+                {materialPendingDelete.recipient?.name
+                  ? ` for ${materialPendingDelete.recipient.name}`
+                  : ''}
+                .
+              </Typography>
+              {(materialPendingDelete.status || 'dispatched') === 'dispatched' ? (
+                <Alert severity="warning" variant="outlined">
+                  This challan was dispatched. Deleting it removes it from inventory history — serial
+                  numbers and quantities on this challan will no longer count as material out, and
+                  stock availability will be recalculated. Purchase returns and other records are not
+                  affected. This cannot be undone.
+                </Alert>
+              ) : (
+                <Alert severity="info" variant="outlined">
+                  This record has not been dispatched yet. Deleting it will not affect current stock
+                  levels.
+                </Alert>
+              )}
+              {materialPendingDelete.dispatchDate && (
+                <Typography variant="body2">
+                  Dispatch date:{' '}
+                  <strong>{formatDate(materialPendingDelete.dispatchDate)}</strong>
+                </Typography>
+              )}
+              <Typography variant="body2">
+                Products on challan:{' '}
+                <strong>{calculateTotalProducts(materialPendingDelete)}</strong>
+              </Typography>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={handleCloseDeleteDialog} disabled={deletingMaterial}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleConfirmDeleteMaterial}
+            disabled={deletingMaterial}
+            startIcon={deletingMaterial ? <CircularProgress size={16} color="inherit" /> : undefined}
+          >
+            {deletingMaterial ? 'Deleting…' : 'Delete permanently'}
+          </Button>
         </DialogActions>
       </Dialog>
 
