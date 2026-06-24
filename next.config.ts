@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 function serverActionAllowedOrigins(): string[] {
   const hosts = new Set<string>(['localhost:3000', 'localhost:3002']);
@@ -16,6 +17,9 @@ function serverActionAllowedOrigins(): string[] {
 }
 
 const nextConfig: NextConfig = {
+  /** Use this app's lockfile/node_modules — parent folder also has a package-lock.json. */
+  outputFileTracingRoot: path.join(__dirname),
+
   /**
    * jspdf / jspdf-autotable / xlsx ship mixed ESM–CJS; without transpilation webpack can throw
    * `Cannot read properties of undefined (reading 'call')` when loading export chunks.

@@ -41,6 +41,11 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
 import { fetchBusinessCompanies, defaultCompanySelection, type BusinessCompany } from '@/utils/businessCompanies';
+import {
+  isSerialTrackedProductLine,
+  normalizeProductLinesWithSerials,
+  productLineSerials,
+} from '@/utils/serialUtils';
 import { 
   Delete as DeleteIcon, 
   Add as AddIcon,
@@ -77,10 +82,32 @@ interface Props {
 
 const steps = ['Challan Details', 'Product Details', 'Review & Summary'];
 
+function normalizeMaterialOut(material: MaterialOutward): MaterialOutward {
+  return {
+    ...material,
+    products: normalizeProductLinesWithSerials(material.products, {
+      reason: material.reason,
+      notes: (material as MaterialOutward & { notes?: string }).notes,
+    }),
+  };
+}
+
+function serialsForProduct(
+  product: MaterialProduct,
+  material: MaterialOutward,
+): string[] {
+  return productLineSerials(product as unknown as Record<string, unknown>, {
+    reason: material.reason,
+    notes: (material as MaterialOutward & { notes?: string }).notes,
+  });
+}
+
 const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, availableItems = [], onSave, onCancel, isSaving = false }) => {
   const [activeStep, setActiveStep] = useState(0);
   const [materialData, setMaterialData] = useState<MaterialOutward>(
-    initialData || {
+    initialData
+      ? normalizeMaterialOut(initialData)
+      : {
       challanNumber: '',
       recipient: { id: '', name: '' },
       reason: '',
@@ -200,7 +227,11 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
 
   const isSerialRequiredForCurrent = useMemo(() => {
     if (!currentProduct) return false;
-    return !!currentProduct.hasSerialNumber || availableSerials.length > 0;
+    return (
+      Boolean(currentProduct.hasSerialNumber) ||
+      currentProduct.type === 'Hearing Aid' ||
+      availableSerials.length > 0
+    );
   }, [currentProduct, availableSerials.length]);
 
   const addManualSerials = () => {
@@ -253,8 +284,32 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
   };
 
   const handleSubmit = () => {
-    if (materialData.products.length === 0) { setErrors({ products: 'At least one product is required' }); return; }
-    // sanitize document to avoid undefineds for Firestore
+    if (materialData.products.length === 0) {
+      setErrors({ products: 'At least one product is required' });
+      return;
+    }
+
+    const missingSerialLines = materialData.products.filter((product) => {
+      if (!isSerialTrackedProductLine(product)) return false;
+      const serials = serialsForProduct(product, materialData);
+      const required =
+        product.type === 'Hearing Aid' && product.quantityType === 'pair'
+          ? product.quantity * 2
+          : product.quantity;
+      return serials.length < required;
+    });
+
+    if (missingSerialLines.length > 0) {
+      const names = missingSerialLines.map((p) => p.name).join(', ');
+      setErrors({
+        products: `Serial numbers are required for hearing aids / serial-tracked products. Missing or incomplete on: ${names}`,
+      });
+      setActiveStep(1);
+      return;
+    }
+
+    const normalized = normalizeMaterialOut(materialData);
+
     const pruneUndefined = (value: any): any => {
       if (value === undefined) return undefined;
       if (value === null) return null;
@@ -269,7 +324,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
       }
       return value;
     };
-    const sanitized = pruneUndefined(materialData);
+    const sanitized = pruneUndefined(normalized);
     onSave(sanitized);
   };
 
@@ -484,14 +539,22 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                 </TableRow>
               </TableHead>
               <TableBody>
-                {materialData.products.map((p, idx) => (
+                {materialData.products.map((p, idx) => {
+                  const serials = serialsForProduct(p, materialData);
+                  return (
                   <TableRow key={idx}>
                     <TableCell>
                       <Box>
                         <Typography variant="body2">{p.name}</Typography>
-                        {p.serialNumbers.length > 0 && (
-                          <Typography variant="caption" color="text.secondary">{p.serialNumbers.length} serial(s)</Typography>
-                        )}
+                        {serials.length > 0 ? (
+                          <Typography variant="caption" color="text.secondary">
+                            SN: {serials.join(', ')}
+                          </Typography>
+                        ) : isSerialTrackedProductLine(p) ? (
+                          <Typography variant="caption" color="error">
+                            SN missing
+                          </Typography>
+                        ) : null}
                       </Box>
                     </TableCell>
                     <TableCell align="center">{p.quantity}</TableCell>
@@ -500,7 +563,8 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                       <IconButton color="error" size="small" onClick={() => removeProduct(idx)}><DeleteIcon /></IconButton>
                     </TableCell>
                   </TableRow>
-                ))}
+                );
+                })}
                 <TableRow>
                   <TableCell colSpan={2} align="right"><Typography variant="subtitle1">Total Amount:</Typography></TableCell>
                   <TableCell align="right"><Typography variant="subtitle1">{formatCurrency(materialData.totalAmount)}</Typography></TableCell>
@@ -559,18 +623,31 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {materialData.products.map((p, idx) => (
+                      {materialData.products.map((p, idx) => {
+                        const serials = serialsForProduct(p, materialData);
+                        return (
                         <TableRow key={idx}>
                           <TableCell>{p.name}</TableCell>
                           <TableCell>{p.type}</TableCell>
-                          <TableCell>{p.serialNumbers && p.serialNumbers.length ? p.serialNumbers.join(', ') : '-'}</TableCell>
+                          <TableCell>
+                            {serials.length > 0 ? (
+                              serials.join(', ')
+                            ) : isSerialTrackedProductLine(p) ? (
+                              <Typography component="span" variant="body2" color="error">
+                                missing — edit to add serial
+                              </Typography>
+                            ) : (
+                              '-'
+                            )}
+                          </TableCell>
                           <TableCell align="center">{p.quantity}</TableCell>
                           <TableCell align="right">{formatCurrency(p.dealerPrice || 0)}</TableCell>
                           <TableCell align="right">{p.discountPercent ? `${p.discountPercent}%` : '-'}</TableCell>
                           <TableCell align="right">{formatCurrency(p.finalPrice || p.dealerPrice || 0)}</TableCell>
                           <TableCell align="right">{formatCurrency((p.finalPrice || p.dealerPrice || 0) * p.quantity)}</TableCell>
                         </TableRow>
-                      ))}
+                      );
+                      })}
                       <TableRow>
                         <TableCell colSpan={7} align="right"><Typography variant="subtitle1">Total Amount:</Typography></TableCell>
                         <TableCell align="right"><Typography variant="subtitle1">{formatCurrency(materialData.totalAmount)}</Typography></TableCell>

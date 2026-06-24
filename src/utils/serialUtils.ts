@@ -7,6 +7,123 @@ export interface SerialIndexEntry {
 
 export type SerialIndex = Map<string, SerialIndexEntry>;
 
+/** Split comma/newline/pipe-separated serial strings; flatten nested arrays. */
+export function splitSerialCandidates(raw: unknown): string[] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) {
+    return raw.flatMap((item) => splitSerialCandidates(item));
+  }
+  const text = String(raw).trim();
+  if (!text) return [];
+  return text
+    .split(/[,\n;|]+/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function serialsFromSerialPairs(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const pair of value) {
+    if (!Array.isArray(pair)) continue;
+    for (const s of pair) {
+      const t = String(s ?? '').trim();
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
+
+const SERIAL_REMARK_PATTERNS = [
+  /\bS\/N\s*:?\s*([^,\-–—|\n]+)/gi,
+  /\bSerial(?:\s+(?:Number|No\.?|#))?\s*:?\s*([A-Za-z0-9][A-Za-z0-9\-_/]*)/gi,
+];
+
+/** Parse serial numbers embedded in free-text remarks/notes (e.g. trial/sales returns). */
+export function serialsFromRemarksText(text: string): string[] {
+  const out: string[] = [];
+  for (const pattern of SERIAL_REMARK_PATTERNS) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      const candidate = String(match[1] || '').trim();
+      if (candidate.length >= 3) out.push(candidate);
+    }
+  }
+  return [...new Set(out)];
+}
+
+export function isSerialTrackedProductLine(prod: {
+  type?: string;
+  hasSerialNumber?: boolean;
+}): boolean {
+  if (prod.hasSerialNumber) return true;
+  const type = String(prod.type || '').trim().toLowerCase();
+  return type === 'hearing aid' || type.includes('hearing aid');
+}
+
+/**
+ * Extract every serial number stored on a product line, including legacy field names
+ * and serials embedded in remarks/notes.
+ */
+export function extractSerialNumbersFromProductLine(
+  prod: Record<string, unknown>,
+  opts?: { fallbackTexts?: string[] },
+): string[] {
+  const all: string[] = [];
+
+  all.push(...splitSerialCandidates(prod.serialNumbers));
+  all.push(...splitSerialCandidates(prod.serials));
+
+  for (const key of [
+    'serialNumber',
+    'trialSerialNumber',
+    'serialNo',
+    'serial_no',
+    'deviceSerial',
+    'hearingAidSerial',
+    'sn',
+    'SN',
+  ]) {
+    all.push(...splitSerialCandidates(prod[key]));
+  }
+
+  all.push(...serialsFromSerialPairs(prod.serialPairs));
+
+  if (all.length === 0 && opts?.fallbackTexts?.length) {
+    for (const text of opts.fallbackTexts) {
+      all.push(...serialsFromRemarksText(String(text || '')));
+    }
+  }
+
+  return [...new Set(all.filter(Boolean))];
+}
+
+/** Serials for display/export with document-level context (reason, notes, etc.). */
+export function productLineSerials(
+  prod: Record<string, unknown>,
+  materialContext?: { reason?: string; reference?: string; notes?: string },
+): string[] {
+  const fallbackTexts = [
+    prod.remarks as string | undefined,
+    materialContext?.reason,
+    materialContext?.reference,
+    materialContext?.notes,
+  ].filter(Boolean) as string[];
+  return extractSerialNumbersFromProductLine(prod, { fallbackTexts });
+}
+
+export function normalizeProductLinesWithSerials<T extends { remarks?: string; serialNumbers?: string[] }>(
+  products: T[],
+  materialContext?: { reason?: string; reference?: string; notes?: string },
+): T[] {
+  return products.map((product) => {
+    const serials = productLineSerials(product as unknown as Record<string, unknown>, materialContext);
+    if (serials.length === 0) return product;
+    return { ...product, serialNumbers: serials };
+  });
+}
+
 /**
  * Helper to safely extract serial numbers and associated product names
  * from a products array used in various Firestore documents
@@ -21,25 +138,16 @@ const extractSerialsFromProducts = (
   products.forEach((prod: any) => {
     const productName = String(prod?.name ?? '').trim() || 'Unknown product';
 
-    const rawArray: any[] = Array.isArray(prod?.serialNumbers)
-      ? prod.serialNumbers
-      : prod?.serialNumber
-        ? [prod.serialNumber]
-        : [];
-
-    rawArray
-      .map((sn) => String(sn ?? '').trim())
-      .filter((sn) => !!sn)
-      .forEach((sn) => {
-        const existing = index.get(sn);
-        if (existing) {
-          if (!existing.products.includes(productName)) {
-            existing.products.push(productName);
-          }
-        } else {
-          index.set(sn, { products: [productName] });
+    extractSerialNumbersFromProductLine(prod).forEach((sn) => {
+      const existing = index.get(sn);
+      if (existing) {
+        if (!existing.products.includes(productName)) {
+          existing.products.push(productName);
         }
-      });
+      } else {
+        index.set(sn, { products: [productName] });
+      }
+    });
   });
 };
 

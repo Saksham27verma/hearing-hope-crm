@@ -43,7 +43,12 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
-import { fetchExistingSerialNumbers, SerialIndex } from '@/utils/serialUtils';
+import {
+  extractSerialNumbersFromProductLine,
+  fetchExistingSerialNumbers,
+  isSerialTrackedProductLine,
+  SerialIndex,
+} from '@/utils/serialUtils';
 import {
   getHeadOfficeId,
   fetchAllCenters,
@@ -182,6 +187,19 @@ const buildSerialPairs = (
   return pairs;
 };
 
+function normalizeMaterialInProducts(material: MaterialInward): MaterialInward {
+  return {
+    ...material,
+    products: material.products.map((product) => {
+      const serials = extractSerialNumbersFromProductLine(product as unknown as Record<string, unknown>, {
+        fallbackTexts: [product.remarks, material.notes].filter(Boolean) as string[],
+      });
+      if (serials.length === 0) return product;
+      return { ...product, serialNumbers: serials };
+    }),
+  };
+}
+
 const MaterialInForm: React.FC<MaterialInFormProps> = ({
   initialData,
   products,
@@ -212,7 +230,9 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
   // State
   const [activeStep, setActiveStep] = useState(0);
   const [materialData, setMaterialData] = useState<MaterialInward>(
-    initialData || {
+    initialData
+      ? normalizeMaterialInProducts(initialData)
+      : {
       challanNumber: '',
       supplier: { id: '', name: '' },
       company: '',
@@ -1006,13 +1026,32 @@ const MaterialInForm: React.FC<MaterialInFormProps> = ({
 
   // Handle form submission
   const handleSubmit = () => {
-    // Do final validation
     if (materialData.products.length === 0) {
       setErrors({ products: 'At least one product is required' });
       return;
     }
-    
-    // Call the onSave prop with the materialData
+
+    const missingSerialLines = materialData.products.filter((product) => {
+      if (!isSerialTrackedProductLine(product)) return false;
+      const serials = extractSerialNumbersFromProductLine(product as unknown as Record<string, unknown>, {
+        fallbackTexts: [product.remarks, materialData.notes].filter(Boolean) as string[],
+      });
+      const required =
+        product.type === 'Hearing Aid' && product.quantityType === 'pair'
+          ? product.quantity * 2
+          : product.quantity;
+      return serials.length < required;
+    });
+
+    if (missingSerialLines.length > 0) {
+      const names = missingSerialLines.map((p) => p.name).join(', ');
+      setErrors({
+        products: `Serial numbers are required for hearing aids / serial-tracked products. Missing or incomplete on: ${names}`,
+      });
+      setActiveStep(1);
+      return;
+    }
+
     onSave(materialData);
   };
 

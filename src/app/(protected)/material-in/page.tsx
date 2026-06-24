@@ -40,7 +40,15 @@ import {
   CompareArrows as ConvertIcon,
   Preview as PreviewIcon,
   AssignmentReturn as AssignmentReturnIcon,
+  FileDownload as FileDownloadIcon,
+  PictureAsPdf as PictureAsPdfIcon,
 } from '@mui/icons-material';
+import {
+  downloadMaterialMovementCsv,
+  downloadMaterialMovementPdf,
+  flattenMaterialInToRows,
+  isWithinDateRange,
+} from '@/utils/materialMovementExport';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -245,7 +253,8 @@ export default function MaterialInPage() {
   const [currentMaterial, setCurrentMaterial] = useState<MaterialInward | null>(null);
   const [savingMaterial, setSavingMaterial] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilter, setDateFilter] = useState<Date | null>(null);
+  const [dateFromFilter, setDateFromFilter] = useState<Date | null>(null);
+  const [dateToFilter, setDateToFilter] = useState<Date | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
   const [successMsg, setSuccessMsg] = useState('');
@@ -320,17 +329,11 @@ export default function MaterialInPage() {
       );
     }
     
-    // Apply date filter
-    if (dateFilter) {
-      const filterDate = new Date(dateFilter);
-      filtered = filtered.filter(material => {
-        const materialDate = new Date(material.receivedDate.seconds * 1000);
-        return (
-          materialDate.getDate() === filterDate.getDate() &&
-          materialDate.getMonth() === filterDate.getMonth() &&
-          materialDate.getFullYear() === filterDate.getFullYear()
-        );
-      });
+    // Apply date range filter
+    if (dateFromFilter || dateToFilter) {
+      filtered = filtered.filter((material) =>
+        isWithinDateRange(material.receivedDate, dateFromFilter, dateToFilter),
+      );
     }
     
     // Apply converted filter
@@ -341,7 +344,7 @@ export default function MaterialInPage() {
     }
     
     setFilteredMaterials(filtered);
-  }, [materials, searchTerm, dateFilter, showConvertedChallans]);
+  }, [materials, searchTerm, dateFromFilter, dateToFilter, showConvertedChallans]);
 
   // Fetch materials from Firestore
   const fetchMaterials = async () => {
@@ -907,6 +910,28 @@ export default function MaterialInPage() {
     return material.products.reduce((sum, product) => sum + product.quantity, 0);
   };
 
+  const handleExportCsv = () => {
+    try {
+      const rows = flattenMaterialInToRows(filteredMaterials);
+      downloadMaterialMovementCsv(rows, 'in', dateFromFilter, dateToFilter);
+      setSuccessMsg(`Exported ${rows.length} material-in line(s) to CSV.`);
+    } catch (err) {
+      console.error('CSV export failed:', err);
+      setErrorMsg(err instanceof Error ? err.message : 'CSV export failed.');
+    }
+  };
+
+  const handleExportPdf = () => {
+    try {
+      const rows = flattenMaterialInToRows(filteredMaterials);
+      downloadMaterialMovementPdf(rows, 'in', dateFromFilter, dateToFilter);
+      setSuccessMsg(`Opened PDF print view for ${rows.length} material-in line(s).`);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      setErrorMsg(err instanceof Error ? err.message : 'PDF export failed.');
+    }
+  };
+
   // Preview material
   const handlePreviewMaterial = (material: MaterialInward) => {
     setPreviewMaterial(material);
@@ -1230,19 +1255,30 @@ export default function MaterialInPage() {
           />
           
           <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <DatePicker
-              label="Filter by date"
-              value={dateFilter}
-              onChange={(newValue) => {
-                setDateFilter(newValue);
-              }}
-              slotProps={{ 
-                textField: { 
-                  size: 'small',
-                  sx: { width: { xs: '100%', sm: 180 } }
-                } 
-              }}
-            />
+            <Box display="flex" gap={1} flexWrap="wrap">
+              <DatePicker
+                label="From date"
+                value={dateFromFilter}
+                onChange={(newValue) => setDateFromFilter(newValue)}
+                slotProps={{
+                  textField: {
+                    size: 'small',
+                    sx: { width: { xs: '100%', sm: 160 } },
+                  },
+                }}
+              />
+              <DatePicker
+                label="To date"
+                value={dateToFilter}
+                onChange={(newValue) => setDateToFilter(newValue)}
+                slotProps={{
+                  textField: {
+                    size: 'small',
+                    sx: { width: { xs: '100%', sm: 160 } },
+                  },
+                }}
+              />
+            </Box>
           </LocalizationProvider>
           
           <FormControl size="small" sx={{ minWidth: 180 }}>
@@ -1259,16 +1295,40 @@ export default function MaterialInPage() {
             </Select>
           </FormControl>
           
-          {dateFilter && (
-            <Button 
-              variant="outlined" 
+          {(dateFromFilter || dateToFilter) && (
+            <Button
+              variant="outlined"
               size="small"
-              onClick={() => setDateFilter(null)}
+              onClick={() => {
+                setDateFromFilter(null);
+                setDateToFilter(null);
+              }}
               sx={{ borderRadius: 1.5 }}
             >
-              Clear Date
+              Clear Dates
             </Button>
           )}
+
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExportCsv}
+            disabled={filteredMaterials.length === 0}
+            sx={{ borderRadius: 1.5 }}
+          >
+            Export CSV
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<PictureAsPdfIcon />}
+            onClick={handleExportPdf}
+            disabled={filteredMaterials.length === 0}
+            sx={{ borderRadius: 1.5 }}
+          >
+            Export PDF
+          </Button>
         </Box>
         
         <Button

@@ -48,7 +48,15 @@ import {
   Close as CloseIcon,
   Print as PrintIcon,
   Refresh as RefreshIcon,
+  FileDownload as FileDownloadIcon,
+  PictureAsPdf as PictureAsPdfIcon,
 } from '@mui/icons-material';
+import {
+  downloadMaterialMovementCsv,
+  downloadMaterialMovementPdf,
+  flattenMaterialOutToRows,
+  isWithinDateRange,
+} from '@/utils/materialMovementExport';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -72,6 +80,11 @@ import RefreshDataButton from '@/components/common/RefreshDataButton';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { logActivity } from '@/lib/activityLogger';
+import {
+  isSerialTrackedProductLine,
+  normalizeProductLinesWithSerials,
+  productLineSerials,
+} from '@/utils/serialUtils';
 
 // Types
 interface Product {
@@ -129,6 +142,7 @@ interface MaterialOut {
   dispatchDate: Timestamp;
   status?: 'pending' | 'dispatched' | 'returned';
   reason?: string;
+  notes?: string;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }
@@ -144,7 +158,8 @@ export default function MaterialOutPage() {
   const [currentMaterial, setCurrentMaterial] = useState<MaterialOut | null>(null);
   const [savingMaterial, setSavingMaterial] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dateFilter, setDateFilter] = useState<Date | null>(null);
+  const [dateFromFilter, setDateFromFilter] = useState<Date | null>(null);
+  const [dateToFilter, setDateToFilter] = useState<Date | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [products, setProducts] = useState<Product[]>([]);
   const [parties, setParties] = useState<Party[]>([]);
@@ -203,21 +218,15 @@ export default function MaterialOutPage() {
       filtered = filtered.filter(material => material.status === statusFilter);
     }
     
-    // Apply date filter
-    if (dateFilter) {
-      const filterDate = new Date(dateFilter);
-      filtered = filtered.filter(material => {
-        const materialDate = new Date(material.dispatchDate.seconds * 1000);
-        return (
-          materialDate.getDate() === filterDate.getDate() &&
-          materialDate.getMonth() === filterDate.getMonth() &&
-          materialDate.getFullYear() === filterDate.getFullYear()
-        );
-      });
+    // Apply date range filter
+    if (dateFromFilter || dateToFilter) {
+      filtered = filtered.filter((material) =>
+        isWithinDateRange(material.dispatchDate, dateFromFilter, dateToFilter),
+      );
     }
     
     setFilteredMaterials(filtered);
-  }, [materials, searchTerm, statusFilter, dateFilter]);
+  }, [materials, searchTerm, statusFilter, dateFromFilter, dateToFilter]);
 
   // Fetch materials from Firestore
   const fetchMaterials = async () => {
@@ -730,6 +739,11 @@ export default function MaterialOutPage() {
       const withDefaultStatus: MaterialOut = {
         ...material,
         status: (material as any).status || 'dispatched',
+        products: normalizeProductLinesWithSerials(material.products, {
+          reason: material.reason,
+          reference: material.reference,
+          notes: material.notes,
+        }),
       };
       const sanitized = pruneUndefined(withDefaultStatus) as MaterialOut;
       if (material.id) {
@@ -862,6 +876,28 @@ export default function MaterialOutPage() {
   // Calculate total products in a material
   const calculateTotalProducts = (material: MaterialOut) => {
     return material.products.reduce((sum, product) => sum + product.quantity, 0);
+  };
+
+  const handleExportCsv = () => {
+    try {
+      const rows = flattenMaterialOutToRows(filteredMaterials);
+      downloadMaterialMovementCsv(rows, 'out', dateFromFilter, dateToFilter);
+      setSuccessMsg(`Exported ${rows.length} material-out line(s) to CSV.`);
+    } catch (err) {
+      console.error('CSV export failed:', err);
+      setErrorMsg(err instanceof Error ? err.message : 'CSV export failed.');
+    }
+  };
+
+  const handleExportPdf = () => {
+    try {
+      const rows = flattenMaterialOutToRows(filteredMaterials);
+      downloadMaterialMovementPdf(rows, 'out', dateFromFilter, dateToFilter);
+      setSuccessMsg(`Opened PDF print view for ${rows.length} material-out line(s).`);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+      setErrorMsg(err instanceof Error ? err.message : 'PDF export failed.');
+    }
   };
 
   // Get status chip color
@@ -1034,25 +1070,53 @@ export default function MaterialOutPage() {
           </FormControl>
           
           <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <DatePicker
-              label="Filter by date"
-              value={dateFilter}
-              onChange={(newValue) => {
-                setDateFilter(newValue);
-              }}
-              slotProps={{ textField: { size: 'small' } }}
-            />
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+              <DatePicker
+                label="From date"
+                value={dateFromFilter}
+                onChange={(newValue) => setDateFromFilter(newValue)}
+                slotProps={{ textField: { size: 'small', sx: { width: 160 } } }}
+              />
+              <DatePicker
+                label="To date"
+                value={dateToFilter}
+                onChange={(newValue) => setDateToFilter(newValue)}
+                slotProps={{ textField: { size: 'small', sx: { width: 160 } } }}
+              />
+            </Stack>
           </LocalizationProvider>
-          
-          {dateFilter && (
-            <Button 
-              variant="outlined" 
-              size="small" 
-              onClick={() => setDateFilter(null)}
+
+          {(dateFromFilter || dateToFilter) && (
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => {
+                setDateFromFilter(null);
+                setDateToFilter(null);
+              }}
             >
-              Clear Date
+              Clear Dates
             </Button>
           )}
+
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExportCsv}
+            disabled={filteredMaterials.length === 0}
+          >
+            Export CSV
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<PictureAsPdfIcon />}
+            onClick={handleExportPdf}
+            disabled={filteredMaterials.length === 0}
+          >
+            Export PDF
+          </Button>
         </Box>
       </Box>
       
@@ -1215,18 +1279,35 @@ export default function MaterialOutPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {(previewMaterial.products || []).map((p, idx) => (
+                      {(previewMaterial.products || []).map((p, idx) => {
+                        const serials = productLineSerials(p as unknown as Record<string, unknown>, {
+                          reason: previewMaterial.reason,
+                          reference: previewMaterial.reference,
+                          notes: previewMaterial.notes,
+                        });
+                        return (
                         <TableRow key={idx}>
                           <TableCell>{p.name}</TableCell>
                           <TableCell>{p.type}</TableCell>
-                          <TableCell>{p.serialNumbers && p.serialNumbers.length ? p.serialNumbers.join(', ') : '-'}</TableCell>
+                          <TableCell>
+                            {serials.length > 0 ? (
+                              serials.join(', ')
+                            ) : isSerialTrackedProductLine(p) ? (
+                              <Typography component="span" variant="body2" color="error">
+                                missing — edit challan to add serial
+                              </Typography>
+                            ) : (
+                              '-'
+                            )}
+                          </TableCell>
                           <TableCell align="center">{p.quantity}</TableCell>
                           <TableCell align="right">{formatCurrency(p.dealerPrice || 0)}</TableCell>
                           <TableCell align="right">{p.discountPercent ? `${p.discountPercent}%` : '-'}</TableCell>
                           <TableCell align="right">{formatCurrency(p.finalPrice || p.dealerPrice || 0)}</TableCell>
                           <TableCell align="right">{formatCurrency((p.finalPrice || p.dealerPrice || 0) * p.quantity)}</TableCell>
                         </TableRow>
-                      ))}
+                      );
+                      })}
                       <TableRow>
                         <TableCell colSpan={7} align="right"><Typography variant="subtitle1">Total Amount:</Typography></TableCell>
                         <TableCell align="right"><Typography variant="subtitle1">{formatCurrency(previewMaterial.totalAmount)}</Typography></TableCell>

@@ -20,6 +20,7 @@ import {
   Close as CloseIcon,
 } from '@mui/icons-material';
 import { Timestamp } from 'firebase/firestore';
+import { extractSerialNumbersFromProductLine } from '@/utils/serialUtils';
 
 // Define interfaces for the component props
 interface MaterialProduct {
@@ -195,14 +196,23 @@ const MaterialInPreviewDialog: React.FC<MaterialInPreviewDialogProps> = ({
               </TableRow>
             </TableHead>
             <TableBody>
-              {material.products.map((product, index) => (
+              {material.products.map((product, index) => {
+                const serials = extractSerialNumbersFromProductLine(
+                  product as Record<string, unknown>,
+                  { fallbackTexts: [product.remarks, material.notes].filter(Boolean) as string[] },
+                );
+                return (
                 <TableRow key={index}>
                   <TableCell>
                     <Box>
                       <Typography variant="body2">{product.name}</Typography>
-                      {product.serialNumbers.length > 0 && (
+                      {serials.length > 0 ? (
                         <Typography variant="caption">
-                          SN: {product.serialNumbers.join(', ')}
+                          SN: {serials.join(', ')}
+                        </Typography>
+                      ) : (
+                        <Typography variant="caption" color="error">
+                          SN: missing — edit this challan to add serial numbers
                         </Typography>
                       )}
                       {product.remarks && (
@@ -217,7 +227,8 @@ const MaterialInPreviewDialog: React.FC<MaterialInPreviewDialogProps> = ({
                   <TableCell align="right">{formatCurrency(product.dealerPrice || 0)}</TableCell>
                   <TableCell align="right">{formatCurrency((product.dealerPrice || 0) * product.quantity)}</TableCell>
                 </TableRow>
-              ))}
+              );
+              })}
               
               <TableRow>
                 <TableCell colSpan={4} align="right" sx={{ fontWeight: 'bold' }}>
