@@ -82,6 +82,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
       { text: 'Visitors', path: '/interaction/visitors' },
       { text: 'Enquiries', path: '/interaction/enquiries' },
       { text: 'Telecalling Records', path: '/telecalling-records' },
+      { text: 'Customer Lifecycle', path: '/customer-lifecycle' },
     ],
   },
   { text: 'Appointment Scheduler', path: '/appointments', icon: CalendarDays },

@@ -3,6 +3,7 @@ export type NotificationType =
   | 'new_sale'
   | 'whatsapp_invoice_request'
   | 'whatsapp_inbound'
+  | 'sale_milestone'
   | 'system';
 
 export type NotificationEntity =
@@ -10,6 +11,7 @@ export type NotificationEntity =
   | { kind: 'sale'; id: string }
   | { kind: 'whatsapp_invoice_request'; id: string }
   | { kind: 'whatsapp_inbound'; id: string }
+  | { kind: 'legacy_sale'; id: string }
   | { kind: 'system'; id?: string };
 
 /**

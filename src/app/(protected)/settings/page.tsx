@@ -6,6 +6,7 @@ import { Settings as SettingsIcon } from '@mui/icons-material';
 import FieldOptionsSettings from '@/components/settings/FieldOptionsSettings';
 import StaffPaymentNotifySettings from '@/components/settings/StaffPaymentNotifySettings';
 import DueCallsNotifySettings from '@/components/settings/DueCallsNotifySettings';
+import SaleMilestoneNotifySettings from '@/components/settings/SaleMilestoneNotifySettings';
 
 export default function SettingsPage() {
   return (
@@ -22,6 +23,7 @@ export default function SettingsPage() {
           same Firestore collection but are managed from code for now — this page is Enquiries-only.
         </Typography>
         <DueCallsNotifySettings />
+        <SaleMilestoneNotifySettings />
         <StaffPaymentNotifySettings />
         <Box sx={{ mt: 3 }}>
           <FieldOptionsSettings />
