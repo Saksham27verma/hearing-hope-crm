@@ -40,6 +40,21 @@ import {
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+const stripUndefined = <T,>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map((v) => stripUndefined(v)) as unknown as T;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefined(v);
+    }
+    return out as unknown as T;
+  }
+  return value;
+};
+
 const blankInvoice = (companyId: string, companyName: string): AccountingInvoice => ({
   companyId,
   companyName,
@@ -164,16 +179,20 @@ export default function NewAccountingInvoicePage() {
       if (finalNumber === previewedNext) {
         finalNumber = await allocateNextAccountingInvoiceNumber(db, selectedCompanyId);
       }
-      const payload = {
+      const payload = stripUndefined({
         ...invoice,
         invoiceNumber: finalNumber,
         status: asStatus,
         amountPaid: Number(invoice.amountPaid || 0),
+        tdsDeducted: Number(invoice.tdsDeducted || 0),
+        netPayablePercent: Number(invoice.netPayablePercent || 100),
+        grossSubtotal: Number(invoice.grossSubtotal || invoice.subtotal || 0),
+        grossGrandTotal: Number(invoice.grossGrandTotal || invoice.grandTotal || 0),
         balanceDue: Math.max(0, invoice.grandTotal - Number(invoice.amountPaid || 0) - Number(invoice.tdsDeducted || 0)),
         createdBy: user?.uid || '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      };
+      });
       const ref = await addDoc(collection(db, 'accountingInvoices'), payload);
       setSnack({ msg: 'Invoice saved', sev: 'success' });
       router.push(`/accounting/invoices/${ref.id}`);

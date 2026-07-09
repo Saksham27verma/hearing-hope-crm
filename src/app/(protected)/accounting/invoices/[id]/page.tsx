@@ -75,6 +75,21 @@ const statusColor: Record<AccountingInvoiceStatus, 'default' | 'primary' | 'warn
   cancelled: 'default',
 };
 
+const stripUndefined = <T,>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map((v) => stripUndefined(v)) as unknown as T;
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefined(v);
+    }
+    return out as unknown as T;
+  }
+  return value;
+};
+
 export default function AccountingInvoiceDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -171,12 +186,17 @@ export default function AccountingInvoiceDetailPage() {
       const { id, createdAt, ...rest } = invoice;
       void id;
       void createdAt;
-      await updateDoc(doc(db, 'accountingInvoices', invoice.id), {
+      const payload = stripUndefined({
         ...rest,
         amountPaid: Number(invoice.amountPaid || 0),
+        tdsDeducted: Number(invoice.tdsDeducted || 0),
+        netPayablePercent: Number(invoice.netPayablePercent || 100),
+        grossSubtotal: Number(invoice.grossSubtotal || invoice.subtotal || 0),
+        grossGrandTotal: Number(invoice.grossGrandTotal || invoice.grandTotal || 0),
         balanceDue: Math.max(0, invoice.grandTotal - Number(invoice.amountPaid || 0) - Number(invoice.tdsDeducted || 0)),
         updatedAt: serverTimestamp(),
       });
+      await updateDoc(doc(db, 'accountingInvoices', invoice.id), payload);
       setSnack({ msg: 'Saved', sev: 'success' });
       setPreEditSnapshot(null);
       setEditing(false);
