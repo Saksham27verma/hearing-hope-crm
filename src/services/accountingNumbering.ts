@@ -78,6 +78,33 @@ export async function peekNextAccountingInvoiceNumber(
   return formatAccountingInvoiceNumber(s, s.nextNumber);
 }
 
+export async function loadCompanyInvoiceTemplate(
+  db: Firestore,
+  companyId: string,
+): Promise<string | null> {
+  const ref = accountingSettingsDocRef(db, companyId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const t = (snap.data() as Record<string, unknown>).invoiceTemplateHtml;
+  return typeof t === 'string' && t.trim().length > 0 ? t : null;
+}
+
+export async function saveCompanyInvoiceTemplate(
+  db: Firestore,
+  companyId: string,
+  templateHtml: string | null,
+): Promise<void> {
+  const ref = accountingSettingsDocRef(db, companyId);
+  await setDoc(
+    ref,
+    {
+      invoiceTemplateHtml: templateHtml && templateHtml.trim().length > 0 ? templateHtml : null,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
 export async function allocateNextAccountingInvoiceNumber(
   db: Firestore,
   companyId: string,

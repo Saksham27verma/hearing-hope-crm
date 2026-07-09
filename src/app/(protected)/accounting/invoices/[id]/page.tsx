@@ -58,6 +58,11 @@ import {
   printInvoiceHtml,
   renderAccountingInvoiceHtml,
 } from '@/lib/accounting/invoiceHtml';
+import {
+  applyInvoiceTemplate,
+  buildInvoiceTemplateContext,
+} from '@/lib/accounting/invoiceTemplate';
+import { loadCompanyInvoiceTemplate } from '@/services/accountingNumbering';
 
 const statusColor: Record<AccountingInvoiceStatus, 'default' | 'primary' | 'warning' | 'success' | 'error' | 'info'> = {
   draft: 'default',
@@ -79,6 +84,7 @@ export default function AccountingInvoiceDetailPage() {
   const [invoice, setInvoice] = useState<AccountingInvoice | null>(null);
   const [clients, setClients] = useState<AccountingClient[]>([]);
   const [companyProfile, setCompanyProfile] = useState<AccountingCompanyProfile | null>(null);
+  const [customTemplate, setCustomTemplate] = useState<string | null>(null);
   const [snack, setSnack] = useState<{ msg: string; sev: 'success' | 'error' | 'info' } | null>(null);
   const [moreAnchor, setMoreAnchor] = useState<HTMLElement | null>(null);
 
@@ -94,7 +100,7 @@ export default function AccountingInvoiceDetailPage() {
       }
       const data = { id: snap.id, ...(snap.data() as Omit<AccountingInvoice, 'id'>) };
       setInvoice(data);
-      const [clientSnap, profile] = await Promise.all([
+      const [clientSnap, profile, tmpl] = await Promise.all([
         getDocs(
           query(
             collection(db, 'accountingClients'),
@@ -102,7 +108,9 @@ export default function AccountingInvoiceDetailPage() {
           ),
         ),
         fetchAccountingCompanyProfile(data.companyId),
+        loadCompanyInvoiceTemplate(db, data.companyId),
       ]);
+      setCustomTemplate(tmpl);
       const rows: AccountingClient[] = clientSnap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as Omit<AccountingClient, 'id'>),
@@ -123,10 +131,14 @@ export default function AccountingInvoiceDetailPage() {
   }, [load]);
 
   const isEditable = invoice?.status === 'draft';
-  const html = useMemo(
-    () => (invoice ? renderAccountingInvoiceHtml(invoice, companyProfile) : ''),
-    [invoice, companyProfile],
-  );
+  const html = useMemo(() => {
+    if (!invoice) return '';
+    if (customTemplate) {
+      const ctx = buildInvoiceTemplateContext(invoice, companyProfile);
+      return applyInvoiceTemplate(customTemplate, ctx);
+    }
+    return renderAccountingInvoiceHtml(invoice, companyProfile);
+  }, [invoice, companyProfile, customTemplate]);
 
   const handleSave = async () => {
     if (!invoice?.id) return;

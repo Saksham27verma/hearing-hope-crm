@@ -22,6 +22,9 @@ import {
   Badge,
   useTheme,
   Checkbox,
+  Tooltip,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -32,9 +35,19 @@ import {
   AddCircle as AddCircleIcon,
   Category as CategoryIcon,
   Check as CheckIcon,
+  Bookmark as BookmarkIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Save as SaveIcon,
+  Add as AddIcon,
 } from '@mui/icons-material';
 import type { ServiceCatalog, ServiceCatalogItem } from '@/lib/accounting/serviceCatalog';
-import { fetchServiceCatalog } from '@/lib/accounting/serviceCatalog';
+import {
+  addCustomCatalogItem,
+  deleteCustomCatalogItem,
+  fetchServiceCatalog,
+  updateCustomCatalogItem,
+} from '@/lib/accounting/serviceCatalog';
 import { formatINR } from '@/lib/accounting/computations';
 
 type Props = {
@@ -44,47 +57,71 @@ type Props = {
   onPick: (items: ServiceCatalogItem[]) => void;
 };
 
+type TabKey = 'hearing_aid' | 'test' | 'ent' | 'custom';
+
 const KIND_META: Record<
-  ServiceCatalogItem['kind'],
+  TabKey,
   { color: string; label: string; icon: React.ReactNode }
 > = {
   hearing_aid: { color: '#1976d2', label: 'Hearing Aid', icon: <HearingIcon fontSize="small" /> },
   test: { color: '#7b1fa2', label: 'Test', icon: <BiotechIcon fontSize="small" /> },
   ent: { color: '#00897b', label: 'ENT', icon: <MedicalIcon fontSize="small" /> },
+  custom: { color: '#ef6c00', label: 'Custom', icon: <BookmarkIcon fontSize="small" /> },
+};
+
+type CustomDraft = {
+  editingId: string | null;
+  name: string;
+  hsnSac: string;
+  gstPercent: number;
+  suggestedRate: number;
+};
+
+const emptyDraft: CustomDraft = {
+  editingId: null,
+  name: '',
+  hsnSac: '',
+  gstPercent: 18,
+  suggestedRate: 0,
 };
 
 export default function ServiceItemPickerDialog({ open, onClose, companyId, onPick }: Props) {
   const theme = useTheme();
-  const [tab, setTab] = useState<'hearing_aid' | 'test' | 'ent'>('hearing_aid');
+  const [tab, setTab] = useState<TabKey>('hearing_aid');
   const [catalog, setCatalog] = useState<ServiceCatalog | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<Record<string, ServiceCatalogItem>>({});
+  const [draft, setDraft] = useState<CustomDraft>(emptyDraft);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [snack, setSnack] = useState<{ msg: string; sev: 'success' | 'error' } | null>(null);
+
+  const reload = async () => {
+    if (!companyId) return;
+    setLoading(true);
+    try {
+      const c = await fetchServiceCatalog(companyId);
+      setCatalog(c);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!open || !companyId) return;
-    let cancelled = false;
-    setLoading(true);
     setSelection({});
     setSearch('');
-    (async () => {
-      try {
-        const c = await fetchServiceCatalog(companyId);
-        if (!cancelled) setCatalog(c);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    setDraft(emptyDraft);
+    void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, companyId]);
 
   const activeList: ServiceCatalogItem[] = useMemo(() => {
     if (!catalog) return [];
     if (tab === 'hearing_aid') return catalog.hearingAids;
     if (tab === 'test') return catalog.tests;
-    return catalog.entProcedures;
+    if (tab === 'ent') return catalog.entProcedures;
+    return catalog.custom;
   }, [catalog, tab]);
 
   const filtered = useMemo(() => {
@@ -119,6 +156,72 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
     hearing_aid: catalog?.hearingAids.length || 0,
     test: catalog?.tests.length || 0,
     ent: catalog?.entProcedures.length || 0,
+    custom: catalog?.custom.length || 0,
+  };
+
+  const startEditCustom = (it: ServiceCatalogItem) => {
+    if (!it.customId) return;
+    setDraft({
+      editingId: it.customId,
+      name: it.name,
+      hsnSac: it.hsnSac || '',
+      gstPercent: it.gstPercent,
+      suggestedRate: it.suggestedRate,
+    });
+  };
+
+  const resetDraft = () => setDraft(emptyDraft);
+
+  const saveDraft = async () => {
+    if (!draft.name.trim()) {
+      setSnack({ msg: 'Name is required', sev: 'error' });
+      return;
+    }
+    setSavingDraft(true);
+    try {
+      if (draft.editingId) {
+        await updateCustomCatalogItem(draft.editingId, {
+          name: draft.name,
+          hsnSac: draft.hsnSac,
+          gstPercent: draft.gstPercent,
+          suggestedRate: draft.suggestedRate,
+        });
+        setSnack({ msg: 'Updated', sev: 'success' });
+      } else {
+        await addCustomCatalogItem(companyId, {
+          name: draft.name,
+          hsnSac: draft.hsnSac,
+          gstPercent: draft.gstPercent,
+          suggestedRate: draft.suggestedRate,
+        });
+        setSnack({ msg: 'Added to catalog', sev: 'success' });
+      }
+      resetDraft();
+      await reload();
+    } catch (e) {
+      console.error(e);
+      setSnack({ msg: 'Save failed', sev: 'error' });
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const deleteCustom = async (it: ServiceCatalogItem) => {
+    if (!it.customId) return;
+    if (!confirm(`Delete "${it.name}" from your custom catalog?`)) return;
+    try {
+      await deleteCustomCatalogItem(it.customId);
+      setSelection((s) => {
+        const next = { ...s };
+        delete next[it.key];
+        return next;
+      });
+      setSnack({ msg: 'Deleted', sev: 'success' });
+      await reload();
+    } catch (e) {
+      console.error(e);
+      setSnack({ msg: 'Delete failed', sev: 'error' });
+    }
   };
 
   return (
@@ -127,7 +230,7 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
       onClose={onClose}
       maxWidth="md"
       fullWidth
-      PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden', height: '85vh' } }}
+      PaperProps={{ sx: { borderRadius: 3, overflow: 'hidden', height: '88vh' } }}
     >
       <Box
         sx={{
@@ -155,7 +258,7 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
               Add Service Items
             </Typography>
             <Typography variant="body2" sx={{ opacity: 0.85 }}>
-              Pick from your product catalog and test library.
+              Pick from products, tests, ENT procedures or your own custom catalog.
             </Typography>
           </Box>
         </Stack>
@@ -168,53 +271,147 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
           variant="fullWidth"
           sx={{ minHeight: 44 }}
         >
-          <Tab
-            value="hearing_aid"
-            iconPosition="start"
-            icon={<HearingIcon fontSize="small" />}
-            label={
-              <Stack direction="row" spacing={1} alignItems="center">
-                <span>Hearing Aids</span>
-                <Chip size="small" label={counts.hearing_aid} sx={{ height: 18, fontSize: 11 }} />
-              </Stack>
-            }
-            sx={{ textTransform: 'none', minHeight: 44 }}
-          />
-          <Tab
-            value="test"
-            iconPosition="start"
-            icon={<BiotechIcon fontSize="small" />}
-            label={
-              <Stack direction="row" spacing={1} alignItems="center">
-                <span>Tests</span>
-                <Chip size="small" label={counts.test} sx={{ height: 18, fontSize: 11 }} />
-              </Stack>
-            }
-            sx={{ textTransform: 'none', minHeight: 44 }}
-          />
-          <Tab
-            value="ent"
-            iconPosition="start"
-            icon={<MedicalIcon fontSize="small" />}
-            label={
-              <Stack direction="row" spacing={1} alignItems="center">
-                <span>ENT</span>
-                <Chip size="small" label={counts.ent} sx={{ height: 18, fontSize: 11 }} />
-              </Stack>
-            }
-            sx={{ textTransform: 'none', minHeight: 44 }}
-          />
+          {(['hearing_aid', 'test', 'ent', 'custom'] as TabKey[]).map((k) => (
+            <Tab
+              key={k}
+              value={k}
+              iconPosition="start"
+              icon={KIND_META[k].icon}
+              label={
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <span>{KIND_META[k].label}s</span>
+                  <Chip size="small" label={counts[k]} sx={{ height: 18, fontSize: 11 }} />
+                </Stack>
+              }
+              sx={{ textTransform: 'none', minHeight: 44 }}
+            />
+          ))}
         </Tabs>
       </Box>
 
       <DialogContent sx={{ p: 2, bgcolor: 'grey.50', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        {tab === 'custom' && (
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 2,
+              mb: 1.5,
+              borderRadius: 2,
+              borderColor: KIND_META.custom.color,
+              borderStyle: 'dashed',
+              bgcolor: `${KIND_META.custom.color}08`,
+            }}
+          >
+            <Stack direction="row" spacing={1} alignItems="center" mb={1.25}>
+              <Avatar
+                variant="rounded"
+                sx={{ bgcolor: `${KIND_META.custom.color}22`, color: KIND_META.custom.color, width: 32, height: 32 }}
+              >
+                {draft.editingId ? <EditIcon fontSize="small" /> : <AddIcon fontSize="small" />}
+              </Avatar>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle2" fontWeight={700}>
+                  {draft.editingId ? 'Edit custom item' : 'Add a new custom item'}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Stored per company and reusable across future invoices.
+                </Typography>
+              </Box>
+              {draft.editingId && (
+                <Button size="small" onClick={resetDraft} sx={{ textTransform: 'none' }}>
+                  Cancel edit
+                </Button>
+              )}
+            </Stack>
+            <Grid container spacing={1.5}>
+              <Grid item xs={12} md={5}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label="Item Name"
+                  placeholder="e.g. Home Visit Consultation"
+                  value={draft.name}
+                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                />
+              </Grid>
+              <Grid item xs={6} md={2}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  label="HSN/SAC"
+                  value={draft.hsnSac}
+                  onChange={(e) => setDraft((d) => ({ ...d, hsnSac: e.target.value }))}
+                />
+              </Grid>
+              <Grid item xs={6} md={2}>
+                <TextField
+                  size="small"
+                  select
+                  fullWidth
+                  label="GST %"
+                  value={draft.gstPercent}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, gstPercent: Number(e.target.value) }))
+                  }
+                  SelectProps={{ native: true }}
+                >
+                  {[0, 5, 12, 18, 28].map((g) => (
+                    <option key={g} value={g}>
+                      {g}%
+                    </option>
+                  ))}
+                </TextField>
+              </Grid>
+              <Grid item xs={6} md={2}>
+                <TextField
+                  size="small"
+                  type="number"
+                  fullWidth
+                  label="Default Rate"
+                  value={draft.suggestedRate}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, suggestedRate: Number(e.target.value) }))
+                  }
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Typography fontWeight={700}>&#8377;</Typography>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+              </Grid>
+              <Grid item xs={6} md={1}>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  onClick={saveDraft}
+                  disabled={savingDraft}
+                  startIcon={<SaveIcon />}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: 2,
+                    height: 40,
+                    bgcolor: KIND_META.custom.color,
+                    '&:hover': { bgcolor: '#e65100' },
+                  }}
+                >
+                  {savingDraft ? '…' : draft.editingId ? 'Save' : 'Add'}
+                </Button>
+              </Grid>
+            </Grid>
+          </Paper>
+        )}
+
         <TextField
           size="small"
           fullWidth
           placeholder={
             tab === 'hearing_aid'
               ? 'Search by product name, company, type or HSN'
-              : 'Search by test / procedure name'
+              : tab === 'custom'
+              ? 'Search your custom catalog'
+              : 'Search by name'
           }
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -247,11 +444,13 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
             }}
           >
             <Avatar sx={{ bgcolor: 'grey.200' }}>{KIND_META[tab].icon}</Avatar>
-            <Typography color="text.secondary" variant="body2">
+            <Typography color="text.secondary" variant="body2" textAlign="center">
               {activeList.length === 0
                 ? tab === 'hearing_aid'
                   ? 'No products found. Add hearing aids in the Products module.'
-                  : 'No test types configured yet.'
+                  : tab === 'custom'
+                  ? 'No custom items yet. Use the form above to add one.'
+                  : 'No entries configured yet.'
                 : 'No matches for your search.'}
             </Typography>
           </Paper>
@@ -277,20 +476,13 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
                         borderWidth: isSelected ? 2 : 1,
                         bgcolor: isSelected ? `${meta.color}0d` : '#fff',
                         transition: 'all 0.15s',
-                        '&:hover': {
-                          borderColor: meta.color,
-                          boxShadow: 1,
-                        },
+                        '&:hover': { borderColor: meta.color, boxShadow: 1 },
                       }}
                     >
                       <Checkbox
                         checked={isSelected}
                         size="small"
-                        sx={{
-                          p: 0.5,
-                          color: meta.color,
-                          '&.Mui-checked': { color: meta.color },
-                        }}
+                        sx={{ p: 0.5, color: meta.color, '&.Mui-checked': { color: meta.color } }}
                       />
                       <Avatar
                         variant="rounded"
@@ -299,28 +491,47 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
                         {meta.icon}
                       </Avatar>
                       <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Typography fontWeight={600} noWrap title={item.name}>
-                          {item.name}
-                        </Typography>
+                        <Stack direction="row" alignItems="center" spacing={0.5}>
+                          <Typography fontWeight={600} noWrap title={item.name} sx={{ flex: 1 }}>
+                            {item.name}
+                          </Typography>
+                          {item.kind === 'custom' && (
+                            <>
+                              <Tooltip title="Edit">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    startEditCustom(item);
+                                  }}
+                                >
+                                  <EditIcon fontSize="inherit" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Delete">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    void deleteCustom(item);
+                                  }}
+                                >
+                                  <DeleteIcon fontSize="inherit" />
+                                </IconButton>
+                              </Tooltip>
+                            </>
+                          )}
+                        </Stack>
                         <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
                           {item.company && (
                             <Chip size="small" label={item.company} sx={{ height: 20 }} />
                           )}
                           {item.productType && (
-                            <Chip
-                              size="small"
-                              variant="outlined"
-                              label={item.productType}
-                              sx={{ height: 20 }}
-                            />
+                            <Chip size="small" variant="outlined" label={item.productType} sx={{ height: 20 }} />
                           )}
                           {item.hsnSac && (
-                            <Chip
-                              size="small"
-                              variant="outlined"
-                              label={`HSN ${item.hsnSac}`}
-                              sx={{ height: 20 }}
-                            />
+                            <Chip size="small" variant="outlined" label={`HSN ${item.hsnSac}`} sx={{ height: 20 }} />
                           )}
                           <Chip
                             size="small"
@@ -388,6 +599,15 @@ export default function ServiceItemPickerDialog({ open, onClose, companyId, onPi
           </Button>
         </Stack>
       </Box>
+
+      <Snackbar
+        open={!!snack}
+        autoHideDuration={2500}
+        onClose={() => setSnack(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        {snack ? <Alert severity={snack.sev}>{snack.msg}</Alert> : undefined}
+      </Snackbar>
     </Dialog>
   );
 }

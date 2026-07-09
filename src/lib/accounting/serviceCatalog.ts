@@ -1,9 +1,15 @@
 import {
+  addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  query,
+  serverTimestamp,
   setDoc,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { getFieldOptions } from '@/services/fieldOptionsService';
@@ -12,7 +18,7 @@ import { accountingSettingsDocRef } from '@/services/accountingNumbering';
 
 export type ServiceCatalogItem = {
   key: string;
-  kind: 'hearing_aid' | 'test' | 'ent';
+  kind: 'hearing_aid' | 'test' | 'ent' | 'custom';
   name: string;
   description?: string;
   company?: string;
@@ -22,19 +28,31 @@ export type ServiceCatalogItem = {
   suggestedRate: number;
   isFree?: boolean;
   hasSerialNumber?: boolean;
+  customId?: string;
 };
 
 export type ServiceCatalog = {
   hearingAids: ServiceCatalogItem[];
   tests: ServiceCatalogItem[];
   entProcedures: ServiceCatalogItem[];
+  custom: ServiceCatalogItem[];
 };
 
+export type CustomCatalogItemInput = {
+  name: string;
+  hsnSac?: string;
+  gstPercent: number;
+  suggestedRate: number;
+};
+
+const CUSTOM_COLLECTION = 'accountingCatalog';
+
 export async function fetchServiceCatalog(companyId: string): Promise<ServiceCatalog> {
-  const [productsSnap, testOpts, priceMap] = await Promise.all([
+  const [productsSnap, testOpts, priceMap, custom] = await Promise.all([
     getDocs(collection(db, 'products')),
     getFieldOptions(db, 'enquiries', 'hearing_test_type'),
     loadServicePriceMap(companyId),
+    fetchCustomCatalogItems(companyId),
   ]);
 
   const hearingAids: ServiceCatalogItem[] = productsSnap.docs.map((d) => {
@@ -81,7 +99,70 @@ export async function fetchServiceCatalog(companyId: string): Promise<ServiceCat
     };
   });
 
-  return { hearingAids, tests, entProcedures };
+  return { hearingAids, tests, entProcedures, custom };
+}
+
+export async function fetchCustomCatalogItems(
+  companyId: string,
+): Promise<ServiceCatalogItem[]> {
+  try {
+    const snap = await getDocs(
+      query(collection(db, CUSTOM_COLLECTION), where('companyId', '==', companyId)),
+    );
+    const rows: ServiceCatalogItem[] = snap.docs
+      .map((d) => {
+        const data = d.data() as Record<string, unknown>;
+        return {
+          key: `custom:${d.id}`,
+          kind: 'custom' as const,
+          name: String(data.name || 'Untitled'),
+          hsnSac: (data.hsnSac as string) || '',
+          gstPercent: Number(data.gstPercent ?? 18),
+          suggestedRate: Number(data.suggestedRate ?? 0),
+          customId: d.id,
+        };
+      })
+      .filter((r) => (r.name || '').trim().length > 0);
+    rows.sort((a, b) => a.name.localeCompare(b.name));
+    return rows;
+  } catch (e) {
+    console.warn('fetchCustomCatalogItems failed', e);
+    return [];
+  }
+}
+
+export async function addCustomCatalogItem(
+  companyId: string,
+  input: CustomCatalogItemInput,
+): Promise<string> {
+  const ref = await addDoc(collection(db, CUSTOM_COLLECTION), {
+    companyId,
+    name: input.name.trim(),
+    hsnSac: input.hsnSac?.trim() || '',
+    gstPercent: Math.max(0, Math.min(100, Number(input.gstPercent) || 0)),
+    suggestedRate: Math.max(0, Number(input.suggestedRate) || 0),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
+export async function updateCustomCatalogItem(
+  customId: string,
+  patch: Partial<CustomCatalogItemInput>,
+): Promise<void> {
+  const cleaned: Record<string, unknown> = { updatedAt: serverTimestamp() };
+  if (patch.name !== undefined) cleaned.name = patch.name.trim();
+  if (patch.hsnSac !== undefined) cleaned.hsnSac = patch.hsnSac.trim();
+  if (patch.gstPercent !== undefined)
+    cleaned.gstPercent = Math.max(0, Math.min(100, Number(patch.gstPercent) || 0));
+  if (patch.suggestedRate !== undefined)
+    cleaned.suggestedRate = Math.max(0, Number(patch.suggestedRate) || 0);
+  await updateDoc(doc(db, CUSTOM_COLLECTION, customId), cleaned);
+}
+
+export async function deleteCustomCatalogItem(customId: string): Promise<void> {
+  await deleteDoc(doc(db, CUSTOM_COLLECTION, customId));
 }
 
 export async function loadServicePriceMap(companyId: string): Promise<Record<string, number>> {
