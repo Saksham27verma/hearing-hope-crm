@@ -30,6 +30,7 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAccountingCompany } from '@/context/AccountingCompanyContext';
 import type {
+  AccountingClient,
   AccountingInvoice,
   AccountingPayment,
 } from '@/lib/accounting/types';
@@ -49,13 +50,14 @@ export default function AccountingDashboardPage() {
 
   const [invoices, setInvoices] = useState<AccountingInvoice[]>([]);
   const [payments, setPayments] = useState<AccountingPayment[]>([]);
+  const [clients, setClients] = useState<AccountingClient[]>([]);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!selectedCompanyId) return;
     setLoading(true);
     try {
-      const [invSnap, paySnap] = await Promise.all([
+      const [invSnap, paySnap, cliSnap] = await Promise.all([
         getDocs(
           query(
             collection(db, 'accountingInvoices'),
@@ -68,12 +70,21 @@ export default function AccountingDashboardPage() {
             where('companyId', '==', selectedCompanyId),
           ),
         ),
+        getDocs(
+          query(
+            collection(db, 'accountingClients'),
+            where('companyId', '==', selectedCompanyId),
+          ),
+        ),
       ]);
       setInvoices(
         invSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AccountingInvoice, 'id'>) })),
       );
       setPayments(
         paySnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AccountingPayment, 'id'>) })),
+      );
+      setClients(
+        cliSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AccountingClient, 'id'>) })),
       );
     } finally {
       setLoading(false);
@@ -87,16 +98,39 @@ export default function AccountingDashboardPage() {
   const stats = useMemo(() => {
     const monthStart = firstOfMonthISO();
     const now = todayISO();
-    let receivables = 0;
     let invoicedMonth = 0;
     let overdueCount = 0;
     let overdueAmt = 0;
-    const perClient: Record<string, { name: string; due: number }> = {};
+    let openingReceivablesTotal = 0;
+
+    // Per-client signed running balance: positive = they owe us (Dr), negative = we owe them (Cr).
+    const perClient: Record<string, { name: string; signed: number }> = {};
+    const ensure = (id: string, name: string) => {
+      if (!perClient[id]) perClient[id] = { name: name || 'Unknown', signed: 0 };
+      else if (!perClient[id].name && name) perClient[id].name = name;
+      return perClient[id];
+    };
+
+    for (const c of clients) {
+      if (!c.id) continue;
+      const opening = Number(c.openingBalance || 0);
+      if (!opening) {
+        ensure(c.id, c.name);
+        continue;
+      }
+      const signed = c.openingBalanceType === 'credit' ? -opening : opening;
+      ensure(c.id, c.name).signed += signed;
+      if (signed > 0) openingReceivablesTotal += signed;
+    }
 
     for (const inv of invoices) {
       if (inv.status === 'cancelled' || inv.status === 'draft') continue;
-      const due = Math.max(0, Number(inv.grandTotal || 0) - Number(inv.amountPaid || 0) - Number((inv as any).tdsDeducted || 0));
-      receivables += due;
+      const due = Math.max(
+        0,
+        Number(inv.grandTotal || 0) -
+          Number(inv.amountPaid || 0) -
+          Number((inv as any).tdsDeducted || 0),
+      );
       if ((inv.invoiceDate || '') >= monthStart && (inv.invoiceDate || '') <= now) {
         invoicedMonth += Number(inv.grandTotal || 0);
       }
@@ -106,35 +140,43 @@ export default function AccountingDashboardPage() {
       }
       if (due > 0) {
         const key = inv.clientId || 'unknown';
-        const name = inv.clientSnapshot?.name || 'Unknown';
-        perClient[key] = {
-          name,
-          due: (perClient[key]?.due || 0) + due,
-        };
+        ensure(key, inv.clientSnapshot?.name || '').signed += due;
       }
     }
 
     let collectedMonth = 0;
     for (const p of payments) {
       if ((p.paymentDate || '') >= monthStart && (p.paymentDate || '') <= now) {
-        collectedMonth += Number(p.amount || 0);
+        collectedMonth += Number(p.amount || 0) + Number(p.tdsAmount || 0);
+      }
+      // Unallocated / advance portion reduces the receivable balance for that client.
+      const unalloc = Number(p.unallocated || 0);
+      if (unalloc > 0 && p.clientId) {
+        ensure(p.clientId, p.clientName || '').signed -= unalloc;
       }
     }
 
+    const receivables = Object.values(perClient).reduce(
+      (s, v) => s + Math.max(0, v.signed),
+      0,
+    );
+
     const topOverdue = Object.entries(perClient)
-      .map(([id, v]) => ({ id, ...v }))
+      .map(([id, v]) => ({ id, name: v.name, due: v.signed }))
+      .filter((r) => r.due > 0.01)
       .sort((a, b) => b.due - a.due)
       .slice(0, 5);
 
     return {
       receivables,
+      openingReceivablesTotal,
       invoicedMonth,
       collectedMonth,
       overdueCount,
       overdueAmt,
       topOverdue,
     };
-  }, [invoices, payments]);
+  }, [invoices, payments, clients]);
 
   if (!selectedCompanyId) return null;
 
@@ -171,6 +213,11 @@ export default function AccountingDashboardPage() {
         <KpiCard
           title="Total Receivables"
           value={formatINR(stats.receivables)}
+          subtitle={
+            stats.openingReceivablesTotal > 0
+              ? `incl. ${formatINR(stats.openingReceivablesTotal)} opening balance`
+              : undefined
+          }
           color="#ef6c00"
           loading={loading}
         />
@@ -298,11 +345,13 @@ export default function AccountingDashboardPage() {
 function KpiCard({
   title,
   value,
+  subtitle,
   color,
   loading,
 }: {
   title: string;
   value: string;
+  subtitle?: string;
   color: string;
   loading?: boolean;
 }) {
@@ -315,9 +364,16 @@ function KpiCard({
         {loading ? (
           <CircularProgress size={20} sx={{ mt: 1 }} />
         ) : (
-          <Typography variant="h6" fontWeight={700} sx={{ color }}>
-            {value}
-          </Typography>
+          <>
+            <Typography variant="h6" fontWeight={700} sx={{ color }}>
+              {value}
+            </Typography>
+            {subtitle && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                {subtitle}
+              </Typography>
+            )}
+          </>
         )}
       </Paper>
     </Grid>
