@@ -29,6 +29,7 @@ import {
   ReceiptLong as ReceiptIcon,
   CalendarToday as CalendarIcon,
   EventBusy as DueIcon,
+  DateRange as MonthIcon,
   ShoppingCart as CartIcon,
   Notes as NotesIcon,
   Gavel as TermsIcon,
@@ -45,6 +46,7 @@ import type {
   AccountingInvoiceItem,
 } from '@/lib/accounting/types';
 import { computeInvoiceTotals, formatINR, amountInWords } from '@/lib/accounting/computations';
+import { formatInvoiceMonth } from '@/lib/accounting/invoiceTemplate';
 import type { AccountingCompanyProfile } from '@/lib/accounting/companyProfile';
 import ServiceItemPickerDialog from '@/components/accounting/ServiceItemPickerDialog';
 import type { ServiceCatalogItem } from '@/lib/accounting/serviceCatalog';
@@ -383,6 +385,37 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                       <DueIcon fontSize="small" color="action" />
                     </InputAdornment>
                   ),
+                }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={8} md={4}>
+              <TextField
+                size="small"
+                fullWidth
+                label="Invoice Month"
+                placeholder="e.g. July 2026"
+                value={inv.invoiceMonth || ''}
+                onChange={(e) => patch({ invoiceMonth: e.target.value })}
+                helperText="Optional — appears on the printed invoice only when filled"
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <MonthIcon fontSize="small" color="action" />
+                    </InputAdornment>
+                  ),
+                  endAdornment: inv.invoiceDate ? (
+                    <InputAdornment position="end">
+                      <Button
+                        size="small"
+                        sx={{ minWidth: 0, textTransform: 'none', fontSize: 11 }}
+                        onClick={() =>
+                          patch({ invoiceMonth: formatInvoiceMonth(inv.invoiceDate) })
+                        }
+                      >
+                        From date
+                      </Button>
+                    </InputAdornment>
+                  ) : undefined,
                 }}
               />
             </Grid>

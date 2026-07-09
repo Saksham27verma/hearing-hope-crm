@@ -47,6 +47,7 @@ const blankInvoice = (companyId: string, companyName: string): AccountingInvoice
   clientSnapshot: { name: '' },
   invoiceNumber: '',
   invoiceDate: todayStr(),
+  invoiceMonth: '',
   dueDate: '',
   items: [
     {

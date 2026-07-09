@@ -31,7 +31,7 @@ function linePayable(it: AccountingInvoiceItem): number {
   return Math.round((lineSubtotal(it) + lineGst(it)) * 100) / 100;
 }
 
-function formatInvoiceMonth(dateStr: string | undefined): string {
+export function formatInvoiceMonth(dateStr: string | undefined): string {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return '';
@@ -156,7 +156,7 @@ export function buildInvoiceTemplateContext(
 
     invoiceNumber: escapeHtml(invoice.invoiceNumber),
     invoiceDate: escapeHtml(invoice.invoiceDate),
-    invoiceMonth: escapeHtml(formatInvoiceMonth(invoice.invoiceDate)),
+    invoiceMonth: escapeHtml(String(invoice.invoiceMonth || '').trim()),
     dueDate: escapeHtml(invoice.dueDate || ''),
     status: escapeHtml(String(invoice.status || 'draft').toUpperCase()),
     taxMode:
@@ -221,7 +221,7 @@ export const TEMPLATE_PLACEHOLDERS: {
 
   { key: 'invoiceNumber', desc: 'Invoice number' },
   { key: 'invoiceDate', desc: 'Invoice date' },
-  { key: 'invoiceMonth', desc: 'Invoice month e.g. July 2026' },
+  { key: 'invoiceMonth', desc: 'Invoice month label (optional — hidden on PDF when empty)' },
   { key: 'dueDate', desc: 'Due date (may be empty)' },
   { key: 'status', desc: 'Uppercase status (DRAFT / SENT / PAID …)' },
   { key: 'taxMode', desc: 'Descriptive tax mode label' },
@@ -405,7 +405,7 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
         <span style="font-size: 26px; font-weight: bold; color: #111; text-transform: uppercase;">Tax Invoice</span><br>
         <span style="font-size: 13px; color: #333;"><b>Invoice Date:</b> {{invoiceDate}}</span><br>
         <span style="font-size: 13px; color: #333;"><b>Invoice Number:</b> {{invoiceNumber}}</span><br>
-        <span style="font-size: 13px; color: #333;"><b>Invoice Month:</b> {{invoiceMonth}}</span><br>
+        {{#if invoiceMonth}}<span style="font-size: 13px; color: #333;"><b>Invoice Month:</b> {{invoiceMonth}}</span><br>{{/if}}
         <span style="font-size: 13px; color: #333;"><b>GSTIN:</b> {{companyGSTIN}}</span>
       </td>
     </tr>

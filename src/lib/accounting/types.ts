@@ -56,6 +56,8 @@ export type AccountingInvoice = {
   clientSnapshot: AccountingInvoiceClientSnapshot;
   invoiceNumber: string;
   invoiceDate: string;
+  /** Optional label e.g. "July 2026" — shown on PDF/HTML only when set */
+  invoiceMonth?: string;
   dueDate?: string;
   items: AccountingInvoiceItem[];
   subtotal: number;

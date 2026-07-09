@@ -106,6 +106,7 @@ function makeSampleInvoice(companyId: string, companyName: string): AccountingIn
     },
     invoiceNumber: 'SAMPLE/25-26/0007',
     invoiceDate: new Date().toISOString().slice(0, 10),
+    invoiceMonth: 'July 2026',
     dueDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
     items: [
       {
