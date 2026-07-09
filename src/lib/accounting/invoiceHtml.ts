@@ -16,21 +16,25 @@ const escapeHtml = (s: string | undefined | null): string =>
 const nl2br = (s: string | undefined | null): string =>
   escapeHtml(s).replace(/\n/g, '<br/>');
 
-function itemsRows(items: AccountingInvoiceItem[]): string {
+function itemsRows(items: AccountingInvoiceItem[], ratio: number = 1): string {
   return items
     .map(
-      (it, i) => `
+      (it, i) => {
+        const qty = Number(it.quantity || 0);
+        const rate = Number(it.rate || 0) * ratio;
+        return `
     <tr>
       <td class="c">${i + 1}</td>
       <td>
         <div class="desc">${escapeHtml(it.description)}</div>
       </td>
       <td class="c">${escapeHtml(it.hsnSac || '')}</td>
-      <td class="r">${Number(it.quantity || 0)}</td>
-      <td class="r">${formatINR(it.rate).replace('₹', '')}</td>
+      <td class="r">${qty}</td>
+      <td class="r">${formatINR(rate).replace('₹', '')}</td>
       <td class="r">${Number(it.gstPercent || 0)}%</td>
-      <td class="r">${formatINR(Number(it.quantity || 0) * Number(it.rate || 0)).replace('₹', '')}</td>
-    </tr>`,
+      <td class="r">${formatINR(qty * rate).replace('₹', '')}</td>
+    </tr>`;
+      },
     )
     .join('');
 }
@@ -52,6 +56,15 @@ export function renderAccountingInvoiceHtml(
       .join('\n'),
   );
   const taxMode = invoice.taxMode || 'intra';
+  const netPct = Math.min(
+    100,
+    Math.max(0.01, Number((invoice as any).netPayablePercent || 100)),
+  );
+  const ratio = netPct / 100;
+  const partBillingNote =
+    netPct < 100
+      ? `<div style="margin-top:6px;font-size:11px;font-style:italic;color:#ef6c00">Part billing @ ${netPct}% of standard rates applied.</div>`
+      : '';
 
   return `<!doctype html>
 <html>
@@ -139,9 +152,10 @@ export function renderAccountingInvoiceHtml(
         </tr>
       </thead>
       <tbody>
-        ${itemsRows(invoice.items || [])}
+        ${itemsRows(invoice.items || [], ratio)}
       </tbody>
     </table>
+    ${partBillingNote}
 
     <div class="totals">
       <table>

@@ -18,17 +18,17 @@ const nl2br = (s: string | undefined | null): string =>
 
 const rupee = (n: number) => formatINR(n);
 
-function lineSubtotal(it: AccountingInvoiceItem): number {
-  return Number(it.quantity || 0) * Number(it.rate || 0);
+function lineSubtotal(it: AccountingInvoiceItem, ratio: number = 1): number {
+  return Number(it.quantity || 0) * Number(it.rate || 0) * ratio;
 }
 
-function lineGst(it: AccountingInvoiceItem): number {
-  const sub = lineSubtotal(it);
+function lineGst(it: AccountingInvoiceItem, ratio: number = 1): number {
+  const sub = lineSubtotal(it, ratio);
   return Math.round((sub * Number(it.gstPercent || 0)) / 100 * 100) / 100;
 }
 
-function linePayable(it: AccountingInvoiceItem): number {
-  return Math.round((lineSubtotal(it) + lineGst(it)) * 100) / 100;
+function linePayable(it: AccountingInvoiceItem, ratio: number = 1): number {
+  return Math.round((lineSubtotal(it, ratio) + lineGst(it, ratio)) * 100) / 100;
 }
 
 export function formatInvoiceMonth(dateStr: string | undefined): string {
@@ -45,47 +45,59 @@ function splitDescription(desc: string): { title: string; detail: string } {
   return { title: parts[0], detail: parts.slice(1).join(' · ') };
 }
 
-function buildItemsHtml(items: AccountingInvoiceItem[]): string {
+function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): string {
   return items
     .map(
-      (it, i) => `
+      (it, i) => {
+        const qty = Number(it.quantity || 0);
+        const rate = Number(it.rate || 0) * ratio;
+        return `
       <tr>
         <td style="text-align:center">${i + 1}</td>
         <td>${nl2br(it.description)}</td>
         <td style="text-align:center">${escapeHtml(it.hsnSac || '')}</td>
-        <td style="text-align:right">${Number(it.quantity || 0)}</td>
-        <td style="text-align:right">${rupee(Number(it.rate || 0))}</td>
+        <td style="text-align:right">${qty}</td>
+        <td style="text-align:right">${rupee(rate)}</td>
         <td style="text-align:right">${Number(it.gstPercent || 0)}%</td>
-        <td style="text-align:right">${rupee(Number(it.quantity || 0) * Number(it.rate || 0))}</td>
-      </tr>`,
+        <td style="text-align:right">${rupee(qty * rate)}</td>
+      </tr>`;
+      },
     )
     .join('');
 }
 
-function buildItemsPlainRows(items: AccountingInvoiceItem[]): string {
+function buildItemsPlainRows(items: AccountingInvoiceItem[], ratio: number = 1): string {
   return items
     .map(
-      (it, i) => `
+      (it, i) => {
+        const qty = Number(it.quantity || 0);
+        const rate = Number(it.rate || 0) * ratio;
+        return `
       <tr>
         <td>${i + 1}</td>
         <td>${nl2br(it.description)}</td>
         <td>${escapeHtml(it.hsnSac || '')}</td>
-        <td style="text-align:right">${Number(it.quantity || 0)}</td>
-        <td style="text-align:right">${rupee(Number(it.rate || 0))}</td>
+        <td style="text-align:right">${qty}</td>
+        <td style="text-align:right">${rupee(rate)}</td>
         <td style="text-align:right">${Number(it.gstPercent || 0)}%</td>
-        <td style="text-align:right">${rupee(Number(it.quantity || 0) * Number(it.rate || 0))}</td>
-      </tr>`,
+        <td style="text-align:right">${rupee(qty * rate)}</td>
+      </tr>`;
+      },
     )
     .join('');
 }
 
-function buildItemsHopeEnterprisesHtml(items: AccountingInvoiceItem[]): string {
+function buildItemsHopeEnterprisesHtml(
+  items: AccountingInvoiceItem[],
+  ratio: number = 1,
+): string {
   return items
     .map((it, i) => {
       const { title, detail } = splitDescription(it.description);
-      const sub = lineSubtotal(it);
-      const gst = lineGst(it);
-      const payable = linePayable(it);
+      const rate = Number(it.rate || 0) * ratio;
+      const sub = lineSubtotal(it, ratio);
+      const gst = lineGst(it, ratio);
+      const payable = linePayable(it, ratio);
       return `
       <tr style="border-bottom: 1px solid #e0e0e0;">
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${i + 1}</td>
@@ -94,7 +106,7 @@ function buildItemsHopeEnterprisesHtml(items: AccountingInvoiceItem[]): string {
           ${detail ? `<br><span style="color: #666; font-size: 11px;">${escapeHtml(detail)}</span>` : ''}
         </td>
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${escapeHtml(it.hsnSac || '')}</td>
-        <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(Number(it.rate || 0))}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(rate)}</td>
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${Number(it.quantity || 0)}</td>
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${Number(it.gstPercent || 0)}%</td>
         <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(gst)}</td>
@@ -130,6 +142,11 @@ export function buildInvoiceTemplateContext(
     company?.ifsc && `IFSC: ${company.ifsc}`,
     company?.branch && `Branch: ${company.branch}`,
   ].filter(Boolean) as string[];
+
+  const netPctRaw = Number((invoice as any).netPayablePercent);
+  const netPct =
+    Number.isFinite(netPctRaw) && netPctRaw > 0 ? Math.min(100, netPctRaw) : 100;
+  const ratio = netPct / 100;
 
   const balanceDue = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.amountPaid || 0) - Number((invoice as any).tdsDeducted || 0));
 
@@ -195,9 +212,14 @@ export function buildInvoiceTemplateContext(
     balanceDue: rupee(balanceDue),
     grandTotalWords: escapeHtml(amountInWords(invoice.grandTotal)),
 
-    itemsHtml: buildItemsHtml(invoice.items || []),
-    itemsPlainHtml: buildItemsPlainRows(invoice.items || []),
-    itemsHopeEnterprisesHtml: buildItemsHopeEnterprisesHtml(invoice.items || []),
+    itemsHtml: buildItemsHtml(invoice.items || [], ratio),
+    itemsPlainHtml: buildItemsPlainRows(invoice.items || [], ratio),
+    itemsHopeEnterprisesHtml: buildItemsHopeEnterprisesHtml(invoice.items || [], ratio),
+
+    partBillingNote:
+      netPct < 100
+        ? `Part billing @ ${netPct}% of standard rates applied.`
+        : '',
 
     notes: nl2br(invoice.notes || ''),
     terms: nl2br(invoice.terms || ''),
@@ -267,6 +289,7 @@ export const TEMPLATE_PLACEHOLDERS: {
   { key: 'itemsHtml', desc: 'Full styled <tr> rows for line items table' },
   { key: 'itemsHopeEnterprisesHtml', desc: 'Hope Enterprises / Zoho-style line item rows (9 columns)' },
   { key: 'itemsPlainHtml', desc: 'Unstyled <tr> rows if you\u2019re providing your own CSS' },
+  { key: 'partBillingNote', desc: 'Short note "Part billing @ X% applied" (empty when 100%)' },
   { key: 'companyLogoUrl', desc: 'Logo image URL (set in template HTML if needed)' },
   { key: 'signatureImageUrl', desc: 'Signature image URL (set in template HTML if needed)' },
 
@@ -466,6 +489,12 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
       {{itemsHopeEnterprisesHtml}}
     </tbody>
   </table>
+
+  {{#if partBillingNote}}
+  <div style="font-size: 12px; color: #ef6c00; margin: -10px 0 15px; font-style: italic;">
+    Note: {{partBillingNote}}
+  </div>
+  {{/if}}
 
   <table width="100%" border="0" cellspacing="0" cellpadding="6" style="font-size: 13px; margin-bottom: 30px;">
     <tr>
