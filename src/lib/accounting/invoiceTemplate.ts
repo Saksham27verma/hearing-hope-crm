@@ -131,7 +131,7 @@ export function buildInvoiceTemplateContext(
     company?.branch && `Branch: ${company.branch}`,
   ].filter(Boolean) as string[];
 
-  const balanceDue = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.amountPaid || 0));
+  const balanceDue = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.amountPaid || 0) - Number((invoice as any).tdsDeducted || 0));
 
   const clientAddressComma = [
     client.address,
@@ -178,6 +178,8 @@ export function buildInvoiceTemplateContext(
     roundOff: rupee(invoice.roundOff),
     grandTotal: rupee(invoice.grandTotal),
     amountPaid: rupee(invoice.amountPaid),
+    tdsDeducted: rupee(Number((invoice as any).tdsDeducted || 0)),
+    settledAmount: rupee(Number(invoice.amountPaid || 0) + Number((invoice as any).tdsDeducted || 0)),
     balanceDue: rupee(balanceDue),
     grandTotalWords: escapeHtml(amountInWords(invoice.grandTotal)),
 
@@ -241,6 +243,8 @@ export const TEMPLATE_PLACEHOLDERS: {
   { key: 'roundOff', desc: 'Round off' },
   { key: 'grandTotal', desc: 'Grand total' },
   { key: 'amountPaid', desc: 'Amount already received' },
+  { key: 'tdsDeducted', desc: 'TDS deducted by client to date' },
+  { key: 'settledAmount', desc: 'Total settled = amountPaid + tdsDeducted' },
   { key: 'balanceDue', desc: 'Balance still due' },
   { key: 'grandTotalWords', desc: 'Amount in words' },
 

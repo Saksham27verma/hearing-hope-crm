@@ -219,7 +219,22 @@ export default function AccountingPaymentsPage() {
                 <TableRow key={p.id} hover>
                   <TableCell>{p.paymentDate}</TableCell>
                   <TableCell>{p.clientName || '—'}</TableCell>
-                  <TableCell align="right">{formatINR(p.amount)}</TableCell>
+                  <TableCell align="right">
+                    <Stack alignItems="flex-end" spacing={0.25}>
+                      <Typography variant="body2" fontWeight={600}>
+                        {formatINR(p.amount)}
+                      </Typography>
+                      {Number(p.tdsAmount || 0) > 0 && (
+                        <Chip
+                          size="small"
+                          color="warning"
+                          variant="outlined"
+                          label={`+ TDS ${formatINR(p.tdsAmount || 0)}${p.tdsPercent ? ` (${p.tdsPercent}%)` : ''}`}
+                          sx={{ height: 18, fontSize: 10 }}
+                        />
+                      )}
+                    </Stack>
+                  </TableCell>
                   <TableCell>
                     <Chip size="small" label={p.mode.toUpperCase()} />
                   </TableCell>
@@ -232,7 +247,11 @@ export default function AccountingPaymentsPage() {
                             key={a.invoiceId}
                             size="small"
                             variant="outlined"
-                            label={`${a.invoiceNumber}: ${formatINR(a.amount)}`}
+                            label={
+                              Number(a.tdsAmount || 0) > 0
+                                ? `${a.invoiceNumber}: ${formatINR(a.amount)} + ${formatINR(a.tdsAmount || 0)} TDS`
+                                : `${a.invoiceNumber}: ${formatINR(a.amount)}`
+                            }
                           />
                         ))
                       ) : (

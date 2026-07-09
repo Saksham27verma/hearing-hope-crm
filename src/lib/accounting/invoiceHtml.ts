@@ -122,7 +122,7 @@ export function renderAccountingInvoiceHtml(
         <div>Status: <b>${escapeHtml(String(invoice.status || 'draft').toUpperCase())}</b></div>
         <div>Tax Mode: <b>${taxMode === 'intra' ? 'CGST + SGST (intra-state)' : 'IGST (inter-state)'}</b></div>
         <div>Amount Paid: <b>${formatINR(invoice.amountPaid || 0)}</b></div>
-        <div>Balance Due: <b>${formatINR(Math.max(0, invoice.grandTotal - (invoice.amountPaid || 0)))}</b></div>
+        <div>Balance Due: <b>${formatINR(Math.max(0, invoice.grandTotal - (invoice.amountPaid || 0) - Number((invoice as any).tdsDeducted || 0)))}</b></div>
       </div>
     </div>
 

@@ -8,7 +8,7 @@ import { amountInWords, formatINR, roundTo2 } from '@/lib/accounting/computation
 
 export type LedgerEntry = {
   date: string;
-  type: 'opening' | 'invoice' | 'payment';
+  type: 'opening' | 'invoice' | 'payment' | 'tds';
   particulars: string;
   reference: string;
   debit: number;
@@ -83,7 +83,9 @@ export function buildLedger({
       if (e.kind === 'invoice' && e.invoice) {
         openingInPeriodSigned = signedBalance(openingInPeriodSigned, Number(e.invoice.grandTotal || 0), 0);
       } else if (e.kind === 'payment' && e.payment) {
-        openingInPeriodSigned = signedBalance(openingInPeriodSigned, 0, Number(e.payment.amount || 0));
+        const cash = Number(e.payment.amount || 0);
+        const tds = Number(e.payment.tdsAmount || 0);
+        openingInPeriodSigned = signedBalance(openingInPeriodSigned, 0, cash + tds);
       }
     }
     running = openingInPeriodSigned;
@@ -126,20 +128,45 @@ export function buildLedger({
       });
     } else if (e.kind === 'payment' && e.payment) {
       const amt = Number(e.payment.amount || 0);
-      running = signedBalance(running, 0, amt);
-      totalCredit = roundTo2(totalCredit + amt);
-      const d = toDisplay(running);
-      entries.push({
-        date: e.date,
-        type: 'payment',
-        particulars: `Payment received (${e.payment.mode})${e.payment.reference ? ` · ${e.payment.reference}` : ''}`,
-        reference: e.payment.allocations?.map((a) => a.invoiceNumber).filter(Boolean).join(', ') || '',
-        debit: 0,
-        credit: amt,
-        balance: d.amount,
-        balanceType: d.type,
-        paymentId: e.payment.id,
-      });
+      const tds = Number(e.payment.tdsAmount || 0);
+      if (amt > 0) {
+        running = signedBalance(running, 0, amt);
+        totalCredit = roundTo2(totalCredit + amt);
+        const d = toDisplay(running);
+        entries.push({
+          date: e.date,
+          type: 'payment',
+          particulars: `Payment received (${e.payment.mode})${e.payment.reference ? ` · ${e.payment.reference}` : ''}`,
+          reference: e.payment.allocations?.map((a) => a.invoiceNumber).filter(Boolean).join(', ') || '',
+          debit: 0,
+          credit: amt,
+          balance: d.amount,
+          balanceType: d.type,
+          paymentId: e.payment.id,
+        });
+      }
+      if (tds > 0) {
+        running = signedBalance(running, 0, tds);
+        totalCredit = roundTo2(totalCredit + tds);
+        const d = toDisplay(running);
+        const pct = Number(e.payment.tdsPercent || 0);
+        entries.push({
+          date: e.date,
+          type: 'tds',
+          particulars: `TDS deducted by client${pct ? ` @ ${pct}%` : ''}`,
+          reference:
+            e.payment.allocations
+              ?.filter((a) => Number(a.tdsAmount || 0) > 0)
+              .map((a) => a.invoiceNumber)
+              .filter(Boolean)
+              .join(', ') || '',
+          debit: 0,
+          credit: tds,
+          balance: d.amount,
+          balanceType: d.type,
+          paymentId: e.payment.id,
+        });
+      }
     }
   }
 

@@ -150,7 +150,7 @@ export default function AccountingInvoiceDetailPage() {
       await updateDoc(doc(db, 'accountingInvoices', invoice.id), {
         ...rest,
         amountPaid: Number(invoice.amountPaid || 0),
-        balanceDue: Math.max(0, invoice.grandTotal - Number(invoice.amountPaid || 0)),
+        balanceDue: Math.max(0, invoice.grandTotal - Number(invoice.amountPaid || 0) - Number(invoice.tdsDeducted || 0)),
         updatedAt: serverTimestamp(),
       });
       setSnack({ msg: 'Saved', sev: 'success' });
@@ -315,11 +315,18 @@ export default function AccountingInvoiceDetailPage() {
             {invoice.companyName} · {invoice.clientSnapshot?.name || 'Client'}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} flexWrap="wrap">
           <Chip label={`Total: ${formatINR(invoice.grandTotal)}`} />
           <Chip label={`Paid: ${formatINR(invoice.amountPaid)}`} color="success" variant="outlined" />
+          {Number(invoice.tdsDeducted || 0) > 0 && (
+            <Chip
+              label={`TDS: ${formatINR(invoice.tdsDeducted || 0)}`}
+              color="warning"
+              variant="outlined"
+            />
+          )}
           <Chip
-            label={`Due: ${formatINR(Math.max(0, invoice.grandTotal - invoice.amountPaid))}`}
+            label={`Due: ${formatINR(Math.max(0, invoice.grandTotal - Number(invoice.amountPaid || 0) - Number(invoice.tdsDeducted || 0)))}`}
             color="warning"
             variant="outlined"
           />

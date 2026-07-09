@@ -41,7 +41,9 @@ import {
   Article as ChequeIcon,
   Savings as CashIcon,
   MoreHoriz as OtherIcon,
+  Percent as PercentIcon,
 } from '@mui/icons-material';
+import { Switch, FormControlLabel } from '@mui/material';
 import {
   collection,
   doc,
@@ -139,6 +141,9 @@ export default function PaymentDialog({
   const [notes, setNotes] = useState('');
   const [openInvoices, setOpenInvoices] = useState<AccountingInvoice[]>([]);
   const [alloc, setAlloc] = useState<Record<string, number>>({});
+  const [tdsAlloc, setTdsAlloc] = useState<Record<string, number>>({});
+  const [tdsEnabled, setTdsEnabled] = useState(false);
+  const [tdsPercent, setTdsPercent] = useState<number>(10);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
@@ -157,6 +162,9 @@ export default function PaymentDialog({
       setReference('');
       setNotes('');
       setAlloc({});
+      setTdsAlloc({});
+      setTdsEnabled(false);
+      setTdsPercent(10);
       setError(null);
     }
   }, [open, presetClientId]);
@@ -182,7 +190,8 @@ export default function PaymentDialog({
           .map((d) => ({ id: d.id, ...(d.data() as Omit<AccountingInvoice, 'id'>) }))
           .filter((r) => {
             if (r.status === 'cancelled' || r.status === 'draft') return false;
-            const due = Number(r.grandTotal || 0) - Number(r.amountPaid || 0);
+            const settled = Number(r.amountPaid || 0) + Number(r.tdsDeducted || 0);
+            const due = Number(r.grandTotal || 0) - settled;
             return due > 0.01;
           })
           .sort((a, b) => (a.invoiceDate || '').localeCompare(b.invoiceDate || ''));
@@ -201,7 +210,14 @@ export default function PaymentDialog({
   const totalOutstanding = useMemo(
     () =>
       openInvoices.reduce(
-        (s, i) => s + Math.max(0, Number(i.grandTotal || 0) - Number(i.amountPaid || 0)),
+        (s, i) =>
+          s +
+          Math.max(
+            0,
+            Number(i.grandTotal || 0) -
+              Number(i.amountPaid || 0) -
+              Number(i.tdsDeducted || 0),
+          ),
         0,
       ),
     [openInvoices],
@@ -212,25 +228,81 @@ export default function PaymentDialog({
     [alloc],
   );
 
+  const tdsTotal = useMemo(
+    () => Object.values(tdsAlloc).reduce((a, b) => a + Number(b || 0), 0),
+    [tdsAlloc],
+  );
+
   const remaining = Number(amount || 0) - allocatedTotal;
+
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
+  const invoiceDue = (inv: AccountingInvoice) =>
+    Math.max(
+      0,
+      Number(inv.grandTotal || 0) -
+        Number(inv.amountPaid || 0) -
+        Number(inv.tdsDeducted || 0),
+    );
+
+  const settleRowFull = (inv: AccountingInvoice) => {
+    if (!inv.id) return;
+    const due = invoiceDue(inv);
+    if (tdsEnabled && tdsPercent > 0) {
+      const tds = round2((due * tdsPercent) / 100);
+      const cash = round2(due - tds);
+      setAlloc((a) => ({ ...a, [inv.id!]: cash }));
+      setTdsAlloc((a) => ({ ...a, [inv.id!]: tds }));
+    } else {
+      setAlloc((a) => ({ ...a, [inv.id!]: round2(due) }));
+      setTdsAlloc((a) => {
+        const n = { ...a };
+        delete n[inv.id!];
+        return n;
+      });
+    }
+  };
 
   const autoAllocate = () => {
     let left = Number(amount || 0);
-    const next: Record<string, number> = {};
+    const nextCash: Record<string, number> = {};
+    const nextTds: Record<string, number> = {};
     for (const inv of openInvoices) {
       if (!inv.id) continue;
-      const due = Number(inv.grandTotal || 0) - Number(inv.amountPaid || 0);
-      const take = Math.min(due, left);
-      if (take > 0) next[inv.id] = Number(take.toFixed(2));
-      left -= take;
+      const due = invoiceDue(inv);
+      if (tdsEnabled && tdsPercent > 0) {
+        const cashShare = round2((due * (100 - tdsPercent)) / 100);
+        const cashUse = Math.min(cashShare, left);
+        if (cashUse <= 0) continue;
+        const ratio = cashShare > 0 ? cashUse / cashShare : 0;
+        const settled = round2(due * ratio);
+        const tds = round2(settled - cashUse);
+        nextCash[inv.id] = round2(cashUse);
+        if (tds > 0) nextTds[inv.id] = tds;
+        left -= cashUse;
+      } else {
+        const cashUse = Math.min(due, left);
+        if (cashUse > 0) nextCash[inv.id] = round2(cashUse);
+        left -= cashUse;
+      }
       if (left <= 0) break;
     }
-    setAlloc(next);
+    setAlloc(nextCash);
+    setTdsAlloc(nextTds);
   };
 
-  const clearAlloc = () => setAlloc({});
+  const clearAlloc = () => {
+    setAlloc({});
+    setTdsAlloc({});
+  };
 
-  const fillFullAmount = () => setAmount(Number(totalOutstanding.toFixed(2)));
+  const fillFullAmount = () => {
+    if (tdsEnabled && tdsPercent > 0) {
+      setAmount(Number(((totalOutstanding * (100 - tdsPercent)) / 100).toFixed(2)));
+    } else {
+      setAmount(Number(totalOutstanding.toFixed(2)));
+    }
+  };
 
   const handleSubmit = async () => {
     setError(null);
@@ -243,29 +315,38 @@ export default function PaymentDialog({
       return;
     }
     if (allocatedTotal - Number(amount || 0) > 0.01) {
-      setError('Allocated amount exceeds payment amount');
+      setError('Allocated cash exceeds payment amount');
       return;
     }
     setSaving(true);
     try {
       await runTransaction(db, async (tx) => {
         const allocations: AccountingPaymentAllocation[] = [];
-        for (const [invoiceId, allocAmt] of Object.entries(alloc)) {
-          const amt = Number(allocAmt || 0);
-          if (amt <= 0) continue;
+        const invoiceIds = new Set<string>([
+          ...Object.keys(alloc),
+          ...Object.keys(tdsAlloc),
+        ]);
+        for (const invoiceId of invoiceIds) {
+          const cashAmt = Number(alloc[invoiceId] || 0);
+          const tdsAmt = Number(tdsAlloc[invoiceId] || 0);
+          if (cashAmt <= 0 && tdsAmt <= 0) continue;
           const invRef = doc(db, 'accountingInvoices', invoiceId);
           const snap = await tx.get(invRef);
           if (!snap.exists()) continue;
           const data = snap.data() as AccountingInvoice;
           const grand = Number(data.grandTotal || 0);
           const paidBefore = Number(data.amountPaid || 0);
-          const newPaid = Math.min(grand, paidBefore + amt);
-          const newDue = Math.max(0, grand - newPaid);
+          const tdsBefore = Number(data.tdsDeducted || 0);
+          const newPaid = Math.min(grand, paidBefore + cashAmt);
+          const newTds = Math.min(grand, tdsBefore + tdsAmt);
+          const settled = Math.min(grand, newPaid + newTds);
+          const newDue = Math.max(0, grand - settled);
           let status = data.status;
           if (newDue <= 0.01) status = 'paid';
-          else if (newPaid > 0) status = 'partial';
+          else if (settled > 0) status = 'partial';
           tx.update(invRef, {
             amountPaid: Number(newPaid.toFixed(2)),
+            tdsDeducted: Number(newTds.toFixed(2)),
             balanceDue: Number(newDue.toFixed(2)),
             status,
             updatedAt: serverTimestamp(),
@@ -273,7 +354,8 @@ export default function PaymentDialog({
           allocations.push({
             invoiceId,
             invoiceNumber: data.invoiceNumber || '',
-            amount: Number(amt.toFixed(2)),
+            amount: Number(cashAmt.toFixed(2)),
+            ...(tdsAmt > 0 ? { tdsAmount: Number(tdsAmt.toFixed(2)) } : {}),
           });
         }
         const paymentsRef = doc(collection(db, 'accountingPayments'));
@@ -283,6 +365,8 @@ export default function PaymentDialog({
           clientName: selectedClient?.name || '',
           paymentDate,
           amount: Number(Number(amount).toFixed(2)),
+          tdsAmount: Number(tdsTotal.toFixed(2)),
+          tdsPercent: tdsEnabled ? Number(tdsPercent) : 0,
           mode,
           reference: reference || '',
           notes: notes || '',
@@ -496,6 +580,65 @@ export default function PaymentDialog({
                   }}
                 />
               </Grid>
+              <Grid item xs={12}>
+                <Paper
+                  variant="outlined"
+                  sx={{
+                    p: 1.5,
+                    borderRadius: 2,
+                    borderStyle: tdsEnabled ? 'solid' : 'dashed',
+                    borderColor: tdsEnabled ? 'warning.main' : 'divider',
+                    bgcolor: tdsEnabled ? 'warning.50' : 'transparent',
+                  }}
+                >
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ sm: 'center' }}>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          checked={tdsEnabled}
+                          onChange={(_, v) => {
+                            setTdsEnabled(v);
+                            if (!v) setTdsAlloc({});
+                          }}
+                          color="warning"
+                        />
+                      }
+                      label={
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                          <PercentIcon fontSize="small" color={tdsEnabled ? 'warning' : 'action'} />
+                          <Typography fontWeight={600}>Client deducted TDS</Typography>
+                        </Stack>
+                      }
+                    />
+                    {tdsEnabled && (
+                      <>
+                        <TextField
+                          size="small"
+                          type="number"
+                          label="TDS %"
+                          value={tdsPercent}
+                          onChange={(e) =>
+                            setTdsPercent(Math.max(0, Math.min(100, Number(e.target.value) || 0)))
+                          }
+                          sx={{ width: 110 }}
+                          InputProps={{
+                            endAdornment: (
+                              <InputAdornment position="end">
+                                <PercentIcon fontSize="small" color="action" />
+                              </InputAdornment>
+                            ),
+                            inputProps: { min: 0, max: 100, step: 'any' },
+                          }}
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                          Bill is marked cleared once <b>cash + TDS = invoice total</b>. Cash <b>{formatINR(amount)}</b> +
+                          TDS <b>{formatINR(tdsTotal)}</b> = <b>{formatINR(Number(amount || 0) + tdsTotal)}</b> settled.
+                        </Typography>
+                      </>
+                    )}
+                  </Stack>
+                </Paper>
+              </Grid>
             </Grid>
           </Paper>
 
@@ -546,10 +689,13 @@ export default function PaymentDialog({
             ) : (
               <Stack spacing={1.25}>
                 {openInvoices.map((inv) => {
-                  const due = Number(inv.grandTotal || 0) - Number(inv.amountPaid || 0);
+                  const settledBefore = Number(inv.amountPaid || 0) + Number(inv.tdsDeducted || 0);
+                  const due = Number(inv.grandTotal || 0) - settledBefore;
                   const cur = Number(alloc[inv.id || ''] || 0);
-                  const pct = due > 0 ? Math.min(100, (cur / due) * 100) : 0;
-                  const isFull = cur > 0 && cur >= due - 0.01;
+                  const curTds = Number(tdsAlloc[inv.id || ''] || 0);
+                  const rowSettled = cur + curTds;
+                  const pct = due > 0 ? Math.min(100, (rowSettled / due) * 100) : 0;
+                  const isFull = rowSettled > 0 && rowSettled >= due - 0.01;
                   return (
                     <Paper
                       key={inv.id}
@@ -557,12 +703,12 @@ export default function PaymentDialog({
                       sx={{
                         p: 1.5,
                         borderRadius: 2,
-                        borderLeft: `4px solid ${isFull ? theme.palette.success.main : cur > 0 ? theme.palette.warning.main : theme.palette.divider}`,
-                        bgcolor: cur > 0 ? 'action.hover' : 'transparent',
+                        borderLeft: `4px solid ${isFull ? theme.palette.success.main : rowSettled > 0 ? theme.palette.warning.main : theme.palette.divider}`,
+                        bgcolor: rowSettled > 0 ? 'action.hover' : 'transparent',
                       }}
                     >
                       <Grid container spacing={1.5} alignItems="center">
-                        <Grid item xs={12} sm={5}>
+                        <Grid item xs={12} sm={tdsEnabled ? 3 : 5}>
                           <Stack direction="row" spacing={1} alignItems="center">
                             <Avatar sx={{ bgcolor: 'primary.50', color: 'primary.main', width: 32, height: 32 }}>
                               <ReceiptIcon fontSize="small" />
@@ -577,7 +723,7 @@ export default function PaymentDialog({
                             </Box>
                           </Stack>
                         </Grid>
-                        <Grid item xs={6} sm={2}>
+                        <Grid item xs={4} sm={tdsEnabled ? 2 : 2}>
                           <Typography variant="caption" color="text.secondary" display="block">
                             Total
                           </Typography>
@@ -585,7 +731,7 @@ export default function PaymentDialog({
                             {formatINR(inv.grandTotal)}
                           </Typography>
                         </Grid>
-                        <Grid item xs={6} sm={2}>
+                        <Grid item xs={4} sm={tdsEnabled ? 2 : 2}>
                           <Typography variant="caption" color="text.secondary" display="block">
                             Due
                           </Typography>
@@ -593,45 +739,68 @@ export default function PaymentDialog({
                             {formatINR(due)}
                           </Typography>
                         </Grid>
-                        <Grid item xs={12} sm={3}>
-                          <TextField
-                            size="small"
-                            type="number"
-                            fullWidth
-                            placeholder="0.00"
-                            value={alloc[inv.id || ''] || ''}
-                            onChange={(e) =>
-                              setAlloc((a) => ({
-                                ...a,
-                                [inv.id || '']: Math.max(0, Math.min(due, Number(e.target.value) || 0)),
-                              }))
-                            }
-                            InputProps={{
-                              startAdornment: (
-                                <InputAdornment position="start">
-                                  <Typography fontWeight={700} fontSize={14}>&#8377;</Typography>
-                                </InputAdornment>
-                              ),
-                              endAdornment: (
-                                <InputAdornment position="end">
-                                  <Tooltip title="Allocate full due">
-                                    <Button
-                                      size="small"
-                                      sx={{ minWidth: 0, p: 0.25 }}
-                                      onClick={() =>
-                                        setAlloc((a) => ({ ...a, [inv.id || '']: Number(due.toFixed(2)) }))
-                                      }
-                                    >
-                                      Max
-                                    </Button>
-                                  </Tooltip>
-                                </InputAdornment>
-                              ),
-                              inputProps: { style: { textAlign: 'right' }, min: 0, step: 'any' },
-                            }}
-                          />
+                        <Grid item xs={tdsEnabled ? 12 : 12} sm={tdsEnabled ? 5 : 3}>
+                          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                            <TextField
+                              size="small"
+                              type="number"
+                              fullWidth
+                              label={tdsEnabled ? 'Cash' : undefined}
+                              placeholder="0.00"
+                              value={alloc[inv.id || ''] || ''}
+                              onChange={(e) =>
+                                setAlloc((a) => ({
+                                  ...a,
+                                  [inv.id || '']: Math.max(0, Math.min(due, Number(e.target.value) || 0)),
+                                }))
+                              }
+                              InputProps={{
+                                startAdornment: (
+                                  <InputAdornment position="start">
+                                    <Typography fontWeight={700} fontSize={14}>&#8377;</Typography>
+                                  </InputAdornment>
+                                ),
+                                inputProps: { style: { textAlign: 'right' }, min: 0, step: 'any' },
+                              }}
+                            />
+                            {tdsEnabled && (
+                              <TextField
+                                size="small"
+                                type="number"
+                                fullWidth
+                                label="TDS"
+                                placeholder="0.00"
+                                value={tdsAlloc[inv.id || ''] || ''}
+                                onChange={(e) =>
+                                  setTdsAlloc((a) => ({
+                                    ...a,
+                                    [inv.id || '']: Math.max(0, Math.min(due, Number(e.target.value) || 0)),
+                                  }))
+                                }
+                                InputProps={{
+                                  startAdornment: (
+                                    <InputAdornment position="start">
+                                      <PercentIcon fontSize="small" color="warning" />
+                                    </InputAdornment>
+                                  ),
+                                  inputProps: { style: { textAlign: 'right' }, min: 0, step: 'any' },
+                                }}
+                                sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'warning.50' } }}
+                              />
+                            )}
+                            <Tooltip title={tdsEnabled ? `Settle with ${tdsPercent}% TDS split` : 'Allocate full due'}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => settleRowFull(inv)}
+                                sx={{ minWidth: 60, whiteSpace: 'nowrap' }}
+                              >
+                                {tdsEnabled ? 'Settle' : 'Max'}
+                              </Button>
+                            </Tooltip>
+                          </Stack>
                         </Grid>
-                        {cur > 0 && (
+                        {rowSettled > 0 && (
                           <Grid item xs={12}>
                             <Stack direction="row" spacing={1} alignItems="center">
                               <LinearProgress
@@ -643,12 +812,21 @@ export default function PaymentDialog({
                               <Typography variant="caption" color="text.secondary">
                                 {pct.toFixed(0)}%
                               </Typography>
+                              {curTds > 0 && (
+                                <Chip
+                                  size="small"
+                                  color="warning"
+                                  variant="outlined"
+                                  label={`TDS ${formatINR(curTds)}`}
+                                  sx={{ height: 20 }}
+                                />
+                              )}
                               {isFull && (
                                 <Chip
                                   size="small"
                                   color="success"
                                   icon={<CheckIcon />}
-                                  label="Fully paid"
+                                  label="Fully cleared"
                                   sx={{ height: 20 }}
                                 />
                               )}
@@ -706,13 +884,30 @@ export default function PaymentDialog({
         }}
       >
         <Stack direction="row" spacing={1} flexWrap="wrap">
-          <Chip size="small" label={`Amount: ${formatINR(amount)}`} color="primary" />
+          <Chip size="small" label={`Cash: ${formatINR(amount)}`} color="primary" />
+          {tdsTotal > 0 && (
+            <Chip
+              size="small"
+              color="warning"
+              variant="outlined"
+              icon={<PercentIcon fontSize="small" />}
+              label={`TDS: ${formatINR(tdsTotal)}`}
+            />
+          )}
           <Chip
             size="small"
             variant="outlined"
             color="primary"
             label={`Allocated: ${formatINR(allocatedTotal)}`}
           />
+          {tdsTotal > 0 && (
+            <Chip
+              size="small"
+              variant="outlined"
+              color="success"
+              label={`Settled: ${formatINR(allocatedTotal + tdsTotal)}`}
+            />
+          )}
           <Chip
             size="small"
             variant="outlined"

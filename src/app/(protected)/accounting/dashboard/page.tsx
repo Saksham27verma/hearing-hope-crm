@@ -95,7 +95,7 @@ export default function AccountingDashboardPage() {
 
     for (const inv of invoices) {
       if (inv.status === 'cancelled' || inv.status === 'draft') continue;
-      const due = Math.max(0, Number(inv.grandTotal || 0) - Number(inv.amountPaid || 0));
+      const due = Math.max(0, Number(inv.grandTotal || 0) - Number(inv.amountPaid || 0) - Number((inv as any).tdsDeducted || 0));
       receivables += due;
       if ((inv.invoiceDate || '') >= monthStart && (inv.invoiceDate || '') <= now) {
         invoicedMonth += Number(inv.grandTotal || 0);

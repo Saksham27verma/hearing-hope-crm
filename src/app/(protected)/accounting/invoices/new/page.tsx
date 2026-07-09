@@ -168,7 +168,7 @@ export default function NewAccountingInvoicePage() {
         invoiceNumber: finalNumber,
         status: asStatus,
         amountPaid: Number(invoice.amountPaid || 0),
-        balanceDue: Math.max(0, invoice.grandTotal - Number(invoice.amountPaid || 0)),
+        balanceDue: Math.max(0, invoice.grandTotal - Number(invoice.amountPaid || 0) - Number(invoice.tdsDeducted || 0)),
         createdBy: user?.uid || '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),

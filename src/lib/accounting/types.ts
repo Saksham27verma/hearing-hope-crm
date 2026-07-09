@@ -69,6 +69,8 @@ export type AccountingInvoice = {
   grandTotal: number;
   amountPaid: number;
   balanceDue: number;
+  /** Cumulative TDS deducted by clients (still due from tax dept but counts toward settlement). */
+  tdsDeducted?: number;
   taxMode: 'intra' | 'inter';
   status: AccountingInvoiceStatus;
   notes?: string;
@@ -90,6 +92,8 @@ export type AccountingPaymentAllocation = {
   invoiceId: string;
   invoiceNumber: string;
   amount: number;
+  /** TDS amount deducted by client against this invoice (part of settled total, not part of cash `amount`). */
+  tdsAmount?: number;
 };
 
 export type AccountingPayment = {
@@ -98,7 +102,12 @@ export type AccountingPayment = {
   clientId: string;
   clientName: string;
   paymentDate: string;
+  /** Actual cash / bank amount received. */
   amount: number;
+  /** Total TDS across all allocations of this payment (0 if none). */
+  tdsAmount?: number;
+  /** TDS % that was used at entry time (informational). */
+  tdsPercent?: number;
   mode: AccountingPaymentMode;
   reference?: string;
   notes?: string;

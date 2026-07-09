@@ -54,20 +54,32 @@ export function computeInvoiceTotals(
   };
 }
 
+export function invoiceSettled(
+  invoice: Pick<AccountingInvoice, 'amountPaid' | 'tdsDeducted'>,
+): number {
+  return Number(invoice.amountPaid || 0) + Number((invoice as any).tdsDeducted || 0);
+}
+
+export function invoiceBalance(
+  invoice: Pick<AccountingInvoice, 'grandTotal' | 'amountPaid' | 'tdsDeducted'>,
+): number {
+  return Math.max(0, Number(invoice.grandTotal || 0) - invoiceSettled(invoice));
+}
+
 export function deriveInvoiceStatus(
-  invoice: Pick<AccountingInvoice, 'grandTotal' | 'amountPaid' | 'dueDate' | 'status'>,
+  invoice: Pick<AccountingInvoice, 'grandTotal' | 'amountPaid' | 'tdsDeducted' | 'dueDate' | 'status'>,
 ): AccountingInvoiceStatus {
   if (invoice.status === 'cancelled' || invoice.status === 'draft') return invoice.status;
-  const paid = Number(invoice.amountPaid || 0);
+  const settled = invoiceSettled(invoice);
   const total = Number(invoice.grandTotal || 0);
-  if (paid <= 0) {
+  if (settled <= 0) {
     if (invoice.dueDate) {
       const d = new Date(invoice.dueDate);
       if (!Number.isNaN(d.getTime()) && d.getTime() < Date.now()) return 'overdue';
     }
     return invoice.status === 'sent' ? 'sent' : 'sent';
   }
-  if (paid + 0.01 < total) return 'partial';
+  if (settled + 0.01 < total) return 'partial';
   return 'paid';
 }
 

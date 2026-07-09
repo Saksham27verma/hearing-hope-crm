@@ -123,7 +123,7 @@ export default function AccountingInvoicesListPage() {
       (acc, r) => {
         acc.grand += Number(r.grandTotal || 0);
         acc.paid += Number(r.amountPaid || 0);
-        acc.due += Math.max(0, Number(r.grandTotal || 0) - Number(r.amountPaid || 0));
+        acc.due += Math.max(0, Number(r.grandTotal || 0) - Number(r.amountPaid || 0) - Number((r as any).tdsDeducted || 0));
         return acc;
       },
       { grand: 0, paid: 0, due: 0 },
@@ -237,7 +237,7 @@ export default function AccountingInvoicesListPage() {
               </TableRow>
             ) : (
               filtered.map((r) => {
-                const due = Math.max(0, Number(r.grandTotal || 0) - Number(r.amountPaid || 0));
+                const due = Math.max(0, Number(r.grandTotal || 0) - Number(r.amountPaid || 0) - Number((r as any).tdsDeducted || 0));
                 return (
                   <TableRow key={r.id} hover>
                     <TableCell>
