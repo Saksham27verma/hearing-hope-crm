@@ -20,21 +20,42 @@ export type InvoiceTotals = {
   totalGst: number;
   roundOff: number;
   grandTotal: number;
+  /** Subtotal before applying netPayablePercent scaling. */
+  grossSubtotal: number;
+  /** Grand total before applying netPayablePercent scaling. */
+  grossGrandTotal: number;
+  /** The scaling percentage that was applied (1-100). */
+  netPayablePercent: number;
 };
 
 export function computeInvoiceTotals(
   items: AccountingInvoiceItem[],
   taxMode: 'intra' | 'inter',
+  netPayablePercent: number = 100,
 ): InvoiceTotals {
+  const pct =
+    Number.isFinite(netPayablePercent) && netPayablePercent > 0
+      ? Math.min(100, Math.max(0.0001, Number(netPayablePercent)))
+      : 100;
+  const ratio = pct / 100;
+
+  let grossSubtotal = 0;
+  let grossGst = 0;
   let subtotal = 0;
   let gst = 0;
   for (const it of items) {
     const qty = Number(it.quantity || 0);
     const rate = Number(it.rate || 0);
-    const line = qty * rate;
+    const grossLine = qty * rate;
+    const line = grossLine * ratio;
+    grossSubtotal += grossLine;
     subtotal += line;
-    gst += (line * Number(it.gstPercent || 0)) / 100;
+    const g = Number(it.gstPercent || 0);
+    grossGst += (grossLine * g) / 100;
+    gst += (line * g) / 100;
   }
+  grossSubtotal = roundTo2(grossSubtotal);
+  grossGst = roundTo2(grossGst);
   subtotal = roundTo2(subtotal);
   gst = roundTo2(gst);
   const cgst = taxMode === 'intra' ? roundTo2(gst / 2) : 0;
@@ -43,6 +64,7 @@ export function computeInvoiceTotals(
   const rawGrand = subtotal + gst;
   const grand = Math.round(rawGrand);
   const roundOff = roundTo2(grand - rawGrand);
+  const grossGrand = Math.round(grossSubtotal + grossGst);
   return {
     subtotal,
     cgst,
@@ -51,6 +73,9 @@ export function computeInvoiceTotals(
     totalGst: gst,
     roundOff,
     grandTotal: grand,
+    grossSubtotal,
+    grossGrandTotal: grossGrand,
+    netPayablePercent: pct,
   };
 }
 

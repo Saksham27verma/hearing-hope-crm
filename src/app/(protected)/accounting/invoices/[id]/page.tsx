@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter, useParams } from 'next/navigation';
+import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import {
   Box,
   Stack,
@@ -21,6 +21,8 @@ import {
   ArrowBack as BackIcon,
   Save as SaveIcon,
   Delete as DeleteIcon,
+  Edit as EditIcon,
+  Close as CancelIcon,
   Print as PrintIcon,
   Visibility as PreviewIcon,
   WhatsApp as WhatsAppIcon,
@@ -76,11 +78,14 @@ const statusColor: Record<AccountingInvoiceStatus, 'default' | 'primary' | 'warn
 export default function AccountingInvoiceDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const invoiceId = params?.id as string;
   const { selectedCompanyId } = useAccountingCompany();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [preEditSnapshot, setPreEditSnapshot] = useState<AccountingInvoice | null>(null);
   const [invoice, setInvoice] = useState<AccountingInvoice | null>(null);
   const [clients, setClients] = useState<AccountingClient[]>([]);
   const [companyProfile, setCompanyProfile] = useState<AccountingCompanyProfile | null>(null);
@@ -100,6 +105,13 @@ export default function AccountingInvoiceDetailPage() {
       }
       const data = { id: snap.id, ...(snap.data() as Omit<AccountingInvoice, 'id'>) };
       setInvoice(data);
+      const wantEdit = searchParams?.get('edit') === '1';
+      setEditing((prev) => {
+        if (data.status === 'cancelled') return false;
+        if (prev) return true;
+        if (wantEdit) return true;
+        return data.status === 'draft';
+      });
       const [clientSnap, profile, tmpl] = await Promise.all([
         getDocs(
           query(
@@ -124,13 +136,13 @@ export default function AccountingInvoiceDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [invoiceId, selectedCompanyId]);
+  }, [invoiceId, selectedCompanyId, searchParams]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const isEditable = invoice?.status === 'draft';
+  const canEdit = !!invoice && invoice.status !== 'cancelled';
   const html = useMemo(() => {
     if (!invoice) return '';
     if (customTemplate) {
@@ -139,6 +151,18 @@ export default function AccountingInvoiceDetailPage() {
     }
     return renderAccountingInvoiceHtml(invoice, companyProfile);
   }, [invoice, companyProfile, customTemplate]);
+
+  const startEditing = () => {
+    if (!invoice) return;
+    setPreEditSnapshot(invoice);
+    setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    if (preEditSnapshot) setInvoice(preEditSnapshot);
+    setPreEditSnapshot(null);
+    setEditing(false);
+  };
 
   const handleSave = async () => {
     if (!invoice?.id) return;
@@ -154,6 +178,8 @@ export default function AccountingInvoiceDetailPage() {
         updatedAt: serverTimestamp(),
       });
       setSnack({ msg: 'Saved', sev: 'success' });
+      setPreEditSnapshot(null);
+      setEditing(false);
       await load();
     } catch (e) {
       console.error(e);
@@ -225,24 +251,44 @@ export default function AccountingInvoiceDetailPage() {
           sx={{ fontWeight: 700 }}
         />
         <Box sx={{ flex: 1 }} />
-        <Button startIcon={<PreviewIcon />} onClick={handlePreview}>
+        <Button startIcon={<PreviewIcon />} onClick={handlePreview} disabled={editing}>
           Preview
         </Button>
-        <Button startIcon={<PrintIcon />} onClick={handlePrint}>
+        <Button startIcon={<PrintIcon />} onClick={handlePrint} disabled={editing}>
           Print / PDF
         </Button>
-        <Button startIcon={<WhatsAppIcon />} color="success" onClick={handleWhatsApp}>
+        <Button startIcon={<WhatsAppIcon />} color="success" onClick={handleWhatsApp} disabled={editing}>
           WhatsApp
         </Button>
-        {isEditable && (
+        {canEdit && !editing && (
           <Button
-            variant="contained"
-            startIcon={<SaveIcon />}
-            onClick={handleSave}
-            disabled={saving}
+            variant="outlined"
+            color="primary"
+            startIcon={<EditIcon />}
+            onClick={startEditing}
           >
-            {saving ? 'Saving…' : 'Save'}
+            Edit
           </Button>
+        )}
+        {editing && (
+          <>
+            <Button
+              startIcon={<CancelIcon />}
+              color="inherit"
+              onClick={cancelEditing}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<SaveIcon />}
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          </>
         )}
         <Button
           endIcon={<MoreIcon />}
@@ -333,20 +379,34 @@ export default function AccountingInvoiceDetailPage() {
         </Stack>
       </Stack>
 
-      {isEditable ? (
-        <InvoiceEditor
-          companyProfile={companyProfile}
-          clients={clients}
-          value={invoice}
-          onChange={setInvoice}
-        />
+      {editing ? (
+        <>
+          {invoice.status !== 'draft' && (
+            <Alert severity="warning" sx={{ mb: 2, borderRadius: 2 }} variant="outlined">
+              You are editing a <b>{invoice.status.toUpperCase()}</b> invoice.
+              {Number(invoice.amountPaid || 0) > 0 || Number(invoice.tdsDeducted || 0) > 0 ? (
+                <>
+                  {' '}Payments totalling {formatINR(Number(invoice.amountPaid || 0) + Number(invoice.tdsDeducted || 0))} are already
+                  recorded. Amount Received and TDS values are managed via the Payments module — changing line items or totals
+                  here may leave the invoice partly paid.
+                </>
+              ) : null}
+            </Alert>
+          )}
+          <InvoiceEditor
+            companyProfile={companyProfile}
+            clients={clients}
+            value={invoice}
+            onChange={setInvoice}
+          />
+        </>
       ) : (
         <Paper variant="outlined" sx={{ p: 0, overflow: 'hidden' }}>
           <Box
             sx={{ background: '#fafafa', p: 1, borderBottom: '1px solid #eee' }}
           >
             <Typography variant="caption" color="text.secondary">
-              Read-only preview (invoice is no longer a draft). Use Preview / Print to open the styled PDF.
+              Preview. Click <b>Edit</b> above to modify this invoice.
             </Typography>
           </Box>
           <Box sx={{ p: 0 }}>

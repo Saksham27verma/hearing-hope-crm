@@ -71,6 +71,12 @@ export type AccountingInvoice = {
   balanceDue: number;
   /** Cumulative TDS deducted by clients (still due from tax dept but counts toward settlement). */
   tdsDeducted?: number;
+  /** Portion of the gross value being billed (1-100). 100 = full bill, 50 = half billing. Defaults to 100. */
+  netPayablePercent?: number;
+  /** Gross subtotal (before applying netPayablePercent). Kept for display / audit. */
+  grossSubtotal?: number;
+  /** Gross grand total (before applying netPayablePercent). */
+  grossGrandTotal?: number;
   taxMode: 'intra' | 'inter';
   status: AccountingInvoiceStatus;
   notes?: string;

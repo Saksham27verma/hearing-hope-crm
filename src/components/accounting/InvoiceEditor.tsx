@@ -163,9 +163,14 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
     return cState === clState ? 'intra' : 'inter';
   }, [companyProfile?.state, selectedClient?.state, inv.clientSnapshot?.state]);
 
+  const netPayablePercent =
+    inv.netPayablePercent == null || Number(inv.netPayablePercent) <= 0
+      ? 100
+      : Math.min(100, Math.max(0.01, Number(inv.netPayablePercent)));
+
   const totals = useMemo(
-    () => computeInvoiceTotals(inv.items || [], taxMode),
-    [inv.items, taxMode],
+    () => computeInvoiceTotals(inv.items || [], taxMode, netPayablePercent),
+    [inv.items, taxMode, netPayablePercent],
   );
 
   useEffect(() => {
@@ -173,7 +178,9 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
       inv.subtotal === totals.subtotal &&
       inv.totalGst === totals.totalGst &&
       inv.grandTotal === totals.grandTotal &&
-      inv.taxMode === taxMode
+      inv.taxMode === taxMode &&
+      inv.grossSubtotal === totals.grossSubtotal &&
+      inv.grossGrandTotal === totals.grossGrandTotal
     ) {
       return;
     }
@@ -185,11 +192,14 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
       totalGst: totals.totalGst,
       roundOff: totals.roundOff,
       grandTotal: totals.grandTotal,
+      grossSubtotal: totals.grossSubtotal,
+      grossGrandTotal: totals.grossGrandTotal,
+      netPayablePercent,
       taxMode,
-      balanceDue: Math.max(0, totals.grandTotal - (inv.amountPaid || 0)),
+      balanceDue: Math.max(0, totals.grandTotal - (inv.amountPaid || 0) - Number(inv.tdsDeducted || 0)),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totals.subtotal, totals.totalGst, totals.grandTotal, taxMode]);
+  }, [totals.subtotal, totals.totalGst, totals.grandTotal, totals.grossGrandTotal, taxMode, netPayablePercent]);
 
   const setItem = (idx: number, upd: Partial<EnrichedItem>) => {
     const next = (inv.items as EnrichedItem[]).map((it, i) => {
@@ -682,6 +692,20 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                 color={theme.palette.success.main}
               />
               <Stack spacing={0.5}>
+                {netPayablePercent < 100 && (
+                  <>
+                    <Row
+                      label="Gross Subtotal"
+                      value={formatINR(totals.grossSubtotal)}
+                      muted
+                    />
+                    <Row
+                      label={`Billed portion (${netPayablePercent}%)`}
+                      value={`\u2212 ${formatINR(totals.grossSubtotal - totals.subtotal)}`}
+                      muted
+                    />
+                  </>
+                )}
                 <Row label="Subtotal" value={formatINR(totals.subtotal)} />
                 {taxMode === 'intra' ? (
                   <>
@@ -712,6 +736,70 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
               </Stack>
 
               <Divider sx={{ my: 2 }} />
+              <Stack spacing={1} sx={{ mb: 2 }}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                    NET PAYABLE
+                  </Typography>
+                  <Tooltip title="Bill only a portion of the total value (e.g. 50% part billing). Subtotal, GST and grand total scale proportionally.">
+                    <InfoIcon fontSize="inherit" color="action" />
+                  </Tooltip>
+                  <Box sx={{ flex: 1 }} />
+                  <Chip
+                    size="small"
+                    label={`${netPayablePercent}%`}
+                    color={netPayablePercent < 100 ? 'warning' : 'default'}
+                    variant={netPayablePercent < 100 ? 'filled' : 'outlined'}
+                  />
+                </Stack>
+                <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                  {[25, 50, 75, 100].map((p) => (
+                    <Button
+                      key={p}
+                      size="small"
+                      variant={netPayablePercent === p ? 'contained' : 'outlined'}
+                      color={p === 100 ? 'primary' : 'warning'}
+                      sx={{ minWidth: 46, textTransform: 'none', px: 1 }}
+                      onClick={() => patch({ netPayablePercent: p })}
+                    >
+                      {p}%
+                    </Button>
+                  ))}
+                  <TextField
+                    size="small"
+                    type="number"
+                    value={netPayablePercent}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      const clamped = Math.min(
+                        100,
+                        Math.max(0.01, Number.isFinite(v) && v > 0 ? v : 100),
+                      );
+                      patch({ netPayablePercent: clamped });
+                    }}
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">
+                          <Typography fontWeight={700}>%</Typography>
+                        </InputAdornment>
+                      ),
+                      inputProps: { min: 0.01, max: 100, step: 'any' },
+                    }}
+                    sx={{ width: 110 }}
+                  />
+                </Stack>
+                {netPayablePercent < 100 && (
+                  <Alert
+                    severity="warning"
+                    variant="outlined"
+                    sx={{ py: 0.25, borderRadius: 2, '& .MuiAlert-message': { py: 0.5 } }}
+                    icon={false}
+                  >
+                    Billing <b>{netPayablePercent}%</b> of {formatINR(totals.grossGrandTotal)} =
+                    <b> {formatINR(totals.grandTotal)}</b>
+                  </Alert>
+                )}
+              </Stack>
               <TextField
                 size="small"
                 fullWidth
@@ -722,7 +810,7 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                   const paid = Math.max(0, Number(e.target.value) || 0);
                   patch({
                     amountPaid: paid,
-                    balanceDue: Math.max(0, totals.grandTotal - paid),
+                    balanceDue: Math.max(0, totals.grandTotal - paid - Number(inv.tdsDeducted || 0)),
                   });
                 }}
                 InputProps={{
@@ -742,7 +830,7 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                 />
                 <Chip
                   size="small"
-                  label={`Due: ${formatINR(Math.max(0, totals.grandTotal - (inv.amountPaid || 0)))}`}
+                  label={`Due: ${formatINR(Math.max(0, totals.grandTotal - (inv.amountPaid || 0) - Number(inv.tdsDeducted || 0)))}`}
                   color="warning"
                   variant="outlined"
                 />

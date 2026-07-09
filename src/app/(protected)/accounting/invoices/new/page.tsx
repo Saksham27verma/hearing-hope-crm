@@ -69,6 +69,7 @@ const blankInvoice = (companyId: string, companyName: string): AccountingInvoice
   grandTotal: 0,
   amountPaid: 0,
   balanceDue: 0,
+  netPayablePercent: 100,
   taxMode: 'intra',
   status: 'draft',
   notes: '',

@@ -26,6 +26,7 @@ import {
   Add as AddIcon,
   Search as SearchIcon,
   OpenInNew as OpenIcon,
+  Edit as EditIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -256,6 +257,16 @@ export default function AccountingInvoicesListPage() {
                       />
                     </TableCell>
                     <TableCell align="right">
+                      <Tooltip title="Edit">
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => router.push(`/accounting/invoices/${r.id}?edit=1`)}
+                          disabled={r.status === 'cancelled'}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
                       <Tooltip title="Open">
                         <IconButton
                           size="small"

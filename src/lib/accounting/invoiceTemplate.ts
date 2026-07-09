@@ -177,6 +177,18 @@ export function buildInvoiceTemplateContext(
     totalGst: rupee(invoice.totalGst),
     roundOff: rupee(invoice.roundOff),
     grandTotal: rupee(invoice.grandTotal),
+    grossSubtotal: rupee(Number((invoice as any).grossSubtotal || invoice.subtotal || 0)),
+    grossGrandTotal: rupee(Number((invoice as any).grossGrandTotal || invoice.grandTotal || 0)),
+    netPayablePercent:
+      Number((invoice as any).netPayablePercent || 100) < 100
+        ? String(Number((invoice as any).netPayablePercent))
+        : '',
+    netPayableReduction:
+      Number((invoice as any).netPayablePercent || 100) < 100
+        ? rupee(
+            Number((invoice as any).grossGrandTotal || 0) - Number(invoice.grandTotal || 0),
+          )
+        : '',
     amountPaid: rupee(invoice.amountPaid),
     tdsDeducted: rupee(Number((invoice as any).tdsDeducted || 0)),
     settledAmount: rupee(Number(invoice.amountPaid || 0) + Number((invoice as any).tdsDeducted || 0)),
@@ -241,7 +253,11 @@ export const TEMPLATE_PLACEHOLDERS: {
   { key: 'igst', desc: 'IGST amount' },
   { key: 'totalGst', desc: 'Total GST' },
   { key: 'roundOff', desc: 'Round off' },
-  { key: 'grandTotal', desc: 'Grand total' },
+  { key: 'grandTotal', desc: 'Grand total (after net payable %)' },
+  { key: 'grossGrandTotal', desc: 'Grand total before net payable % (equal to grandTotal when 100%)' },
+  { key: 'grossSubtotal', desc: 'Subtotal before net payable % scaling' },
+  { key: 'netPayablePercent', desc: 'Net payable % (empty when 100%) — use inside {{#if netPayablePercent}}' },
+  { key: 'netPayableReduction', desc: 'Amount reduced due to net payable % (empty when 100%)' },
   { key: 'amountPaid', desc: 'Amount already received' },
   { key: 'tdsDeducted', desc: 'TDS deducted by client to date' },
   { key: 'settledAmount', desc: 'Total settled = amountPaid + tdsDeducted' },
