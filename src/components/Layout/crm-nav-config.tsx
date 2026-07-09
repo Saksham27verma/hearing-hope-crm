@@ -28,6 +28,7 @@ import {
   PackageSearch,
   MessageSquare,
   Inbox,
+  BookOpen,
 } from 'lucide-react';
 
 export interface NavChild {
@@ -69,6 +70,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   },
   { text: 'Receipts', path: '/receipts', icon: ScrollText },
   { text: 'Invoice Manager', path: '/invoice-manager', icon: FileText },
+  { text: 'Accounting', path: '/accounting', icon: BookOpen, adminOnly: true },
   { text: 'Parties', path: '/parties', icon: Handshake },
   { text: 'Centers', path: '/centers', icon: Building2 },
   { text: 'Companies', path: '/companies', icon: Factory, adminOnly: true },
@@ -123,6 +125,7 @@ export const NAV_ITEM_ACCESS_KEYS: Record<string, string[]> = {
   'Sales & Invoicing': ['sales'],
   Receipts: ['receipts'],
   'Invoice Manager': ['invoice manager'],
+  Accounting: ['accounting'],
   Parties: ['parties'],
   Centers: ['centers'],
   Companies: ['companies'],
@@ -152,6 +155,7 @@ export const CRM_MODULE_ACCESS_OPTIONS: { key: string; label: string }[] = [
   { key: 'sales', label: 'Sales & Invoicing' },
   { key: 'receipts', label: 'Receipts' },
   { key: 'invoice manager', label: 'Invoice Manager' },
+  { key: 'accounting', label: 'Accounting' },
   { key: 'parties', label: 'Parties' },
   { key: 'centers', label: 'Centers' },
   { key: 'companies', label: 'Companies' },
