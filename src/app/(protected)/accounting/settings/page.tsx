@@ -50,6 +50,7 @@ import {
   applyInvoiceTemplate,
   buildInvoiceTemplateContext,
   getDefaultInvoiceTemplate,
+  getHopeEnterprisesInvoiceTemplate,
   TEMPLATE_PLACEHOLDERS,
 } from '@/lib/accounting/invoiceTemplate';
 import { fetchAccountingCompanyProfile } from '@/lib/accounting/companyProfile';
@@ -223,6 +224,14 @@ export default function AccountingSettingsPage() {
   const loadDefault = () => {
     setTemplateHtml(getDefaultInvoiceTemplate());
     setSnack({ msg: 'Loaded default template. Edit and Save when ready.', sev: 'info' });
+  };
+
+  const loadHopeEnterprises = () => {
+    setTemplateHtml(getHopeEnterprisesInvoiceTemplate());
+    setSnack({
+      msg: 'Loaded Hope Enterprises template. Review logo/signature URLs, then Save.',
+      sev: 'info',
+    });
   };
 
   const clearTemplate = () => {
@@ -417,6 +426,15 @@ export default function AccountingSettingsPage() {
                       sx={{ textTransform: 'none', borderRadius: 2 }}
                     >
                       Load default
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="secondary"
+                      onClick={loadHopeEnterprises}
+                      sx={{ textTransform: 'none', borderRadius: 2 }}
+                    >
+                      Load Hope Enterprises
                     </Button>
                     {templateHtml && (
                       <Tooltip title="Clear custom template">

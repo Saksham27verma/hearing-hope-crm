@@ -18,6 +18,33 @@ const nl2br = (s: string | undefined | null): string =>
 
 const rupee = (n: number) => formatINR(n);
 
+function lineSubtotal(it: AccountingInvoiceItem): number {
+  return Number(it.quantity || 0) * Number(it.rate || 0);
+}
+
+function lineGst(it: AccountingInvoiceItem): number {
+  const sub = lineSubtotal(it);
+  return Math.round((sub * Number(it.gstPercent || 0)) / 100 * 100) / 100;
+}
+
+function linePayable(it: AccountingInvoiceItem): number {
+  return Math.round((lineSubtotal(it) + lineGst(it)) * 100) / 100;
+}
+
+function formatInvoiceMonth(dateStr: string | undefined): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+function splitDescription(desc: string): { title: string; detail: string } {
+  const parts = String(desc || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return { title: '', detail: '' };
+  if (parts.length === 1) return { title: parts[0], detail: '' };
+  return { title: parts[0], detail: parts.slice(1).join(' · ') };
+}
+
 function buildItemsHtml(items: AccountingInvoiceItem[]): string {
   return items
     .map(
@@ -52,6 +79,32 @@ function buildItemsPlainRows(items: AccountingInvoiceItem[]): string {
     .join('');
 }
 
+function buildItemsHopeEnterprisesHtml(items: AccountingInvoiceItem[]): string {
+  return items
+    .map((it, i) => {
+      const { title, detail } = splitDescription(it.description);
+      const sub = lineSubtotal(it);
+      const gst = lineGst(it);
+      const payable = linePayable(it);
+      return `
+      <tr style="border-bottom: 1px solid #e0e0e0;">
+        <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${i + 1}</td>
+        <td style="border: 1px solid #e0e0e0;" valign="top">
+          <b>${escapeHtml(title || it.description)}</b>
+          ${detail ? `<br><span style="color: #666; font-size: 11px;">${escapeHtml(detail)}</span>` : ''}
+        </td>
+        <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${escapeHtml(it.hsnSac || '')}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(Number(it.rate || 0))}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${Number(it.quantity || 0)}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${Number(it.gstPercent || 0)}%</td>
+        <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(gst)}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: right; font-weight: bold;" valign="top">${rupee(sub)}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: right; font-weight: bold;" valign="top">${rupee(payable)}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
 export type InvoiceTemplateContext = Record<string, string>;
 
 export function buildInvoiceTemplateContext(
@@ -80,6 +133,15 @@ export function buildInvoiceTemplateContext(
 
   const balanceDue = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.amountPaid || 0));
 
+  const clientAddressComma = [
+    client.address,
+    client.city,
+    client.state,
+    client.pincode,
+  ]
+    .filter(Boolean)
+    .join(', ');
+
   return {
     companyName: escapeHtml(company?.name || invoice.companyName),
     companyAddress: nl2br(companyAddress),
@@ -89,9 +151,12 @@ export function buildInvoiceTemplateContext(
     companyEmail: escapeHtml(company?.email || ''),
     companyWebsite: escapeHtml(company?.website || ''),
     companyBankDetails: nl2br(bankDetailsParts.join('\n')),
+    companyLogoUrl: '',
+    signatureImageUrl: '',
 
     invoiceNumber: escapeHtml(invoice.invoiceNumber),
     invoiceDate: escapeHtml(invoice.invoiceDate),
+    invoiceMonth: escapeHtml(formatInvoiceMonth(invoice.invoiceDate)),
     dueDate: escapeHtml(invoice.dueDate || ''),
     status: escapeHtml(String(invoice.status || 'draft').toUpperCase()),
     taxMode:
@@ -100,6 +165,7 @@ export function buildInvoiceTemplateContext(
     clientName: escapeHtml(client.name || ''),
     clientAddress: nl2br(clientAddress),
     clientAddressPlain: escapeHtml(clientAddress),
+    clientAddressComma: escapeHtml(clientAddressComma),
     clientGSTIN: escapeHtml(client.gstin || ''),
     clientPhone: escapeHtml(client.phone || ''),
     clientEmail: escapeHtml(client.email || ''),
@@ -117,6 +183,7 @@ export function buildInvoiceTemplateContext(
 
     itemsHtml: buildItemsHtml(invoice.items || []),
     itemsPlainHtml: buildItemsPlainRows(invoice.items || []),
+    itemsHopeEnterprisesHtml: buildItemsHopeEnterprisesHtml(invoice.items || []),
 
     notes: nl2br(invoice.notes || ''),
     terms: nl2br(invoice.terms || ''),
@@ -154,12 +221,14 @@ export const TEMPLATE_PLACEHOLDERS: {
 
   { key: 'invoiceNumber', desc: 'Invoice number' },
   { key: 'invoiceDate', desc: 'Invoice date' },
+  { key: 'invoiceMonth', desc: 'Invoice month e.g. July 2026' },
   { key: 'dueDate', desc: 'Due date (may be empty)' },
   { key: 'status', desc: 'Uppercase status (DRAFT / SENT / PAID …)' },
   { key: 'taxMode', desc: 'Descriptive tax mode label' },
 
   { key: 'clientName', desc: 'Client name' },
   { key: 'clientAddress', desc: 'Client address as HTML block' },
+  { key: 'clientAddressComma', desc: 'Client address comma-separated (street, city, state, pin)' },
   { key: 'clientGSTIN', desc: 'Client GSTIN' },
   { key: 'clientPhone', desc: 'Client phone' },
   { key: 'clientEmail', desc: 'Client email' },
@@ -176,7 +245,10 @@ export const TEMPLATE_PLACEHOLDERS: {
   { key: 'grandTotalWords', desc: 'Amount in words' },
 
   { key: 'itemsHtml', desc: 'Full styled <tr> rows for line items table' },
+  { key: 'itemsHopeEnterprisesHtml', desc: 'Hope Enterprises / Zoho-style line item rows (9 columns)' },
   { key: 'itemsPlainHtml', desc: 'Unstyled <tr> rows if you\u2019re providing your own CSS' },
+  { key: 'companyLogoUrl', desc: 'Logo image URL (set in template HTML if needed)' },
+  { key: 'signatureImageUrl', desc: 'Signature image URL (set in template HTML if needed)' },
 
   { key: 'notes', desc: 'Invoice notes as HTML block' },
   { key: 'terms', desc: 'Terms as HTML block' },
@@ -298,6 +370,142 @@ export function getDefaultInvoiceTemplate(): string {
       </div>
     </div>
   </div>
+</body>
+</html>`;
+}
+
+/** Hope Enterprises layout (converted from Zoho CRM template). */
+export function getHopeEnterprisesInvoiceTemplate(): string {
+  const logoUrl =
+    'https://crm.zoho.in/crm/viewInLineImage?fileContent=7e6626e61d93856172a5d0a1ebf06b42e64c69461d1222a3aaf9bb56b41f3389c3955f980503bfebe17da7cd2e4c8f4e26f40bafdc3399cd4c8ad327d686881887d47887560678e72d8cab828257341a6c622bb8466972824531eb9c32159f97';
+  const signatureUrl =
+    'https://crm.zoho.in/crm/viewInLineImage?fileContent=0f21df6d64058a73e142a428a27a7895d490ebb243a2df565ed37f2a9e5da9a38789d734b7bf38c65ab1c2dddbd3263a2c5dfe0181fc1b159fd174a8d9a09f1879e2062daa01ae55616de618c50c65a332b00b5084728ade32d4df45813a0c7a';
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Tax Invoice {{invoiceNumber}}</title>
+</head>
+<body style="margin:0;padding:0;">
+<div style="font-family: 'Segoe UI', Arial, sans-serif; color: #333; max-width: 900px; margin: 0 auto; padding: 20px; background-color: #ffffff; border: 1px solid #e0e0e0;">
+
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 20px;">
+    <tr>
+      <td width="60%" valign="top">
+        <img src="${logoUrl}" alt="Logo" width="90" style="margin-bottom: 10px;"><br>
+        <span style="font-size: 22px; font-weight: bold; color: #111;">{{companyName}}</span><br>
+        <span style="font-size: 13px; color: #555; line-height: 1.5;">
+          {{companyAddress}}
+          {{#if companyEmail}}<br>Email: {{companyEmail}}{{/if}}{{#if companyPhone}} | Contact: {{companyPhone}}{{/if}}
+          {{#if companyWebsite}}<br>Website: {{companyWebsite}}{{/if}}
+        </span>
+      </td>
+      <td width="40%" valign="top" align="right" style="line-height: 1.6;">
+        <span style="font-size: 26px; font-weight: bold; color: #111; text-transform: uppercase;">Tax Invoice</span><br>
+        <span style="font-size: 13px; color: #333;"><b>Invoice Date:</b> {{invoiceDate}}</span><br>
+        <span style="font-size: 13px; color: #333;"><b>Invoice Number:</b> {{invoiceNumber}}</span><br>
+        <span style="font-size: 13px; color: #333;"><b>Invoice Month:</b> {{invoiceMonth}}</span><br>
+        <span style="font-size: 13px; color: #333;"><b>GSTIN:</b> {{companyGSTIN}}</span>
+      </td>
+    </tr>
+  </table>
+
+  <hr style="border: 0; border-top: 2px solid #333; margin: 20px 0;">
+
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 30px; font-size: 13px;">
+    <tr>
+      <td width="50%" valign="top" style="line-height: 1.6;">
+        <span style="font-size: 15px; font-weight: bold; color: #111; border-bottom: 1px solid #ccc; padding-bottom: 3px;">BILL TO</span><br><br>
+        <b>Name:</b> {{clientName}}<br>
+        {{#if clientPhone}}<b>Contact No:</b> {{clientPhone}}<br>{{/if}}
+        {{#if clientAddressComma}}<b>Address:</b> {{clientAddressComma}}<br>{{/if}}
+      </td>
+      <td width="50%" valign="top" align="right" style="line-height: 1.6;">
+        <br><br>
+        {{#if clientGSTIN}}<b>Customer GSTIN:</b> {{clientGSTIN}}<br>{{/if}}
+      </td>
+    </tr>
+  </table>
+
+  <table width="100%" border="0" cellspacing="0" cellpadding="8" style="font-size: 12px; border-collapse: collapse; margin-bottom: 20px; border: 1px solid #e0e0e0;">
+    <thead>
+      <tr style="background-color: #f4f5f7; border-bottom: 2px solid #ccc; text-align: left;">
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 5%;">S.No</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 28%;">Item Name &amp; Description</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 9%; text-align: center;">SAC/HSN</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 9%; text-align: right;">Rate</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 6%; text-align: center;">Qty</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 7%; text-align: center;">GST (%)</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 10%; text-align: right;">GST Amt</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 12%; text-align: right;">Total Amount</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 14%; text-align: right;">Total Amount Payable</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{itemsHopeEnterprisesHtml}}
+    </tbody>
+  </table>
+
+  <table width="100%" border="0" cellspacing="0" cellpadding="6" style="font-size: 13px; margin-bottom: 30px;">
+    <tr>
+      <td width="65%" valign="top"></td>
+      <td width="35%" valign="top">
+        <table width="100%" border="0" cellspacing="0" cellpadding="4">
+          <tr>
+            <td align="left"><b>Sub Total:</b></td>
+            <td align="right">{{subtotal}}</td>
+          </tr>
+          <tr>
+            <td align="left"><b>Total GST:</b></td>
+            <td align="right">{{totalGst}}</td>
+          </tr>
+          <tr>
+            <td colspan="2"><hr style="border: 0; border-top: 1px solid #ccc; margin: 5px 0;"></td>
+          </tr>
+          <tr>
+            <td align="left"><b style="font-size: 15px;">Grand Total:</b></td>
+            <td align="right"><b style="font-size: 15px;">{{grandTotal}}</b></td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <div style="font-size: 12px; line-height: 1.5; color: #555; text-align: justify; margin-bottom: 40px;">
+    I acknowledge that the particulars given above are true and correct, and I am satisfied with the services rendered to me.
+  </div>
+
+  <table width="100%" border="0" cellspacing="0" cellpadding="0" style="font-size: 12px;">
+    <tr>
+      <td width="60%" valign="top" style="line-height: 1.6; padding-right: 20px;">
+        <b style="font-size: 14px; color: #111;">Terms and Conditions:</b><br>
+        {{#if terms}}<div style="margin-top: 5px; color: #555;">{{terms}}</div>{{/if}}
+        <ul style="margin-top: 5px; padding-left: 15px; color: #555;">
+          <li>Goods/Services once sold/rendered will not be taken back or refunded.</li>
+          <li>Interest @ 24% P.A. will be charged if payment is not received within 15 days from the date of the bill.</li>
+          <li>All disputes are subject to Delhi Jurisdiction.</li>
+          <li>Home visit charges will be extra (if applicable).</li>
+        </ul>
+      </td>
+      <td width="40%" valign="bottom" align="center" style="border: 1px solid #e0e0e0; background-color: #f9f9f9; padding: 20px 10px;">
+        <img src="${signatureUrl}" alt="Signature" height="60"><br>
+        <hr style="border: 0; border-top: 1px solid #ccc; width: 80%; margin: 10px auto;">
+        <b>Authorised Signatory</b><br>
+        <span style="color: #777;">For {{companyName}}</span>
+      </td>
+    </tr>
+  </table>
+
+  <div style="margin-top: 40px; border-top: 1px dotted #ccc; padding-top: 20px;">
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="font-size: 12px;">
+      <tr>
+        <td align="left"><b>Customer Signature:</b> ___________________________</td>
+      </tr>
+    </table>
+  </div>
+
+</div>
 </body>
 </html>`;
 }
