@@ -251,7 +251,16 @@ export default function SalarySlipPage({ params }: { params: { id: string } }) {
           salaryTimestampValue(data) > salaryTimestampValue(existing) ||
           d.id === buildSalaryDocId(params.id, data.month);
         if (prefer) {
-          bestRecord.set(data.month, { id: d.id, month: data.month, netSalary: data.netSalary || 0, isPaid: !!data.isPaid });
+          bestRecord.set(data.month, {
+            id: d.id,
+            month: data.month,
+            netSalary:
+              Number(data.netSalary) ||
+              Number(data.totalEarnings) - Number(data.totalDeductions || 0) ||
+              Number(data.basicSalary) ||
+              0,
+            isPaid: !!data.isPaid,
+          });
           bestData.set(data.month, { id: d.id, ...data });
         }
       });

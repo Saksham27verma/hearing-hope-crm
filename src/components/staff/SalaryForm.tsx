@@ -1,30 +1,29 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
   TextField,
   Button,
-  Divider,
   InputAdornment,
   Chip,
   Avatar,
   Stack,
   alpha,
   LinearProgress,
-  Skeleton,
   Switch,
   FormControlLabel,
   IconButton,
   Tooltip,
+  Divider,
 } from '@mui/material';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
-import { format, parse, startOfMonth } from 'date-fns';
+import { format, parse, startOfMonth, isValid } from 'date-fns';
 import {
   TrendingUp as EarningsIcon,
   TrendingDown as DeductionsIcon,
@@ -32,8 +31,6 @@ import {
   RadioButtonUnchecked as CircleIcon,
   Close as CloseIcon,
   Print as PrintIcon,
-  EventNote as NoteIcon,
-  CreditCard as PaymentIcon,
 } from '@mui/icons-material';
 
 interface Staff {
@@ -71,6 +68,8 @@ interface Salary {
 interface SalaryFormProps {
   staff: Staff;
   initialData?: Salary;
+  /** Explicitly selected month (YYYY-MM). Survives when no Firestore record exists. */
+  selectedMonth: string;
   salaryHistory?: Array<{
     id: string;
     month: string;
@@ -88,51 +87,135 @@ const fmt = (n: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
 const initials = (name: string) =>
-  name.split(' ').map((p) => p[0]).join('').toUpperCase().substring(0, 2);
+  name
+    .split(' ')
+    .map((p) => p[0])
+    .join('')
+    .toUpperCase()
+    .substring(0, 2);
 
-const blankSalary = (staff: Staff): Salary => ({
-  staffId: staff.id || '',
-  month: format(new Date(), 'yyyy-MM'),
-  basicSalary: staff.basicSalary || 0,
-  hra: 0,
-  travelAllowance: 0,
-  festivalAdvance: 0,
-  generalAdvance: 0,
-  deductions: 0,
-  incentives: 0,
-  totalEarnings: 0,
-  totalDeductions: 0,
-  netSalary: 0,
-  isPaid: false,
-  remarks: '',
-});
+const num = (v: unknown, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
 
-const hydrate = (initialData: Salary | undefined, staff: Staff): Salary => ({
-  id: initialData?.id,
-  staffId: staff.id || '',
-  month: initialData?.month || format(new Date(), 'yyyy-MM'),
-  basicSalary: initialData?.basicSalary ?? staff.basicSalary ?? 0,
-  hra: initialData?.hra ?? 0,
-  travelAllowance: initialData?.travelAllowance ?? 0,
-  festivalAdvance: initialData?.festivalAdvance ?? 0,
-  generalAdvance: initialData?.generalAdvance ?? 0,
-  deductions: initialData?.deductions ?? 0,
-  incentives: initialData?.incentives ?? 0,
-  totalEarnings: initialData?.totalEarnings ?? 0,
-  totalDeductions: initialData?.totalDeductions ?? 0,
-  netSalary: initialData?.netSalary ?? 0,
-  isPaid: initialData?.isPaid ?? false,
-  paidDate: initialData?.paidDate,
-  remarks: initialData?.remarks ?? '',
-});
+/** Normalize to zero-padded YYYY-MM. */
+export const normalizeMonth = (month: string | undefined | null, fallback?: string): string => {
+  const fb = fallback || format(new Date(), 'yyyy-MM');
+  if (!month) return fb;
+  const match = String(month).trim().match(/^(\d{4})-(\d{1,2})$/);
+  if (!match) return fb;
+  return `${match[1]}-${match[2].padStart(2, '0')}`;
+};
+
+export const resolveNetSalary = (data: Partial<Salary> | Record<string, unknown>): number => {
+  const stored = num(data.netSalary, NaN);
+  if (Number.isFinite(stored) && stored !== 0) return stored;
+
+  const earnings = num(data.totalEarnings);
+  const deductions = num(data.totalDeductions);
+  if (earnings !== 0 || deductions !== 0) return earnings - deductions;
+
+  const computedEarnings =
+    num(data.basicSalary) + num(data.hra) + num(data.incentives) + num(data.travelAllowance);
+  const computedDeductions =
+    num(data.festivalAdvance) + num(data.generalAdvance) + num(data.deductions);
+  const computed = computedEarnings - computedDeductions;
+  if (computed !== 0) return computed;
+
+  return Number.isFinite(stored) ? stored : 0;
+};
+
+const hasComponentValues = (data: Partial<Salary>) =>
+  num(data.basicSalary) !== 0 ||
+  num(data.hra) !== 0 ||
+  num(data.travelAllowance) !== 0 ||
+  num(data.incentives) !== 0 ||
+  num(data.festivalAdvance) !== 0 ||
+  num(data.generalAdvance) !== 0 ||
+  num(data.deductions) !== 0;
+
+const blankSalary = (staff: Staff, month: string): Salary => {
+  const basic = num(staff.basicSalary);
+  return {
+    staffId: staff.id || '',
+    month: normalizeMonth(month),
+    basicSalary: basic,
+    hra: 0,
+    travelAllowance: 0,
+    festivalAdvance: 0,
+    generalAdvance: 0,
+    deductions: 0,
+    incentives: 0,
+    totalEarnings: basic,
+    totalDeductions: 0,
+    netSalary: basic,
+    isPaid: false,
+    remarks: '',
+  };
+};
+
+const hydrate = (initialData: Salary | undefined, staff: Staff, selectedMonth: string): Salary => {
+  const month = normalizeMonth(initialData?.month || selectedMonth);
+
+  if (!initialData) {
+    return blankSalary(staff, month);
+  }
+
+  // Legacy records sometimes only stored net/total without component breakdown.
+  // Seed basic salary from stored net so the form and recalc don't show ₹0.
+  let basicSalary = num(initialData.basicSalary, NaN);
+  if (!Number.isFinite(basicSalary) || (basicSalary === 0 && !hasComponentValues(initialData))) {
+    const fallbackNet = resolveNetSalary(initialData);
+    basicSalary = fallbackNet !== 0 ? fallbackNet : num(staff.basicSalary);
+  }
+
+  const hra = num(initialData.hra);
+  const travelAllowance = num(initialData.travelAllowance);
+  const incentives = num(initialData.incentives);
+  const festivalAdvance = num(initialData.festivalAdvance);
+  const generalAdvance = num(initialData.generalAdvance);
+  const deductions = num(initialData.deductions);
+
+  const totalEarnings = basicSalary + hra + incentives + travelAllowance;
+  const totalDeductions = festivalAdvance + generalAdvance + deductions;
+
+  return {
+    id: initialData.id,
+    staffId: staff.id || '',
+    month,
+    basicSalary,
+    hra,
+    travelAllowance,
+    festivalAdvance,
+    generalAdvance,
+    deductions,
+    incentives,
+    totalEarnings,
+    totalDeductions,
+    netSalary: totalEarnings - totalDeductions,
+    isPaid: !!initialData.isPaid,
+    paidDate: initialData.paidDate,
+    remarks: initialData.remarks ?? '',
+  };
+};
+
+const parseMonthDate = (month: string): Date => {
+  const normalized = normalizeMonth(month);
+  const d = parse(normalized, 'yyyy-MM', new Date());
+  return isValid(d) ? startOfMonth(d) : startOfMonth(new Date());
+};
 
 const NUMERIC_FIELDS = [
-  'basicSalary', 'hra', 'travelAllowance',
-  'festivalAdvance', 'generalAdvance', 'deductions', 'incentives',
+  'basicSalary',
+  'hra',
+  'travelAllowance',
+  'festivalAdvance',
+  'generalAdvance',
+  'deductions',
+  'incentives',
 ];
 
-// Defined OUTSIDE SalaryForm so its identity is stable across renders.
-// If defined inside, React treats it as a new component every render → input loses focus after each keystroke.
 const AmountField = React.memo(function AmountField({
   label,
   name,
@@ -176,6 +259,7 @@ const AmountField = React.memo(function AmountField({
 export default function SalaryForm({
   staff,
   initialData,
+  selectedMonth,
   salaryHistory = [],
   onMonthChange,
   onSave,
@@ -183,38 +267,80 @@ export default function SalaryForm({
   isSaving = false,
   loading = false,
 }: SalaryFormProps) {
-  const [formData, setFormData] = useState<Salary>(() => hydrate(initialData, staff));
-  const [monthDate, setMonthDate] = useState<Date | null>(() =>
-    parse(formData.month, 'yyyy-MM', new Date())
-  );
+  const [formData, setFormData] = useState<Salary>(() => hydrate(initialData, staff, selectedMonth));
+  const [monthDate, setMonthDate] = useState<Date | null>(() => parseMonthDate(selectedMonth));
   const [paymentDate, setPaymentDate] = useState<Date | null>(
     formData.paidDate ? new Date(formData.paidDate.seconds * 1000) : null
   );
 
+  // Keep form in sync when parent loads a different month/record.
+  // selectedMonth is the source of truth for which month is active.
   useEffect(() => {
-    const next = hydrate(initialData, staff);
+    const next = hydrate(initialData, staff, selectedMonth);
     setFormData(next);
-    setMonthDate(parse(next.month, 'yyyy-MM', new Date()));
+    setMonthDate(parseMonthDate(selectedMonth));
     setPaymentDate(next.paidDate ? new Date(next.paidDate.seconds * 1000) : null);
-  }, [initialData, staff.id, staff.basicSalary]);
+  }, [initialData, selectedMonth, staff.id, staff.basicSalary]);
 
+  // Live totals from component fields
   useEffect(() => {
-    const totalEarnings = formData.basicSalary + formData.hra + formData.incentives + formData.travelAllowance;
-    const totalDeductions = formData.festivalAdvance + formData.generalAdvance + formData.deductions;
-    setFormData((p) => ({ ...p, totalEarnings, totalDeductions, netSalary: totalEarnings - totalDeductions }));
-  }, [formData.basicSalary, formData.hra, formData.festivalAdvance, formData.generalAdvance, formData.deductions, formData.incentives, formData.travelAllowance]);
+    const totalEarnings =
+      formData.basicSalary + formData.hra + formData.incentives + formData.travelAllowance;
+    const totalDeductions =
+      formData.festivalAdvance + formData.generalAdvance + formData.deductions;
+    const netSalary = totalEarnings - totalDeductions;
+    setFormData((p) => {
+      if (
+        p.totalEarnings === totalEarnings &&
+        p.totalDeductions === totalDeductions &&
+        p.netSalary === netSalary
+      ) {
+        return p;
+      }
+      return { ...p, totalEarnings, totalDeductions, netSalary };
+    });
+  }, [
+    formData.basicSalary,
+    formData.hra,
+    formData.festivalAdvance,
+    formData.generalAdvance,
+    formData.deductions,
+    formData.incentives,
+    formData.travelAllowance,
+  ]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setFormData((p) => ({ ...p, [name]: NUMERIC_FIELDS.includes(name) ? parseFloat(value) || 0 : value }));
+    setFormData((p) => ({
+      ...p,
+      [name]: NUMERIC_FIELDS.includes(name) ? parseFloat(value) || 0 : value,
+    }));
   };
 
-  const handleMonthChange = (date: Date | null) => {
-    if (!date) return;
-    setMonthDate(date);
-    const m = format(startOfMonth(date), 'yyyy-MM');
+  /** Local preview while picking year/month — do not fetch yet. */
+  const handleMonthPickerChange = (date: Date | null) => {
+    if (!date || !isValid(date)) return;
+    setMonthDate(startOfMonth(date));
+  };
+
+  /** Commit month only when the picker selection is accepted (avoids mid-pick resets). */
+  const handleMonthAccept = (date: Date | null) => {
+    if (!date || !isValid(date)) return;
+    const m = normalizeMonth(format(startOfMonth(date), 'yyyy-MM'));
+    setMonthDate(startOfMonth(date));
     setFormData((p) => ({ ...p, month: m }));
-    void onMonthChange?.(m);
+    if (m !== selectedMonth) {
+      void onMonthChange?.(m);
+    }
+  };
+
+  const selectHistoryMonth = (month: string) => {
+    const m = normalizeMonth(month);
+    setMonthDate(parseMonthDate(m));
+    setFormData((p) => ({ ...p, month: m }));
+    if (m !== selectedMonth) {
+      void onMonthChange?.(m);
+    }
   };
 
   const handlePaymentDateChange = (date: Date | null) => {
@@ -228,14 +354,17 @@ export default function SalaryForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    onSave({ ...formData, month: normalizeMonth(formData.month || selectedMonth) });
   };
 
   const isNew = !initialData?.id;
-  const displayMonth = format(parse(formData.month, 'yyyy-MM', new Date()), 'MMMM yyyy');
-  const lastUpdated = initialData?.updatedAt
-    ? format(new Date(initialData.updatedAt.seconds * 1000), 'dd MMM yyyy, hh:mm a')
-    : null;
+  const displayMonth = useMemo(() => {
+    try {
+      return format(parseMonthDate(formData.month || selectedMonth), 'MMMM yyyy');
+    } catch {
+      return formData.month || selectedMonth;
+    }
+  }, [formData.month, selectedMonth]);
 
   return (
     <Box
@@ -244,208 +373,157 @@ export default function SalaryForm({
       noValidate
       sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}
     >
-      {/* ── HEADER ──────────────────────────────────────────────── */}
+      {/* Header */}
       <Box
         sx={{
-          background: (theme) =>
-            `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 60%, ${alpha(theme.palette.primary.light, 0.9)} 100%)`,
-          color: 'white',
           px: 3,
           py: 2,
           display: 'flex',
           alignItems: 'center',
           gap: 2,
           flexShrink: 0,
-          position: 'relative',
-          overflow: 'hidden',
-          '&::after': {
-            content: '""',
-            position: 'absolute',
-            right: -40,
-            top: -40,
-            width: 160,
-            height: 160,
-            borderRadius: '50%',
-            bgcolor: alpha('#fff', 0.05),
-            pointerEvents: 'none',
-          },
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'background.paper',
         }}
       >
         <Avatar
           sx={{
-            bgcolor: alpha('#fff', 0.18),
-            color: 'white',
-            width: 46,
-            height: 46,
+            bgcolor: 'primary.main',
+            width: 42,
+            height: 42,
             fontWeight: 700,
-            fontSize: 17,
-            border: `2px solid ${alpha('#fff', 0.3)}`,
+            fontSize: 15,
           }}
         >
           {initials(staff.name)}
         </Avatar>
 
         <Box flex={1} minWidth={0}>
-          <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.25, letterSpacing: '-0.3px' }}>
+          <Typography variant="subtitle1" fontWeight={700} noWrap sx={{ lineHeight: 1.3 }}>
             {staff.name}
           </Typography>
-          <Typography variant="caption" sx={{ opacity: 0.75, display: 'block' }}>
-            {staff.jobRole} &nbsp;·&nbsp; Salary Management
+          <Typography variant="caption" color="text.secondary">
+            {staff.jobRole} · Salary
           </Typography>
         </Box>
 
-        {/* Month Picker */}
         <LocalizationProvider dateAdapter={AdapterDateFns}>
           <DatePicker
+            label="Salary month"
             value={monthDate}
-            onChange={handleMonthChange}
-            views={['month', 'year']}
+            onChange={handleMonthPickerChange}
+            onAccept={handleMonthAccept}
+            onClose={() => setMonthDate(parseMonthDate(formData.month || selectedMonth))}
+            views={['year', 'month']}
+            openTo="month"
+            disabled={loading || isSaving}
             slotProps={{
               textField: {
                 size: 'small',
-                sx: {
-                  width: 175,
-                  '& .MuiOutlinedInput-root': {
-                    color: 'white',
-                    fontWeight: 600,
-                    '& fieldset': { borderColor: alpha('#fff', 0.35) },
-                    '&:hover fieldset': { borderColor: alpha('#fff', 0.7) },
-                    '&.Mui-focused fieldset': { borderColor: 'white' },
-                  },
-                  '& .MuiInputLabel-root': { color: alpha('#fff', 0.7) },
-                  '& .MuiInputLabel-root.Mui-focused': { color: 'white' },
-                  '& .MuiSvgIcon-root': { color: alpha('#fff', 0.75) },
-                },
+                sx: { width: 180 },
               },
+              actionBar: { actions: ['accept', 'cancel'] },
             }}
           />
         </LocalizationProvider>
 
-        <Tooltip title="Open Salary Slip" arrow>
+        <Tooltip title="Open salary slip" arrow>
           <IconButton
             size="small"
-            onClick={() => window.open(`/staff/salary-slip/${staff.id}?month=${formData.month}`, '_blank')}
-            sx={{ color: alpha('#fff', 0.75), '&:hover': { color: 'white', bgcolor: alpha('#fff', 0.12) } }}
+            onClick={() =>
+              window.open(`/staff/salary-slip/${staff.id}?month=${formData.month}`, '_blank')
+            }
           >
             <PrintIcon fontSize="small" />
           </IconButton>
         </Tooltip>
 
         <Tooltip title="Close" arrow>
-          <IconButton
-            size="small"
-            onClick={onCancel}
-            sx={{ color: alpha('#fff', 0.75), '&:hover': { color: 'white', bgcolor: alpha('#fff', 0.12) } }}
-          >
+          <IconButton size="small" onClick={onCancel}>
             <CloseIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </Box>
 
-      {/* Progress bar while loading */}
-      <Box sx={{ height: 3, flexShrink: 0 }}>
-        {loading && <LinearProgress />}
-      </Box>
+      <Box sx={{ height: 3, flexShrink: 0 }}>{loading && <LinearProgress />}</Box>
 
-      {/* ── BODY ────────────────────────────────────────────────── */}
       <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* LEFT SIDEBAR: Month History */}
+        {/* History */}
         <Box
           sx={{
-            width: 220,
+            width: 200,
             flexShrink: 0,
             borderRight: '1px solid',
             borderColor: 'divider',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            bgcolor: (theme) => alpha(theme.palette.grey[50], 0.7),
+            bgcolor: (t) => alpha(t.palette.grey[500], 0.04),
           }}
         >
-          <Box
-            sx={{
-              px: 2,
-              py: 1.25,
-              borderBottom: '1px solid',
-              borderColor: 'divider',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.75,
-            }}
-          >
+          <Box sx={{ px: 2, py: 1.25, borderBottom: '1px solid', borderColor: 'divider' }}>
             <Typography
               variant="caption"
               fontWeight={700}
               color="text.secondary"
-              sx={{ textTransform: 'uppercase', letterSpacing: 1 }}
+              sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}
             >
-              History
+              Past months
             </Typography>
-            {salaryHistory.length > 0 && (
-              <Chip
-                label={salaryHistory.length}
-                size="small"
-                sx={{
-                  height: 16,
-                  fontSize: 10,
-                  fontWeight: 700,
-                  '& .MuiChip-label': { px: 0.75 },
-                }}
-              />
-            )}
           </Box>
 
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             {salaryHistory.length === 0 ? (
-              <Box sx={{ p: 2.5, textAlign: 'center' }}>
-                <Typography variant="caption" color="text.disabled" display="block">
-                  No records yet.
-                </Typography>
+              <Box sx={{ p: 2 }}>
                 <Typography variant="caption" color="text.disabled">
-                  Pick a month above to start.
+                  No saved salaries yet. Pick a month and save.
                 </Typography>
               </Box>
             ) : (
               salaryHistory.map((row) => {
-                const active = row.month === formData.month;
+                const active = normalizeMonth(row.month) === normalizeMonth(formData.month);
                 return (
                   <Box
                     key={row.id}
                     onClick={() => {
-                      setMonthDate(parse(row.month, 'yyyy-MM', new Date()));
-                      setFormData((p) => ({ ...p, month: row.month }));
-                      void onMonthChange?.(row.month);
+                      if (loading || isSaving) return;
+                      selectHistoryMonth(row.month);
                     }}
                     sx={{
                       px: 2,
-                      py: 1.5,
-                      cursor: 'pointer',
+                      py: 1.25,
+                      cursor: loading || isSaving ? 'default' : 'pointer',
                       borderLeft: '3px solid',
                       borderLeftColor: active ? 'primary.main' : 'transparent',
-                      bgcolor: active ? (t) => alpha(t.palette.primary.main, 0.07) : 'transparent',
-                      transition: 'all 0.15s ease',
+                      bgcolor: active ? (t) => alpha(t.palette.primary.main, 0.06) : 'transparent',
+                      opacity: loading ? 0.7 : 1,
                       '&:hover': {
-                        bgcolor: (t) => alpha(t.palette.primary.main, active ? 0.07 : 0.04),
+                        bgcolor: (t) =>
+                          loading || isSaving
+                            ? undefined
+                            : alpha(t.palette.primary.main, active ? 0.06 : 0.03),
                       },
                     }}
                   >
-                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.25}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
                       <Typography
                         variant="body2"
-                        fontWeight={active ? 700 : 400}
+                        fontWeight={active ? 700 : 500}
                         color={active ? 'primary.main' : 'text.primary'}
                         sx={{ fontSize: 13 }}
                       >
-                        {format(parse(row.month, 'yyyy-MM', new Date()), 'MMM yyyy')}
+                        {format(parseMonthDate(row.month), 'MMM yyyy')}
                       </Typography>
                       {row.isPaid ? (
-                        <CheckIcon sx={{ fontSize: 13, color: 'success.main' }} />
+                        <CheckIcon sx={{ fontSize: 14, color: 'success.main' }} />
                       ) : (
-                        <CircleIcon sx={{ fontSize: 13, color: 'text.disabled' }} />
+                        <CircleIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
                       )}
                     </Box>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: 11 }}>
+                    <Typography variant="caption" color="text.secondary">
                       {fmt(row.netSalary)}
+                      {row.isPaid ? ' · Paid' : ' · Unpaid'}
                     </Typography>
                   </Box>
                 );
@@ -454,374 +532,209 @@ export default function SalaryForm({
           </Box>
         </Box>
 
-        {/* RIGHT: Form Content */}
-        <Box sx={{ flex: 1, overflowY: 'auto', p: 3, bgcolor: (t) => alpha(t.palette.grey[50], 0.3) }}>
-          {loading ? (
-            <Stack spacing={2.5}>
-              <Skeleton variant="rounded" height={56} />
-              <Skeleton variant="rounded" height={180} />
-              <Skeleton variant="rounded" height={180} />
-              <Skeleton variant="rounded" height={80} />
-            </Stack>
-          ) : (
-            <Stack spacing={3}>
-              {/* Record status banner */}
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  p: 1.75,
-                  borderRadius: 2,
-                  border: '1px solid',
-                  borderColor: isNew ? 'info.light' : 'divider',
-                  bgcolor: (t) =>
-                    isNew ? alpha(t.palette.info.main, 0.06) : alpha(t.palette.grey[500], 0.04),
-                }}
-              >
-                <Box>
-                  <Typography variant="subtitle2" fontWeight={700} sx={{ letterSpacing: '-0.2px' }}>
-                    {displayMonth}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {isNew
-                      ? 'New record — not saved yet'
-                      : lastUpdated
-                      ? `Last updated ${lastUpdated}`
-                      : 'Existing record'}
-                  </Typography>
-                </Box>
-                <Chip
-                  size="small"
-                  label={formData.isPaid ? 'Paid' : 'Unpaid'}
-                  color={formData.isPaid ? 'success' : 'default'}
-                  variant={formData.isPaid ? 'filled' : 'outlined'}
-                  icon={formData.isPaid ? <CheckIcon sx={{ fontSize: '13px !important' }} /> : undefined}
-                  sx={{ fontWeight: 600, fontSize: 11 }}
+        {/* Form */}
+        <Box
+          sx={{
+            flex: 1,
+            overflowY: 'auto',
+            p: 3,
+            opacity: loading ? 0.55 : 1,
+            pointerEvents: loading ? 'none' : 'auto',
+            transition: 'opacity 0.15s ease',
+          }}
+        >
+          <Stack spacing={2.5}>
+            <Box display="flex" alignItems="center" justifyContent="space-between" gap={2}>
+              <Box>
+                <Typography variant="h6" fontWeight={700} sx={{ letterSpacing: '-0.3px' }}>
+                  {displayMonth}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {isNew ? 'New month — fill amounts and save' : 'Editing saved salary record'}
+                </Typography>
+              </Box>
+              <Chip
+                size="small"
+                label={formData.isPaid ? 'Paid' : 'Unpaid'}
+                color={formData.isPaid ? 'success' : 'default'}
+                variant={formData.isPaid ? 'filled' : 'outlined'}
+                icon={formData.isPaid ? <CheckIcon sx={{ fontSize: '13px !important' }} /> : undefined}
+                sx={{ fontWeight: 600 }}
+              />
+            </Box>
+
+            {/* Earnings */}
+            <Box>
+              <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                <EarningsIcon sx={{ fontSize: 18, color: 'success.main' }} />
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Earnings
+                </Typography>
+                <Typography variant="body2" fontWeight={700} color="success.main" sx={{ ml: 'auto' }}>
+                  {fmt(formData.totalEarnings)}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.75 }}>
+                <AmountField
+                  label="Basic Salary"
+                  name="basicSalary"
+                  value={formData.basicSalary}
+                  onChange={handleChange}
+                />
+                <AmountField label="HRA" name="hra" value={formData.hra} onChange={handleChange} />
+                <AmountField
+                  label="Travel Allowance"
+                  name="travelAllowance"
+                  value={formData.travelAllowance}
+                  onChange={handleChange}
+                />
+                <AmountField
+                  label="Incentives / Bonus"
+                  name="incentives"
+                  value={formData.incentives}
+                  onChange={handleChange}
                 />
               </Box>
+            </Box>
 
-              {/* ─── EARNINGS ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: (t) => alpha(t.palette.success.main, 0.25),
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.25,
-                    px: 2.5,
-                    py: 1.5,
-                    bgcolor: (t) => alpha(t.palette.success.main, 0.07),
-                    borderBottom: '1px solid',
-                    borderBottomColor: (t) => alpha(t.palette.success.main, 0.2),
-                  }}
-                >
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: 30,
-                      height: 30,
-                      borderRadius: 1.5,
-                      bgcolor: (t) => alpha(t.palette.success.main, 0.15),
-                    }}
-                  >
-                    <EarningsIcon sx={{ fontSize: 17, color: 'success.dark' }} />
-                  </Box>
-                  <Box flex={1}>
-                    <Typography variant="subtitle2" fontWeight={700} color="success.dark">
-                      Earnings
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" fontWeight={700} color="success.main">
-                    {fmt(formData.totalEarnings)}
-                  </Typography>
-                </Box>
-                <Box sx={{ p: 2.5, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <AmountField label="Basic Salary" name="basicSalary" value={formData.basicSalary} onChange={handleChange} />
-                  <AmountField label="HRA" name="hra" value={formData.hra} onChange={handleChange} />
-                  <AmountField label="Travel Allowance" name="travelAllowance" value={formData.travelAllowance} onChange={handleChange} />
-                  <AmountField label="Incentives / Bonus" name="incentives" value={formData.incentives} onChange={handleChange} />
-                </Box>
+            <Divider />
+
+            {/* Deductions */}
+            <Box>
+              <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                <DeductionsIcon sx={{ fontSize: 18, color: 'error.main' }} />
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Deductions
+                </Typography>
+                <Typography variant="body2" fontWeight={700} color="error.main" sx={{ ml: 'auto' }}>
+                  {fmt(formData.totalDeductions)}
+                </Typography>
               </Box>
-
-              {/* ─── DEDUCTIONS ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: (t) => alpha(t.palette.error.main, 0.25),
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.25,
-                    px: 2.5,
-                    py: 1.5,
-                    bgcolor: (t) => alpha(t.palette.error.main, 0.07),
-                    borderBottom: '1px solid',
-                    borderBottomColor: (t) => alpha(t.palette.error.main, 0.2),
-                  }}
-                >
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: 30,
-                      height: 30,
-                      borderRadius: 1.5,
-                      bgcolor: (t) => alpha(t.palette.error.main, 0.15),
-                    }}
-                  >
-                    <DeductionsIcon sx={{ fontSize: 17, color: 'error.dark' }} />
-                  </Box>
-                  <Box flex={1}>
-                    <Typography variant="subtitle2" fontWeight={700} color="error.dark">
-                      Deductions
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" fontWeight={700} color="error.main">
-                    {fmt(formData.totalDeductions)}
-                  </Typography>
-                </Box>
-                <Box sx={{ p: 2.5, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <AmountField label="Festival Advance" name="festivalAdvance" value={formData.festivalAdvance} onChange={handleChange} />
-                  <AmountField label="General Advance" name="generalAdvance" value={formData.generalAdvance} onChange={handleChange} />
-                  <AmountField label="Other Deductions" name="deductions" value={formData.deductions} onChange={handleChange} />
-                </Box>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.75 }}>
+                <AmountField
+                  label="Festival Advance"
+                  name="festivalAdvance"
+                  value={formData.festivalAdvance}
+                  onChange={handleChange}
+                />
+                <AmountField
+                  label="General Advance"
+                  name="generalAdvance"
+                  value={formData.generalAdvance}
+                  onChange={handleChange}
+                />
+                <AmountField
+                  label="Other Deductions"
+                  name="deductions"
+                  value={formData.deductions}
+                  onChange={handleChange}
+                />
               </Box>
+            </Box>
 
-              {/* ─── PAYMENT STATUS ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.25,
-                    px: 2.5,
-                    py: 1.5,
-                    bgcolor: (t) => alpha(t.palette.grey[500], 0.05),
-                    borderBottom: '1px solid',
-                    borderBottomColor: 'divider',
-                  }}
-                >
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: 30,
-                      height: 30,
-                      borderRadius: 1.5,
-                      bgcolor: (t) => alpha(t.palette.grey[600], 0.1),
-                    }}
-                  >
-                    <PaymentIcon sx={{ fontSize: 17, color: 'text.secondary' }} />
-                  </Box>
-                  <Typography variant="subtitle2" fontWeight={700}>
-                    Payment Status
-                  </Typography>
-                </Box>
-                <Box sx={{ px: 2.5, py: 2 }}>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={formData.isPaid}
-                        onChange={(e) => {
-                          const isPaid = e.target.checked;
-                          setFormData((p) => ({
-                            ...p,
-                            isPaid,
-                            paidDate: isPaid && paymentDate ? Timestamp.fromDate(paymentDate) : undefined,
-                          }));
+            <Divider />
+
+            {/* Payment + remarks in one compact block */}
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+                gap: 2.5,
+                alignItems: 'start',
+              }}
+            >
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700} mb={1}>
+                  Payment
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.isPaid}
+                      onChange={(e) => {
+                        const isPaid = e.target.checked;
+                        const today = new Date();
+                        setFormData((p) => ({
+                          ...p,
+                          isPaid,
+                          paidDate: isPaid
+                            ? paymentDate
+                              ? Timestamp.fromDate(paymentDate)
+                              : Timestamp.fromDate(today)
+                            : undefined,
+                        }));
+                        if (isPaid && !paymentDate) setPaymentDate(today);
+                        if (!isPaid) setPaymentDate(null);
+                      }}
+                      color="success"
+                    />
+                  }
+                  label={
+                    <Typography variant="body2" color={formData.isPaid ? 'success.main' : 'text.secondary'}>
+                      {formData.isPaid ? 'Marked as paid' : 'Mark as paid'}
+                    </Typography>
+                  }
+                />
+                {formData.isPaid && (
+                  <Box sx={{ mt: 1.5, maxWidth: 260 }}>
+                    <LocalizationProvider dateAdapter={AdapterDateFns}>
+                      <DatePicker
+                        label="Payment date"
+                        value={paymentDate}
+                        onChange={handlePaymentDateChange}
+                        slotProps={{
+                          textField: { size: 'small', fullWidth: true },
                         }}
-                        color="success"
                       />
-                    }
-                    label={
-                      <Typography
-                        variant="body2"
-                        fontWeight={formData.isPaid ? 700 : 400}
-                        color={formData.isPaid ? 'success.main' : 'text.secondary'}
-                      >
-                        {formData.isPaid ? 'Salary has been paid' : 'Mark salary as paid'}
-                      </Typography>
-                    }
-                  />
-                  {formData.isPaid && (
-                    <Box sx={{ mt: 2, maxWidth: 280 }}>
-                      <LocalizationProvider dateAdapter={AdapterDateFns}>
-                        <DatePicker
-                          label="Date of Payment"
-                          value={paymentDate}
-                          onChange={handlePaymentDateChange}
-                          slotProps={{
-                            textField: {
-                              size: 'small',
-                              fullWidth: true,
-                              helperText: 'Date on which salary was disbursed',
-                            },
-                          }}
-                        />
-                      </LocalizationProvider>
-                    </Box>
-                  )}
-                </Box>
+                    </LocalizationProvider>
+                  </Box>
+                )}
               </Box>
 
-              {/* ─── REMARKS ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.25,
-                    px: 2.5,
-                    py: 1.5,
-                    bgcolor: (t) => alpha(t.palette.grey[500], 0.05),
-                    borderBottom: '1px solid',
-                    borderBottomColor: 'divider',
-                  }}
-                >
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: 30,
-                      height: 30,
-                      borderRadius: 1.5,
-                      bgcolor: (t) => alpha(t.palette.grey[600], 0.1),
-                    }}
-                  >
-                    <NoteIcon sx={{ fontSize: 17, color: 'text.secondary' }} />
-                  </Box>
-                  <Typography variant="subtitle2" fontWeight={700}>
-                    Remarks
-                  </Typography>
-                </Box>
-                <Box sx={{ px: 2.5, py: 2 }}>
-                  <TextField
-                    fullWidth
-                    multiline
-                    rows={3}
-                    name="remarks"
-                    value={formData.remarks}
-                    onChange={handleChange}
-                    placeholder="Add any notes about this salary — e.g. adjustments, explanations…"
-                    size="small"
-                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
-                  />
-                </Box>
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700} mb={1}>
+                  Remarks
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={3}
+                  name="remarks"
+                  value={formData.remarks}
+                  onChange={handleChange}
+                  placeholder="Optional notes…"
+                  size="small"
+                />
               </Box>
-            </Stack>
-          )}
+            </Box>
+          </Stack>
         </Box>
       </Box>
 
-      {/* ── FOOTER: Live Summary + Actions ──────────────────────── */}
+      {/* Footer */}
       <Box
         sx={{
           flexShrink: 0,
           borderTop: '1px solid',
           borderColor: 'divider',
           px: 3,
-          py: 2,
+          py: 1.75,
           display: 'flex',
           alignItems: 'center',
-          gap: 3,
+          gap: 2,
           bgcolor: 'background.paper',
         }}
       >
-        {/* Summary pills */}
-        <Stack direction="row" spacing={2.5} sx={{ flex: 1 }} alignItems="center">
-          <Box sx={{ display: { xs: 'none', md: 'block' } }}>
-            <Typography variant="caption" color="text.disabled" display="block" sx={{ lineHeight: 1.2, mb: 0.25 }}>
-              Earnings
-            </Typography>
-            <Typography variant="body2" fontWeight={700} color="success.main">
-              {fmt(formData.totalEarnings)}
-            </Typography>
-          </Box>
+        <Box sx={{ flex: 1 }}>
+          <Typography variant="caption" color="text.secondary" display="block">
+            Net pay · {displayMonth}
+          </Typography>
+          <Typography variant="h6" fontWeight={800} color="primary.main" sx={{ lineHeight: 1.2 }}>
+            {fmt(formData.netSalary)}
+          </Typography>
+        </Box>
 
-          <Box
-            sx={{
-              width: 1,
-              height: 32,
-              bgcolor: 'divider',
-              display: { xs: 'none', md: 'block' },
-            }}
-          />
-
-          <Box sx={{ display: { xs: 'none', md: 'block' } }}>
-            <Typography variant="caption" color="text.disabled" display="block" sx={{ lineHeight: 1.2, mb: 0.25 }}>
-              Deductions
-            </Typography>
-            <Typography variant="body2" fontWeight={700} color="error.main">
-              {fmt(formData.totalDeductions)}
-            </Typography>
-          </Box>
-
-          <Box
-            sx={{
-              width: 1,
-              height: 32,
-              bgcolor: 'divider',
-              display: { xs: 'none', md: 'block' },
-            }}
-          />
-
-          <Box>
-            <Typography variant="caption" color="text.disabled" display="block" sx={{ lineHeight: 1.2, mb: 0.25 }}>
-              Net Pay &mdash; <strong style={{ color: 'inherit' }}>{displayMonth}</strong>
-            </Typography>
-            <Typography
-              variant="h6"
-              fontWeight={800}
-              color="primary.main"
-              sx={{ lineHeight: 1, letterSpacing: '-0.5px' }}
-            >
-              {fmt(formData.netSalary)}
-            </Typography>
-          </Box>
-        </Stack>
-
-        {/* Actions */}
-        <Button
-          variant="text"
-          onClick={onCancel}
-          disabled={isSaving}
-          sx={{ color: 'text.secondary', fontWeight: 500, minWidth: 80 }}
-        >
+        <Button variant="text" onClick={onCancel} disabled={isSaving} sx={{ color: 'text.secondary' }}>
           Cancel
         </Button>
         <AsyncActionButton
@@ -830,13 +743,7 @@ export default function SalaryForm({
           type="submit"
           loading={isSaving}
           loadingText={isNew ? 'Saving…' : 'Updating…'}
-          sx={{
-            minWidth: 140,
-            fontWeight: 700,
-            borderRadius: 2,
-            boxShadow: 'none',
-            '&:hover': { boxShadow: 'none' },
-          }}
+          sx={{ minWidth: 130, fontWeight: 700, borderRadius: 2 }}
         >
           {isNew ? 'Save Salary' : 'Update Salary'}
         </AsyncActionButton>

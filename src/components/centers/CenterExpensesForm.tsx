@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -13,7 +13,6 @@ import {
   Stack,
   alpha,
   LinearProgress,
-  Skeleton,
   Switch,
   FormControlLabel,
   IconButton,
@@ -24,7 +23,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Timestamp } from 'firebase/firestore';
-import { format, parse, startOfMonth } from 'date-fns';
+import { format, parse, startOfMonth, isValid } from 'date-fns';
 import {
   Home as RentIcon,
   ElectricalServices as UtilitiesIcon,
@@ -33,8 +32,6 @@ import {
   CheckCircle as CheckIcon,
   RadioButtonUnchecked as CircleIcon,
   Close as CloseIcon,
-  EventNote as NoteIcon,
-  CreditCard as PaymentIcon,
   Domain as DomainIcon,
 } from '@mui/icons-material';
 
@@ -89,6 +86,8 @@ export interface CenterExpenseHistorySummary {
 interface CenterExpensesFormProps {
   center: Center;
   initialData?: CenterExpense;
+  /** Explicitly selected month (YYYY-MM). Survives when no Firestore record exists. */
+  selectedMonth: string;
   expenseHistory?: CenterExpenseHistorySummary[];
   onMonthChange?: (month: string) => Promise<void> | void;
   onSave: (data: CenterExpense) => Promise<void> | void;
@@ -104,56 +103,156 @@ const fmt = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 
-const centerInitials = (name: string) =>
-  name
-    .split(' ')
-    .map((p) => p[0])
-    .join('')
-    .toUpperCase()
-    .substring(0, 2);
+const num = (v: unknown, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
 
-const BLANK_EXPENSE = (center: Center, month?: string): CenterExpense => ({
-  centerId: center.id,
-  month: month || format(new Date(), 'yyyy-MM'),
-  rent: center.monthlyRent || 0,
-  parking: 0,
-  electricity: center.monthlyElectricity || 0,
-  water: 0,
-  internet: 0,
-  maintenance: 0,
-  repairWork: 0,
-  housekeeping: 0,
-  miscellaneous: 0,
-  totalExpenses: 0,
-  isPaid: false,
-  remarks: '',
-});
+/** Normalize to zero-padded YYYY-MM. */
+export const normalizeExpenseMonth = (month: string | undefined | null, fallback?: string): string => {
+  const fb = fallback || format(new Date(), 'yyyy-MM');
+  if (!month) return fb;
+  const match = String(month).trim().match(/^(\d{4})-(\d{1,2})$/);
+  if (!match) return fb;
+  return `${match[1]}-${match[2].padStart(2, '0')}`;
+};
 
-const hydrateExpense = (data: CenterExpense | undefined, center: Center): CenterExpense => ({
-  id: data?.id,
-  centerId: center.id,
-  month: data?.month || format(new Date(), 'yyyy-MM'),
-  rent: data?.rent ?? center.monthlyRent ?? 0,
-  parking: data?.parking ?? 0,
-  electricity: data?.electricity ?? center.monthlyElectricity ?? 0,
-  water: data?.water ?? 0,
-  internet: data?.internet ?? 0,
-  maintenance: data?.maintenance ?? 0,
-  repairWork: data?.repairWork ?? 0,
-  housekeeping: data?.housekeeping ?? 0,
-  miscellaneous: data?.miscellaneous ?? 0,
-  totalExpenses: data?.totalExpenses ?? 0,
-  isPaid: data?.isPaid ?? false,
-  paidDate: data?.paidDate,
-  remarks: data?.remarks ?? '',
-});
+export const resolveTotalExpenses = (data: Partial<CenterExpense> | Record<string, unknown>): number => {
+  const stored = num(data.totalExpenses, NaN);
+  if (Number.isFinite(stored) && stored !== 0) return stored;
+
+  const computed =
+    num(data.rent) +
+    num(data.parking) +
+    num(data.electricity) +
+    num(data.water) +
+    num(data.internet) +
+    num(data.maintenance) +
+    num(data.repairWork) +
+    num(data.housekeeping) +
+    num(data.miscellaneous);
+
+  if (computed !== 0) return computed;
+  return Number.isFinite(stored) ? stored : 0;
+};
+
+const hasComponentValues = (data: Partial<CenterExpense>) =>
+  num(data.rent) !== 0 ||
+  num(data.parking) !== 0 ||
+  num(data.electricity) !== 0 ||
+  num(data.water) !== 0 ||
+  num(data.internet) !== 0 ||
+  num(data.maintenance) !== 0 ||
+  num(data.repairWork) !== 0 ||
+  num(data.housekeeping) !== 0 ||
+  num(data.miscellaneous) !== 0;
+
+const blankExpense = (center: Center, month: string): CenterExpense => {
+  const rent = num(center.monthlyRent);
+  const electricity = num(center.monthlyElectricity);
+  return {
+    centerId: center.id,
+    month: normalizeExpenseMonth(month),
+    rent,
+    parking: 0,
+    electricity,
+    water: 0,
+    internet: 0,
+    maintenance: 0,
+    repairWork: 0,
+    housekeeping: 0,
+    miscellaneous: 0,
+    totalExpenses: rent + electricity,
+    isPaid: false,
+    remarks: '',
+  };
+};
+
+const hydrateExpense = (
+  data: CenterExpense | undefined,
+  center: Center,
+  selectedMonth: string
+): CenterExpense => {
+  const month = normalizeExpenseMonth(data?.month || selectedMonth);
+
+  if (!data) {
+    return blankExpense(center, month);
+  }
+
+  // Legacy records may only store totalExpenses without component breakdown.
+  let rent = num(data.rent, NaN);
+  let electricity = num(data.electricity, NaN);
+  const parking = num(data.parking);
+  const water = num(data.water);
+  const internet = num(data.internet);
+  const maintenance = num(data.maintenance);
+  const repairWork = num(data.repairWork);
+  const housekeeping = num(data.housekeeping);
+  const miscellaneous = num(data.miscellaneous);
+
+  if (!hasComponentValues(data)) {
+    const fallbackTotal = resolveTotalExpenses(data);
+    if (fallbackTotal !== 0) {
+      rent = fallbackTotal;
+      electricity = 0;
+    } else {
+      rent = num(center.monthlyRent);
+      electricity = num(center.monthlyElectricity);
+    }
+  } else {
+    if (!Number.isFinite(rent)) rent = num(center.monthlyRent);
+    if (!Number.isFinite(electricity)) electricity = num(center.monthlyElectricity);
+  }
+
+  const totalExpenses =
+    rent +
+    parking +
+    electricity +
+    water +
+    internet +
+    maintenance +
+    repairWork +
+    housekeeping +
+    miscellaneous;
+
+  return {
+    id: data.id,
+    centerId: center.id,
+    month,
+    rent,
+    parking,
+    electricity,
+    water,
+    internet,
+    maintenance,
+    repairWork,
+    housekeeping,
+    miscellaneous,
+    totalExpenses,
+    isPaid: !!data.isPaid,
+    paidDate: data.paidDate,
+    remarks: data.remarks ?? '',
+  };
+};
+
+const parseMonthDate = (month: string): Date => {
+  const normalized = normalizeExpenseMonth(month);
+  const d = parse(normalized, 'yyyy-MM', new Date());
+  return isValid(d) ? startOfMonth(d) : startOfMonth(new Date());
+};
 
 const NUMERIC_FIELDS: (keyof CenterExpense)[] = [
-  'rent', 'parking', 'electricity', 'water', 'internet',
-  'maintenance', 'repairWork', 'housekeeping', 'miscellaneous',
+  'rent',
+  'parking',
+  'electricity',
+  'water',
+  'internet',
+  'maintenance',
+  'repairWork',
+  'housekeeping',
+  'miscellaneous',
 ];
 
-// Defined OUTSIDE the component so its identity is stable across renders.
 const ExpenseField = React.memo(function ExpenseField({
   label,
   name,
@@ -197,6 +296,7 @@ const ExpenseField = React.memo(function ExpenseField({
 export default function CenterExpensesForm({
   center,
   initialData,
+  selectedMonth,
   expenseHistory = [],
   onMonthChange,
   onSave,
@@ -204,23 +304,21 @@ export default function CenterExpensesForm({
   isSaving = false,
   loading = false,
 }: CenterExpensesFormProps) {
-  const [formData, setFormData] = useState<CenterExpense>(() => hydrateExpense(initialData, center));
-  const [monthDate, setMonthDate] = useState<Date | null>(() =>
-    parse(formData.month, 'yyyy-MM', new Date())
+  const [formData, setFormData] = useState<CenterExpense>(() =>
+    hydrateExpense(initialData, center, selectedMonth)
   );
+  const [monthDate, setMonthDate] = useState<Date | null>(() => parseMonthDate(selectedMonth));
   const [paymentDate, setPaymentDate] = useState<Date | null>(
     formData.paidDate ? new Date(formData.paidDate.seconds * 1000) : null
   );
 
-  // Sync form when initialData changes (month switch)
   useEffect(() => {
-    const next = hydrateExpense(initialData, center);
+    const next = hydrateExpense(initialData, center, selectedMonth);
     setFormData(next);
-    setMonthDate(parse(next.month, 'yyyy-MM', new Date()));
+    setMonthDate(parseMonthDate(selectedMonth));
     setPaymentDate(next.paidDate ? new Date(next.paidDate.seconds * 1000) : null);
-  }, [initialData, center.id]);
+  }, [initialData, selectedMonth, center.id, center.monthlyRent, center.monthlyElectricity]);
 
-  // Recalculate total whenever any amount changes
   useEffect(() => {
     const total =
       formData.rent +
@@ -232,11 +330,16 @@ export default function CenterExpensesForm({
       formData.repairWork +
       formData.housekeeping +
       formData.miscellaneous;
-    setFormData((p) => ({ ...p, totalExpenses: total }));
+    setFormData((p) => (p.totalExpenses === total ? p : { ...p, totalExpenses: total }));
   }, [
-    formData.rent, formData.parking,
-    formData.electricity, formData.water, formData.internet,
-    formData.maintenance, formData.repairWork, formData.housekeeping,
+    formData.rent,
+    formData.parking,
+    formData.electricity,
+    formData.water,
+    formData.internet,
+    formData.maintenance,
+    formData.repairWork,
+    formData.housekeeping,
     formData.miscellaneous,
   ]);
 
@@ -244,18 +347,32 @@ export default function CenterExpensesForm({
     const { name, value } = e.target;
     setFormData((p) => ({
       ...p,
-      [name]: NUMERIC_FIELDS.includes(name as keyof CenterExpense)
-        ? parseFloat(value) || 0
-        : value,
+      [name]: NUMERIC_FIELDS.includes(name as keyof CenterExpense) ? parseFloat(value) || 0 : value,
     }));
   };
 
-  const handleMonthChange = (date: Date | null) => {
-    if (!date) return;
-    setMonthDate(date);
-    const m = format(startOfMonth(date), 'yyyy-MM');
+  const handleMonthPickerChange = (date: Date | null) => {
+    if (!date || !isValid(date)) return;
+    setMonthDate(startOfMonth(date));
+  };
+
+  const handleMonthAccept = (date: Date | null) => {
+    if (!date || !isValid(date)) return;
+    const m = normalizeExpenseMonth(format(startOfMonth(date), 'yyyy-MM'));
+    setMonthDate(startOfMonth(date));
     setFormData((p) => ({ ...p, month: m }));
-    void onMonthChange?.(m);
+    if (m !== selectedMonth) {
+      void onMonthChange?.(m);
+    }
+  };
+
+  const selectHistoryMonth = (month: string) => {
+    const m = normalizeExpenseMonth(month);
+    setMonthDate(parseMonthDate(m));
+    setFormData((p) => ({ ...p, month: m }));
+    if (m !== selectedMonth) {
+      void onMonthChange?.(m);
+    }
   };
 
   const handlePaymentDateChange = (date: Date | null) => {
@@ -269,63 +386,21 @@ export default function CenterExpensesForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    onSave({ ...formData, month: normalizeExpenseMonth(formData.month || selectedMonth) });
   };
 
   const isNew = !initialData?.id;
-  const displayMonth = format(parse(formData.month, 'yyyy-MM', new Date()), 'MMMM yyyy');
-  const lastUpdated = initialData?.updatedAt
-    ? format(new Date(initialData.updatedAt.seconds * 1000), 'dd MMM yyyy, hh:mm a')
-    : null;
+  const displayMonth = useMemo(() => {
+    try {
+      return format(parseMonthDate(formData.month || selectedMonth), 'MMMM yyyy');
+    } catch {
+      return formData.month || selectedMonth;
+    }
+  }, [formData.month, selectedMonth]);
 
-  // Computed section totals for summary strip
   const rentTotal = formData.rent + formData.parking;
   const utilitiesTotal = formData.electricity + formData.water + formData.internet;
   const maintenanceTotal = formData.maintenance + formData.repairWork + formData.housekeeping;
-
-  const SectionHeader = ({
-    icon,
-    title,
-    color,
-    sectionTotal,
-  }: {
-    icon: React.ReactNode;
-    title: string;
-    color: 'primary' | 'warning' | 'secondary' | 'default';
-    sectionTotal: number;
-  }) => {
-    const colorMap = {
-      primary: { bg: 'primary.main', light: (t: any) => alpha(t.palette.primary.main, 0.07), border: (t: any) => alpha(t.palette.primary.main, 0.25), iconBg: (t: any) => alpha(t.palette.primary.main, 0.15), textColor: 'primary.dark' },
-      warning: { bg: 'warning.main', light: (t: any) => alpha(t.palette.warning.main, 0.07), border: (t: any) => alpha(t.palette.warning.main, 0.25), iconBg: (t: any) => alpha(t.palette.warning.main, 0.15), textColor: 'warning.dark' },
-      secondary: { bg: 'secondary.main', light: (t: any) => alpha(t.palette.secondary.main, 0.07), border: (t: any) => alpha(t.palette.secondary.main, 0.25), iconBg: (t: any) => alpha(t.palette.secondary.main, 0.15), textColor: 'secondary.dark' },
-      default: { bg: 'grey.600', light: (t: any) => alpha(t.palette.grey[600], 0.07), border: (t: any) => alpha(t.palette.grey[600], 0.2), iconBg: (t: any) => alpha(t.palette.grey[600], 0.12), textColor: 'text.secondary' },
-    };
-    const c = colorMap[color];
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1.25,
-          px: 2.5,
-          py: 1.5,
-          bgcolor: c.light,
-          borderBottom: '1px solid',
-          borderBottomColor: c.border,
-        }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 1.5, bgcolor: c.iconBg }}>
-          {icon}
-        </Box>
-        <Typography variant="subtitle2" fontWeight={700} color={c.textColor} flex={1}>
-          {title}
-        </Typography>
-        <Typography variant="body2" fontWeight={700} color={c.textColor}>
-          {fmt(sectionTotal)}
-        </Typography>
-      </Box>
-    );
-  };
 
   return (
     <Box
@@ -334,193 +409,135 @@ export default function CenterExpensesForm({
       noValidate
       sx={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}
     >
-      {/* ── HEADER ──────────────────────────────────────────────── */}
+      {/* Header */}
       <Box
         sx={{
-          background: (theme) =>
-            `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 60%, ${alpha(theme.palette.primary.light, 0.9)} 100%)`,
-          color: 'white',
           px: 3,
           py: 2,
           display: 'flex',
           alignItems: 'center',
           gap: 2,
           flexShrink: 0,
-          position: 'relative',
-          overflow: 'hidden',
-          '&::after': {
-            content: '""',
-            position: 'absolute',
-            right: -40,
-            top: -40,
-            width: 160,
-            height: 160,
-            borderRadius: '50%',
-            bgcolor: alpha('#fff', 0.05),
-            pointerEvents: 'none',
-          },
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'background.paper',
         }}
       >
-        <Avatar
-          sx={{
-            bgcolor: alpha('#fff', 0.18),
-            color: 'white',
-            width: 46,
-            height: 46,
-            fontWeight: 700,
-            fontSize: 17,
-            border: `2px solid ${alpha('#fff', 0.3)}`,
-          }}
-        >
+        <Avatar sx={{ bgcolor: 'primary.main', width: 42, height: 42 }}>
           <DomainIcon />
         </Avatar>
 
         <Box flex={1} minWidth={0}>
-          <Typography variant="h6" fontWeight={700} sx={{ lineHeight: 1.25, letterSpacing: '-0.3px' }}>
+          <Typography variant="subtitle1" fontWeight={700} noWrap sx={{ lineHeight: 1.3 }}>
             {center.name}
           </Typography>
-          <Typography variant="caption" sx={{ opacity: 0.75, display: 'block' }}>
-            Rent &amp; Maintenance Tracker
+          <Typography variant="caption" color="text.secondary">
+            Rent &amp; Maintenance
           </Typography>
         </Box>
 
-        {/* Month Picker */}
         <LocalizationProvider dateAdapter={AdapterDateFns}>
           <DatePicker
+            label="Expense month"
             value={monthDate}
-            onChange={handleMonthChange}
-            views={['month', 'year']}
+            onChange={handleMonthPickerChange}
+            onAccept={handleMonthAccept}
+            onClose={() => setMonthDate(parseMonthDate(formData.month || selectedMonth))}
+            views={['year', 'month']}
+            openTo="month"
+            disabled={loading || isSaving}
             slotProps={{
-              textField: {
-                size: 'small',
-                sx: {
-                  width: 175,
-                  '& .MuiOutlinedInput-root': {
-                    color: 'white',
-                    fontWeight: 600,
-                    '& fieldset': { borderColor: alpha('#fff', 0.35) },
-                    '&:hover fieldset': { borderColor: alpha('#fff', 0.7) },
-                    '&.Mui-focused fieldset': { borderColor: 'white' },
-                  },
-                  '& .MuiInputLabel-root': { color: alpha('#fff', 0.7) },
-                  '& .MuiInputLabel-root.Mui-focused': { color: 'white' },
-                  '& .MuiSvgIcon-root': { color: alpha('#fff', 0.75) },
-                },
-              },
+              textField: { size: 'small', sx: { width: 180 } },
+              actionBar: { actions: ['accept', 'cancel'] },
             }}
           />
         </LocalizationProvider>
 
         <Tooltip title="Close" arrow>
-          <IconButton
-            size="small"
-            onClick={onCancel}
-            sx={{ color: alpha('#fff', 0.75), '&:hover': { color: 'white', bgcolor: alpha('#fff', 0.12) } }}
-          >
+          <IconButton size="small" onClick={onCancel}>
             <CloseIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       </Box>
 
-      {/* Loading bar */}
-      <Box sx={{ height: 3, flexShrink: 0 }}>
-        {loading && <LinearProgress />}
-      </Box>
+      <Box sx={{ height: 3, flexShrink: 0 }}>{loading && <LinearProgress />}</Box>
 
-      {/* ── BODY ────────────────────────────────────────────────── */}
       <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* LEFT SIDEBAR: Month History */}
+        {/* History */}
         <Box
           sx={{
-            width: 220,
+            width: 200,
             flexShrink: 0,
             borderRight: '1px solid',
             borderColor: 'divider',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            bgcolor: (t) => alpha(t.palette.grey[50], 0.7),
+            bgcolor: (t) => alpha(t.palette.grey[500], 0.04),
           }}
         >
-          <Box
-            sx={{
-              px: 2,
-              py: 1.25,
-              borderBottom: '1px solid',
-              borderColor: 'divider',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.75,
-            }}
-          >
+          <Box sx={{ px: 2, py: 1.25, borderBottom: '1px solid', borderColor: 'divider' }}>
             <Typography
               variant="caption"
               fontWeight={700}
               color="text.secondary"
-              sx={{ textTransform: 'uppercase', letterSpacing: 1 }}
+              sx={{ textTransform: 'uppercase', letterSpacing: 0.8 }}
             >
-              History
+              Past months
             </Typography>
-            {expenseHistory.length > 0 && (
-              <Chip
-                label={expenseHistory.length}
-                size="small"
-                sx={{ height: 16, fontSize: 10, fontWeight: 700, '& .MuiChip-label': { px: 0.75 } }}
-              />
-            )}
           </Box>
 
           <Box sx={{ flex: 1, overflowY: 'auto' }}>
             {expenseHistory.length === 0 ? (
-              <Box sx={{ p: 2.5, textAlign: 'center' }}>
-                <Typography variant="caption" color="text.disabled" display="block">
-                  No records yet.
-                </Typography>
+              <Box sx={{ p: 2 }}>
                 <Typography variant="caption" color="text.disabled">
-                  Pick a month above to start.
+                  No saved expenses yet. Pick a month and save.
                 </Typography>
               </Box>
             ) : (
               expenseHistory.map((row) => {
-                const active = row.month === formData.month;
+                const active = normalizeExpenseMonth(row.month) === normalizeExpenseMonth(formData.month);
                 return (
                   <Box
                     key={row.id}
                     onClick={() => {
-                      setMonthDate(parse(row.month, 'yyyy-MM', new Date()));
-                      setFormData((p) => ({ ...p, month: row.month }));
-                      void onMonthChange?.(row.month);
+                      if (loading || isSaving) return;
+                      selectHistoryMonth(row.month);
                     }}
                     sx={{
                       px: 2,
-                      py: 1.5,
-                      cursor: 'pointer',
+                      py: 1.25,
+                      cursor: loading || isSaving ? 'default' : 'pointer',
                       borderLeft: '3px solid',
                       borderLeftColor: active ? 'primary.main' : 'transparent',
-                      bgcolor: active ? (t) => alpha(t.palette.primary.main, 0.07) : 'transparent',
-                      transition: 'all 0.15s ease',
+                      bgcolor: active ? (t) => alpha(t.palette.primary.main, 0.06) : 'transparent',
+                      opacity: loading ? 0.7 : 1,
                       '&:hover': {
-                        bgcolor: (t) => alpha(t.palette.primary.main, active ? 0.07 : 0.04),
+                        bgcolor: (t) =>
+                          loading || isSaving
+                            ? undefined
+                            : alpha(t.palette.primary.main, active ? 0.06 : 0.03),
                       },
                     }}
                   >
-                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.25}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center">
                       <Typography
                         variant="body2"
-                        fontWeight={active ? 700 : 400}
+                        fontWeight={active ? 700 : 500}
                         color={active ? 'primary.main' : 'text.primary'}
                         sx={{ fontSize: 13 }}
                       >
-                        {format(parse(row.month, 'yyyy-MM', new Date()), 'MMM yyyy')}
+                        {format(parseMonthDate(row.month), 'MMM yyyy')}
                       </Typography>
                       {row.isPaid ? (
-                        <CheckIcon sx={{ fontSize: 13, color: 'success.main' }} />
+                        <CheckIcon sx={{ fontSize: 14, color: 'success.main' }} />
                       ) : (
-                        <CircleIcon sx={{ fontSize: 13, color: 'text.disabled' }} />
+                        <CircleIcon sx={{ fontSize: 14, color: 'text.disabled' }} />
                       )}
                     </Box>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: 11 }}>
+                    <Typography variant="caption" color="text.secondary">
                       {fmt(row.totalExpenses)}
+                      {row.isPaid ? ' · Paid' : ' · Pending'}
                     </Typography>
                   </Box>
                 );
@@ -529,317 +546,213 @@ export default function CenterExpensesForm({
           </Box>
         </Box>
 
-        {/* RIGHT: Form Content */}
-        <Box sx={{ flex: 1, overflowY: 'auto', p: 3, bgcolor: (t) => alpha(t.palette.grey[50], 0.3) }}>
-          {loading ? (
-            <Stack spacing={2.5}>
-              <Skeleton variant="rounded" height={56} />
-              <Skeleton variant="rounded" height={160} />
-              <Skeleton variant="rounded" height={160} />
-              <Skeleton variant="rounded" height={160} />
-            </Stack>
-          ) : (
-            <Stack spacing={3}>
-              {/* Record status banner */}
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  p: 1.75,
-                  borderRadius: 2,
-                  border: '1px solid',
-                  borderColor: isNew ? 'info.light' : 'divider',
-                  bgcolor: (t) =>
-                    isNew ? alpha(t.palette.info.main, 0.06) : alpha(t.palette.grey[500], 0.04),
-                }}
-              >
-                <Box>
-                  <Typography variant="subtitle2" fontWeight={700} sx={{ letterSpacing: '-0.2px' }}>
-                    {displayMonth}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {isNew
-                      ? 'New record — not saved yet'
-                      : lastUpdated
-                      ? `Last updated ${lastUpdated}`
-                      : 'Existing record'}
-                  </Typography>
-                </Box>
-                <Chip
-                  size="small"
-                  label={formData.isPaid ? 'Paid' : 'Pending'}
-                  color={formData.isPaid ? 'success' : 'warning'}
-                  variant={formData.isPaid ? 'filled' : 'outlined'}
-                  icon={formData.isPaid ? <CheckIcon sx={{ fontSize: '13px !important' }} /> : undefined}
-                  sx={{ fontWeight: 600, fontSize: 11 }}
+        {/* Form */}
+        <Box
+          sx={{
+            flex: 1,
+            overflowY: 'auto',
+            p: 3,
+            opacity: loading ? 0.55 : 1,
+            pointerEvents: loading ? 'none' : 'auto',
+            transition: 'opacity 0.15s ease',
+          }}
+        >
+          <Stack spacing={2.5}>
+            <Box display="flex" alignItems="center" justifyContent="space-between" gap={2}>
+              <Box>
+                <Typography variant="h6" fontWeight={700} sx={{ letterSpacing: '-0.3px' }}>
+                  {displayMonth}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {isNew ? 'New month — fill amounts and save' : 'Editing saved expense record'}
+                </Typography>
+              </Box>
+              <Chip
+                size="small"
+                label={formData.isPaid ? 'Paid' : 'Pending'}
+                color={formData.isPaid ? 'success' : 'default'}
+                variant={formData.isPaid ? 'filled' : 'outlined'}
+                icon={formData.isPaid ? <CheckIcon sx={{ fontSize: '13px !important' }} /> : undefined}
+                sx={{ fontWeight: 600 }}
+              />
+            </Box>
+
+            <Box>
+              <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                <RentIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Rent &amp; Lease
+                </Typography>
+                <Typography variant="body2" fontWeight={700} color="primary.main" sx={{ ml: 'auto' }}>
+                  {fmt(rentTotal)}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1.75 }}>
+                <ExpenseField label="Monthly Rent" name="rent" value={formData.rent} onChange={handleChange} />
+                <ExpenseField label="Parking / Garage" name="parking" value={formData.parking} onChange={handleChange} />
+              </Box>
+            </Box>
+
+            <Divider />
+
+            <Box>
+              <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                <UtilitiesIcon sx={{ fontSize: 18, color: 'warning.main' }} />
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Utilities
+                </Typography>
+                <Typography variant="body2" fontWeight={700} color="warning.main" sx={{ ml: 'auto' }}>
+                  {fmt(utilitiesTotal)}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr' }, gap: 1.75 }}>
+                <ExpenseField label="Electricity" name="electricity" value={formData.electricity} onChange={handleChange} />
+                <ExpenseField label="Water / Drainage" name="water" value={formData.water} onChange={handleChange} />
+                <ExpenseField label="Internet / Broadband" name="internet" value={formData.internet} onChange={handleChange} />
+              </Box>
+            </Box>
+
+            <Divider />
+
+            <Box>
+              <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                <MaintenanceIcon sx={{ fontSize: 18, color: 'secondary.main' }} />
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Maintenance &amp; Repairs
+                </Typography>
+                <Typography variant="body2" fontWeight={700} color="secondary.main" sx={{ ml: 'auto' }}>
+                  {fmt(maintenanceTotal)}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr' }, gap: 1.75 }}>
+                <ExpenseField label="General Maintenance" name="maintenance" value={formData.maintenance} onChange={handleChange} />
+                <ExpenseField label="Repairs / Renovation" name="repairWork" value={formData.repairWork} onChange={handleChange} />
+                <ExpenseField label="Housekeeping / Cleaning" name="housekeeping" value={formData.housekeeping} onChange={handleChange} />
+              </Box>
+            </Box>
+
+            <Divider />
+
+            <Box>
+              <Box display="flex" alignItems="center" gap={1} mb={1.5}>
+                <OtherIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Miscellaneous
+                </Typography>
+                <Typography variant="body2" fontWeight={700} color="text.secondary" sx={{ ml: 'auto' }}>
+                  {fmt(formData.miscellaneous)}
+                </Typography>
+              </Box>
+              <Box sx={{ maxWidth: 320 }}>
+                <ExpenseField
+                  label="Other Expenses"
+                  name="miscellaneous"
+                  value={formData.miscellaneous}
+                  onChange={handleChange}
                 />
               </Box>
+            </Box>
 
-              {/* ─── RENT & LEASE ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: (t) => alpha(t.palette.primary.main, 0.25),
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <SectionHeader
-                  icon={<RentIcon sx={{ fontSize: 17, color: 'primary.dark' }} />}
-                  title="Rent & Lease"
-                  color="primary"
-                  sectionTotal={rentTotal}
+            <Divider />
+
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+                gap: 2.5,
+                alignItems: 'start',
+              }}
+            >
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700} mb={1}>
+                  Payment
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formData.isPaid}
+                      onChange={(e) => {
+                        const isPaid = e.target.checked;
+                        const today = new Date();
+                        setFormData((p) => ({
+                          ...p,
+                          isPaid,
+                          paidDate: isPaid
+                            ? paymentDate
+                              ? Timestamp.fromDate(paymentDate)
+                              : Timestamp.fromDate(today)
+                            : undefined,
+                        }));
+                        if (isPaid && !paymentDate) setPaymentDate(today);
+                        if (!isPaid) setPaymentDate(null);
+                      }}
+                      color="success"
+                    />
+                  }
+                  label={
+                    <Typography variant="body2" color={formData.isPaid ? 'success.main' : 'text.secondary'}>
+                      {formData.isPaid ? 'Marked as paid' : 'Mark as paid'}
+                    </Typography>
+                  }
                 />
-                <Box sx={{ p: 2.5, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-                  <ExpenseField label="Monthly Rent" name="rent" value={formData.rent} onChange={handleChange} />
-                  <ExpenseField label="Parking / Garage" name="parking" value={formData.parking} onChange={handleChange} />
-                </Box>
-              </Box>
-
-              {/* ─── UTILITIES ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: (t) => alpha(t.palette.warning.main, 0.3),
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <SectionHeader
-                  icon={<UtilitiesIcon sx={{ fontSize: 17, color: 'warning.dark' }} />}
-                  title="Utilities"
-                  color="warning"
-                  sectionTotal={utilitiesTotal}
-                />
-                <Box sx={{ p: 2.5, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 2 }}>
-                  <ExpenseField label="Electricity" name="electricity" value={formData.electricity} onChange={handleChange} />
-                  <ExpenseField label="Water / Drainage" name="water" value={formData.water} onChange={handleChange} />
-                  <ExpenseField label="Internet / Broadband" name="internet" value={formData.internet} onChange={handleChange} />
-                </Box>
-              </Box>
-
-              {/* ─── MAINTENANCE ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: (t) => alpha(t.palette.secondary.main, 0.25),
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <SectionHeader
-                  icon={<MaintenanceIcon sx={{ fontSize: 17, color: 'secondary.dark' }} />}
-                  title="Maintenance & Repairs"
-                  color="secondary"
-                  sectionTotal={maintenanceTotal}
-                />
-                <Box sx={{ p: 2.5, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 2 }}>
-                  <ExpenseField label="General Maintenance" name="maintenance" value={formData.maintenance} onChange={handleChange} />
-                  <ExpenseField label="Repairs / Renovation" name="repairWork" value={formData.repairWork} onChange={handleChange} />
-                  <ExpenseField label="Housekeeping / Cleaning" name="housekeeping" value={formData.housekeeping} onChange={handleChange} />
-                </Box>
-              </Box>
-
-              {/* ─── OTHER ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <SectionHeader
-                  icon={<OtherIcon sx={{ fontSize: 17, color: 'text.secondary' }} />}
-                  title="Miscellaneous"
-                  color="default"
-                  sectionTotal={formData.miscellaneous}
-                />
-                <Box sx={{ p: 2.5, maxWidth: 320 }}>
-                  <ExpenseField label="Other Expenses" name="miscellaneous" value={formData.miscellaneous} onChange={handleChange} />
-                </Box>
-              </Box>
-
-              {/* ─── PAYMENT STATUS ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.25,
-                    px: 2.5,
-                    py: 1.5,
-                    bgcolor: (t) => alpha(t.palette.grey[500], 0.05),
-                    borderBottom: '1px solid',
-                    borderBottomColor: 'divider',
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 1.5, bgcolor: (t) => alpha(t.palette.grey[600], 0.1) }}>
-                    <PaymentIcon sx={{ fontSize: 17, color: 'text.secondary' }} />
-                  </Box>
-                  <Typography variant="subtitle2" fontWeight={700}>
-                    Payment Status
-                  </Typography>
-                </Box>
-                <Box sx={{ px: 2.5, py: 2 }}>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={formData.isPaid}
-                        onChange={(e) => {
-                          const isPaid = e.target.checked;
-                          setFormData((p) => ({
-                            ...p,
-                            isPaid,
-                            paidDate: isPaid && paymentDate ? Timestamp.fromDate(paymentDate) : undefined,
-                          }));
-                        }}
-                        color="success"
+                {formData.isPaid && (
+                  <Box sx={{ mt: 1.5, maxWidth: 260 }}>
+                    <LocalizationProvider dateAdapter={AdapterDateFns}>
+                      <DatePicker
+                        label="Payment date"
+                        value={paymentDate}
+                        onChange={handlePaymentDateChange}
+                        slotProps={{ textField: { size: 'small', fullWidth: true } }}
                       />
-                    }
-                    label={
-                      <Typography
-                        variant="body2"
-                        fontWeight={formData.isPaid ? 700 : 400}
-                        color={formData.isPaid ? 'success.main' : 'text.secondary'}
-                      >
-                        {formData.isPaid ? 'Expenses settled / paid' : 'Mark expenses as paid'}
-                      </Typography>
-                    }
-                  />
-                  {formData.isPaid && (
-                    <Box sx={{ mt: 2, maxWidth: 280 }}>
-                      <LocalizationProvider dateAdapter={AdapterDateFns}>
-                        <DatePicker
-                          label="Date of Payment"
-                          value={paymentDate}
-                          onChange={handlePaymentDateChange}
-                          slotProps={{
-                            textField: {
-                              size: 'small',
-                              fullWidth: true,
-                              helperText: 'Date on which expenses were settled',
-                            },
-                          }}
-                        />
-                      </LocalizationProvider>
-                    </Box>
-                  )}
-                </Box>
+                    </LocalizationProvider>
+                  </Box>
+                )}
               </Box>
 
-              {/* ─── REMARKS ─── */}
-              <Box
-                sx={{
-                  bgcolor: 'background.paper',
-                  border: '1px solid',
-                  borderColor: 'divider',
-                  borderRadius: 2.5,
-                  overflow: 'hidden',
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1.25,
-                    px: 2.5,
-                    py: 1.5,
-                    bgcolor: (t) => alpha(t.palette.grey[500], 0.05),
-                    borderBottom: '1px solid',
-                    borderBottomColor: 'divider',
-                  }}
-                >
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 1.5, bgcolor: (t) => alpha(t.palette.grey[600], 0.1) }}>
-                    <NoteIcon sx={{ fontSize: 17, color: 'text.secondary' }} />
-                  </Box>
-                  <Typography variant="subtitle2" fontWeight={700}>
-                    Remarks
-                  </Typography>
-                </Box>
-                <Box sx={{ px: 2.5, py: 2 }}>
-                  <TextField
-                    fullWidth
-                    multiline
-                    rows={3}
-                    name="remarks"
-                    value={formData.remarks}
-                    onChange={handleChange}
-                    placeholder="Add any notes about this month's expenses — e.g. one-time repairs, rent changes…"
-                    size="small"
-                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
-                  />
-                </Box>
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700} mb={1}>
+                  Remarks
+                </Typography>
+                <TextField
+                  fullWidth
+                  multiline
+                  rows={3}
+                  name="remarks"
+                  value={formData.remarks}
+                  onChange={handleChange}
+                  placeholder="Optional notes…"
+                  size="small"
+                />
               </Box>
-            </Stack>
-          )}
+            </Box>
+          </Stack>
         </Box>
       </Box>
 
-      {/* ── FOOTER: Live Summary + Actions ──────────────────────── */}
+      {/* Footer */}
       <Box
         sx={{
           flexShrink: 0,
           borderTop: '1px solid',
           borderColor: 'divider',
           px: 3,
-          py: 2,
+          py: 1.75,
           display: 'flex',
           alignItems: 'center',
-          gap: 3,
+          gap: 2,
           bgcolor: 'background.paper',
         }}
       >
-        <Stack direction="row" spacing={2.5} sx={{ flex: 1 }} alignItems="center">
-          {[
-            { label: 'Rent', value: rentTotal, color: 'primary.main' },
-            { label: 'Utilities', value: utilitiesTotal, color: 'warning.main' },
-            { label: 'Maintenance', value: maintenanceTotal, color: 'secondary.main' },
-          ].map((item, i) => (
-            <React.Fragment key={item.label}>
-              {i > 0 && (
-                <Box sx={{ width: 1, height: 32, bgcolor: 'divider', display: { xs: 'none', md: 'block' } }} />
-              )}
-              <Box sx={{ display: { xs: 'none', md: 'block' } }}>
-                <Typography variant="caption" color="text.disabled" display="block" sx={{ lineHeight: 1.2, mb: 0.25 }}>
-                  {item.label}
-                </Typography>
-                <Typography variant="body2" fontWeight={700} color={item.color}>
-                  {fmt(item.value)}
-                </Typography>
-              </Box>
-            </React.Fragment>
-          ))}
-          <Box sx={{ width: 1, height: 32, bgcolor: 'divider', display: { xs: 'none', md: 'block' } }} />
-          <Box>
-            <Typography variant="caption" color="text.disabled" display="block" sx={{ lineHeight: 1.2, mb: 0.25 }}>
-              Total &mdash; <strong style={{ color: 'inherit' }}>{displayMonth}</strong>
-            </Typography>
-            <Typography variant="h6" fontWeight={800} color="primary.main" sx={{ lineHeight: 1, letterSpacing: '-0.5px' }}>
-              {fmt(formData.totalExpenses)}
-            </Typography>
-          </Box>
-        </Stack>
+        <Box sx={{ flex: 1 }}>
+          <Typography variant="caption" color="text.secondary" display="block">
+            Total · {displayMonth}
+          </Typography>
+          <Typography variant="h6" fontWeight={800} color="primary.main" sx={{ lineHeight: 1.2 }}>
+            {fmt(formData.totalExpenses)}
+          </Typography>
+        </Box>
 
-        <Button
-          variant="text"
-          onClick={onCancel}
-          disabled={isSaving}
-          sx={{ color: 'text.secondary', fontWeight: 500, minWidth: 80 }}
-        >
+        <Button variant="text" onClick={onCancel} disabled={isSaving} sx={{ color: 'text.secondary' }}>
           Cancel
         </Button>
         <AsyncActionButton
@@ -848,7 +761,7 @@ export default function CenterExpensesForm({
           type="submit"
           loading={isSaving}
           loadingText={isNew ? 'Saving…' : 'Updating…'}
-          sx={{ minWidth: 160, fontWeight: 700, borderRadius: 2, boxShadow: 'none', '&:hover': { boxShadow: 'none' } }}
+          sx={{ minWidth: 150, fontWeight: 700, borderRadius: 2 }}
         >
           {isNew ? 'Save Expenses' : 'Update Expenses'}
         </AsyncActionButton>

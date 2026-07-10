@@ -43,8 +43,14 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import { collection, addDoc, getDocs, serverTimestamp, query, orderBy, updateDoc, doc, deleteDoc, getDoc, setDoc, where } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import InventoryTransfer from '@/components/admin/InventoryTransfer';
-import CenterExpensesForm, { CenterExpense, CenterExpenseHistorySummary } from '@/components/centers/CenterExpensesForm';
+import CenterExpensesForm, {
+  CenterExpense,
+  CenterExpenseHistorySummary,
+  normalizeExpenseMonth,
+  resolveTotalExpenses,
+} from '@/components/centers/CenterExpensesForm';
 import { useAuth } from '@/context/AuthContext';
+import { format } from 'date-fns';
 
 interface Center {
   id: string;
@@ -127,6 +133,9 @@ export default function CentersPage() {
   const [expenseDialogOpen, setExpenseDialogOpen] = useState(false);
   const [expenseCenter, setExpenseCenter] = useState<Center | null>(null);
   const [currentExpenseData, setCurrentExpenseData] = useState<CenterExpense | undefined>();
+  const [selectedExpenseMonth, setSelectedExpenseMonth] = useState<string>(
+    format(new Date(), 'yyyy-MM')
+  );
   const [expenseHistory, setExpenseHistory] = useState<CenterExpenseHistorySummary[]>([]);
   const [loadingExpenses, setLoadingExpenses] = useState(false);
   const [savingExpenses, setSavingExpenses] = useState(false);
@@ -152,7 +161,7 @@ export default function CentersPage() {
   }, []);
 
   // ── Expense context loader ───────────────────────────────────────────────
-  const loadExpenseContext = async (center: Center) => {
+  const loadExpenseContext = async (center: Center, preferMonth?: string) => {
     setLoadingExpenses(true);
     try {
       const snap = await getDocs(
@@ -163,15 +172,20 @@ export default function CentersPage() {
         ...(d.data() as Omit<CenterExpense, 'id'>),
       }));
 
-      // Deduplicate by month — keep the deterministic-ID record when both exist
+      // Deduplicate by normalized month — keep the deterministic-ID record when both exist
       const byMonth = new Map<string, CenterExpense>();
       raw.forEach((exp) => {
-        const existing = byMonth.get(exp.month);
+        const month = normalizeExpenseMonth(exp.month);
+        const normalized = { ...exp, month };
+        const existing = byMonth.get(month);
         if (!existing) {
-          byMonth.set(exp.month, exp);
+          byMonth.set(month, normalized);
         } else {
-          const deterministicId = buildExpenseDocId(center.id, exp.month);
-          if (exp.id === deterministicId) byMonth.set(exp.month, exp);
+          const deterministicId = buildExpenseDocId(center.id, month);
+          const preferCurrent =
+            exp.id === deterministicId ||
+            resolveTotalExpenses(normalized) > resolveTotalExpenses(existing);
+          if (preferCurrent) byMonth.set(month, normalized);
         }
       });
 
@@ -180,15 +194,21 @@ export default function CentersPage() {
         .map((e) => ({
           id: e.id!,
           month: e.month,
-          totalExpenses: e.totalExpenses,
+          totalExpenses: resolveTotalExpenses(e),
           isPaid: e.isPaid,
         }));
 
       setExpenseHistory(history);
 
-      // Default to latest month record (or blank for current month)
-      const latest = history[0] ? byMonth.get(history[0].month) : undefined;
-      setCurrentExpenseData(latest);
+      const preferred = preferMonth ? normalizeExpenseMonth(preferMonth) : undefined;
+      const monthToShow =
+        (preferred && byMonth.has(preferred) && preferred) ||
+        preferred ||
+        history[0]?.month ||
+        format(new Date(), 'yyyy-MM');
+
+      setSelectedExpenseMonth(monthToShow);
+      setCurrentExpenseData(byMonth.get(monthToShow));
     } catch (err) {
       console.error('Error loading expense context:', err);
       setErrorMsg(getFirestoreErrorMessage(err, 'Failed to load expense history'));
@@ -199,28 +219,53 @@ export default function CentersPage() {
 
   const handleExpenseMonthChange = async (month: string) => {
     if (!expenseCenter) return;
+    const normalized = normalizeExpenseMonth(month);
+    // Keep the user's choice immediately so the form never snaps back to "today".
+    setSelectedExpenseMonth(normalized);
     setLoadingExpenses(true);
     try {
-      const deterministicRef = doc(db, 'centerExpenses', buildExpenseDocId(expenseCenter.id, month));
+      const deterministicRef = doc(db, 'centerExpenses', buildExpenseDocId(expenseCenter.id, normalized));
       const deterministicSnap = await getDoc(deterministicRef);
       if (deterministicSnap.exists()) {
-        setCurrentExpenseData({ id: deterministicSnap.id, ...(deterministicSnap.data() as Omit<CenterExpense, 'id'>) });
-      } else {
-        // Fallback: query by centerId + month (legacy record)
+        const data = deterministicSnap.data() as Omit<CenterExpense, 'id'>;
+        setCurrentExpenseData({
+          id: deterministicSnap.id,
+          ...data,
+          month: normalizeExpenseMonth(data.month, normalized),
+        });
+        return;
+      }
+
+      // Try exact month, then unpadded legacy month (e.g. 2025-4).
+      const monthVariants = Array.from(
+        new Set([
+          normalized,
+          normalized.replace(/^(\d{4})-0?(\d+)$/, (_, y, m) => `${y}-${Number(m)}`),
+        ])
+      );
+
+      for (const variant of monthVariants) {
         const snap = await getDocs(
           query(
             collection(db, 'centerExpenses'),
             where('centerId', '==', expenseCenter.id),
-            where('month', '==', month),
+            where('month', '==', variant),
           ),
         );
         if (!snap.empty) {
-          const d = snap.docs[0];
-          setCurrentExpenseData({ id: d.id, ...(d.data() as Omit<CenterExpense, 'id'>) });
-        } else {
-          setCurrentExpenseData(undefined);
+          let best = snap.docs[0];
+          for (const d of snap.docs) {
+            const cur = d.data() as CenterExpense;
+            const prev = best.data() as CenterExpense;
+            if (resolveTotalExpenses(cur) > resolveTotalExpenses(prev)) best = d;
+          }
+          const data = best.data() as Omit<CenterExpense, 'id'>;
+          setCurrentExpenseData({ id: best.id, ...data, month: normalized });
+          return;
         }
       }
+
+      setCurrentExpenseData(undefined);
     } catch (err) {
       console.error('Error loading expense month:', err);
       setErrorMsg(getFirestoreErrorMessage(err, 'Failed to load expenses for selected month'));
@@ -231,33 +276,48 @@ export default function CentersPage() {
 
   const handleOpenExpenses = async (center: Center) => {
     setExpenseCenter(center);
+    setCurrentExpenseData(undefined);
+    setSelectedExpenseMonth(format(new Date(), 'yyyy-MM'));
+    setExpenseHistory([]);
     setExpenseDialogOpen(true);
     await loadExpenseContext(center);
+  };
+
+  const handleCloseExpenses = () => {
+    if (savingExpenses) return;
+    setExpenseDialogOpen(false);
+    setExpenseCenter(null);
+    setCurrentExpenseData(undefined);
+    setSelectedExpenseMonth(format(new Date(), 'yyyy-MM'));
+    setExpenseHistory([]);
   };
 
   const handleSaveExpenses = async (expenseData: CenterExpense) => {
     if (savingExpenses) return;
     try {
       setSavingExpenses(true);
-      const docId = buildExpenseDocId(expenseData.centerId, expenseData.month);
+      const month = normalizeExpenseMonth(expenseData.month || selectedExpenseMonth);
+      const docId = buildExpenseDocId(expenseData.centerId, month);
       const expenseRef = doc(db, 'centerExpenses', docId);
       const existingDoc = await getDoc(expenseRef);
 
       const cleanData = stripUndefinedForFirestore(expenseData as unknown as Record<string, unknown>);
+      delete cleanData.id;
       const payload: Record<string, unknown> = {
         ...cleanData,
         centerId: expenseData.centerId,
-        month: expenseData.month,
+        month,
+        totalExpenses: Number(expenseData.totalExpenses) || resolveTotalExpenses(expenseData),
         updatedAt: serverTimestamp(),
         ...(existingDoc.exists() ? {} : { createdAt: serverTimestamp() }),
       };
 
       await setDoc(expenseRef, payload, { merge: true });
-      await loadExpenseContext(expenseCenter!);
       setSuccessMsg(existingDoc.exists() ? 'Expenses updated successfully' : 'Expenses saved successfully');
       setExpenseDialogOpen(false);
       setExpenseCenter(null);
       setCurrentExpenseData(undefined);
+      setSelectedExpenseMonth(format(new Date(), 'yyyy-MM'));
       setExpenseHistory([]);
     } catch (err) {
       console.error('Error saving expenses:', err);
@@ -786,7 +846,7 @@ export default function CentersPage() {
       {/* Rent & Maintenance Expense Tracking Dialog */}
       <Dialog
         open={expenseDialogOpen}
-        onClose={() => !savingExpenses && setExpenseDialogOpen(false)}
+        onClose={handleCloseExpenses}
         fullWidth
         maxWidth="lg"
         PaperProps={{
@@ -804,17 +864,11 @@ export default function CentersPage() {
             <CenterExpensesForm
               center={expenseCenter}
               initialData={currentExpenseData}
+              selectedMonth={selectedExpenseMonth}
               expenseHistory={expenseHistory}
               onMonthChange={handleExpenseMonthChange}
               onSave={handleSaveExpenses}
-              onCancel={() => {
-                if (!savingExpenses) {
-                  setExpenseDialogOpen(false);
-                  setExpenseCenter(null);
-                  setCurrentExpenseData(undefined);
-                  setExpenseHistory([]);
-                }
-              }}
+              onCancel={handleCloseExpenses}
               isSaving={savingExpenses}
               loading={loadingExpenses}
             />

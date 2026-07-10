@@ -135,6 +135,37 @@ interface SalaryRecordSummary {
 
 const buildSalaryDocId = (staffId: string, month: string) => `${staffId}_${month}`;
 
+const normalizeMonth = (month: string | undefined | null, fallback?: string): string => {
+  const fb = fallback || format(new Date(), 'yyyy-MM');
+  if (!month) return fb;
+  const match = String(month).trim().match(/^(\d{4})-(\d{1,2})$/);
+  if (!match) return fb;
+  return `${match[1]}-${match[2].padStart(2, '0')}`;
+};
+
+const resolveNetSalary = (data: Partial<Salary> | Record<string, unknown>): number => {
+  const stored = Number(data.netSalary);
+  if (Number.isFinite(stored) && stored !== 0) return stored;
+
+  const earnings = Number(data.totalEarnings) || 0;
+  const deductions = Number(data.totalDeductions) || 0;
+  if (earnings !== 0 || deductions !== 0) return earnings - deductions;
+
+  const computedEarnings =
+    (Number(data.basicSalary) || 0) +
+    (Number(data.hra) || 0) +
+    (Number(data.incentives) || 0) +
+    (Number(data.travelAllowance) || 0);
+  const computedDeductions =
+    (Number(data.festivalAdvance) || 0) +
+    (Number(data.generalAdvance) || 0) +
+    (Number(data.deductions) || 0);
+  const computed = computedEarnings - computedDeductions;
+  if (computed !== 0) return computed;
+
+  return Number.isFinite(stored) ? stored : 0;
+};
+
 const salaryTimestampValue = (salary?: Salary) =>
   salary?.updatedAt?.seconds || salary?.createdAt?.seconds || 0;
 
@@ -161,6 +192,9 @@ export default function StaffPage() {
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
   const [currentSalaryData, setCurrentSalaryData] = useState<Salary | undefined>(undefined);
+  const [selectedSalaryMonth, setSelectedSalaryMonth] = useState<string>(
+    format(new Date(), 'yyyy-MM')
+  );
   const [salaryHistory, setSalaryHistory] = useState<SalaryRecordSummary[]>([]);
 
   // Fetch data when component mounts
@@ -278,15 +312,17 @@ export default function StaffPage() {
 
   // Handle opening the salary form
   const handleManageSalary = (staffMember: Staff) => {
+    const currentMonth = format(new Date(), 'yyyy-MM');
     setCurrentStaff(staffMember);
     setCurrentSalaryData(undefined);
+    setSelectedSalaryMonth(currentMonth);
     setSalaryHistory([]);
     setOpenSalaryDialog(true);
     handleMenuClose();
     void loadSalaryContext(staffMember);
   };
 
-  const loadSalaryContext = async (staffMember: Staff) => {
+  const loadSalaryContext = async (staffMember: Staff, preferMonth?: string) => {
     if (!staffMember.id) return;
     try {
       setLoadingSalaryContext(true);
@@ -302,21 +338,22 @@ export default function StaffPage() {
 
       snapshot.docs.forEach((salaryDoc) => {
         const data = salaryDoc.data() as Salary;
+        const month = normalizeMonth(data.month);
         const record: SalaryRecordSummary = {
           id: salaryDoc.id,
-          month: data.month,
-          netSalary: data.netSalary || 0,
+          month,
+          netSalary: resolveNetSalary({ ...data, month }),
           isPaid: !!data.isPaid,
         };
-        const previous = monthlyBestData.get(data.month);
+        const previous = monthlyBestData.get(month);
         const preferCurrent =
           !previous ||
           salaryTimestampValue(data) > salaryTimestampValue(previous) ||
-          salaryDoc.id === buildSalaryDocId(staffMember.id || '', data.month);
+          salaryDoc.id === buildSalaryDocId(staffMember.id || '', month);
 
         if (preferCurrent) {
-          monthlyBestRecord.set(data.month, record);
-          monthlyBestData.set(data.month, { id: salaryDoc.id, ...data });
+          monthlyBestRecord.set(month, record);
+          monthlyBestData.set(month, { id: salaryDoc.id, ...data, month });
         }
       });
 
@@ -325,10 +362,16 @@ export default function StaffPage() {
       );
 
       setSalaryHistory(history);
-      if (history.length > 0) {
-        const latest = monthlyBestData.get(history[0].month);
-        setCurrentSalaryData(latest);
-      }
+
+      const preferred = preferMonth ? normalizeMonth(preferMonth) : undefined;
+      const monthToShow =
+        (preferred && monthlyBestData.has(preferred) && preferred) ||
+        preferred ||
+        history[0]?.month ||
+        format(new Date(), 'yyyy-MM');
+
+      setSelectedSalaryMonth(monthToShow);
+      setCurrentSalaryData(monthlyBestData.get(monthToShow));
     } catch (error) {
       console.error('Error loading salary context:', error);
       setErrorMsg(getFirestoreErrorMessage(error, 'Failed to load salary history'));
@@ -360,37 +403,71 @@ export default function StaffPage() {
     setOpenSalaryDialog(false);
     setCurrentStaff(null);
     setCurrentSalaryData(undefined);
+    setSelectedSalaryMonth(format(new Date(), 'yyyy-MM'));
     setSalaryHistory([]);
   };
 
   const handleSalaryMonthChange = async (month: string) => {
     if (!currentStaff?.id) return;
+    const normalized = normalizeMonth(month);
+    // Keep the user's choice immediately so the form never snaps back to "today".
+    setSelectedSalaryMonth(normalized);
+
     try {
       setLoadingSalaryContext(true);
-      const salaryDocId = buildSalaryDocId(currentStaff.id, month);
+      const salaryDocId = buildSalaryDocId(currentStaff.id, normalized);
       const salaryDocRef = doc(db, 'salaries', salaryDocId);
       const salaryDoc = await getDoc(salaryDocRef);
       if (salaryDoc.exists()) {
+        const data = salaryDoc.data() as Salary;
         setCurrentSalaryData({
           id: salaryDoc.id,
-          ...(salaryDoc.data() as Salary),
+          ...data,
+          month: normalizeMonth(data.month, normalized),
         });
-      } else {
+        return;
+      }
+
+      // Try exact month, then unpadded legacy month (e.g. 2025-4).
+      const monthVariants = Array.from(
+        new Set([
+          normalized,
+          normalized.replace(/^(\d{4})-0?(\d+)$/, (_, y, m) => `${y}-${Number(m)}`),
+        ])
+      );
+
+      for (const variant of monthVariants) {
         const fallbackQuery = query(
           collection(db, 'salaries'),
           where('staffId', '==', currentStaff.id),
-          where('month', '==', month)
+          where('month', '==', variant)
         );
         const fallbackSnapshot = await getDocs(fallbackQuery);
         if (!fallbackSnapshot.empty) {
+          // Prefer the richest / newest doc if duplicates exist
+          let best = fallbackSnapshot.docs[0];
+          for (const d of fallbackSnapshot.docs) {
+            const cur = d.data() as Salary;
+            const prev = best.data() as Salary;
+            if (
+              resolveNetSalary(cur) > resolveNetSalary(prev) ||
+              salaryTimestampValue(cur) > salaryTimestampValue(prev)
+            ) {
+              best = d;
+            }
+          }
+          const data = best.data() as Salary;
           setCurrentSalaryData({
-            id: fallbackSnapshot.docs[0].id,
-            ...(fallbackSnapshot.docs[0].data() as Salary),
+            id: best.id,
+            ...data,
+            month: normalized,
           });
-        } else {
-          setCurrentSalaryData(undefined);
+          return;
         }
       }
+
+      // No record for this month — keep selected month, clear data so form shows a blank for it
+      setCurrentSalaryData(undefined);
     } catch (error) {
       console.error('Error loading salary month:', error);
       setErrorMsg(getFirestoreErrorMessage(error, 'Failed to load selected salary month'));
@@ -463,26 +540,31 @@ export default function StaffPage() {
     if (savingSalary) return;
     try {
       setSavingSalary(true);
-      const salaryDocId = buildSalaryDocId(salaryData.staffId, salaryData.month);
+      const month = normalizeMonth(salaryData.month || selectedSalaryMonth);
+      const salaryDocId = buildSalaryDocId(salaryData.staffId, month);
       const salaryRef = doc(db, 'salaries', salaryDocId);
       const existingDoc = await getDoc(salaryRef);
 
       // Strip undefined fields and the local 'id' key — Firestore rejects undefined values
       const cleanData = stripUndefinedForFirestore(salaryData as unknown as Record<string, unknown>);
+      delete cleanData.id;
       const payload: Record<string, unknown> = {
         ...cleanData,
         staffId: salaryData.staffId,
-        month: salaryData.month,
+        month,
+        netSalary: Number(salaryData.netSalary) || resolveNetSalary(salaryData),
+        totalEarnings: Number(salaryData.totalEarnings) || 0,
+        totalDeductions: Number(salaryData.totalDeductions) || 0,
         updatedAt: serverTimestamp(),
         ...(existingDoc.exists() ? {} : { createdAt: serverTimestamp() }),
       };
 
       await setDoc(salaryRef, payload, { merge: true });
-      await loadSalaryContext(currentStaff || ({ id: salaryData.staffId } as Staff));
       setSuccessMsg(existingDoc.exists() ? 'Salary updated successfully' : 'Salary added successfully');
       setOpenSalaryDialog(false);
       setCurrentStaff(null);
       setCurrentSalaryData(undefined);
+      setSelectedSalaryMonth(format(new Date(), 'yyyy-MM'));
       setSalaryHistory([]);
     } catch (error) {
       console.error('Error saving salary:', error);
@@ -751,6 +833,7 @@ export default function StaffPage() {
             <SalaryForm
               staff={currentStaff}
               initialData={currentSalaryData}
+              selectedMonth={selectedSalaryMonth}
               salaryHistory={salaryHistory}
               onMonthChange={handleSalaryMonthChange}
               onSave={handleSaveSalary}
