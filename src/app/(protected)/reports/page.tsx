@@ -10,11 +10,13 @@ import {
   Analytics as AnalyticsIcon,
   PhoneCallback as PhoneCallbackIcon,
   MonetizationOn as ProfitIcon,
+  ShoppingBag as TopProductsIcon,
 } from '@mui/icons-material';
 
 import InProcessEnquiriesReportTab from '@/components/Reports/InProcessEnquiriesReportTab';
 import BookedEnquiriesReportTab from '@/components/Reports/BookedEnquiriesReportTab';
 import SalesReportsTab from '@/components/Reports/SalesReportsTab';
+import TopProductsReportTab from '@/components/Reports/TopProductsReportTab';
 import AssignToReportTab from '@/components/Reports/AssignToReportTab';
 import ExecutiveAnalysisReportTab from '@/components/Reports/ExecutiveAnalysisReportTab';
 import TelecallersAnalysisReportTab from '@/components/Reports/TelecallersAnalysisReportTab';
@@ -74,6 +76,12 @@ export default function ReportsPage() {
       label: 'Sales Report',
       icon: <SalesIcon />,
       content: <SalesReportsTab />,
+    },
+    {
+      key: 'top-products',
+      label: 'Top Products',
+      icon: <TopProductsIcon />,
+      content: <TopProductsReportTab />,
     },
     {
       key: 'assign-to',
