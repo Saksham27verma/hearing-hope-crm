@@ -6,12 +6,19 @@ import {
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
   FormControl,
   Grid as MuiGrid,
+  IconButton,
   InputLabel,
   MenuItem,
   Paper,
   Select,
+  Stack,
   Tab,
   Tabs,
   Table,
@@ -23,7 +30,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { Download as DownloadIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import {
+  CalculateOutlined as CalculateOutlinedIcon,
+  Close as CloseIcon,
+  Download as DownloadIcon,
+  Refresh as RefreshIcon,
+} from '@mui/icons-material';
 import { collection, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { deriveEnquirySalesFromDocs } from '@/lib/sales-invoicing/enquiryDerivation';
@@ -660,6 +672,7 @@ function aggregateByDimension<T extends string>(
 export default function ProfitReportTab() {
   const [tab, setTab] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [calcDialogOpen, setCalcDialogOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState(() => getLocalMonthDateStrings().fromStr);
   const [dateTo, setDateTo] = useState(() => getLocalMonthDateStrings().toStr);
   const [centerFilter, setCenterFilter] = useState<string>('all');
@@ -1429,11 +1442,29 @@ export default function ProfitReportTab() {
       </Paper>
 
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
-          Sales list matches Sales Report: same merged invoices + enquiry visits, same date/center/executive/source
-          filters. Invoice totals below are the row totals from that list; serial columns are pre-tax amounts split
-          per serial for margin matching.
-        </Typography>
+        <Box
+          display="flex"
+          alignItems="flex-start"
+          justifyContent="space-between"
+          gap={1.5}
+          flexWrap="wrap"
+          sx={{ mb: 1.5 }}
+        >
+          <Typography variant="caption" color="text.secondary" sx={{ flex: '1 1 280px' }}>
+            Sales list matches Sales Report: same merged invoices + enquiry visits, same date/center/executive/source
+            filters. Invoice totals below are the row totals from that list; serial columns are pre-tax amounts split
+            per serial for margin matching.
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<CalculateOutlinedIcon />}
+            onClick={() => setCalcDialogOpen(true)}
+            sx={{ flexShrink: 0 }}
+          >
+            How profit is calculated
+          </Button>
+        </Box>
         <Grid container spacing={2}>
           <Grid item xs={6} sm={4} md={2}>
             <Typography variant="caption" color="text.secondary">
@@ -2115,6 +2146,151 @@ export default function ProfitReportTab() {
           </TableContainer>
         </Box>
       )}
+
+      <Dialog
+        open={calcDialogOpen}
+        onClose={() => setCalcDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        scroll="paper"
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, pr: 1 }}>
+          <Box display="flex" alignItems="center" gap={1}>
+            <CalculateOutlinedIcon color="primary" />
+            <Typography component="span" variant="h6" sx={{ fontWeight: 700 }}>
+              How profit is calculated
+            </Typography>
+          </Box>
+          <IconButton aria-label="Close" onClick={() => setCalcDialogOpen(false)} size="small">
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2.25}>
+            <Paper
+              variant="outlined"
+              sx={{
+                p: 2,
+                bgcolor: (t) => (t.palette.mode === 'dark' ? 'rgba(25,118,210,0.12)' : 'rgba(25,118,210,0.06)'),
+                borderColor: 'primary.light',
+              }}
+            >
+              <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                Core formula (per resolved serial)
+              </Typography>
+              <Typography
+                variant="h6"
+                sx={{
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  fontWeight: 700,
+                  letterSpacing: 0.2,
+                }}
+              >
+                Profit = Pre-tax selling price − Dealer cost
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Report total profit is the sum of that formula across every serial that has a matched dealer cost
+                (or HEAR.COM rule) in the current filters.
+              </Typography>
+            </Paper>
+
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
+                Live totals for your current filters
+              </Typography>
+              <TableContainer component={Paper} variant="outlined" elevation={0}>
+                <Table size="small">
+                  <TableBody>
+                    <TableRow>
+                      <TableCell>Resolved serial selling (pre-tax)</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 600 }}>
+                        {formatCurrency(totals.dealerCostTotal + totals.profitTotal)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell>− Dealer cost (matched inbound)</TableCell>
+                      <TableCell align="right">{formatCurrency(totals.dealerCostTotal)}</TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 800 }}>= Profit</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 800, color: 'primary.main' }}>
+                        {formatCurrency(totals.profitTotal)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell colSpan={2} sx={{ bgcolor: 'action.hover' }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Check: {formatCurrency(totals.dealerCostTotal + totals.profitTotal)} −{' '}
+                          {formatCurrency(totals.dealerCostTotal)} = {formatCurrency(totals.profitTotal)}
+                          {totals.resolvedCount > 0
+                            ? ` · across ${totals.resolvedCount} resolved serial${totals.resolvedCount === 1 ? '' : 's'}`
+                            : ''}
+                          {totals.unresolvedCount > 0
+                            ? ` · ${totals.unresolvedCount} unresolved serial${totals.unresolvedCount === 1 ? '' : 's'} excluded from profit`
+                            : ''}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Box>
+
+            <Divider />
+
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.75 }}>
+                Step-by-step
+              </Typography>
+              <Stack spacing={1.25} component="ol" sx={{ m: 0, pl: 2.5 }}>
+                <Typography component="li" variant="body2">
+                  <strong>Sales basis:</strong> same merged list as Sales Report (invoices + enquiry visits), then
+                  filtered by From/To, Center, Executive, and Source.
+                </Typography>
+                <Typography component="li" variant="body2">
+                  <strong>Serial selling price:</strong> each product line&apos;s pre-tax amount (
+                  <code>sellingPrice</code> / <code>finalAmount</code> / <code>amount</code>) is split evenly across
+                  its serials (and quantity when higher), so multi-serial lines are not double-counted.
+                </Typography>
+                <Typography component="li" variant="body2">
+                  <strong>Dealer cost match:</strong> each serial is matched to Material Inward or Purchase by
+                  product+serial first, then serial-only. If both exist, Purchase wins (else latest entry). Pair
+                  products split purchase-unit dealer cost across serials the same way.
+                </Typography>
+                <Typography component="li" variant="body2">
+                  <strong>Per-serial profit:</strong> for a matched serial,{' '}
+                  <code>profit = selling − dealer</code>. Unmatched serials stay unresolved (selling still shown,
+                  profit = ₹0 and excluded from totals).
+                </Typography>
+                <Typography component="li" variant="body2">
+                  <strong>HEAR.COM exception:</strong> reference HEAR.COM uses a fixed rule — profit = 21% of
+                  pre-tax serial selling; implied cost = remaining 79% (no inbound match required).
+                </Typography>
+                <Typography component="li" variant="body2">
+                  <strong>Report total:</strong> sum of resolved per-serial profits. Center / Executive / Source /
+                  Week views only regroup that same sum. Margin % = profit ÷ serial selling × 100.
+                </Typography>
+              </Stack>
+            </Box>
+
+            <Paper variant="outlined" sx={{ p: 1.75 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                What is not in this profit figure
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                GST / invoice grand totals, salaries, rent, utilities, cash outflows, and managed expenses are not
+                deducted here. Those appear on the separate Profit page (net profit). This report is serial-level
+                gross margin only: selling minus dealer cost.
+              </Typography>
+            </Paper>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 1.5 }}>
+          <Button onClick={() => setCalcDialogOpen(false)} variant="contained">
+            Got it
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
