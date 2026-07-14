@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/due-calls-digest",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/incomplete-compliance-alerts",
+      "schedule": "0 * * * *"
     }
   ]
 }

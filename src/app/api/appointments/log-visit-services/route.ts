@@ -172,7 +172,7 @@ function parseServicesBody(raw: unknown): { ok: true; services: StaffVisitServic
 
 export async function POST(req: Request) {
   try {
-    const { uid } = await verifyStaffFromBearer(req);
+    const { uid, staff } = await verifyStaffFromBearer(req);
 
     const body = await req.json().catch(() => null);
     const appointmentId = (body?.appointmentId ?? '').toString().trim();
@@ -239,6 +239,14 @@ export async function POST(req: Request) {
       appointment: appt,
       appointmentId,
       services: parsed.services,
+      staffUid: uid,
+      staffName:
+        String(
+          (staff as { name?: string; fullName?: string; displayName?: string })?.name ||
+            (staff as { fullName?: string })?.fullName ||
+            (staff as { displayName?: string })?.displayName ||
+            ''
+        ).trim() || uid,
     });
 
     await enquiryRef.update({

@@ -10,6 +10,8 @@ import { useEnquiryOptionsByField } from '@/hooks/useEnquiryOptionsByField';
 import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
+import { appointmentBlocksPipeline } from '@/lib/visitCompliance/helpers';
+import type { AppointmentComplianceFields } from '@/lib/visitCompliance/types';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
 import JourneyConfirmDialog, { type JourneySelectValue } from './JourneyConfirmDialog';
 import {
@@ -1428,6 +1430,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const { userProfile, user } = useAuth();
   const isAdmin = userProfile?.role === 'admin';
   const isAudiologist = userProfile?.role === 'audiologist';
+  const [blockingHomeAppointments, setBlockingHomeAppointments] = useState<
+    Array<AppointmentComplianceFields & { id: string; patientName?: string; start?: string; status?: string; type?: string }>
+  >([]);
+  const [complianceOverrideBusy, setComplianceOverrideBusy] = useState(false);
+  const pipelineBlockedByCompliance = blockingHomeAppointments.length > 0;
+  const pipelineBookingSaleLocked = pipelineBlockedByCompliance && !isAdmin;
   const getPtaIdToken = useCallback(async () => {
     try {
       return user ? await user.getIdToken() : null;
@@ -2865,6 +2873,62 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       });
     }
   }, [open, isEditMode, enquiry?.id, reset]);
+
+  useEffect(() => {
+    if (!open || !enquiry?.id) {
+      setBlockingHomeAppointments([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'appointments'), where('enquiryId', '==', enquiry.id))
+        );
+        if (cancelled) return;
+        const blocking = snap.docs
+          .map((d) => ({ id: d.id, ...(d.data() as AppointmentComplianceFields & { type?: string; status?: string; patientName?: string; start?: string }) }))
+          .filter((a) => appointmentBlocksPipeline(a));
+        setBlockingHomeAppointments(blocking);
+      } catch {
+        if (!cancelled) setBlockingHomeAppointments([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, enquiry?.id]);
+
+  const applyComplianceAdminOverrideForBlocking = useCallback(async (): Promise<boolean> => {
+    if (!user || !isAdmin || blockingHomeAppointments.length === 0) return false;
+    const reason = window.prompt(
+      'You are bypassing incomplete end-of-visit compliance. Optional reason:'
+    );
+    if (reason === null) return false;
+    setComplianceOverrideBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      for (const appt of blockingHomeAppointments) {
+        const res = await fetch('/api/appointments/compliance-admin-override', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ appointmentId: appt.id, reason }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Override failed');
+      }
+      setBlockingHomeAppointments([]);
+      return true;
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'Override failed');
+      return false;
+    } finally {
+      setComplianceOverrideBusy(false);
+    }
+  }, [user, isAdmin, blockingHomeAppointments]);
 
   // Handle visit changes (single field)
   const updateVisit = (visitIndex: number, field: string, value: any) => {
@@ -5509,6 +5573,28 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                       <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 1 }}>
                         Visit services
                       </Typography>
+                      {pipelineBlockedByCompliance ? (
+                        <Alert
+                          severity={isAdmin ? 'warning' : 'error'}
+                          sx={{ mb: 1.5, borderRadius: '8px' }}
+                          action={
+                            isAdmin ? (
+                              <Button
+                                color="inherit"
+                                size="small"
+                                disabled={complianceOverrideBusy}
+                                onClick={() => void applyComplianceAdminOverrideForBlocking()}
+                              >
+                                {complianceOverrideBusy ? '…' : 'Override'}
+                              </Button>
+                            ) : undefined
+                          }
+                        >
+                          {isAdmin
+                            ? 'Admin bypass available: linked home visit has incomplete end-of-visit compliance (telecaller PIN / checklist). Sale and Booking are unlocked for admins — confirm override when enabling them.'
+                            : 'Sale and Booking are locked until the field agent completes end-of-visit compliance (telecaller PIN, GPS, checklist) for the linked home visit.'}
+                        </Alert>
+                      ) : null}
                       <Box
                         sx={{
                           display: 'grid',
@@ -5591,8 +5677,17 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           title="Hearing aid booked"
                           hint="One model · qty in booking block"
                           checked={currentVisit.hearingAidBooked}
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const checked = e.target.checked;
+                            if (
+                              checked &&
+                              pipelineBlockedByCompliance &&
+                              isAdmin &&
+                              blockingHomeAppointments.length > 0
+                            ) {
+                              const ok = await applyComplianceAdminOverrideForBlocking();
+                              if (!ok) return;
+                            }
                             updateVisit(activeVisit, 'hearingAidBooked', checked);
                             if (checked) {
                               const visit = getValues('visits')[activeVisit];
@@ -5608,15 +5703,35 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                               }
                             }
                           }}
-                          disabled={isAudiologist}
+                          disabled={
+                            isAudiologist ||
+                            (pipelineBookingSaleLocked && !currentVisit.hearingAidBooked) ||
+                            complianceOverrideBusy
+                          }
                         />
                         <VisitServiceToggleRow
                           active={!!currentVisit.hearingAidSale}
                           title="Hearing aid sale"
                           hint="Inventory · qty or one row per serial"
                           checked={currentVisit.hearingAidSale}
-                          onChange={(e) => updateVisit(activeVisit, 'hearingAidSale', e.target.checked)}
-                          disabled={isAudiologist}
+                          onChange={async (e) => {
+                            const checked = e.target.checked;
+                            if (
+                              checked &&
+                              pipelineBlockedByCompliance &&
+                              isAdmin &&
+                              blockingHomeAppointments.length > 0
+                            ) {
+                              const ok = await applyComplianceAdminOverrideForBlocking();
+                              if (!ok) return;
+                            }
+                            updateVisit(activeVisit, 'hearingAidSale', e.target.checked);
+                          }}
+                          disabled={
+                            isAudiologist ||
+                            (pipelineBookingSaleLocked && !currentVisit.hearingAidSale) ||
+                            complianceOverrideBusy
+                          }
                         />
                         <VisitServiceToggleRow
                           active={!!currentVisit.salesReturn}

@@ -56,9 +56,19 @@ function formatTimeFromStart(start: unknown): string {
   }).format(d);
 }
 
-/** Booking: catalog device + booking amounts — brand/model/type come from `bookingProduct` (CRM catalogue). */
+/** Booking: one or more catalog devices. */
+export type StaffBookingLine = {
+  catalogProductId: string;
+  hearingAidPrice: number;
+  bookingSellingPrice: number;
+  bookingQuantity: number;
+};
+
 export type StaffBookingDetails = {
   whichEar: 'left' | 'right' | 'both';
+  /** Normalized list — always ≥1 after parse. */
+  items: StaffBookingLine[];
+  /** Convenience mirrors of first item (legacy / summaries). */
   hearingAidPrice: number;
   bookingSellingPrice: number;
   bookingQuantity: number;
@@ -208,6 +218,13 @@ function mapVisitToVisitSchedule(visit: Record<string, unknown>): Record<string,
     visitDate: visit.visitDate,
     visitTime: visit.visitTime,
     notes: visit.visitNotes,
+    linkedAppointmentId: visit.linkedAppointmentId || null,
+    gpsLocation: visit.gpsLocation || null,
+    complianceFormData: visit.complianceFormData || null,
+    staffVisitFeedback: visit.staffVisitFeedback || null,
+    telecallerVerified: visit.telecallerVerified ?? null,
+    createdByUid: visit.createdByUid || null,
+    createdByName: visit.createdByName || null,
     medicalServices: [
       ...(visit.hearingTest ? ['hearing_test'] : []),
       ...(visit.hearingAidTrial ? ['hearing_aid_trial'] : []),
@@ -277,6 +294,7 @@ function defaultVisitShell(appointment: Record<string, unknown>): Record<string,
     visitTime,
     visitType,
     visitNotes: 'Updated from staff app (appointment-linked visit / receipt request).',
+    linkedAppointmentId: '',
     hearingTest: false,
     hearingAidTrial: false,
     hearingAidBooked: false,
@@ -359,6 +377,60 @@ function defaultVisitShell(appointment: Record<string, unknown>): Record<string,
   };
 }
 
+function findStaffVisitIndexByAppointment(
+  visits: Record<string, unknown>[],
+  appointmentId: string
+): number {
+  const id = String(appointmentId || '').trim();
+  if (!id) return -1;
+  return visits.findIndex((v) => String(v?.linkedAppointmentId || '').trim() === id);
+}
+
+function appendVisitNote(visit: Record<string, unknown>, line: string) {
+  const next = String(line || '').trim();
+  if (!next) return;
+  const prev = String(visit.visitNotes || '').trim();
+  if (!prev) {
+    visit.visitNotes = next;
+    return;
+  }
+  if (prev.includes(next)) return;
+  visit.visitNotes = `${prev}\n\n${next}`;
+}
+
+/**
+ * One enquiry visit per staff appointment — services, compliance, and payment merge into the same row.
+ */
+function getOrCreateStaffAppointmentVisit(
+  visitsRaw: Record<string, unknown>[],
+  appointment: Record<string, unknown>,
+  appointmentId: string,
+  noteSeed: string
+): { visit: Record<string, unknown>; index: number } {
+  const idx = findStaffVisitIndexByAppointment(visitsRaw, appointmentId);
+  if (idx >= 0) {
+    const visit = { ...(visitsRaw[idx] as Record<string, unknown>) };
+    visit.linkedAppointmentId = appointmentId;
+    return { visit, index: idx };
+  }
+  const visit = {
+    ...(defaultVisitShell(appointment) as Record<string, unknown>),
+    linkedAppointmentId: appointmentId,
+    visitNotes: noteSeed,
+  };
+  return { visit, index: -1 };
+}
+
+function commitStaffAppointmentVisit(
+  visitsRaw: Record<string, unknown>[],
+  index: number,
+  visit: Record<string, unknown>
+) {
+  const cleaned = removeUndefined(visit) as Record<string, unknown>;
+  if (index >= 0) visitsRaw[index] = cleaned;
+  else visitsRaw.push(cleaned);
+}
+
 /** Non-payment visit logging from staff mobile / PWA — hearing test, accessory, programming, counselling. */
 export type StaffVisitServicesHearingTest = {
   hearingTestEntries: { id: string; testType: string; price: number }[];
@@ -407,25 +479,35 @@ function sumHearingTestEntryPricesFromEntries(
 }
 
 /**
- * Appends one visit with selected service flags/fields. Does not modify financialSummary or payments.
- * At least one service key must be present in `services` (validated by API).
+ * Upserts services onto the appointment-linked visit (does not create a separate visit row).
+ * Does not modify financialSummary or payments.
  */
 export function mergeStaffVisitServicesIntoEnquiry(args: {
   enquiry: Record<string, unknown>;
   appointment: Record<string, unknown>;
   appointmentId: string;
   services: StaffVisitServicesPayload;
+  staffUid?: string;
+  staffName?: string;
 }): { visits: Record<string, unknown>[]; visitSchedules: Record<string, unknown>[]; financialSummary: Record<string, unknown> } {
   const { enquiry, appointment, appointmentId, services } = args;
   const visitsRaw = Array.isArray(enquiry.visits) ? [...(enquiry.visits as Record<string, unknown>[])] : [];
 
   const baseNote = `Staff app — appointment ${appointmentId} — visit services logged.`;
-  const extraLines: string[] = [];
+  const { visit: v, index } = getOrCreateStaffAppointmentVisit(
+    visitsRaw,
+    appointment,
+    appointmentId,
+    baseNote
+  );
+  appendVisitNote(v, baseNote);
 
-  const v = {
-    ...(defaultVisitShell(appointment) as Record<string, unknown>),
-    visitNotes: baseNote,
-  };
+  if (args.staffUid && !v.createdByUid) v.createdByUid = args.staffUid;
+  if (args.staffName) {
+    if (!v.createdByName) v.createdByName = args.staffName;
+    v.updatedByName = args.staffName;
+  }
+  if (args.staffUid) v.updatedByUid = args.staffUid;
 
   if (services.hearingTest) {
     const ht = services.hearingTest;
@@ -477,18 +559,15 @@ export function mergeStaffVisitServicesIntoEnquiry(args: {
 
   if (services.counselling) {
     const c = services.counselling;
-    Object.assign(v, { counselling: true });
     const n = String(c.notes || '').trim();
-    if (n) {
-      extraLines.push(`Counselling: ${n}`);
-    }
+    Object.assign(v, {
+      counselling: true,
+      ...(n ? { counsellingNotes: n } : {}),
+    });
+    if (n) appendVisitNote(v, `Counselling: ${n}`);
   }
 
-  if (extraLines.length > 0) {
-    v.visitNotes = [String(v.visitNotes || baseNote), ...extraLines].join('\n\n');
-  }
-
-  visitsRaw.push(removeUndefined(v) as Record<string, unknown>);
+  commitStaffAppointmentVisit(visitsRaw, index, v);
 
   const visitSchedules = visitsRaw.map((visit) => mapVisitToVisitSchedule(visit));
 
@@ -498,15 +577,78 @@ export function mergeStaffVisitServicesIntoEnquiry(args: {
   return { visits: visitsRaw, visitSchedules, financialSummary };
 }
 
+export type StaffComplianceSnapshot = {
+  gpsLocation: {
+    lat: number;
+    lng: number;
+    accuracy?: number | null;
+    capturedAt: string;
+  };
+  complianceFormData: {
+    wearingIdUniformBag: boolean;
+    sharedPersonalContact: boolean;
+    focHomeVisitsCommitted: number;
+    freeBatteryBoxesCommitted: boolean;
+    freeBatteryBoxesQty?: number | null;
+    explainedAccessoriesCharges: boolean;
+    explainedWarranty: boolean;
+    connectedWithTelecaller: true;
+  };
+  feedback?: string;
+};
+
+/** Persist home-visit checkout (GPS + checklist + feedback) onto the patient visit. */
+export function mergeStaffComplianceIntoEnquiry(args: {
+  enquiry: Record<string, unknown>;
+  appointment: Record<string, unknown>;
+  appointmentId: string;
+  compliance: StaffComplianceSnapshot;
+  staffUid?: string;
+  staffName?: string;
+}): { visits: Record<string, unknown>[]; visitSchedules: Record<string, unknown>[] } {
+  const visitsRaw = Array.isArray(args.enquiry.visits)
+    ? [...(args.enquiry.visits as Record<string, unknown>[])]
+    : [];
+  const note = `Staff app — appointment ${args.appointmentId} — home visit checkout completed.`;
+  const { visit: v, index } = getOrCreateStaffAppointmentVisit(
+    visitsRaw,
+    args.appointment,
+    args.appointmentId,
+    note
+  );
+  appendVisitNote(v, note);
+
+  const feedback = String(args.compliance.feedback || '').trim();
+  Object.assign(v, {
+    gpsLocation: args.compliance.gpsLocation,
+    complianceFormData: args.compliance.complianceFormData,
+    telecallerVerified: true,
+    ...(feedback ? { staffVisitFeedback: feedback } : {}),
+  });
+
+  if (args.staffUid && !v.createdByUid) v.createdByUid = args.staffUid;
+  if (args.staffName) {
+    if (!v.createdByName) v.createdByName = args.staffName;
+    v.updatedByName = args.staffName;
+  }
+  if (args.staffUid) v.updatedByUid = args.staffUid;
+
+  commitStaffAppointmentVisit(visitsRaw, index, v);
+  const visitSchedules = visitsRaw.map((visit) => mapVisitToVisitSchedule(visit));
+  return { visits: visitsRaw, visitSchedules };
+}
+
 export function mergeStaffSubmissionIntoEnquiry(args: {
   enquiry: Record<string, unknown>;
   appointment: Record<string, unknown>;
-  /** Firestore appointment doc id — stored in visit notes for CRM traceability. */
+  /** Firestore appointment doc id — links all staff checkout pieces to one visit. */
   appointmentId: string;
   receiptType: 'trial' | 'booking' | 'invoice';
   amount: number;
   booking?: StaffBookingDetails;
   bookingProduct?: CatalogProductDoc;
+  /** All catalog docs for booking.items (includes bookingProduct). */
+  bookingProducts?: CatalogProductDoc[];
   trial?: StaffTrialDetails;
   trialProduct?: CatalogProductDoc;
   secondTrialProduct?: CatalogProductDoc;
@@ -514,39 +656,93 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
   /** CRM sale visit: `hearingAidBrand` is "Who Sold" (staff), not device manufacturer. */
   whoSoldName: string;
   saleDeviceType?: string;
+  staffUid?: string;
+  staffName?: string;
 }): { visits: Record<string, unknown>[]; visitSchedules: Record<string, unknown>[]; financialSummary: Record<string, unknown> } {
   const enquiry = args.enquiry;
   const todayYmd = formatDateYmdInIST(new Date());
   const visitsRaw = Array.isArray(enquiry.visits) ? [...(enquiry.visits as Record<string, unknown>[])] : [];
 
-  /** Always append a new visit for staff-app payments so we never overwrite an existing same-day CRM visit. */
-  const v = {
-    ...(defaultVisitShell(args.appointment) as Record<string, unknown>),
-    visitNotes: `Staff app — appointment ${args.appointmentId} — ${args.receiptType} (payment logged).`,
-  };
+  const paymentNote = `Staff app — appointment ${args.appointmentId} — ${args.receiptType} (payment logged).`;
+  const { visit: v, index } = getOrCreateStaffAppointmentVisit(
+    visitsRaw,
+    args.appointment,
+    args.appointmentId,
+    paymentNote
+  );
+  appendVisitNote(v, paymentNote);
+
+  if (args.staffUid && !v.createdByUid) v.createdByUid = args.staffUid;
+  if (args.staffName) {
+    if (!v.createdByName) v.createdByName = args.staffName;
+    v.updatedByName = args.staffName;
+  }
+  if (args.staffUid) v.updatedByUid = args.staffUid;
 
   if (args.receiptType === 'booking' && args.booking && args.bookingProduct) {
     const b = args.booking;
-    const p = args.bookingProduct;
-    const line = buildCatalogHearingAidProductLine({
-      product: p,
-      saleDateYmd: todayYmd,
-      mrpPerUnit: b.hearingAidPrice,
-      quantity: b.bookingQuantity,
-    });
-    const products = [line];
+    const byId = new Map<string, CatalogProductDoc>();
+    for (const p of args.bookingProducts || []) {
+      if (p?.id) byId.set(p.id, p);
+    }
+    byId.set(args.bookingProduct.id, args.bookingProduct);
+
+    const lines = (b.items?.length ? b.items : [
+      {
+        catalogProductId: args.bookingProduct.id,
+        hearingAidPrice: b.hearingAidPrice,
+        bookingSellingPrice: b.bookingSellingPrice,
+        bookingQuantity: b.bookingQuantity,
+      },
+    ]) as Array<{
+      catalogProductId: string;
+      hearingAidPrice: number;
+      bookingSellingPrice: number;
+      bookingQuantity: number;
+    }>;
+
+    const products = [];
+    for (const item of lines) {
+      const p = byId.get(item.catalogProductId);
+      if (!p) continue;
+      products.push(
+        buildCatalogHearingAidProductLine({
+          product: p,
+          saleDateYmd: todayYmd,
+          mrpPerUnit: item.hearingAidPrice,
+          quantity: item.bookingQuantity,
+        })
+      );
+    }
+    if (products.length === 0) {
+      const p = args.bookingProduct;
+      products.push(
+        buildCatalogHearingAidProductLine({
+          product: p,
+          saleDateYmd: todayYmd,
+          mrpPerUnit: b.hearingAidPrice,
+          quantity: b.bookingQuantity,
+        })
+      );
+    }
     const totals = sumHearingAidVisitTotalsFromProducts(products);
+    const first = lines[0];
+    const p0 = byId.get(first.catalogProductId) || args.bookingProduct;
+    const modelLabel =
+      products.length > 1
+        ? products.map((x) => String((x as { name?: string }).name || '').trim()).filter(Boolean).join(' + ')
+        : (p0.name || '').trim();
 
     Object.assign(v, {
       hearingAidBooked: true,
-      hearingAidProductId: p.id,
-      hearingAidBrand: (p.company || '').trim(),
-      hearingAidModel: (p.name || '').trim(),
-      hearingAidType: (p.type || '').trim(),
+      hearingAidProductId: p0.id,
+      hearingAidBrand: (p0.company || '').trim(),
+      hearingAidModel: modelLabel,
+      hearingAidType: (p0.type || '').trim(),
       whichEar: b.whichEar,
-      hearingAidPrice: Number(b.hearingAidPrice) || 0,
-      bookingSellingPrice: Number(b.bookingSellingPrice) || 0,
-      bookingQuantity: Math.max(1, Math.floor(Number(b.bookingQuantity) || 1)),
+      hearingAidPrice: Number(first.hearingAidPrice) || 0,
+      bookingSellingPrice: Number(first.bookingSellingPrice) || 0,
+      bookingQuantity: Math.max(1, Math.floor(Number(first.bookingQuantity) || 1)),
       bookingAdvanceAmount: args.amount,
       bookingDate: todayYmd,
       bookingFromTrial: false,
@@ -654,7 +850,7 @@ export function mergeStaffSubmissionIntoEnquiry(args: {
     });
   }
 
-  visitsRaw.push(removeUndefined(v) as Record<string, unknown>);
+  commitStaffAppointmentVisit(visitsRaw, index, v);
 
   const visitSchedules = visitsRaw.map((visit) => mapVisitToVisitSchedule(visit));
 

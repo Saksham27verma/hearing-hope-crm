@@ -30,6 +30,10 @@ import {
   Dialog,
   DialogContent,
   DialogActions,
+  DialogTitle,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
   TextField,
   FormControl,
   InputLabel,
@@ -64,6 +68,10 @@ import {
   Close as CloseIcon,
   PhoneInTalk as PhoneInTalkIcon,
   PictureAsPdf as PictureAsPdfIcon,
+  Checklist as ChecklistIcon,
+  MyLocation as MyLocationIcon,
+  ExpandMore as ExpandMoreIcon,
+  Lock as LockIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -364,6 +372,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const [enquiryAppointments, setEnquiryAppointments] = useState<any[]>([]);
   const [invoicePdfOpen, setInvoicePdfOpen] = useState(false);
   const [invoicePdfData, setInvoicePdfData] = useState<ReturnType<typeof buildInvoiceDataForPdf> | null>(null);
+  const [fieldCheckoutDialogOpen, setFieldCheckoutDialogOpen] = useState(false);
 
   const fetchEnquiry = async (id: string) => {
     try {
@@ -573,7 +582,87 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }));
   }, [staffList, addFollowUpOpen, userProfile?.displayName, enquiry]);
   
-  const visits = enquiry?.visits || enquiry?.visitSchedules || [];
+  const isAdminViewer = userProfile?.role === 'admin';
+
+  const visits = useMemo(() => {
+    const raw = (enquiry?.visits || enquiry?.visitSchedules || []) as any[];
+    const appts = Array.isArray(enquiryAppointments) ? enquiryAppointments : [];
+    const byId = new Map(appts.map((a: any) => [String(a.id), a]));
+
+    const enriched = raw.map((visit: any) => {
+      if (!isAdminViewer) return visit;
+      const linkedId = String(visit?.linkedAppointmentId || '').trim();
+      let appt = linkedId ? byId.get(linkedId) : null;
+      if (!appt) {
+        const note = String(visit?.visitNotes || '');
+        const m = note.match(/appointment\s+([A-Za-z0-9_-]+)/i);
+        if (m?.[1]) appt = byId.get(m[1]) || null;
+      }
+      if (!appt) return visit;
+      const next = { ...visit };
+      if (!next.linkedAppointmentId && appt.id) next.linkedAppointmentId = appt.id;
+      if (!next.gpsLocation && appt.gps_location) next.gpsLocation = appt.gps_location;
+      if (!next.complianceFormData && appt.compliance_form_data) {
+        next.complianceFormData = appt.compliance_form_data;
+      }
+      if (!next.staffVisitFeedback && appt.feedback) next.staffVisitFeedback = appt.feedback;
+      if (next.telecallerVerified == null && appt.telecaller_verified === true) {
+        next.telecallerVerified = true;
+      }
+      return next;
+    });
+
+    // Checkout-only rows (and enrichment) are admin-only — keep the main visit list clean for others.
+    if (!isAdminViewer) return enriched;
+
+    const linked = new Set(
+      enriched
+        .map((v: any) => String(v?.linkedAppointmentId || '').trim())
+        .filter(Boolean)
+    );
+
+    for (const appt of appts) {
+      const id = String(appt?.id || '').trim();
+      if (!id || linked.has(id)) continue;
+      const hasCheckout =
+        appt.compliance_form_data ||
+        appt.gps_location ||
+        (typeof appt.feedback === 'string' && appt.feedback.trim()) ||
+        appt.complianceStatus === 'completed';
+      if (!hasCheckout) continue;
+
+      const start = appt.start ? new Date(appt.start) : null;
+      const visitDate =
+        start && !Number.isNaN(start.getTime())
+          ? start.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
+          : '';
+      const visitTime =
+        start && !Number.isNaN(start.getTime())
+          ? start.toLocaleTimeString('en-GB', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            })
+          : '';
+
+      enriched.push({
+        id: `appt-checkout-${id}`,
+        linkedAppointmentId: id,
+        visitType: appt.type === 'home' ? 'home' : 'center',
+        visitDate,
+        visitTime,
+        visitNotes: `Home visit checkout from appointment ${id}`,
+        gpsLocation: appt.gps_location || undefined,
+        complianceFormData: appt.compliance_form_data || undefined,
+        staffVisitFeedback: typeof appt.feedback === 'string' ? appt.feedback : undefined,
+        telecallerVerified: appt.telecaller_verified === true,
+        createdByName: appt.homeVisitorName || appt.assignedStaffName || undefined,
+      });
+    }
+
+    return enriched;
+  }, [enquiry?.visits, enquiry?.visitSchedules, enquiryAppointments, isAdminViewer]);
   const hasVisits = visits.length > 0;
   const followUpsList = Array.isArray(enquiry?.followUps) ? enquiry.followUps : [];
   const enquiryCreatedByLabel =
@@ -888,7 +977,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }
   }, [activeVisitTab, visits.length]);
 
+  useEffect(() => {
+    setFieldCheckoutDialogOpen(false);
+  }, [activeVisitTab]);
+
   const activeVisit = visits[activeVisitTab];
+  const activeVisitHasFieldCheckout = Boolean(
+    activeVisit &&
+      (activeVisit.complianceFormData ||
+        activeVisit.gpsLocation ||
+        hasValue(activeVisit.staffVisitFeedback) ||
+        activeVisit.telecallerVerified === true)
+  );
   const activeVisitAudiogramData =
     activeVisit?.hearingTestDetails?.audiogramData || activeVisit?.audiogramData;
   const activeVisitExternalPta =
@@ -1449,7 +1549,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                     >
                       <Grid container spacing={2.5}>
                         <Grid item xs={12} md={8}>
-                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }}>
+                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mb: 2 }} alignItems="center">
                             {getVisitServices(activeVisit).map((service) => (
                               <Chip
                                 key={service.label}
@@ -1462,6 +1562,30 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                             {getVisitServices(activeVisit).length === 0 && (
                               <Chip label="Visit recorded" size="small" variant="outlined" sx={{ borderRadius: 99 }} />
                             )}
+                            {isAdminViewer &&
+                              (activeVisit.complianceFormData ||
+                                activeVisit.gpsLocation ||
+                                hasValue(activeVisit.staffVisitFeedback) ||
+                                activeVisit.telecallerVerified === true) && (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color="inherit"
+                                  startIcon={<LockIcon fontSize="small" />}
+                                  onClick={() => setFieldCheckoutDialogOpen(true)}
+                                  sx={{
+                                    borderRadius: 99,
+                                    textTransform: 'none',
+                                    fontWeight: 700,
+                                    fontSize: '0.75rem',
+                                    ml: { xs: 0, sm: 0.5 },
+                                    borderColor: alpha('#64748b', 0.35),
+                                    color: 'text.secondary',
+                                  }}
+                                >
+                                  Field checkout
+                                </Button>
+                              )}
                           </Stack>
 
                           <Grid container spacing={2}>
@@ -2038,7 +2162,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       {(activeVisit.counselling ||
                         hasValue(activeVisit.counsellingType) ||
                         hasValue(activeVisit.counsellingAmount) ||
-                        hasValue(activeVisit.counsellingDoneBy)) && (
+                        hasValue(activeVisit.counsellingDoneBy) ||
+                        hasValue(activeVisit.counsellingNotes)) && (
                         <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.background.paper, 0.96) : 'rgba(255,255,255,0.84)') }}>
                           <SectionHeading icon={<NotesIcon fontSize="small" />} title="Counselling Details" />
                           <Grid container spacing={2}>
@@ -2850,6 +2975,218 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
           {followUpFeedback.message}
         </Alert>
       </Snackbar>
+
+      {isAdminViewer && activeVisit && (
+        <Dialog
+          open={fieldCheckoutDialogOpen && activeVisitHasFieldCheckout}
+          onClose={() => setFieldCheckoutDialogOpen(false)}
+          fullWidth
+          maxWidth="sm"
+          scroll="paper"
+        >
+          <DialogTitle sx={{ pr: 6, fontWeight: 800 }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <LockIcon fontSize="small" color="action" />
+              <span>Field checkout</span>
+            </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontWeight: 500 }}>
+              Admin only · expand a section to review details
+            </Typography>
+          </DialogTitle>
+          <IconButton
+            aria-label="Close"
+            onClick={() => setFieldCheckoutDialogOpen(false)}
+            sx={{ position: 'absolute', right: 12, top: 12 }}
+          >
+            <CloseIcon />
+          </IconButton>
+          <DialogContent dividers sx={{ pt: 1 }}>
+            <Accordion
+              disableGutters
+              elevation={0}
+              defaultExpanded={false}
+              sx={{
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: '12px !important',
+                mb: 1.25,
+                '&:before': { display: 'none' },
+              }}
+            >
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography sx={{ fontWeight: 700 }}>Visit & verification</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Grid container spacing={2}>
+                  {activeVisit.telecallerVerified === true && (
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField('Telecaller verified', 'Yes')}
+                    </Grid>
+                  )}
+                  {hasValue(activeVisit.linkedAppointmentId) && (
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField('Linked appointment', activeVisit.linkedAppointmentId)}
+                    </Grid>
+                  )}
+                  {hasValue(activeVisit.createdByName) && (
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField('Recorded by', activeVisit.createdByName)}
+                    </Grid>
+                  )}
+                </Grid>
+              </AccordionDetails>
+            </Accordion>
+
+            {activeVisit.gpsLocation ? (
+              <Accordion
+                disableGutters
+                elevation={0}
+                defaultExpanded={false}
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: '12px !important',
+                  mb: 1.25,
+                  '&:before': { display: 'none' },
+                }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <MyLocationIcon fontSize="small" color="primary" />
+                    <Typography sx={{ fontWeight: 700 }}>GPS location</Typography>
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Coordinates',
+                        `${Number(activeVisit.gpsLocation.lat).toFixed(6)}, ${Number(activeVisit.gpsLocation.lng).toFixed(6)}`
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Accuracy',
+                        activeVisit.gpsLocation.accuracy != null
+                          ? `${activeVisit.gpsLocation.accuracy} m`
+                          : undefined
+                      )}
+                    </Grid>
+                    <Grid item xs={12}>
+                      {renderVisitField('Captured at', activeVisit.gpsLocation.capturedAt)}
+                    </Grid>
+                  </Grid>
+                </AccordionDetails>
+              </Accordion>
+            ) : null}
+
+            {activeVisit.complianceFormData ? (
+              <Accordion
+                disableGutters
+                elevation={0}
+                defaultExpanded={false}
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: '12px !important',
+                  mb: 1.25,
+                  '&:before': { display: 'none' },
+                }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <ChecklistIcon fontSize="small" color="action" />
+                    <Typography sx={{ fontWeight: 700 }}>Compliance checklist</Typography>
+                  </Stack>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Wearing ID / uniform / bag',
+                        activeVisit.complianceFormData.wearingIdUniformBag ? 'Yes' : 'No'
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Shared personal contact',
+                        activeVisit.complianceFormData.sharedPersonalContact ? 'Yes' : 'No'
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'FOC home visits committed',
+                        String(activeVisit.complianceFormData.focHomeVisitsCommitted ?? 0)
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Free battery boxes',
+                        activeVisit.complianceFormData.freeBatteryBoxesCommitted
+                          ? `Yes${
+                              activeVisit.complianceFormData.freeBatteryBoxesQty != null
+                                ? ` (${activeVisit.complianceFormData.freeBatteryBoxesQty})`
+                                : ''
+                            }`
+                          : 'No'
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Explained accessories charges',
+                        activeVisit.complianceFormData.explainedAccessoriesCharges ? 'Yes' : 'No'
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Explained warranty',
+                        activeVisit.complianceFormData.explainedWarranty ? 'Yes' : 'No'
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {renderVisitField(
+                        'Connected with telecaller',
+                        activeVisit.complianceFormData.connectedWithTelecaller ? 'Yes' : 'No'
+                      )}
+                    </Grid>
+                  </Grid>
+                </AccordionDetails>
+              </Accordion>
+            ) : null}
+
+            {hasValue(activeVisit.staffVisitFeedback) ? (
+              <Accordion
+                disableGutters
+                elevation={0}
+                defaultExpanded={false}
+                sx={{
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: '12px !important',
+                  mb: 1.25,
+                  '&:before': { display: 'none' },
+                }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography sx={{ fontWeight: 700 }}>Staff feedback</Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  {renderVisitField('Feedback', activeVisit.staffVisitFeedback)}
+                </AccordionDetails>
+              </Accordion>
+            ) : null}
+          </DialogContent>
+          <DialogActions sx={{ px: 3, py: 1.5 }}>
+            <Button
+              onClick={() => setFieldCheckoutDialogOpen(false)}
+              variant="contained"
+              sx={{ borderRadius: 99, textTransform: 'none', fontWeight: 700 }}
+            >
+              Close
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
 
       {invoicePdfData && (
         <InvoicePrintConfirmModal

@@ -229,3 +229,21 @@
  * @field transferHistory - Optional capped array of assign/transfer events
  * @field createdAt - serverTimestamp (optional)
  */
+
+// Collection: appointments (end-of-visit compliance fields — home visits)
+/**
+ * @collection appointments
+ * @description Calendar appointments. Home visits use end-of-visit compliance checkout.
+ * @field status - scheduled | completed | cancelled (calendar lifecycle)
+ * @field complianceStatus - awaiting_telecaller_pin | pending_verification | incomplete_compliance | completed
+ * @field telecaller_pin - 4-digit PIN generated in CRM (cleared after staff verifies)
+ * @field telecaller_verified - true after staff enters correct PIN
+ * @field gps_location - { lat, lng, accuracy?, capturedAt } captured on device at checkout
+ * @field compliance_form_data - mandatory questionnaire answers from staff PWA
+ * @field complianceIncompleteSince - when pending/incomplete started (for 2h admin alerts)
+ * @field staffAwaitingPinAt / staffAwaitingPinBy - set when field staff starts checkout (calendar turns red)
+ * @field complianceAdminOverride - { byUid, byName?, at, reason? } admin bypass for Sale/Booking
+ * @field complianceAlertSentAt - set after incomplete-compliance cron notifies admins
+ * @note Telecaller Log call / Generate PIN is only for today's home visits in awaiting_telecaller_pin
+ *       or pending_verification. Staff must request PIN first via request-compliance-pin.
+ */

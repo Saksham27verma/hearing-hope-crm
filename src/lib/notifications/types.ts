@@ -4,11 +4,14 @@ export type NotificationType =
   | 'whatsapp_invoice_request'
   | 'whatsapp_inbound'
   | 'sale_milestone'
+  | 'incomplete_compliance'
+  | 'awaiting_compliance_pin'
   | 'system';
 
 export type NotificationEntity =
   | { kind: 'enquiry'; id: string }
   | { kind: 'sale'; id: string }
+  | { kind: 'appointment'; id: string }
   | { kind: 'whatsapp_invoice_request'; id: string }
   | { kind: 'whatsapp_inbound'; id: string }
   | { kind: 'legacy_sale'; id: string }

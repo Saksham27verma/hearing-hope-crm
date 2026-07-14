@@ -20,6 +20,10 @@ import { allocateNextReceiptNumberAdmin, type ReceiptNumberKind } from '@/server
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { visitAccessoryToSaleAccessories } from '@/lib/sales-invoicing/visitAccessoryInvoice';
+import {
+  isComplianceFullyComplete,
+  isHomeVisitAppointment,
+} from '@/lib/visitCompliance/helpers';
 
 /** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
 export const maxDuration = 60;
@@ -201,21 +205,61 @@ function parseWhichEar(raw: unknown): 'left' | 'right' | 'both' {
 function parseBookingDetails(raw: unknown): (StaffBookingDetails & { catalogProductId: string }) | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const catalogProductId = String(o.catalogProductId ?? '').trim();
   const whichEar = parseWhichEar(o.whichEar);
-  const hearingAidPrice = Number(o.hearingAidPrice);
-  const bookingSellingPrice = Number(o.bookingSellingPrice);
-  const bookingQuantity = Number(o.bookingQuantity);
-  if (!catalogProductId) return null;
-  if (!Number.isFinite(hearingAidPrice) || hearingAidPrice < 0) return null;
-  if (!Number.isFinite(bookingSellingPrice) || bookingSellingPrice < 0) return null;
-  if (!Number.isFinite(bookingQuantity) || bookingQuantity < 1) return null;
+
+  const itemsRaw = Array.isArray(o.items) ? o.items : null;
+  const items: Array<{
+    catalogProductId: string;
+    hearingAidPrice: number;
+    bookingSellingPrice: number;
+    bookingQuantity: number;
+  }> = [];
+
+  if (itemsRaw && itemsRaw.length > 0) {
+    for (const row of itemsRaw) {
+      if (!row || typeof row !== 'object') continue;
+      const r = row as Record<string, unknown>;
+      const catalogProductId = String(r.catalogProductId ?? '').trim();
+      const hearingAidPrice = Number(r.hearingAidPrice);
+      const bookingSellingPrice = Number(r.bookingSellingPrice);
+      const bookingQuantity = Number(r.bookingQuantity);
+      if (!catalogProductId) continue;
+      if (!Number.isFinite(hearingAidPrice) || hearingAidPrice < 0) continue;
+      if (!Number.isFinite(bookingSellingPrice) || bookingSellingPrice < 0) continue;
+      if (!Number.isFinite(bookingQuantity) || bookingQuantity < 1) continue;
+      items.push({
+        catalogProductId,
+        hearingAidPrice,
+        bookingSellingPrice,
+        bookingQuantity: Math.floor(bookingQuantity),
+      });
+    }
+  } else {
+    const catalogProductId = String(o.catalogProductId ?? '').trim();
+    const hearingAidPrice = Number(o.hearingAidPrice);
+    const bookingSellingPrice = Number(o.bookingSellingPrice);
+    const bookingQuantity = Number(o.bookingQuantity);
+    if (!catalogProductId) return null;
+    if (!Number.isFinite(hearingAidPrice) || hearingAidPrice < 0) return null;
+    if (!Number.isFinite(bookingSellingPrice) || bookingSellingPrice < 0) return null;
+    if (!Number.isFinite(bookingQuantity) || bookingQuantity < 1) return null;
+    items.push({
+      catalogProductId,
+      hearingAidPrice,
+      bookingSellingPrice,
+      bookingQuantity: Math.floor(bookingQuantity),
+    });
+  }
+
+  if (items.length === 0) return null;
+  const first = items[0];
   return {
-    catalogProductId,
+    catalogProductId: first.catalogProductId,
     whichEar,
-    hearingAidPrice,
-    bookingSellingPrice,
-    bookingQuantity: Math.floor(bookingQuantity),
+    hearingAidPrice: first.hearingAidPrice,
+    bookingSellingPrice: first.bookingSellingPrice,
+    bookingQuantity: first.bookingQuantity,
+    items,
   };
 }
 
@@ -405,11 +449,27 @@ export async function POST(req: Request) {
     }
 
     const statusRaw = ((appt.status as string) || '').toLowerCase();
-    if (statusRaw === 'completed' || statusRaw === 'cancelled') {
-      return jsonError('Cannot log payment for completed or cancelled appointments', 400);
+    if (statusRaw === 'cancelled') {
+      return jsonError('Cannot log payment for cancelled appointments', 400);
     }
-    if (statusRaw && statusRaw !== 'scheduled') {
-      return jsonError('Appointment must be scheduled', 400);
+
+    const isHome = isHomeVisitAppointment(appt);
+
+    if (isHome) {
+      // Booking / trial / sale only after end-of-visit compliance is finished
+      if (!isComplianceFullyComplete(appt as Parameters<typeof isComplianceFullyComplete>[0])) {
+        return jsonError(
+          'Complete the home visit checkout (PIN, GPS, checklist) before sending booking, trial, or sale to admin',
+          400
+        );
+      }
+    } else {
+      if (statusRaw === 'completed') {
+        return jsonError('Cannot log payment for completed appointments', 400);
+      }
+      if (statusRaw && statusRaw !== 'scheduled') {
+        return jsonError('Appointment must be scheduled', 400);
+      }
     }
 
     if (!isAppointmentTodayServer(appt.start)) {
@@ -432,6 +492,7 @@ export async function POST(req: Request) {
 
     let booking: StaffBookingDetails | undefined;
     let bookingProduct: CatalogProductDoc | undefined;
+    let bookingProducts: CatalogProductDoc[] = [];
     let trial: StaffTrialDetails | undefined;
     let trialProduct: CatalogProductDoc | undefined;
     let secondTrialProduct: CatalogProductDoc | undefined;
@@ -442,17 +503,32 @@ export async function POST(req: Request) {
       const b = parseBookingDetails(details?.booking ?? details);
       if (!b) {
         return jsonError(
-          'Missing or invalid booking details (catalogProductId, whichEar, MRP, selling price, quantity)',
+          'Missing or invalid booking details (select one or more catalog products with MRP, selling price, quantity)',
           400
         );
       }
-      const { catalogProductId, ...rest } = b;
-      const p = await loadCatalogProduct(catalogProductId);
-      if (!p) {
-        return jsonError('Catalog product not found', 400);
+      const { catalogProductId, items, ...rest } = b;
+      const lines = items?.length
+        ? items
+        : [
+            {
+              catalogProductId,
+              hearingAidPrice: rest.hearingAidPrice,
+              bookingSellingPrice: rest.bookingSellingPrice,
+              bookingQuantity: rest.bookingQuantity,
+            },
+          ];
+      const loaded: CatalogProductDoc[] = [];
+      for (const line of lines) {
+        const p = await loadCatalogProduct(line.catalogProductId);
+        if (!p) {
+          return jsonError(`Catalog product not found (${line.catalogProductId})`, 400);
+        }
+        loaded.push(p);
       }
-      booking = rest;
-      bookingProduct = p;
+      booking = { ...rest, items: lines };
+      bookingProduct = loaded[0];
+      bookingProducts = loaded;
     } else if (receiptType === 'trial') {
       const t = parseTrialDetails(details?.trial ?? details);
       if (!t) {
@@ -530,26 +606,33 @@ export async function POST(req: Request) {
       amount,
       booking,
       bookingProduct,
+      bookingProducts,
       trial,
       trialProduct,
       secondTrialProduct,
       sale,
       whoSoldName: staffName,
       saleDeviceType,
+      staffUid: uid,
+      staffName,
     });
 
+    const visitIdx = merged.visits.findIndex(
+      (v) => String((v as Record<string, unknown>)?.linkedAppointmentId || '').trim() === appointmentId
+    );
+    const targetVisitIdx = visitIdx >= 0 ? visitIdx : merged.visits.length - 1;
+
     if (receiptType === 'invoice') {
-      const lastIdx = merged.visits.length - 1;
-      if (lastIdx >= 0) {
-        const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
+      if (targetVisitIdx >= 0) {
+        const lastVisit = (merged.visits[targetVisitIdx] || {}) as Record<string, unknown>;
         const existingInvoiceNumber = normalizeInvoiceNumberString(lastVisit.invoiceNumber);
         const needsAllocation = !saleHasBillableInvoiceNumber(existingInvoiceNumber);
         if (needsAllocation) {
           const allocatedInvoiceNumber = String(await allocateNextInvoiceNumberAdmin(db)).trim();
-          merged.visits[lastIdx] = { ...lastVisit, invoiceNumber: allocatedInvoiceNumber };
-          if (merged.visitSchedules[lastIdx]) {
-            merged.visitSchedules[lastIdx] = {
-              ...merged.visitSchedules[lastIdx],
+          merged.visits[targetVisitIdx] = { ...lastVisit, invoiceNumber: allocatedInvoiceNumber };
+          if (merged.visitSchedules[targetVisitIdx]) {
+            merged.visitSchedules[targetVisitIdx] = {
+              ...merged.visitSchedules[targetVisitIdx],
               invoiceNumber: allocatedInvoiceNumber,
             };
           }
@@ -561,18 +644,17 @@ export async function POST(req: Request) {
     const isInOfficeTrial = receiptType === 'trial' && trial?.trialLocationType === 'in_office';
 
     if (receiptType === 'booking' || (receiptType === 'trial' && !isInOfficeTrial)) {
-      const lastIdx = merged.visits.length - 1;
-      if (lastIdx >= 0) {
+      if (targetVisitIdx >= 0) {
         const kind: ReceiptNumberKind = receiptType === 'booking' ? 'booking' : 'trial';
         const field = kind === 'booking' ? 'bookingReceiptNumber' : 'trialReceiptNumber';
-        const lastVisit = (merged.visits[lastIdx] || {}) as Record<string, unknown>;
+        const lastVisit = (merged.visits[targetVisitIdx] || {}) as Record<string, unknown>;
         const existing = String(lastVisit[field] || '').trim();
         if (!isStrictReceiptNumber(kind, existing)) {
           const allocated = String(await allocateNextReceiptNumberAdmin(db, kind)).trim();
-          merged.visits[lastIdx] = { ...lastVisit, [field]: allocated };
-          if (merged.visitSchedules[lastIdx]) {
-            merged.visitSchedules[lastIdx] = {
-              ...merged.visitSchedules[lastIdx],
+          merged.visits[targetVisitIdx] = { ...lastVisit, [field]: allocated };
+          if (merged.visitSchedules[targetVisitIdx]) {
+            merged.visitSchedules[targetVisitIdx] = {
+              ...merged.visitSchedules[targetVisitIdx],
               [field]: allocated,
             };
           }
@@ -580,7 +662,9 @@ export async function POST(req: Request) {
       }
     }
 
-    const lastVisit = merged.visits[merged.visits.length - 1] as Record<string, unknown> | undefined;
+    const lastVisit = (
+      targetVisitIdx >= 0 ? merged.visits[targetVisitIdx] : merged.visits[merged.visits.length - 1]
+    ) as Record<string, unknown> | undefined;
     const relatedVisitId = String(lastVisit?.id ?? '').trim();
 
     const crmPaymentEntry = deepStripUndefined({
@@ -627,7 +711,7 @@ export async function POST(req: Request) {
     });
 
     if (receiptType === 'invoice') {
-      const lastVisitIndex = merged.visits.length - 1;
+      const lastVisitIndex = targetVisitIdx;
       const lastVisit = (merged.visits[lastVisitIndex] || {}) as Record<string, unknown>;
       const existingSaleSnap = await db
         .collection('sales')
@@ -688,7 +772,9 @@ export async function POST(req: Request) {
       const result = await buildStaffCrmStyleReceiptPdfBuffer({
         receiptType,
         enquiry: enquiryData,
-        lastVisit: (merged.visits[merged.visits.length - 1] || {}) as Record<string, unknown>,
+        lastVisit: (merged.visits[targetVisitIdx] ||
+          merged.visits[merged.visits.length - 1] ||
+          {}) as Record<string, unknown>,
         enquiryId,
         paymentMethod,
         staffName,
