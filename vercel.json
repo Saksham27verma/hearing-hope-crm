@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/incomplete-compliance-alerts",
-      "schedule": "0 * * * *"
+      "schedule": "15 4 * * *"
     }
   ]
 }
