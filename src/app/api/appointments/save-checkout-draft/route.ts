@@ -9,6 +9,8 @@ import {
 } from '@/lib/visitCompliance/helpers';
 import type { AppointmentCheckoutDraft } from '@/lib/visitCompliance/types';
 
+export const maxDuration = 30;
+
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -47,6 +49,9 @@ export async function OPTIONS() {
 /**
  * Staff stages checkout details (services / commerce / GPS+checklist) on the appointment
  * so telecallers can review them before generating a PIN.
+ *
+ * Important: do NOT await telecaller notifications before responding — Hobby functions
+ * time out at ~10s and a full users scan can hang the staff PWA on "Notifying…".
  */
 export async function POST(req: Request) {
   try {
@@ -162,26 +167,8 @@ export async function POST(req: Request) {
 
     await ref.update(update);
 
-    if (readyForPin) {
-      try {
-        const { notifyAwaitingCompliancePin } = await import(
-          '@/server/notifications/notifyAwaitingCompliancePin'
-        );
-        const patientName = String(data.patientName || data.title || 'Patient').trim();
-        const staffName = String(data.homeVisitorName || data.assignedStaffName || 'Staff').trim();
-        await notifyAwaitingCompliancePin({
-          appointmentId,
-          patientName,
-          staffName,
-          telecallerName: data.telecaller ? String(data.telecaller) : null,
-          centerId: data.centerId ? String(data.centerId) : null,
-        });
-      } catch (e) {
-        console.warn('save-checkout-draft notify:', e);
-      }
-    }
-
-    return withCors(
+    // Respond first — notifications must not block staff checkout on Vercel Hobby timeouts.
+    const response = withCors(
       NextResponse.json({
         ok: true,
         appointmentId,
@@ -191,6 +178,26 @@ export async function POST(req: Request) {
           : data.complianceStatus || null,
       })
     );
+
+    if (readyForPin) {
+      const patientName = String(data.patientName || data.title || 'Patient').trim();
+      const staffName = String(data.homeVisitorName || data.assignedStaffName || 'Staff').trim();
+      const telecallerName = data.telecaller ? String(data.telecaller) : null;
+      const centerId = data.centerId ? String(data.centerId) : null;
+      void import('@/server/notifications/notifyAwaitingCompliancePin')
+        .then(({ notifyAwaitingCompliancePin }) =>
+          notifyAwaitingCompliancePin({
+            appointmentId,
+            patientName,
+            staffName,
+            telecallerName,
+            centerId,
+          })
+        )
+        .catch((e) => console.warn('save-checkout-draft notify:', e));
+    }
+
+    return response;
   } catch (err: unknown) {
     if (err instanceof StaffAuthHttpError) {
       return jsonError(err.message, err.statusCode);

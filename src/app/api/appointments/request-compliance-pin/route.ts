@@ -103,17 +103,20 @@ export async function POST(req: Request) {
     const centerId = data.centerId ? String(data.centerId).trim() : null;
 
     let notified = 0;
-    try {
-      notified = await notifyAwaitingCompliancePin({
-        appointmentId,
-        patientName,
-        staffName,
-        telecallerName,
-        centerId,
+    // Fire-and-forget: do not block PIN request response (Hobby ~10s limit).
+    void notifyAwaitingCompliancePin({
+      appointmentId,
+      patientName,
+      staffName,
+      telecallerName,
+      centerId,
+    })
+      .then((n) => {
+        notified = n;
+      })
+      .catch((notifyErr) => {
+        console.error('notifyAwaitingCompliancePin failed:', notifyErr);
       });
-    } catch (notifyErr) {
-      console.error('notifyAwaitingCompliancePin failed:', notifyErr);
-    }
 
     return withCors(
       NextResponse.json({
