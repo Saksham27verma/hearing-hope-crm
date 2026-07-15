@@ -28,6 +28,7 @@ import InvoiceEditor from '@/components/accounting/InvoiceEditor';
 import type {
   AccountingClient,
   AccountingInvoice,
+  AccountingInvoiceItem,
 } from '@/lib/accounting/types';
 import {
   fetchAccountingCompanyProfile,
@@ -166,10 +167,33 @@ export default function NewAccountingInvoicePage() {
     return true;
   }, [invoice]);
 
+  const missingSerialItems = useMemo(() => {
+    if (!invoice?.items?.length) return [];
+    return invoice.items.filter((it) => {
+      const enriched = it as AccountingInvoiceItem & {
+        kind?: string;
+        catalogKey?: string;
+      };
+      const needs =
+        enriched.kind === 'hearing_aid' ||
+        it.hasSerialNumber === true ||
+        (typeof enriched.catalogKey === 'string' &&
+          enriched.catalogKey.startsWith('product:'));
+      return needs && !String(it.serialNumber || '').trim();
+    });
+  }, [invoice]);
+
   const handleSave = async (asStatus: 'draft' | 'sent') => {
     if (!invoice || !selectedCompanyId) return;
     if (!canSave) {
       setSnack({ msg: 'Please pick a client and add at least one line item', sev: 'error' });
+      return;
+    }
+    if (missingSerialItems.length > 0) {
+      setSnack({
+        msg: 'Please enter the serial number for every hearing aid line item',
+        sev: 'error',
+      });
       return;
     }
     setSaving(true);

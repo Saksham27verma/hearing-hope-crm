@@ -70,7 +70,13 @@ export async function fetchServiceCatalog(companyId: string): Promise<ServiceCat
       gstPercent: gstApplicable ? Number(p.gstPercentage || 18) : 0,
       suggestedRate: Number(savedRate ?? p.mrp ?? 0),
       isFree: p.isFreeOfCost === true,
-      hasSerialNumber: p.hasSerialNumber === true,
+      // Hearing aids are serial-tracked by default (even if master flag is unset).
+      hasSerialNumber:
+        p.hasSerialNumber === true ||
+        String(p.type || '')
+          .trim()
+          .toLowerCase()
+          .includes('hearing aid'),
     };
   });
   hearingAids.sort((a, b) => a.name.localeCompare(b.name));

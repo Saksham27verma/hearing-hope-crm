@@ -27,6 +27,10 @@ export type AccountingInvoiceItem = {
   rate: number;
   gstPercent: number;
   amount: number;
+  /** Serial number(s) for hearing aids / serial-tracked products. Comma-separated when qty > 1. */
+  serialNumber?: string;
+  /** True when this line should collect / display a serial number. */
+  hasSerialNumber?: boolean;
 };
 
 export type AccountingInvoiceStatus =

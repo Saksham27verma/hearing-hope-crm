@@ -67,6 +67,11 @@ type EnrichedItem = AccountingInvoiceItem & {
   meta?: { company?: string; productType?: string };
 };
 
+const needsSerialNumber = (it: EnrichedItem): boolean =>
+  it.kind === 'hearing_aid' ||
+  it.hasSerialNumber === true ||
+  (typeof it.catalogKey === 'string' && it.catalogKey.startsWith('product:'));
+
 const newItem = (): EnrichedItem => ({
   id: `it-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   description: '',
@@ -76,6 +81,8 @@ const newItem = (): EnrichedItem => ({
   gstPercent: 18,
   amount: 0,
   kind: 'custom',
+  serialNumber: '',
+  hasSerialNumber: false,
 });
 
 function SectionHeader({
@@ -248,6 +255,8 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
       (it) => it.description.trim() || it.rate > 0 || it.catalogKey,
     );
     const added: EnrichedItem[] = items.map((s, i) => {
+      const trackSerial =
+        s.kind === 'hearing_aid' || s.hasSerialNumber === true;
       const nameLine =
         s.kind === 'hearing_aid'
           ? [s.name, [s.company, s.productType].filter(Boolean).join(' · ')]
@@ -265,6 +274,8 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
         catalogKey: s.key,
         kind: s.kind,
         meta: { company: s.company, productType: s.productType },
+        hasSerialNumber: trackSerial,
+        serialNumber: '',
       };
     });
     patch({ items: [...kept, ...added] });
@@ -570,7 +581,7 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                             </Stack>
                           </Grid>
 
-                          <Grid item xs={12} md={8}>
+                          <Grid item xs={12} md={needsSerialNumber(it) ? 5 : 8}>
                             <TextField
                               size="small"
                               fullWidth
@@ -583,7 +594,41 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                               placeholder="What is being billed?"
                             />
                           </Grid>
-                          <Grid item xs={12} md={4}>
+                          {needsSerialNumber(it) && (
+                            <Grid item xs={12} md={4}>
+                              <TextField
+                                size="small"
+                                fullWidth
+                                required
+                                label="Serial Number"
+                                value={it.serialNumber || ''}
+                                onChange={(e) =>
+                                  setItem(idx, { serialNumber: e.target.value })
+                                }
+                                placeholder={
+                                  Number(it.quantity) > 1
+                                    ? 'e.g. SN001, SN002 (one per unit)'
+                                    : 'Enter hearing aid serial number'
+                                }
+                                helperText={
+                                  !(it.serialNumber || '').trim()
+                                    ? 'Required for hearing aids — will appear on the invoice'
+                                    : Number(it.quantity) > 1
+                                      ? 'Use commas to separate serials when quantity is more than 1'
+                                      : 'Shown on the printed invoice'
+                                }
+                                error={!(it.serialNumber || '').trim()}
+                                InputProps={{
+                                  startAdornment: (
+                                    <InputAdornment position="start">
+                                      <HearingIcon fontSize="small" color="action" />
+                                    </InputAdornment>
+                                  ),
+                                }}
+                              />
+                            </Grid>
+                          )}
+                          <Grid item xs={12} md={needsSerialNumber(it) ? 3 : 4}>
                             <TextField
                               size="small"
                               fullWidth

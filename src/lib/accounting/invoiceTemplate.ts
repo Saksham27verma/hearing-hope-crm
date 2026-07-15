@@ -51,10 +51,18 @@ function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): stri
       (it, i) => {
         const qty = Number(it.quantity || 0);
         const rate = Number(it.rate || 0) * ratio;
+        const serial = String(it.serialNumber || '').trim();
         return `
       <tr>
         <td style="text-align:center">${i + 1}</td>
-        <td>${nl2br(it.description)}</td>
+        <td>
+          ${nl2br(it.description)}
+          ${
+            serial
+              ? `<div style="margin-top:4px;font-size:11px;color:#555"><b>Serial No.:</b> ${escapeHtml(serial)}</div>`
+              : ''
+          }
+        </td>
         <td style="text-align:center">${escapeHtml(it.hsnSac || '')}</td>
         <td style="text-align:right">${qty}</td>
         <td style="text-align:right">${rupee(rate)}</td>
@@ -72,10 +80,18 @@ function buildItemsPlainRows(items: AccountingInvoiceItem[], ratio: number = 1):
       (it, i) => {
         const qty = Number(it.quantity || 0);
         const rate = Number(it.rate || 0) * ratio;
+        const serial = String(it.serialNumber || '').trim();
         return `
       <tr>
         <td>${i + 1}</td>
-        <td>${nl2br(it.description)}</td>
+        <td>
+          ${nl2br(it.description)}
+          ${
+            serial
+              ? `<div style="margin-top:4px;font-size:11px"><b>Serial No.:</b> ${escapeHtml(serial)}</div>`
+              : ''
+          }
+        </td>
         <td>${escapeHtml(it.hsnSac || '')}</td>
         <td style="text-align:right">${qty}</td>
         <td style="text-align:right">${rupee(rate)}</td>
@@ -98,12 +114,18 @@ function buildItemsHopeEnterprisesHtml(
       const sub = lineSubtotal(it, ratio);
       const gst = lineGst(it, ratio);
       const payable = linePayable(it, ratio);
+      const serial = String(it.serialNumber || '').trim();
       return `
       <tr style="border-bottom: 1px solid #e0e0e0;">
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${i + 1}</td>
         <td style="border: 1px solid #e0e0e0;" valign="top">
           <b>${escapeHtml(title || it.description)}</b>
           ${detail ? `<br><span style="color: #666; font-size: 11px;">${escapeHtml(detail)}</span>` : ''}
+          ${
+            serial
+              ? `<br><span style="color: #333; font-size: 11px;"><b>Serial No.:</b> ${escapeHtml(serial)}</span>`
+              : ''
+          }
         </td>
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${escapeHtml(it.hsnSac || '')}</td>
         <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(rate)}</td>

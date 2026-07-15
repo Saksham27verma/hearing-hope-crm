@@ -22,11 +22,17 @@ function itemsRows(items: AccountingInvoiceItem[], ratio: number = 1): string {
       (it, i) => {
         const qty = Number(it.quantity || 0);
         const rate = Number(it.rate || 0) * ratio;
+        const serial = String(it.serialNumber || '').trim();
         return `
     <tr>
       <td class="c">${i + 1}</td>
       <td>
-        <div class="desc">${escapeHtml(it.description)}</div>
+        <div class="desc">${nl2br(it.description)}</div>
+        ${
+          serial
+            ? `<div class="serial" style="margin-top:4px;font-size:11px;color:#555"><b>Serial No.:</b> ${escapeHtml(serial)}</div>`
+            : ''
+        }
       </td>
       <td class="c">${escapeHtml(it.hsnSac || '')}</td>
       <td class="r">${qty}</td>

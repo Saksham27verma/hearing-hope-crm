@@ -47,6 +47,7 @@ import InvoiceEditor from '@/components/accounting/InvoiceEditor';
 import type {
   AccountingClient,
   AccountingInvoice,
+  AccountingInvoiceItem,
   AccountingInvoiceStatus,
 } from '@/lib/accounting/types';
 import {
@@ -181,6 +182,25 @@ export default function AccountingInvoiceDetailPage() {
 
   const handleSave = async () => {
     if (!invoice?.id) return;
+    const missingSerial = (invoice.items || []).some((it) => {
+      const enriched = it as AccountingInvoiceItem & {
+        kind?: string;
+        catalogKey?: string;
+      };
+      const needs =
+        enriched.kind === 'hearing_aid' ||
+        it.hasSerialNumber === true ||
+        (typeof enriched.catalogKey === 'string' &&
+          enriched.catalogKey.startsWith('product:'));
+      return needs && !String(it.serialNumber || '').trim();
+    });
+    if (missingSerial) {
+      setSnack({
+        msg: 'Please enter the serial number for every hearing aid line item',
+        sev: 'error',
+      });
+      return;
+    }
     setSaving(true);
     try {
       const { id, createdAt, ...rest } = invoice;
