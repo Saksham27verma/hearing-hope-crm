@@ -46,13 +46,15 @@ function splitDescription(desc: string): { title: string; detail: string } {
 }
 
 function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): string {
+  const showPayable = ratio < 1;
   return items
-    .map(
-      (it, i) => {
-        const qty = Number(it.quantity || 0);
-        const rate = Number(it.rate || 0) * ratio;
-        const serial = String(it.serialNumber || '').trim();
-        return `
+    .map((it, i) => {
+      const qty = Number(it.quantity || 0);
+      const mrp = Number(it.rate || 0);
+      const mrpAmount = qty * mrp;
+      const payableAmount = mrpAmount * ratio;
+      const serial = String(it.serialNumber || '').trim();
+      return `
       <tr>
         <td style="text-align:center">${i + 1}</td>
         <td>
@@ -65,23 +67,29 @@ function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): stri
         </td>
         <td style="text-align:center">${escapeHtml(it.hsnSac || '')}</td>
         <td style="text-align:right">${qty}</td>
-        <td style="text-align:right">${rupee(rate)}</td>
+        <td style="text-align:right">${rupee(mrp)}</td>
         <td style="text-align:right">${Number(it.gstPercent || 0)}%</td>
-        <td style="text-align:right">${rupee(qty * rate)}</td>
+        ${
+          showPayable
+            ? `<td style="text-align:right;color:#888;text-decoration:line-through;font-size:11px">${rupee(mrpAmount)}</td>
+        <td style="text-align:right;font-weight:bold">${rupee(payableAmount)}</td>`
+            : `<td style="text-align:right">${rupee(mrpAmount)}</td>`
+        }
       </tr>`;
-      },
-    )
+    })
     .join('');
 }
 
 function buildItemsPlainRows(items: AccountingInvoiceItem[], ratio: number = 1): string {
+  const showPayable = ratio < 1;
   return items
-    .map(
-      (it, i) => {
-        const qty = Number(it.quantity || 0);
-        const rate = Number(it.rate || 0) * ratio;
-        const serial = String(it.serialNumber || '').trim();
-        return `
+    .map((it, i) => {
+      const qty = Number(it.quantity || 0);
+      const mrp = Number(it.rate || 0);
+      const mrpAmount = qty * mrp;
+      const payableAmount = mrpAmount * ratio;
+      const serial = String(it.serialNumber || '').trim();
+      return `
       <tr>
         <td>${i + 1}</td>
         <td>
@@ -94,12 +102,16 @@ function buildItemsPlainRows(items: AccountingInvoiceItem[], ratio: number = 1):
         </td>
         <td>${escapeHtml(it.hsnSac || '')}</td>
         <td style="text-align:right">${qty}</td>
-        <td style="text-align:right">${rupee(rate)}</td>
+        <td style="text-align:right">${rupee(mrp)}</td>
         <td style="text-align:right">${Number(it.gstPercent || 0)}%</td>
-        <td style="text-align:right">${rupee(qty * rate)}</td>
+        ${
+          showPayable
+            ? `<td style="text-align:right">${rupee(mrpAmount)}</td>
+        <td style="text-align:right">${rupee(payableAmount)}</td>`
+            : `<td style="text-align:right">${rupee(mrpAmount)}</td>`
+        }
       </tr>`;
-      },
-    )
+    })
     .join('');
 }
 
@@ -110,8 +122,11 @@ function buildItemsHopeEnterprisesHtml(
   return items
     .map((it, i) => {
       const { title, detail } = splitDescription(it.description);
-      const rate = Number(it.rate || 0) * ratio;
-      const sub = lineSubtotal(it, ratio);
+      const mrp = Number(it.rate || 0);
+      const qty = Number(it.quantity || 0);
+      const mrpTotal = qty * mrp;
+      // GST and payable are on the discounted (bill %) amount
+      const payableExGst = lineSubtotal(it, ratio);
       const gst = lineGst(it, ratio);
       const payable = linePayable(it, ratio);
       const serial = String(it.serialNumber || '').trim();
@@ -128,11 +143,17 @@ function buildItemsHopeEnterprisesHtml(
           }
         </td>
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${escapeHtml(it.hsnSac || '')}</td>
-        <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(rate)}</td>
-        <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${Number(it.quantity || 0)}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(mrp)}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${qty}</td>
         <td style="border: 1px solid #e0e0e0; text-align: center;" valign="top">${Number(it.gstPercent || 0)}%</td>
         <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">${rupee(gst)}</td>
-        <td style="border: 1px solid #e0e0e0; text-align: right; font-weight: bold;" valign="top">${rupee(sub)}</td>
+        <td style="border: 1px solid #e0e0e0; text-align: right;" valign="top">
+          ${
+            ratio < 1
+              ? `<span style="color:#888;text-decoration:line-through;font-size:11px">${rupee(mrpTotal)}</span><br><b>${rupee(payableExGst)}</b>`
+              : `<b>${rupee(mrpTotal)}</b>`
+          }
+        </td>
         <td style="border: 1px solid #e0e0e0; text-align: right; font-weight: bold;" valign="top">${rupee(payable)}</td>
       </tr>`;
     })
@@ -240,8 +261,44 @@ export function buildInvoiceTemplateContext(
 
     partBillingNote:
       netPct < 100
-        ? `Part billing @ ${netPct}% of standard rates applied.`
+        ? `Amount payable = ${netPct}% of MRP (discount ${(100 - netPct).toFixed(
+            Number.isInteger(100 - netPct) ? 0 : 2,
+          )}%).`
         : '',
+
+    // Extra placeholders for custom templates that want explicit MRP vs payable labels
+    mrpLabel: 'MRP',
+    amountPayableLabel: netPct < 100 ? 'Amount Payable' : 'Grand Total',
+    taxableLabel: netPct < 100 ? 'Taxable (payable)' : 'Subtotal',
+    discountPercent:
+      netPct < 100
+        ? String(
+            Number((100 - netPct).toFixed(Number.isInteger(100 - netPct) ? 0 : 2)),
+          )
+        : '',
+    discountAmount:
+      netPct < 100
+        ? rupee(
+            Number((invoice as any).grossSubtotal || 0) - Number(invoice.subtotal || 0),
+          )
+        : '',
+    itemsTableHeadersHtml:
+      netPct < 100
+        ? `<th style="width:32px;text-align:center">#</th>
+          <th>Description</th>
+          <th style="width:80px;text-align:center">HSN/SAC</th>
+          <th style="width:50px;text-align:right">Qty</th>
+          <th style="width:90px;text-align:right">MRP</th>
+          <th style="width:60px;text-align:right">GST</th>
+          <th style="width:100px;text-align:right">MRP Amount</th>
+          <th style="width:110px;text-align:right">Amount Payable</th>`
+        : `<th style="width:32px;text-align:center">#</th>
+          <th>Description</th>
+          <th style="width:80px;text-align:center">HSN/SAC</th>
+          <th style="width:60px;text-align:right">Qty</th>
+          <th style="width:90px;text-align:right">MRP</th>
+          <th style="width:70px;text-align:right">GST</th>
+          <th style="width:110px;text-align:right">Amount</th>`,
 
     notes: nl2br(invoice.notes || ''),
     terms: nl2br(invoice.terms || ''),
@@ -308,10 +365,16 @@ export const TEMPLATE_PLACEHOLDERS: {
   { key: 'balanceDue', desc: 'Balance still due' },
   { key: 'grandTotalWords', desc: 'Amount in words' },
 
-  { key: 'itemsHtml', desc: 'Full styled <tr> rows for line items table' },
-  { key: 'itemsHopeEnterprisesHtml', desc: 'Hope Enterprises / Zoho-style line item rows (9 columns)' },
+  { key: 'itemsHtml', desc: 'Full styled <tr> rows for line items table (MRP + Amount Payable when discounted)' },
+  { key: 'itemsHopeEnterprisesHtml', desc: 'Hope Enterprises / Zoho-style line item rows (MRP, Total Amount, Amount Payable)' },
   { key: 'itemsPlainHtml', desc: 'Unstyled <tr> rows if you\u2019re providing your own CSS' },
-  { key: 'partBillingNote', desc: 'Short note "Part billing @ X% applied" (empty when 100%)' },
+  { key: 'itemsTableHeadersHtml', desc: 'Header <th> cells matching itemsHtml columns (MRP / Amount Payable when discounted)' },
+  { key: 'partBillingNote', desc: 'Note when bill % of MRP is less than 100% (empty when 100%)' },
+  { key: 'amountPayableLabel', desc: '"Amount Payable" when discounted, otherwise "Grand Total"' },
+  { key: 'taxableLabel', desc: '"Taxable (payable)" when discounted, otherwise "Subtotal"' },
+  { key: 'discountPercent', desc: 'Discount % off MRP (empty when 100% bill)' },
+  { key: 'discountAmount', desc: 'Discount amount off MRP subtotal (empty when 100% bill)' },
+  { key: 'mrpLabel', desc: 'Always "MRP"' },
   { key: 'companyLogoUrl', desc: 'Logo image URL (set in template HTML if needed)' },
   { key: 'signatureImageUrl', desc: 'Signature image URL (set in template HTML if needed)' },
 
@@ -395,28 +458,25 @@ export function getDefaultInvoiceTemplate(): string {
     <table class="items">
       <thead>
         <tr>
-          <th style="width:32px;text-align:center">#</th>
-          <th>Description</th>
-          <th style="width:80px;text-align:center">HSN/SAC</th>
-          <th style="width:60px;text-align:right">Qty</th>
-          <th style="width:90px;text-align:right">Rate</th>
-          <th style="width:70px;text-align:right">GST</th>
-          <th style="width:110px;text-align:right">Amount</th>
+          {{itemsTableHeadersHtml}}
         </tr>
       </thead>
       <tbody>
         {{itemsHtml}}
       </tbody>
     </table>
+    {{#if partBillingNote}}<div style="margin-top:6px;font-size:11px;font-style:italic;color:#ef6c00">{{partBillingNote}}</div>{{/if}}
 
     <div class="totals">
       <table>
-        <tr><td>Subtotal</td><td style="text-align:right">{{subtotal}}</td></tr>
+        {{#if netPayablePercent}}<tr><td>MRP Total</td><td style="text-align:right">{{grossSubtotal}}</td></tr>{{/if}}
+        {{#if discountAmount}}<tr><td>Discount ({{discountPercent}}%)</td><td style="text-align:right">− {{discountAmount}}</td></tr>{{/if}}
+        <tr><td>{{taxableLabel}}</td><td style="text-align:right">{{subtotal}}</td></tr>
         {{#if cgst}}<tr><td>CGST</td><td style="text-align:right">{{cgst}}</td></tr>{{/if}}
         {{#if sgst}}<tr><td>SGST</td><td style="text-align:right">{{sgst}}</td></tr>{{/if}}
         {{#if igst}}<tr><td>IGST</td><td style="text-align:right">{{igst}}</td></tr>{{/if}}
         <tr><td>Round Off</td><td style="text-align:right">{{roundOff}}</td></tr>
-        <tr class="grand"><td>Grand Total</td><td style="text-align:right">{{grandTotal}}</td></tr>
+        <tr class="grand"><td>{{amountPayableLabel}}</td><td style="text-align:right">{{grandTotal}}</td></tr>
       </table>
     </div>
     <div class="words">Amount in words: {{grandTotalWords}}</div>
@@ -499,12 +559,12 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 5%;">S.No</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 28%;">Item Name &amp; Description</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 9%; text-align: center;">SAC/HSN</th>
-        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 9%; text-align: right;">Rate</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 9%; text-align: right;">MRP</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 6%; text-align: center;">Qty</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 7%; text-align: center;">GST (%)</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 10%; text-align: right;">GST Amt</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 12%; text-align: right;">Total Amount</th>
-        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 14%; text-align: right;">Total Amount Payable</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 14%; text-align: right;">Amount Payable</th>
       </tr>
     </thead>
     <tbody>
@@ -523,8 +583,20 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
       <td width="65%" valign="top"></td>
       <td width="35%" valign="top">
         <table width="100%" border="0" cellspacing="0" cellpadding="4">
+          {{#if netPayablePercent}}
           <tr>
-            <td align="left"><b>Sub Total:</b></td>
+            <td align="left">MRP Total:</td>
+            <td align="right">{{grossSubtotal}}</td>
+          </tr>
+          {{/if}}
+          {{#if discountAmount}}
+          <tr>
+            <td align="left">Discount ({{discountPercent}}%):</td>
+            <td align="right">− {{discountAmount}}</td>
+          </tr>
+          {{/if}}
+          <tr>
+            <td align="left"><b>{{taxableLabel}}:</b></td>
             <td align="right">{{subtotal}}</td>
           </tr>
           <tr>
@@ -535,9 +607,15 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
             <td colspan="2"><hr style="border: 0; border-top: 1px solid #ccc; margin: 5px 0;"></td>
           </tr>
           <tr>
-            <td align="left"><b style="font-size: 15px;">Grand Total:</b></td>
+            <td align="left"><b style="font-size: 15px;">{{amountPayableLabel}}:</b></td>
             <td align="right"><b style="font-size: 15px;">{{grandTotal}}</b></td>
           </tr>
+          {{#if netPayablePercent}}
+          <tr>
+            <td align="left" style="color:#888;font-size:11px;">MRP Grand Total:</td>
+            <td align="right" style="color:#888;font-size:11px;">{{grossGrandTotal}}</td>
+          </tr>
+          {{/if}}
         </table>
       </td>
     </tr>
