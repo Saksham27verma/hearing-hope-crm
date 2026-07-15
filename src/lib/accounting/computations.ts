@@ -8,6 +8,32 @@ export function roundTo2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/** Hearing-aid lines use MRP; tests / ENT / custom use Rate. */
+export function isHearingAidInvoiceItem(it: AccountingInvoiceItem): boolean {
+  if (it.kind === 'hearing_aid') return true;
+  if (it.kind && it.kind !== 'hearing_aid') return false;
+  if (typeof it.catalogKey === 'string' && it.catalogKey.startsWith('product:')) return true;
+  return it.hasSerialNumber === true;
+}
+
+/** Column header for the unit price: MRP, Rate, or MRP / Rate when mixed. */
+export function rateColumnLabelForItems(items: AccountingInvoiceItem[]): string {
+  if (!items.length) return 'Rate';
+  let hasHa = false;
+  let hasOther = false;
+  for (const it of items) {
+    if (isHearingAidInvoiceItem(it)) hasHa = true;
+    else hasOther = true;
+  }
+  if (hasHa && hasOther) return 'MRP / Rate';
+  if (hasHa) return 'MRP';
+  return 'Rate';
+}
+
+export function priceFieldLabelForItem(it: AccountingInvoiceItem): string {
+  return isHearingAidInvoiceItem(it) ? 'MRP' : 'Rate';
+}
+
 export function computeItemAmount(item: AccountingInvoiceItem): number {
   return roundTo2(Number(item.quantity || 0) * Number(item.rate || 0));
 }

@@ -45,7 +45,7 @@ import type {
   AccountingInvoice,
   AccountingInvoiceItem,
 } from '@/lib/accounting/types';
-import { computeInvoiceTotals, formatINR, amountInWords } from '@/lib/accounting/computations';
+import { computeInvoiceTotals, formatINR, amountInWords, priceFieldLabelForItem, rateColumnLabelForItems } from '@/lib/accounting/computations';
 import { formatInvoiceMonth } from '@/lib/accounting/invoiceTemplate';
 import type { AccountingCompanyProfile } from '@/lib/accounting/companyProfile';
 import ServiceItemPickerDialog from '@/components/accounting/ServiceItemPickerDialog';
@@ -174,6 +174,11 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
     inv.netPayablePercent == null || Number(inv.netPayablePercent) <= 0
       ? 100
       : Math.min(100, Math.max(0.01, Number(inv.netPayablePercent)));
+
+  const rateColumnLabel = useMemo(
+    () => rateColumnLabelForItems((inv.items || []) as AccountingInvoiceItem[]),
+    [inv.items],
+  );
 
   const totals = useMemo(
     () => computeInvoiceTotals(inv.items || [], taxMode, netPayablePercent),
@@ -513,6 +518,10 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                 <Stack spacing={1.25}>
                   {(inv.items as EnrichedItem[]).map((it, idx) => {
                     const color = kindColor(it.kind);
+                    const priceLabel = priceFieldLabelForItem(it);
+                    const mrpLine =
+                      Number(it.quantity || 0) * Number(it.rate || 0);
+                    const payableLine = mrpLine * (netPayablePercent / 100);
                     return (
                       <Paper
                         key={it.id}
@@ -656,7 +665,7 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                               size="small"
                               fullWidth
                               type="number"
-                              label="MRP"
+                              label={priceLabel}
                               value={it.rate}
                               onChange={(e) => setItem(idx, { rate: Number(e.target.value) })}
                               InputProps={{
@@ -690,62 +699,55 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                             </TextField>
                           </Grid>
                           <Grid item xs={6} sm={3} md={4}>
-                            {(() => {
-                              const mrpLine =
-                                Number(it.quantity || 0) * Number(it.rate || 0);
-                              const payableLine = mrpLine * (netPayablePercent / 100);
-                              return (
-                                <Box
-                                  sx={{
-                                    p: 1,
-                                    borderRadius: 1.5,
-                                    bgcolor: 'grey.100',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    justifyContent: 'center',
-                                    minHeight: 40,
-                                    gap: 0.25,
-                                  }}
+                            <Box
+                              sx={{
+                                p: 1,
+                                borderRadius: 1.5,
+                                bgcolor: 'grey.100',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                minHeight: 40,
+                                gap: 0.25,
+                              }}
+                            >
+                              <Stack
+                                direction="row"
+                                alignItems="center"
+                                justifyContent="flex-end"
+                                spacing={1}
+                              >
+                                <Typography variant="caption" color="text.secondary">
+                                  {priceLabel} total
+                                </Typography>
+                                <Typography
+                                  variant="body2"
+                                  fontWeight={netPayablePercent < 100 ? 500 : 700}
+                                  sx={
+                                    netPayablePercent < 100
+                                      ? { textDecoration: 'line-through', color: 'text.secondary' }
+                                      : undefined
+                                  }
                                 >
-                                  <Stack
-                                    direction="row"
-                                    alignItems="center"
-                                    justifyContent="flex-end"
-                                    spacing={1}
-                                  >
-                                    <Typography variant="caption" color="text.secondary">
-                                      MRP total
-                                    </Typography>
-                                    <Typography
-                                      variant="body2"
-                                      fontWeight={netPayablePercent < 100 ? 500 : 700}
-                                      sx={
-                                        netPayablePercent < 100
-                                          ? { textDecoration: 'line-through', color: 'text.secondary' }
-                                          : undefined
-                                      }
-                                    >
-                                      {formatINR(mrpLine)}
-                                    </Typography>
-                                  </Stack>
-                                  {netPayablePercent < 100 && (
-                                    <Stack
-                                      direction="row"
-                                      alignItems="center"
-                                      justifyContent="flex-end"
-                                      spacing={1}
-                                    >
-                                      <Typography variant="caption" color="warning.dark">
-                                        Amount payable ({netPayablePercent}%)
-                                      </Typography>
-                                      <Typography variant="body2" fontWeight={700} color="warning.dark">
-                                        {formatINR(payableLine)}
-                                      </Typography>
-                                    </Stack>
-                                  )}
-                                </Box>
-                              );
-                            })()}
+                                  {formatINR(mrpLine)}
+                                </Typography>
+                              </Stack>
+                              {netPayablePercent < 100 && (
+                                <Stack
+                                  direction="row"
+                                  alignItems="center"
+                                  justifyContent="flex-end"
+                                  spacing={1}
+                                >
+                                  <Typography variant="caption" color="warning.dark">
+                                    Amount payable ({netPayablePercent}%)
+                                  </Typography>
+                                  <Typography variant="body2" fontWeight={700} color="warning.dark">
+                                    {formatINR(payableLine)}
+                                  </Typography>
+                                </Stack>
+                              )}
+                            </Box>
                           </Grid>
                         </Grid>
                       </Paper>
@@ -778,7 +780,7 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                 {netPayablePercent < 100 && (
                   <>
                     <Row
-                      label="MRP Total"
+                      label={`${rateColumnLabel} Total`}
                       value={formatINR(totals.grossSubtotal)}
                       muted
                     />
@@ -820,7 +822,7 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                 </Stack>
                 {netPayablePercent < 100 && (
                   <Typography variant="caption" color="text.secondary">
-                    MRP grand total was {formatINR(totals.grossGrandTotal)}
+                    {rateColumnLabel} grand total was {formatINR(totals.grossGrandTotal)}
                   </Typography>
                 )}
                 <Typography variant="caption" color="text.secondary" mt={0.5}>
@@ -832,9 +834,9 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
               <Stack spacing={1} sx={{ mb: 2 }}>
                 <Stack direction="row" alignItems="center" spacing={1}>
                   <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                    BILL % OF MRP
+                    BILL % OF {rateColumnLabel.toUpperCase()}
                   </Typography>
-                  <Tooltip title="Keep MRP as the rate. Choosing 50% bills half of MRP as Amount Payable (GST scales with it).">
+                  <Tooltip title={`Keep ${rateColumnLabel} as the unit price. Choosing 50% bills half as Amount Payable (GST scales with it).`}>
                     <InfoIcon fontSize="inherit" color="action" />
                   </Tooltip>
                   <Box sx={{ flex: 1 }} />
@@ -888,7 +890,7 @@ export default function InvoiceEditor({ companyProfile, clients, value, onChange
                     sx={{ py: 0.25, borderRadius: 2, '& .MuiAlert-message': { py: 0.5 } }}
                     icon={false}
                   >
-                    Amount payable = <b>{netPayablePercent}%</b> of MRP{' '}
+                    Amount payable = <b>{netPayablePercent}%</b> of {rateColumnLabel}{' '}
                     {formatINR(totals.grossGrandTotal)} →{' '}
                     <b>{formatINR(totals.grandTotal)}</b>
                   </Alert>

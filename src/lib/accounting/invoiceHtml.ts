@@ -3,7 +3,7 @@ import type {
   AccountingInvoiceItem,
 } from '@/lib/accounting/types';
 import type { AccountingCompanyProfile } from '@/lib/accounting/companyProfile';
-import { amountInWords, formatINR } from '@/lib/accounting/computations';
+import { amountInWords, formatINR, rateColumnLabelForItems } from '@/lib/accounting/computations';
 
 const escapeHtml = (s: string | undefined | null): string =>
   String(s || '')
@@ -16,7 +16,7 @@ const escapeHtml = (s: string | undefined | null): string =>
 const nl2br = (s: string | undefined | null): string =>
   escapeHtml(s).replace(/\n/g, '<br/>');
 
-/** Rate column always shows full MRP; Amount Payable is the discounted line total. */
+/** Unit price stays full list price; Amount Payable is the discounted line total. */
 function itemsRows(
   items: AccountingInvoiceItem[],
   ratio: number = 1,
@@ -25,9 +25,9 @@ function itemsRows(
   return items
     .map((it, i) => {
       const qty = Number(it.quantity || 0);
-      const mrp = Number(it.rate || 0);
-      const mrpAmount = qty * mrp;
-      const payableAmount = mrpAmount * ratio;
+      const unit = Number(it.rate || 0);
+      const listAmount = qty * unit;
+      const payableAmount = listAmount * ratio;
       const serial = String(it.serialNumber || '').trim();
       return `
     <tr>
@@ -42,13 +42,15 @@ function itemsRows(
       </td>
       <td class="c">${escapeHtml(it.hsnSac || '')}</td>
       <td class="r">${qty}</td>
-      <td class="r">${formatINR(mrp).replace('₹', '')}</td>
+      <td class="r">${formatINR(unit).replace('₹', '')}</td>
       <td class="r">${Number(it.gstPercent || 0)}%</td>
       ${
         showPayableCol
-          ? `<td class="r muted">${formatINR(mrpAmount).replace('₹', '')}</td>
-      <td class="r"><b>${formatINR(payableAmount).replace('₹', '')}</b></td>`
-          : `<td class="r">${formatINR(mrpAmount).replace('₹', '')}</td>`
+          ? `<td class="r dual-amt">
+          <div class="list-struck">${formatINR(listAmount).replace('₹', '')}</div>
+          <div class="payable"><b>${formatINR(payableAmount).replace('₹', '')}</b></div>
+        </td>`
+          : `<td class="r">${formatINR(listAmount).replace('₹', '')}</td>`
       }
     </tr>`;
     })
@@ -78,6 +80,14 @@ export function renderAccountingInvoiceHtml(
   );
   const ratio = netPct / 100;
   const showPayableCol = netPct < 100;
+  const items = invoice.items || [];
+  const rateColumnLabel = rateColumnLabelForItems(items);
+  const listPriceWord =
+    rateColumnLabel === 'MRP'
+      ? 'MRP'
+      : rateColumnLabel === 'Rate'
+        ? 'listed rates'
+        : 'MRP / Rate';
   const grossSubtotal = Number(
     (invoice as any).grossSubtotal ?? invoice.subtotal ?? 0,
   );
@@ -106,11 +116,13 @@ export function renderAccountingInvoiceHtml(
     .box { border: 1px solid #e0e0e0; border-radius: 6px; padding: 12px; }
     .box h3 { margin: 0 0 6px; font-size: 12px; color: #ef6c00; text-transform: uppercase; letter-spacing: 0.5px; }
     table.items { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    table.items th { background: #fff3e0; color: #ef6c00; text-align: left; padding: 8px; border-bottom: 2px solid #ef6c00; font-size: 11px; }
-    table.items td { padding: 8px; border-bottom: 1px solid #eee; font-size: 12px; vertical-align: top; }
+    table.items th { background: #fff3e0; color: #ef6c00; text-align: left; padding: 10px 8px; border-bottom: 2px solid #ef6c00; font-size: 11px; }
+    table.items td { padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 12px; vertical-align: top; }
     table.items td.c, table.items th.c { text-align: center; }
     table.items td.r, table.items th.r { text-align: right; }
-    table.items td.muted { color: #888; text-decoration: line-through; font-size: 11px; }
+    table.items td.dual-amt { vertical-align: middle; }
+    table.items td.dual-amt .list-struck { color: #888; text-decoration: line-through; font-size: 11px; line-height: 1.5; }
+    table.items td.dual-amt .payable { font-weight: bold; line-height: 1.5; margin-top: 3px; }
     .totals { margin-top: 12px; display: flex; justify-content: flex-end; }
     .totals table { border-collapse: collapse; min-width: 320px; }
     .totals td { padding: 6px 12px; }
@@ -169,23 +181,18 @@ export function renderAccountingInvoiceHtml(
           <th>Description</th>
           <th class="c" style="width:80px">HSN/SAC</th>
           <th class="r" style="width:50px">Qty</th>
-          <th class="r" style="width:90px">MRP (₹)</th>
+          <th class="r" style="width:100px">${escapeHtml(rateColumnLabel)} (₹)</th>
           <th class="r" style="width:60px">GST</th>
-          ${
-            showPayableCol
-              ? `<th class="r" style="width:100px">MRP Amount</th>
-          <th class="r" style="width:110px">Amount Payable</th>`
-              : `<th class="r" style="width:110px">Amount (₹)</th>`
-          }
+          <th class="r" style="width:120px">${showPayableCol ? 'Amount Payable' : 'Amount (₹)'}</th>
         </tr>
       </thead>
       <tbody>
-        ${itemsRows(invoice.items || [], ratio, showPayableCol)}
+        ${itemsRows(items, ratio, showPayableCol)}
       </tbody>
     </table>
     ${
       showPayableCol
-        ? `<div class="discount-note">Amount payable = ${netPct}% of MRP (discount ${discountPct.toFixed(
+        ? `<div class="discount-note">Amount payable = ${netPct}% of ${escapeHtml(listPriceWord)} (discount ${discountPct.toFixed(
             Number.isInteger(discountPct) ? 0 : 2,
           )}%).</div>`
         : ''
@@ -195,7 +202,7 @@ export function renderAccountingInvoiceHtml(
       <table>
         ${
           showPayableCol
-            ? `<tr><td>MRP Total</td><td class="r">${formatINR(grossSubtotal)}</td></tr>
+            ? `<tr><td>${escapeHtml(rateColumnLabel)} Total</td><td class="r">${formatINR(grossSubtotal)}</td></tr>
         <tr><td>Discount (${discountPct.toFixed(
           Number.isInteger(discountPct) ? 0 : 2,
         )}%)</td><td class="r">− ${formatINR(discountAmt)}</td></tr>`
@@ -212,7 +219,7 @@ export function renderAccountingInvoiceHtml(
         <tr class="grand"><td>${showPayableCol ? 'Amount Payable' : 'Grand Total'}</td><td class="r">${formatINR(invoice.grandTotal)}</td></tr>
         ${
           showPayableCol
-            ? `<tr><td style="color:#888;font-size:11px">MRP Grand Total</td><td class="r" style="color:#888;font-size:11px">${formatINR(grossGrandTotal)}</td></tr>`
+            ? `<tr><td style="color:#888;font-size:11px">${escapeHtml(rateColumnLabel)} Grand Total</td><td class="r" style="color:#888;font-size:11px">${formatINR(grossGrandTotal)}</td></tr>`
             : ''
         }
       </table>

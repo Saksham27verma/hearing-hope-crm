@@ -19,6 +19,8 @@ export type AccountingClient = {
   updatedAt?: Timestamp | Date;
 };
 
+export type AccountingInvoiceItemKind = 'hearing_aid' | 'test' | 'ent' | 'custom';
+
 export type AccountingInvoiceItem = {
   id: string;
   description: string;
@@ -31,6 +33,9 @@ export type AccountingInvoiceItem = {
   serialNumber?: string;
   /** True when this line should collect / display a serial number. */
   hasSerialNumber?: boolean;
+  /** Catalog kind — drives MRP vs Rate labeling on invoices. */
+  kind?: AccountingInvoiceItemKind;
+  catalogKey?: string;
 };
 
 export type AccountingInvoiceStatus =
