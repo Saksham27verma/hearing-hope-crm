@@ -47,14 +47,13 @@ import InvoiceEditor from '@/components/accounting/InvoiceEditor';
 import type {
   AccountingClient,
   AccountingInvoice,
-  AccountingInvoiceItem,
   AccountingInvoiceStatus,
 } from '@/lib/accounting/types';
 import {
   fetchAccountingCompanyProfile,
   type AccountingCompanyProfile,
 } from '@/lib/accounting/companyProfile';
-import { formatINR } from '@/lib/accounting/computations';
+import { formatINR, enrichAccountingInvoiceItems } from '@/lib/accounting/computations';
 import {
   buildWhatsAppShareUrl,
   openInvoiceHtmlInNewTab,
@@ -120,7 +119,11 @@ export default function AccountingInvoiceDetailPage() {
         return;
       }
       const data = { id: snap.id, ...(snap.data() as Omit<AccountingInvoice, 'id'>) };
-      setInvoice(data);
+      const enriched = {
+        ...data,
+        items: enrichAccountingInvoiceItems(data.items),
+      };
+      setInvoice(enriched);
       const wantEdit = searchParams?.get('edit') === '1';
       setEditing((prev) => {
         if (data.status === 'cancelled') return false;
@@ -161,6 +164,7 @@ export default function AccountingInvoiceDetailPage() {
   const canEdit = !!invoice && invoice.status !== 'cancelled';
   const html = useMemo(() => {
     if (!invoice) return '';
+    // Normalize so older invoices (missing kind / gross fields) still print MRP + Amount Payable.
     if (customTemplate) {
       const ctx = buildInvoiceTemplateContext(invoice, companyProfile);
       return applyInvoiceTemplate(customTemplate, ctx);
@@ -182,16 +186,11 @@ export default function AccountingInvoiceDetailPage() {
 
   const handleSave = async () => {
     if (!invoice?.id) return;
-    const missingSerial = (invoice.items || []).some((it) => {
-      const enriched = it as AccountingInvoiceItem & {
-        kind?: string;
-        catalogKey?: string;
-      };
+    const missingSerial = enrichAccountingInvoiceItems(invoice.items || []).some((it) => {
       const needs =
-        enriched.kind === 'hearing_aid' ||
+        it.kind === 'hearing_aid' ||
         it.hasSerialNumber === true ||
-        (typeof enriched.catalogKey === 'string' &&
-          enriched.catalogKey.startsWith('product:'));
+        (typeof it.catalogKey === 'string' && it.catalogKey.startsWith('product:'));
       return needs && !String(it.serialNumber || '').trim();
     });
     if (missingSerial) {
@@ -206,8 +205,10 @@ export default function AccountingInvoiceDetailPage() {
       const { id, createdAt, ...rest } = invoice;
       void id;
       void createdAt;
+      const enrichedItems = enrichAccountingInvoiceItems(invoice.items);
       const payload = stripUndefined({
         ...rest,
+        items: enrichedItems,
         amountPaid: Number(invoice.amountPaid || 0),
         tdsDeducted: Number(invoice.tdsDeducted || 0),
         netPayablePercent: Number(invoice.netPayablePercent || 100),

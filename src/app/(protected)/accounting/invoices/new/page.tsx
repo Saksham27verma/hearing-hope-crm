@@ -28,8 +28,8 @@ import InvoiceEditor from '@/components/accounting/InvoiceEditor';
 import type {
   AccountingClient,
   AccountingInvoice,
-  AccountingInvoiceItem,
 } from '@/lib/accounting/types';
+import { enrichAccountingInvoiceItems } from '@/lib/accounting/computations';
 import {
   fetchAccountingCompanyProfile,
   type AccountingCompanyProfile,
@@ -169,16 +169,11 @@ export default function NewAccountingInvoicePage() {
 
   const missingSerialItems = useMemo(() => {
     if (!invoice?.items?.length) return [];
-    return invoice.items.filter((it) => {
-      const enriched = it as AccountingInvoiceItem & {
-        kind?: string;
-        catalogKey?: string;
-      };
+    return enrichAccountingInvoiceItems(invoice.items).filter((it) => {
       const needs =
-        enriched.kind === 'hearing_aid' ||
+        it.kind === 'hearing_aid' ||
         it.hasSerialNumber === true ||
-        (typeof enriched.catalogKey === 'string' &&
-          enriched.catalogKey.startsWith('product:'));
+        (typeof it.catalogKey === 'string' && it.catalogKey.startsWith('product:'));
       return needs && !String(it.serialNumber || '').trim();
     });
   }, [invoice]);
@@ -205,6 +200,7 @@ export default function NewAccountingInvoicePage() {
       }
       const payload = stripUndefined({
         ...invoice,
+        items: enrichAccountingInvoiceItems(invoice.items),
         invoiceNumber: finalNumber,
         status: asStatus,
         amountPaid: Number(invoice.amountPaid || 0),

@@ -3,7 +3,7 @@ import type {
   AccountingInvoiceItem,
 } from '@/lib/accounting/types';
 import type { AccountingCompanyProfile } from '@/lib/accounting/companyProfile';
-import { amountInWords, formatINR, rateColumnLabelForItems } from '@/lib/accounting/computations';
+import { amountInWords, formatINR, rateColumnLabelForItems, isHearingAidInvoiceItem, normalizeAccountingInvoiceForDisplay } from '@/lib/accounting/computations';
 
 const escapeHtml = (s: string | undefined | null): string =>
   String(s || '')
@@ -47,6 +47,8 @@ function splitDescription(desc: string): { title: string; detail: string } {
 
 function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): string {
   const showPayable = ratio < 1;
+  const netPct = Math.round(ratio * 10000) / 100;
+  const discountPct = Math.round((100 - netPct) * 100) / 100;
   return items
     .map((it, i) => {
       const qty = Number(it.quantity || 0);
@@ -54,6 +56,8 @@ function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): stri
       const listAmount = qty * unit;
       const payableAmount = listAmount * ratio;
       const serial = String(it.serialNumber || '').trim();
+      const isHa = isHearingAidInvoiceItem(it);
+      const unitLabel = isHa ? 'MRP' : 'Rate';
       return `
       <tr>
         <td style="text-align:center;padding:10px 8px;vertical-align:top">${i + 1}</td>
@@ -67,7 +71,10 @@ function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): stri
         </td>
         <td style="text-align:center;padding:10px 8px;vertical-align:top">${escapeHtml(it.hsnSac || '')}</td>
         <td style="text-align:right;padding:10px 8px;vertical-align:top">${qty}</td>
-        <td style="text-align:right;padding:10px 8px;vertical-align:top">${rupee(unit)}</td>
+        <td style="text-align:right;padding:10px 8px;vertical-align:top">
+          <div style="font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:2px;line-height:1.3;">${unitLabel}</div>
+          <div style="line-height:1.4;">${rupee(unit)}</div>
+        </td>
         <td style="text-align:right;padding:10px 8px;vertical-align:top">${Number(it.gstPercent || 0)}%</td>
         ${
           showPayable
@@ -75,6 +82,7 @@ function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): stri
           <div style="line-height:1.5">
             <div style="color:#888;text-decoration:line-through;font-size:11px;line-height:1.5">${rupee(listAmount)}</div>
             <div style="font-weight:bold;line-height:1.5;margin-top:3px">${rupee(payableAmount)}</div>
+            <div style="font-size:9px;color:#666;margin-top:3px;line-height:1.3;font-weight:normal">after ${discountPct}% discount<br/>(${netPct}% of ${unitLabel})</div>
           </div>
         </td>`
             : `<td style="text-align:right;padding:10px 8px;vertical-align:top">${rupee(listAmount)}</td>`
@@ -123,17 +131,20 @@ function buildItemsHopeEnterprisesHtml(
   items: AccountingInvoiceItem[],
   ratio: number = 1,
 ): string {
+  const netPct = Math.round(ratio * 10000) / 100;
+  const discountPct = Math.round((100 - netPct) * 100) / 100;
   return items
     .map((it, i) => {
       const { title, detail } = splitDescription(it.description);
       const unitPrice = Number(it.rate || 0);
       const qty = Number(it.quantity || 0);
       const listTotal = qty * unitPrice;
-      // GST and payable are on the discounted (bill %) amount
       const payableExGst = lineSubtotal(it, ratio);
       const gst = lineGst(it, ratio);
       const payable = linePayable(it, ratio);
       const serial = String(it.serialNumber || '').trim();
+      const isHa = isHearingAidInvoiceItem(it);
+      const unitLabel = isHa ? 'MRP' : 'Rate';
       const cellPad = 'border: 1px solid #e0e0e0; padding: 10px 8px;';
       return `
       <tr style="border-bottom: 1px solid #e0e0e0;">
@@ -148,7 +159,10 @@ function buildItemsHopeEnterprisesHtml(
           }
         </td>
         <td style="${cellPad} text-align: center; vertical-align: top;" valign="top">${escapeHtml(it.hsnSac || '')}</td>
-        <td style="${cellPad} text-align: right; vertical-align: top;" valign="top">${rupee(unitPrice)}</td>
+        <td style="${cellPad} text-align: right; vertical-align: top;" valign="top">
+          <div style="font-size:9px;color:#666;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:2px;line-height:1.3;">${unitLabel}</div>
+          <div style="line-height:1.4;">${rupee(unitPrice)}</div>
+        </td>
         <td style="${cellPad} text-align: center; vertical-align: top;" valign="top">${qty}</td>
         <td style="${cellPad} text-align: center; vertical-align: top;" valign="top">${Number(it.gstPercent || 0)}%</td>
         <td style="${cellPad} text-align: right; vertical-align: top;" valign="top">${rupee(gst)}</td>
@@ -162,7 +176,14 @@ function buildItemsHopeEnterprisesHtml(
               : `<b>${rupee(listTotal)}</b>`
           }
         </td>
-        <td style="${cellPad} text-align: right; font-weight: bold; vertical-align: top;" valign="top">${rupee(payable)}</td>
+        <td style="${cellPad} text-align: right; font-weight: bold; vertical-align: top;" valign="top">
+          <div style="line-height:1.4;">${rupee(payable)}</div>
+          ${
+            ratio < 1
+              ? `<div style="font-size:9px;font-weight:normal;color:#666;margin-top:3px;line-height:1.3;">after ${discountPct}% discount<br/>(${netPct}% of ${unitLabel})</div>`
+              : ''
+          }
+        </td>
       </tr>`;
     })
     .join('');
@@ -174,7 +195,8 @@ export function buildInvoiceTemplateContext(
   invoice: AccountingInvoice,
   company: AccountingCompanyProfile | null,
 ): InvoiceTemplateContext {
-  const client = invoice.clientSnapshot || { name: '' };
+  const normalized = normalizeAccountingInvoiceForDisplay(invoice);
+  const client = normalized.clientSnapshot || { name: '' };
   const clientAddress = [
     client.address,
     [client.city, client.state, client.pincode].filter(Boolean).join(', '),
@@ -194,19 +216,26 @@ export function buildInvoiceTemplateContext(
     company?.branch && `Branch: ${company.branch}`,
   ].filter(Boolean) as string[];
 
-  const netPctRaw = Number((invoice as any).netPayablePercent);
+  const netPctRaw = Number(normalized.netPayablePercent);
   const netPct =
     Number.isFinite(netPctRaw) && netPctRaw > 0 ? Math.min(100, netPctRaw) : 100;
   const ratio = netPct / 100;
-  const items = invoice.items || [];
+  const discountPct = Math.round((100 - netPct) * 100) / 100;
+  const items = normalized.items || [];
   const rateColumnLabel = rateColumnLabelForItems(items);
-  const listPriceWord = rateColumnLabel.includes('MRP') && !rateColumnLabel.includes('Rate')
-    ? 'MRP'
-    : rateColumnLabel.includes('Rate') && !rateColumnLabel.includes('MRP')
-      ? 'listed rates'
-      : 'MRP / Rate';
+  const listPriceWord =
+    rateColumnLabel === 'MRP'
+      ? 'MRP'
+      : rateColumnLabel === 'Rate'
+        ? 'listed rates'
+        : 'MRP / Rate';
 
-  const balanceDue = Math.max(0, Number(invoice.grandTotal || 0) - Number(invoice.amountPaid || 0) - Number((invoice as any).tdsDeducted || 0));
+  const balanceDue = Math.max(
+    0,
+    Number(normalized.grandTotal || 0) -
+      Number(normalized.amountPaid || 0) -
+      Number(normalized.tdsDeducted || 0),
+  );
 
   const clientAddressComma = [
     client.address,
@@ -217,8 +246,17 @@ export function buildInvoiceTemplateContext(
     .filter(Boolean)
     .join(', ');
 
+  const amountPayableLabel =
+    netPct < 100
+      ? `Amount Payable (after ${discountPct}% discount)`
+      : 'Grand Total';
+  const amountPayableHeader =
+    netPct < 100
+      ? `Amount Payable<br/><span style="font-weight:normal;font-size:10px">(after ${discountPct}% discount)</span>`
+      : 'Amount Payable';
+
   return {
-    companyName: escapeHtml(company?.name || invoice.companyName),
+    companyName: escapeHtml(company?.name || normalized.companyName),
     companyAddress: nl2br(companyAddress),
     companyAddressPlain: escapeHtml(companyAddress),
     companyGSTIN: escapeHtml(company?.gstNumber || ''),
@@ -229,13 +267,13 @@ export function buildInvoiceTemplateContext(
     companyLogoUrl: '',
     signatureImageUrl: '',
 
-    invoiceNumber: escapeHtml(invoice.invoiceNumber),
-    invoiceDate: escapeHtml(invoice.invoiceDate),
-    invoiceMonth: escapeHtml(String(invoice.invoiceMonth || '').trim()),
-    dueDate: escapeHtml(invoice.dueDate || ''),
-    status: escapeHtml(String(invoice.status || 'draft').toUpperCase()),
+    invoiceNumber: escapeHtml(normalized.invoiceNumber),
+    invoiceDate: escapeHtml(normalized.invoiceDate),
+    invoiceMonth: escapeHtml(String(normalized.invoiceMonth || '').trim()),
+    dueDate: escapeHtml(normalized.dueDate || ''),
+    status: escapeHtml(String(normalized.status || 'draft').toUpperCase()),
     taxMode:
-      invoice.taxMode === 'inter' ? 'IGST (inter-state)' : 'CGST + SGST (intra-state)',
+      normalized.taxMode === 'inter' ? 'IGST (inter-state)' : 'CGST + SGST (intra-state)',
 
     clientName: escapeHtml(client.name || ''),
     clientAddress: nl2br(clientAddress),
@@ -245,30 +283,31 @@ export function buildInvoiceTemplateContext(
     clientPhone: escapeHtml(client.phone || ''),
     clientEmail: escapeHtml(client.email || ''),
 
-    subtotal: rupee(invoice.subtotal),
-    cgst: rupee(invoice.cgst),
-    sgst: rupee(invoice.sgst),
-    igst: rupee(invoice.igst),
-    totalGst: rupee(invoice.totalGst),
-    roundOff: rupee(invoice.roundOff),
-    grandTotal: rupee(invoice.grandTotal),
-    grossSubtotal: rupee(Number((invoice as any).grossSubtotal || invoice.subtotal || 0)),
-    grossGrandTotal: rupee(Number((invoice as any).grossGrandTotal || invoice.grandTotal || 0)),
-    netPayablePercent:
-      Number((invoice as any).netPayablePercent || 100) < 100
-        ? String(Number((invoice as any).netPayablePercent))
-        : '',
+    subtotal: rupee(normalized.subtotal),
+    cgst: rupee(normalized.cgst),
+    sgst: rupee(normalized.sgst),
+    igst: rupee(normalized.igst),
+    totalGst: rupee(normalized.totalGst),
+    roundOff: rupee(normalized.roundOff),
+    grandTotal: rupee(normalized.grandTotal),
+    grossSubtotal: rupee(Number(normalized.grossSubtotal || normalized.subtotal || 0)),
+    grossGrandTotal: rupee(
+      Number(normalized.grossGrandTotal || normalized.grandTotal || 0),
+    ),
+    netPayablePercent: netPct < 100 ? String(netPct) : '',
     netPayableReduction:
-      Number((invoice as any).netPayablePercent || 100) < 100
+      netPct < 100
         ? rupee(
-            Number((invoice as any).grossGrandTotal || 0) - Number(invoice.grandTotal || 0),
+            Number(normalized.grossGrandTotal || 0) - Number(normalized.grandTotal || 0),
           )
         : '',
-    amountPaid: rupee(invoice.amountPaid),
-    tdsDeducted: rupee(Number((invoice as any).tdsDeducted || 0)),
-    settledAmount: rupee(Number(invoice.amountPaid || 0) + Number((invoice as any).tdsDeducted || 0)),
+    amountPaid: rupee(normalized.amountPaid),
+    tdsDeducted: rupee(Number(normalized.tdsDeducted || 0)),
+    settledAmount: rupee(
+      Number(normalized.amountPaid || 0) + Number(normalized.tdsDeducted || 0),
+    ),
     balanceDue: rupee(balanceDue),
-    grandTotalWords: escapeHtml(amountInWords(invoice.grandTotal)),
+    grandTotalWords: escapeHtml(amountInWords(normalized.grandTotal)),
 
     itemsHtml: buildItemsHtml(items, ratio),
     itemsPlainHtml: buildItemsPlainRows(items, ratio),
@@ -276,26 +315,19 @@ export function buildInvoiceTemplateContext(
 
     partBillingNote:
       netPct < 100
-        ? `Amount payable = ${netPct}% of ${listPriceWord} (discount ${(100 - netPct).toFixed(
-            Number.isInteger(100 - netPct) ? 0 : 2,
-          )}%).`
+        ? `Amount payable = ${netPct}% of ${listPriceWord} after ${discountPct}% discount.`
         : '',
 
-    // Extra placeholders for custom templates that want explicit MRP vs payable labels
     mrpLabel: rateColumnLabel,
     rateColumnLabel,
-    amountPayableLabel: netPct < 100 ? 'Amount Payable' : 'Grand Total',
+    amountPayableLabel,
+    amountPayableHeader,
     taxableLabel: netPct < 100 ? 'Taxable (payable)' : 'Subtotal',
-    discountPercent:
-      netPct < 100
-        ? String(
-            Number((100 - netPct).toFixed(Number.isInteger(100 - netPct) ? 0 : 2)),
-          )
-        : '',
+    discountPercent: netPct < 100 ? String(discountPct) : '',
     discountAmount:
       netPct < 100
         ? rupee(
-            Number((invoice as any).grossSubtotal || 0) - Number(invoice.subtotal || 0),
+            Number(normalized.grossSubtotal || 0) - Number(normalized.subtotal || 0),
           )
         : '',
     itemsTableHeadersHtml:
@@ -306,7 +338,7 @@ export function buildInvoiceTemplateContext(
           <th style="width:50px;text-align:right">Qty</th>
           <th style="width:90px;text-align:right">${escapeHtml(rateColumnLabel)}</th>
           <th style="width:60px;text-align:right">GST</th>
-          <th style="width:120px;text-align:right">Amount Payable</th>`
+          <th style="width:130px;text-align:right">Amount Payable<br/><span style="font-weight:normal;font-size:9px">(after discount)</span></th>`
         : `<th style="width:32px;text-align:center">#</th>
           <th>Description</th>
           <th style="width:80px;text-align:center">HSN/SAC</th>
@@ -315,14 +347,54 @@ export function buildInvoiceTemplateContext(
           <th style="width:70px;text-align:right">GST</th>
           <th style="width:110px;text-align:right">Amount</th>`,
 
-    notes: nl2br(invoice.notes || ''),
-    terms: nl2br(invoice.terms || ''),
+    notes: nl2br(normalized.notes || ''),
+    terms: nl2br(normalized.terms || ''),
   };
+}
+
+/**
+ * Rewrite older saved company templates that hard-coded "Rate" / "Grand Total"
+ * so MRP + Amount Payable (after discount) apply to historical invoices too.
+ */
+export function normalizeLegacyInvoiceTemplateHtml(template: string): string {
+  let t = template;
+  // Unit-price column headers saved before dynamic labeling
+  t = t.replace(
+    />\s*Rate\s*</gi,
+    '>{{rateColumnLabel}}<',
+  );
+  t = t.replace(
+    />\s*MRP\s*</gi,
+    '>{{rateColumnLabel}}<',
+  );
+  t = t.replace(
+    />\s*Total Amount Payable\s*</gi,
+    '>{{amountPayableHeader}}<',
+  );
+  t = t.replace(
+    />\s*Amount Payable\s*</gi,
+    '>{{amountPayableHeader}}<',
+  );
+  // Totals footer labels
+  t = t.replace(
+    /(<b[^>]*>)\s*Grand Total\s*(:<\/b>)/gi,
+    '$1{{amountPayableLabel}}$2',
+  );
+  t = t.replace(
+    />\s*Grand Total\s*:?\s*</gi,
+    '>{{amountPayableLabel}}:<',
+  );
+  t = t.replace(
+    />\s*MRP Total\s*:?\s*</gi,
+    '>{{rateColumnLabel}} Total:<',
+  );
+  return t;
 }
 
 /** Simple {{key}} + {{#if key}}...{{/if}} substitution. */
 export function applyInvoiceTemplate(template: string, ctx: InvoiceTemplateContext): string {
-  const conditional = template.replace(
+  const normalizedTemplate = normalizeLegacyInvoiceTemplateHtml(template);
+  const conditional = normalizedTemplate.replace(
     /\{\{#if\s+(\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
     (_m, key: string, block: string) => {
       const v = ctx[key];
@@ -385,11 +457,12 @@ export const TEMPLATE_PLACEHOLDERS: {
   { key: 'itemsPlainHtml', desc: 'Unstyled <tr> rows if you\u2019re providing your own CSS' },
   { key: 'itemsTableHeadersHtml', desc: 'Header <th> cells matching itemsHtml columns (MRP / Amount Payable when discounted)' },
   { key: 'partBillingNote', desc: 'Note when bill % of MRP is less than 100% (empty when 100%)' },
-  { key: 'amountPayableLabel', desc: '"Amount Payable" when discounted, otherwise "Grand Total"' },
+  { key: 'amountPayableLabel', desc: '"Amount Payable (after X% discount)" when discounted, otherwise "Grand Total"' },
+  { key: 'amountPayableHeader', desc: 'HTML header for Amount Payable column (includes after-discount note when applicable)' },
   { key: 'taxableLabel', desc: '"Taxable (payable)" when discounted, otherwise "Subtotal"' },
-  { key: 'discountPercent', desc: 'Discount % off MRP (empty when 100% bill)' },
-  { key: 'discountAmount', desc: 'Discount amount off MRP subtotal (empty when 100% bill)' },
-  { key: 'mrpLabel', desc: 'Alias of rateColumnLabel (MRP / Rate / MRP / Rate)' },
+  { key: 'discountPercent', desc: 'Discount % off list price (empty when 100% bill)' },
+  { key: 'discountAmount', desc: 'Discount amount off list subtotal (empty when 100% bill)' },
+  { key: 'mrpLabel', desc: 'Alias of rateColumnLabel' },
   { key: 'rateColumnLabel', desc: 'Unit price column header: MRP for hearing aids, Rate for tests/custom, or MRP / Rate when mixed' },
   { key: 'companyLogoUrl', desc: 'Logo image URL (set in template HTML if needed)' },
   { key: 'signatureImageUrl', desc: 'Signature image URL (set in template HTML if needed)' },
@@ -580,7 +653,7 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 7%; text-align: center; padding: 10px 8px;">GST (%)</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 10%; text-align: right; padding: 10px 8px;">GST Amt</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 12%; text-align: right; padding: 10px 8px;">Total Amount</th>
-        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 14%; text-align: right; padding: 10px 8px;">Amount Payable</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 14%; text-align: right; padding: 10px 8px;">{{amountPayableHeader}}</th>
       </tr>
     </thead>
     <tbody>

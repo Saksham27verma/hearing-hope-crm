@@ -8,20 +8,84 @@ export function roundTo2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
-/** Hearing-aid lines use MRP; tests / ENT / custom use Rate. */
+const HEARING_AID_DESC_RE =
+  /\bhearing\s*aids?\b|\bric\b|\bbte\b|\bcic\b|\biic\b|\bitc\b|\brechargeable\b|\bphonak\b|\bwidex\b|\bsignia\b|\boticon\b|\bresound\b|\bstarkey\b|\bunitron\b|\bbernafon\b/i;
+
+/** Infer hearing-aid lines even on older invoices that lack `kind` / catalogKey. */
 export function isHearingAidInvoiceItem(it: AccountingInvoiceItem): boolean {
   if (it.kind === 'hearing_aid') return true;
   if (it.kind && it.kind !== 'hearing_aid') return false;
   if (typeof it.catalogKey === 'string' && it.catalogKey.startsWith('product:')) return true;
-  return it.hasSerialNumber === true;
+  if (it.hasSerialNumber === true) return true;
+  if (String(it.serialNumber || '').trim()) return true;
+
+  const meta = (it as AccountingInvoiceItem & {
+    meta?: { company?: string; productType?: string };
+  }).meta;
+  if (meta?.company || meta?.productType) return true;
+
+  const desc = String(it.description || '');
+  if (HEARING_AID_DESC_RE.test(desc)) return true;
+  // Catalog hearing aids are saved as "Name\nCompany · Type"
+  if (desc.includes('\n') && desc.includes('·')) return true;
+
+  return false;
+}
+
+/** Enrich legacy line items so print/edit treat them like newly created ones. */
+export function enrichAccountingInvoiceItems(
+  items: AccountingInvoiceItem[] | undefined | null,
+): AccountingInvoiceItem[] {
+  return (items || []).map((it) => {
+    if (it.kind) return it;
+    if (isHearingAidInvoiceItem(it)) {
+      return {
+        ...it,
+        kind: 'hearing_aid',
+        hasSerialNumber: it.hasSerialNumber ?? true,
+      };
+    }
+    if (typeof it.catalogKey === 'string') {
+      if (it.catalogKey.startsWith('test:')) return { ...it, kind: 'test' };
+      if (it.catalogKey.startsWith('ent:')) return { ...it, kind: 'ent' };
+      if (it.catalogKey.startsWith('custom:')) return { ...it, kind: 'custom' };
+    }
+    return { ...it, kind: it.kind || 'custom' };
+  });
+}
+
+/** Backfill gross totals / kinds so older invoices print with MRP + Amount Payable correctly. */
+export function normalizeAccountingInvoiceForDisplay(
+  invoice: AccountingInvoice,
+): AccountingInvoice {
+  const items = enrichAccountingInvoiceItems(invoice.items);
+  const netPctRaw = Number(invoice.netPayablePercent);
+  const netPct =
+    Number.isFinite(netPctRaw) && netPctRaw > 0 ? Math.min(100, netPctRaw) : 100;
+  const taxMode = invoice.taxMode === 'inter' ? 'inter' : 'intra';
+  const totals = computeInvoiceTotals(items, taxMode, netPct);
+  return {
+    ...invoice,
+    items,
+    netPayablePercent: netPct,
+    grossSubtotal:
+      invoice.grossSubtotal != null && Number(invoice.grossSubtotal) > 0
+        ? Number(invoice.grossSubtotal)
+        : totals.grossSubtotal,
+    grossGrandTotal:
+      invoice.grossGrandTotal != null && Number(invoice.grossGrandTotal) > 0
+        ? Number(invoice.grossGrandTotal)
+        : totals.grossGrandTotal,
+  };
 }
 
 /** Column header for the unit price: MRP, Rate, or MRP / Rate when mixed. */
 export function rateColumnLabelForItems(items: AccountingInvoiceItem[]): string {
-  if (!items.length) return 'Rate';
+  const enriched = enrichAccountingInvoiceItems(items);
+  if (!enriched.length) return 'Rate';
   let hasHa = false;
   let hasOther = false;
-  for (const it of items) {
+  for (const it of enriched) {
     if (isHearingAidInvoiceItem(it)) hasHa = true;
     else hasOther = true;
   }
