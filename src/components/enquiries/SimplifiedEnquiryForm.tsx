@@ -11,6 +11,11 @@ import { isGenericLoginDisplayName } from '@/utils/enquiryTelecallerOptions';
 import { fetchStaffRecordsWithServerFallback } from '@/utils/fetchStaffForEnquiryForms';
 import { useAuth } from '@/context/AuthContext';
 import { appointmentBlocksPipeline } from '@/lib/visitCompliance/helpers';
+import {
+  CRM_VISIT_COMPLIANCE_LOCK_COLLECTION,
+  CRM_VISIT_COMPLIANCE_LOCK_DOC_ID,
+  parseVisitComplianceLockEnabled,
+} from '@/lib/crmSettings/visitComplianceLock';
 import type { AppointmentComplianceFields } from '@/lib/visitCompliance/types';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
 import JourneyConfirmDialog, { type JourneySelectValue } from './JourneyConfirmDialog';
@@ -2882,6 +2887,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     let cancelled = false;
     void (async () => {
       try {
+        const lockSnap = await getDoc(
+          doc(db, CRM_VISIT_COMPLIANCE_LOCK_COLLECTION, CRM_VISIT_COMPLIANCE_LOCK_DOC_ID)
+        );
+        if (cancelled) return;
+        // Settings → Home visit checkout lock (default OFF = unlocked for training)
+        if (!parseVisitComplianceLockEnabled(lockSnap.data())) {
+          setBlockingHomeAppointments([]);
+          return;
+        }
         const snap = await getDocs(
           query(collection(db, 'appointments'), where('enquiryId', '==', enquiry.id))
         );

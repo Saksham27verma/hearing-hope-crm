@@ -24,6 +24,7 @@ import {
   isComplianceFullyComplete,
   isHomeVisitAppointment,
 } from '@/lib/visitCompliance/helpers';
+import { isVisitCompliancePipelineLockEnabled } from '@/server/visitComplianceLock';
 
 /** HTML→PDF (Puppeteer) can exceed default limits on Vercel. */
 export const maxDuration = 60;
@@ -454,10 +455,14 @@ export async function POST(req: Request) {
     }
 
     const isHome = isHomeVisitAppointment(appt);
+    const checkoutLockEnabled = await isVisitCompliancePipelineLockEnabled();
 
     if (isHome) {
-      // Booking / trial / sale only after end-of-visit compliance is finished
-      if (!isComplianceFullyComplete(appt as Parameters<typeof isComplianceFullyComplete>[0])) {
+      // When Settings → Home visit checkout lock is ON, require completed checkout first
+      if (
+        checkoutLockEnabled &&
+        !isComplianceFullyComplete(appt as Parameters<typeof isComplianceFullyComplete>[0])
+      ) {
         return jsonError(
           'Complete the home visit checkout (PIN, GPS, checklist) before sending booking, trial, or sale to admin',
           400

@@ -2,6 +2,7 @@ import { pinnacleConfig, postToPinnacle } from '@/server/invoices/pinnacleSend';
 import { normalizePhoneForWhatsApp } from '@/server/invoices/whatsappInvoiceRecord';
 
 const TEMPLATE_ENV_MAP: Record<string, string> = {
+  service_6mo: 'PINNACLE_LIFECYCLE_TEMPLATE_SERVICE_6MO',
   service_1yr: 'PINNACLE_LIFECYCLE_TEMPLATE_SERVICE',
   upgrade_2yr: 'PINNACLE_LIFECYCLE_TEMPLATE_UPGRADE',
   general_followup: 'PINNACLE_LIFECYCLE_TEMPLATE_GENERAL',
@@ -13,6 +14,11 @@ export function resolveLifecycleTemplateName(templateKey: string): string {
   if (envName) {
     const v = (process.env[envName] || '').trim();
     if (v) return v;
+  }
+  // 6-month can reuse the approved service template until a dedicated one is configured
+  if (key === 'service_6mo') {
+    const fallback = (process.env.PINNACLE_LIFECYCLE_TEMPLATE_SERVICE || '').trim();
+    if (fallback) return fallback;
   }
   return key;
 }

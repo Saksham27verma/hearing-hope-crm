@@ -7,6 +7,7 @@ import FieldOptionsSettings from '@/components/settings/FieldOptionsSettings';
 import StaffPaymentNotifySettings from '@/components/settings/StaffPaymentNotifySettings';
 import DueCallsNotifySettings from '@/components/settings/DueCallsNotifySettings';
 import SaleMilestoneNotifySettings from '@/components/settings/SaleMilestoneNotifySettings';
+import VisitComplianceLockSettings from '@/components/settings/VisitComplianceLockSettings';
 
 export default function SettingsPage() {
   return (
@@ -22,6 +23,7 @@ export default function SettingsPage() {
           Configure enquiry dropdowns (reference, visit status, payments, filters, and more). Invoice fields still use the
           same Firestore collection but are managed from code for now — this page is Enquiries-only.
         </Typography>
+        <VisitComplianceLockSettings />
         <DueCallsNotifySettings />
         <SaleMilestoneNotifySettings />
         <StaffPaymentNotifySettings />
