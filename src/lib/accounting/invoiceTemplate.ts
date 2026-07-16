@@ -47,8 +47,6 @@ function splitDescription(desc: string): { title: string; detail: string } {
 
 function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): string {
   const showPayable = ratio < 1;
-  const netPct = Math.round(ratio * 10000) / 100;
-  const discountPct = Math.round((100 - netPct) * 100) / 100;
   return items
     .map((it, i) => {
       const qty = Number(it.quantity || 0);
@@ -78,13 +76,8 @@ function buildItemsHtml(items: AccountingInvoiceItem[], ratio: number = 1): stri
         <td style="text-align:right;padding:10px 8px;vertical-align:top">${Number(it.gstPercent || 0)}%</td>
         ${
           showPayable
-            ? `<td style="text-align:right;padding:10px 8px;vertical-align:middle">
-          <div style="line-height:1.5">
-            <div style="color:#888;text-decoration:line-through;font-size:11px;line-height:1.5">${rupee(listAmount)}</div>
-            <div style="font-weight:bold;line-height:1.5;margin-top:3px">${rupee(payableAmount)}</div>
-            <div style="font-size:9px;color:#666;margin-top:3px;line-height:1.3;font-weight:normal">after ${discountPct}% discount<br/>(${netPct}% of ${unitLabel})</div>
-          </div>
-        </td>`
+            ? `<td style="text-align:right;padding:10px 8px;vertical-align:top;color:#666">${rupee(listAmount)}</td>
+        <td style="text-align:right;padding:10px 8px;vertical-align:top;font-weight:bold">${rupee(payableAmount)}</td>`
             : `<td style="text-align:right;padding:10px 8px;vertical-align:top">${rupee(listAmount)}</td>`
         }
       </tr>`;
@@ -131,15 +124,12 @@ function buildItemsHopeEnterprisesHtml(
   items: AccountingInvoiceItem[],
   ratio: number = 1,
 ): string {
-  const netPct = Math.round(ratio * 10000) / 100;
-  const discountPct = Math.round((100 - netPct) * 100) / 100;
   return items
     .map((it, i) => {
       const { title, detail } = splitDescription(it.description);
       const unitPrice = Number(it.rate || 0);
       const qty = Number(it.quantity || 0);
       const listTotal = qty * unitPrice;
-      const payableExGst = lineSubtotal(it, ratio);
       const gst = lineGst(it, ratio);
       const payable = linePayable(it, ratio);
       const serial = String(it.serialNumber || '').trim();
@@ -166,24 +156,10 @@ function buildItemsHopeEnterprisesHtml(
         <td style="${cellPad} text-align: center; vertical-align: top;" valign="top">${qty}</td>
         <td style="${cellPad} text-align: center; vertical-align: top;" valign="top">${Number(it.gstPercent || 0)}%</td>
         <td style="${cellPad} text-align: right; vertical-align: top;" valign="top">${rupee(gst)}</td>
-        <td style="${cellPad} text-align: right; vertical-align: middle;" valign="middle">
-          ${
-            ratio < 1
-              ? `<div style="display:inline-block;text-align:right;line-height:1.5;padding:2px 0;">
-            <div style="color:#888;text-decoration:line-through;font-size:11px;line-height:1.5;">${rupee(listTotal)}</div>
-            <div style="font-weight:bold;line-height:1.5;margin-top:3px;">${rupee(payableExGst)}</div>
-          </div>`
-              : `<b>${rupee(listTotal)}</b>`
-          }
+        <td style="${cellPad} text-align: right; vertical-align: top;" valign="top">
+          ${ratio < 1 ? `<span style="color:#666">${rupee(listTotal)}</span>` : `<b>${rupee(listTotal)}</b>`}
         </td>
-        <td style="${cellPad} text-align: right; font-weight: bold; vertical-align: top;" valign="top">
-          <div style="line-height:1.4;">${rupee(payable)}</div>
-          ${
-            ratio < 1
-              ? `<div style="font-size:9px;font-weight:normal;color:#666;margin-top:3px;line-height:1.3;">after ${discountPct}% discount<br/>(${netPct}% of ${unitLabel})</div>`
-              : ''
-          }
-        </td>
+        <td style="${cellPad} text-align: right; font-weight: bold; vertical-align: top;" valign="top">${rupee(payable)}</td>
       </tr>`;
     })
     .join('');
@@ -223,12 +199,6 @@ export function buildInvoiceTemplateContext(
   const discountPct = Math.round((100 - netPct) * 100) / 100;
   const items = normalized.items || [];
   const rateColumnLabel = rateColumnLabelForItems(items);
-  const listPriceWord =
-    rateColumnLabel === 'MRP'
-      ? 'MRP'
-      : rateColumnLabel === 'Rate'
-        ? 'listed rates'
-        : 'MRP / Rate';
 
   const balanceDue = Math.max(
     0,
@@ -246,14 +216,8 @@ export function buildInvoiceTemplateContext(
     .filter(Boolean)
     .join(', ');
 
-  const amountPayableLabel =
-    netPct < 100
-      ? `Amount Payable (after ${discountPct}% discount)`
-      : 'Grand Total';
-  const amountPayableHeader =
-    netPct < 100
-      ? `Amount Payable<br/><span style="font-weight:normal;font-size:10px">(after ${discountPct}% discount)</span>`
-      : 'Amount Payable';
+  const amountPayableLabel = netPct < 100 ? 'Amount Payable' : 'Grand Total';
+  const amountPayableHeader = 'Amount Payable';
 
   return {
     companyName: escapeHtml(company?.name || normalized.companyName),
@@ -313,10 +277,7 @@ export function buildInvoiceTemplateContext(
     itemsPlainHtml: buildItemsPlainRows(items, ratio),
     itemsHopeEnterprisesHtml: buildItemsHopeEnterprisesHtml(items, ratio),
 
-    partBillingNote:
-      netPct < 100
-        ? `Amount payable = ${netPct}% of ${listPriceWord} after ${discountPct}% discount.`
-        : '',
+    partBillingNote: '',
 
     mrpLabel: rateColumnLabel,
     rateColumnLabel,
@@ -338,7 +299,8 @@ export function buildInvoiceTemplateContext(
           <th style="width:50px;text-align:right">Qty</th>
           <th style="width:90px;text-align:right">${escapeHtml(rateColumnLabel)}</th>
           <th style="width:60px;text-align:right">GST</th>
-          <th style="width:130px;text-align:right">Amount Payable<br/><span style="font-weight:normal;font-size:9px">(after discount)</span></th>`
+          <th style="width:100px;text-align:right">${escapeHtml(rateColumnLabel)} Amount</th>
+          <th style="width:110px;text-align:right">Amount Payable</th>`
         : `<th style="width:32px;text-align:center">#</th>
           <th>Description</th>
           <th style="width:80px;text-align:center">HSN/SAC</th>
@@ -652,8 +614,8 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 6%; text-align: center; padding: 10px 8px;">Qty</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 7%; text-align: center; padding: 10px 8px;">GST (%)</th>
         <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 10%; text-align: right; padding: 10px 8px;">GST Amt</th>
-        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 12%; text-align: right; padding: 10px 8px;">Total Amount</th>
-        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 14%; text-align: right; padding: 10px 8px;">{{amountPayableHeader}}</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 12%; text-align: right; padding: 10px 8px;">{{rateColumnLabel}} Amount</th>
+        <th style="border: 1px solid #e0e0e0; font-weight: bold; width: 14%; text-align: right; padding: 10px 8px;">Amount Payable</th>
       </tr>
     </thead>
     <tbody>
@@ -661,9 +623,9 @@ export function getHopeEnterprisesInvoiceTemplate(): string {
     </tbody>
   </table>
 
-  {{#if partBillingNote}}
-  <div style="font-size: 12px; color: #ef6c00; margin: -10px 0 15px; font-style: italic;">
-    Note: {{partBillingNote}}
+  {{#if discountAmount}}
+  <div style="font-size: 12px; color: #555; margin: -10px 0 15px;">
+    Discount {{#if discountPercent}}({{discountPercent}}%){{/if}} applied — see Amount Payable.
   </div>
   {{/if}}
 

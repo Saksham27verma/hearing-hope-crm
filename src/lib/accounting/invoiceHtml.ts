@@ -28,8 +28,6 @@ function itemsRows(
   ratio: number = 1,
   showPayableCol: boolean,
 ): string {
-  const netPct = Math.round(ratio * 10000) / 100;
-  const discountPct = Math.round((100 - netPct) * 100) / 100;
   return items
     .map((it, i) => {
       const qty = Number(it.quantity || 0);
@@ -59,11 +57,8 @@ function itemsRows(
       <td class="r">${Number(it.gstPercent || 0)}%</td>
       ${
         showPayableCol
-          ? `<td class="r dual-amt">
-          <div class="list-struck">${formatINR(listAmount).replace('₹', '')}</div>
-          <div class="payable"><b>${formatINR(payableAmount).replace('₹', '')}</b></div>
-          <div class="after-disc">after ${discountPct}% discount<br/>(${netPct}% of ${unitLabel})</div>
-        </td>`
+          ? `<td class="r muted-amt">${formatINR(listAmount).replace('₹', '')}</td>
+      <td class="r"><b>${formatINR(payableAmount).replace('₹', '')}</b></td>`
           : `<td class="r">${formatINR(listAmount).replace('₹', '')}</td>`
       }
     </tr>`;
@@ -98,20 +93,12 @@ export function renderAccountingInvoiceHtml(
   const discountPct = Math.round((100 - netPct) * 100) / 100;
   const items = normalized.items || [];
   const rateColumnLabel = rateColumnLabelForItems(items);
-  const listPriceWord =
-    rateColumnLabel === 'MRP'
-      ? 'MRP'
-      : rateColumnLabel === 'Rate'
-        ? 'listed rates'
-        : 'MRP / Rate';
   const grossSubtotal = Number(normalized.grossSubtotal ?? normalized.subtotal ?? 0);
   const grossGrandTotal = Number(
     normalized.grossGrandTotal ?? normalized.grandTotal ?? 0,
   );
   const discountAmt = Math.max(0, grossSubtotal - Number(normalized.subtotal || 0));
-  const amountPayableLabel = showPayableCol
-    ? `Amount Payable (after ${discountPct}% discount)`
-    : 'Grand Total';
+  const amountPayableLabel = showPayableCol ? 'Amount Payable' : 'Grand Total';
 
   return `<!doctype html>
 <html>
@@ -137,10 +124,7 @@ export function renderAccountingInvoiceHtml(
     table.items td.c, table.items th.c { text-align: center; }
     table.items td.r, table.items th.r { text-align: right; }
     table.items .unit-label { font-size: 9px; color: #666; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; line-height: 1.3; }
-    table.items td.dual-amt { vertical-align: middle; }
-    table.items td.dual-amt .list-struck { color: #888; text-decoration: line-through; font-size: 11px; line-height: 1.5; }
-    table.items td.dual-amt .payable { font-weight: bold; line-height: 1.5; margin-top: 3px; }
-    table.items td.dual-amt .after-disc { font-size: 9px; color: #666; margin-top: 3px; line-height: 1.3; font-weight: normal; }
+    table.items td.muted-amt { color: #666; }
     .totals { margin-top: 12px; display: flex; justify-content: flex-end; }
     .totals table { border-collapse: collapse; min-width: 340px; }
     .totals td { padding: 6px 12px; }
@@ -150,7 +134,6 @@ export function renderAccountingInvoiceHtml(
     .sign { text-align: right; padding-top: 40px; border-top: 1px solid #ccc; }
     .words { font-style: italic; color: #666; margin-top: 6px; }
     .bank { border-top: 1px solid #eee; padding-top: 8px; margin-top: 8px; color: #555; }
-    .discount-note { margin-top: 6px; font-size: 11px; font-style: italic; color: #ef6c00; }
     @media print { body { padding: 0; } .wrap { max-width: none; } }
   </style>
 </head>
@@ -201,22 +184,18 @@ export function renderAccountingInvoiceHtml(
           <th class="r" style="width:50px">Qty</th>
           <th class="r" style="width:100px">${escapeHtml(rateColumnLabel)} (₹)</th>
           <th class="r" style="width:60px">GST</th>
-          <th class="r" style="width:130px">${
+          ${
             showPayableCol
-              ? `Amount Payable<br/><span style="font-weight:normal;font-size:9px">(after ${discountPct}% discount)</span>`
-              : 'Amount (₹)'
-          }</th>
+              ? `<th class="r" style="width:100px">${escapeHtml(rateColumnLabel)} Amount</th>
+          <th class="r" style="width:110px">Amount Payable</th>`
+              : `<th class="r" style="width:110px">Amount (₹)</th>`
+          }
         </tr>
       </thead>
       <tbody>
         ${itemsRows(items, ratio, showPayableCol)}
       </tbody>
     </table>
-    ${
-      showPayableCol
-        ? `<div class="discount-note">Amount payable = ${netPct}% of ${escapeHtml(listPriceWord)} after ${discountPct}% discount.</div>`
-        : ''
-    }
 
     <div class="totals">
       <table>
