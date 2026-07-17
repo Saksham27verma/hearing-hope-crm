@@ -21,9 +21,10 @@ export async function POST(req: Request) {
   const phone = String(body.phone || '').trim();
   const customerName = String(body.customerName || '').trim();
   const templateKey = String(body.templateKey || 'service_1yr').trim();
+  // Templates are static (no Meta placeholders) — do not invent body params.
   const bodyParams = Array.isArray(body.bodyParams)
     ? body.bodyParams.map((x) => String(x))
-    : [customerName || 'Customer', 'Hearing Hope'];
+    : [];
 
   if (!externalSaleId || !phone) {
     return jsonError('externalSaleId and phone required', 400);

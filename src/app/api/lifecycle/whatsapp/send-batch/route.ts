@@ -59,8 +59,7 @@ export async function POST(req: Request) {
 
   for (let i = 0; i < recipients.length; i++) {
     const r = recipients[i];
-    const bodyParams =
-      r.bodyParams?.length > 0 ? r.bodyParams : [r.customerName || 'Customer', 'Hearing Hope'];
+    const bodyParams = Array.isArray(r.bodyParams) ? r.bodyParams.map((x) => String(x)) : [];
     const out = await sendLifecycleWhatsApp({
       phone: r.phone,
       templateKey,

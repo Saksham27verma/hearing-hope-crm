@@ -81,11 +81,39 @@ export async function postToPinnacle(body: Record<string, unknown>) {
     const detail = errObj ? JSON.stringify(errObj) : text || res.statusText;
     const detailStr = String(root?.message || detail);
 
+    // Prefer the template name from the request body when available
+    const requestedName =
+      typeof body.template === 'object' && body.template
+        ? String((body.template as Record<string, unknown>).name || '')
+        : '';
+    const requestedLang =
+      typeof body.template === 'object' &&
+      body.template &&
+      typeof (body.template as Record<string, unknown>).language === 'object'
+        ? String(
+            ((body.template as Record<string, unknown>).language as Record<string, unknown>)?.code ||
+              '',
+          )
+        : '';
+
     if (code === 132001 || detailStr.includes('132001') || detailStr.includes('does not exist in the translation')) {
-      const { templateName, templateLanguage } = pinnacleConfig();
+      const { templateLanguage } = pinnacleConfig();
+      const name = requestedName || 'unknown';
+      const lang = requestedLang || templateLanguage;
       throw new Error(
-        `WhatsApp template not found: name="${templateName}" language="${templateLanguage}". ` +
-          'Set PINNACLE_TEMPLATE_NAME and PINNACLE_TEMPLATE_LANGUAGE to match your approved template.',
+        `WhatsApp template not found: name="${name}" language="${lang}". ` +
+          'Use the exact approved name from the Pinnacle dashboard in PINNACLE_LIFECYCLE_TEMPLATE_* (not PINNACLE_TEMPLATE_NAME / invoice template).',
+      );
+    }
+
+    if (
+      code === 132012 ||
+      detailStr.includes('132012') ||
+      detailStr.includes('Format mismatch, expected IMAGE')
+    ) {
+      throw new Error(
+        `Template "${requestedName || 'unknown'}" requires an IMAGE header. ` +
+          'Set PINNACLE_LIFECYCLE_HEADER_IMAGE_URL in CRM .env.local to a public https:// JPG/PNG URL, then restart CRM.',
       );
     }
 
