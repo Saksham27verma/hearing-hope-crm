@@ -1,5 +1,9 @@
 import { pinnacleConfig, postToPinnacle } from '@/server/invoices/pinnacleSend';
 import { normalizePhoneForWhatsApp } from '@/server/invoices/whatsappInvoiceRecord';
+import {
+  headerImageParameter,
+  resolveLifecycleHeaderMedia,
+} from '@/server/lifecycle/lifecycleHeaderMedia';
 
 const TEMPLATE_ENV_MAP: Record<string, string> = {
   service_6mo: 'PINNACLE_LIFECYCLE_TEMPLATE_SERVICE_6MO',
@@ -8,52 +12,60 @@ const TEMPLATE_ENV_MAP: Record<string, string> = {
   general_followup: 'PINNACLE_LIFECYCLE_TEMPLATE_GENERAL',
 };
 
-/** Exact Pinnacle template names (overridable via env). Never use the invoice template. */
-const DEFAULT_TEMPLATE_NAMES: Record<string, string> = {
-  service_6mo: 'service_reminder_6mo',
-  service_1yr: 'service_reminder_1yr',
-  upgrade_2yr: 'upgrade_offer_2yr',
-  general_followup: 'general_followup',
+/** Preferred Pinnacle names + common aliases (env overrides preferred first). */
+const TEMPLATE_CANDIDATES: Record<string, string[]> = {
+  service_6mo: ['service_reminder_6mo', 'service_6mo'],
+  service_1yr: ['service_reminder_1yr', 'service_1yr'],
+  upgrade_2yr: [
+    'upgrade_offer_2yr',
+    'upgrade_reminder_2yr',
+    'service_reminder_2yr',
+    'upgrade_2yr',
+  ],
+  general_followup: [
+    'general_followup',
+    'general_follow_up',
+    'followup_general',
+    'general_follow-up',
+  ],
 };
 
 export function resolveLifecycleTemplateName(templateKey: string): string {
+  return resolveLifecycleTemplateCandidates(templateKey)[0] || String(templateKey || '').trim();
+}
+
+export function resolveLifecycleTemplateCandidates(templateKey: string): string[] {
   const key = String(templateKey || '').trim();
+  const out: string[] = [];
   const envName = TEMPLATE_ENV_MAP[key];
   if (envName) {
     const v = (process.env[envName] || '').trim();
-    if (v) return v;
+    if (v) out.push(v);
   }
-  if (DEFAULT_TEMPLATE_NAMES[key]) return DEFAULT_TEMPLATE_NAMES[key];
-  // 6-month can reuse the approved 1yr service template until a dedicated one is configured
-  if (key === 'service_6mo') {
-    const fallback =
-      (process.env.PINNACLE_LIFECYCLE_TEMPLATE_SERVICE || '').trim() ||
-      DEFAULT_TEMPLATE_NAMES.service_1yr;
-    if (fallback) return fallback;
+  for (const name of TEMPLATE_CANDIDATES[key] || []) {
+    if (!out.includes(name)) out.push(name);
   }
-  return key;
+  if (!out.includes(key) && key) out.push(key);
+  return out;
 }
 
-export function buildLifecyclePinnaclePayload(params: {
+export async function buildLifecyclePinnaclePayload(params: {
   to: string;
   templateName: string;
   bodyParams: string[];
+  languageCode?: string;
 }) {
   const { templateLanguage } = pinnacleConfig();
-  const headerImageUrl = (process.env.PINNACLE_LIFECYCLE_HEADER_IMAGE_URL || '').trim();
-  const components: Array<Record<string, unknown>> = [];
+  const languageCode = (params.languageCode || templateLanguage || 'en').trim();
+  const headerMedia = await resolveLifecycleHeaderMedia();
 
-  if (headerImageUrl) {
-    components.push({
+  // Lifecycle templates: IMAGE header, no body placeholders.
+  const components: Array<Record<string, unknown>> = [
+    {
       type: 'header',
-      parameters: [
-        {
-          type: 'image',
-          image: { link: headerImageUrl },
-        },
-      ],
-    });
-  }
+      parameters: [headerImageParameter(headerMedia)],
+    },
+  ];
 
   if (params.bodyParams.length > 0) {
     components.push({
@@ -72,35 +84,74 @@ export function buildLifecyclePinnaclePayload(params: {
     type: 'template',
     template: {
       name: params.templateName,
-      language: { code: templateLanguage },
+      language: { code: languageCode },
       components,
     },
   };
 }
 
+function isTemplateNotFoundError(message: string): boolean {
+  return (
+    message.includes('132001') ||
+    message.includes('template not found') ||
+    message.includes('does not exist in the translation')
+  );
+}
+
 export async function sendLifecycleWhatsApp(params: {
   phone: string;
   templateKey: string;
-  bodyParams: string[];
+  bodyParams?: string[];
 }): Promise<{ ok: true; response: unknown } | { ok: false; error: string }> {
-  const templateName = resolveLifecycleTemplateName(params.templateKey);
+  const candidates = resolveLifecycleTemplateCandidates(params.templateKey);
+  const bodyParams = Array.isArray(params.bodyParams) ? params.bodyParams : [];
   try {
     const to = normalizePhoneForWhatsApp(params.phone);
     if (!to || to.length < 10) {
       return { ok: false, error: 'Invalid phone number' };
     }
-    const payload = buildLifecyclePinnaclePayload({
-      to,
-      templateName,
-      bodyParams: params.bodyParams,
-    });
-    const response = await postToPinnacle(payload);
-    return { ok: true, response };
+
+    const { templateLanguage } = pinnacleConfig();
+    const languages = Array.from(
+      new Set([templateLanguage, 'en', 'en_US'].map((x) => String(x || '').trim()).filter(Boolean)),
+    );
+
+    let lastError = '';
+    let lastName = candidates[0] || params.templateKey;
+
+    for (const templateName of candidates) {
+      lastName = templateName;
+      for (const languageCode of languages) {
+        try {
+          const payload = await buildLifecyclePinnaclePayload({
+            to,
+            templateName,
+            bodyParams,
+            languageCode,
+          });
+          const response = await postToPinnacle(payload);
+          return { ok: true, response };
+        } catch (e) {
+          lastError = e instanceof Error ? e.message : 'Pinnacle send failed';
+          if (!isTemplateNotFoundError(lastError)) {
+            return {
+              ok: false,
+              error: `${lastError} (key=${params.templateKey}, pinnacleName=${templateName})`,
+            };
+          }
+        }
+      }
+    }
+
+    return {
+      ok: false,
+      error: `${lastError} (key=${params.templateKey}, tried=${candidates.join(', ') || lastName})`,
+    };
   } catch (e) {
     const base = e instanceof Error ? e.message : 'Pinnacle send failed';
     return {
       ok: false,
-      error: `${base} (key=${params.templateKey}, pinnacleName=${templateName})`,
+      error: `${base} (key=${params.templateKey}, pinnacleName=${candidates[0] || params.templateKey})`,
     };
   }
 }
