@@ -32,6 +32,10 @@ import {
   LinearProgress,
   TableFooter,
   Stack,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 import { Grid as MuiGrid } from '@mui/material';
@@ -60,6 +64,7 @@ import {
   Calculate as CalculateIcon,
   QrCodeScanner as QrCodeScannerIcon,
   Summarize as SummarizeIcon,
+  Edit as EditIcon,
 } from '@mui/icons-material';
 
 const Grid = MuiGrid;
@@ -131,6 +136,14 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
   const [availableSerials, setAvailableSerials] = useState<string[]>([]);
   const [availableQty, setAvailableQty] = useState<number>(0);
   const [businessCompanies, setBusinessCompanies] = useState<BusinessCompany[]>([]);
+  const [lineEditIndex, setLineEditIndex] = useState<number | null>(null);
+  const [lineEditDraft, setLineEditDraft] = useState<{
+    quantity: number;
+    mrp: number;
+    dealerPrice: number;
+    discountPercent: number;
+  } | null>(null);
+  const [lineEditError, setLineEditError] = useState('');
 
   useEffect(() => { setFilteredProducts(products); }, [products]);
 
@@ -165,6 +178,28 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
   const formatCurrency = (amount: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
   const calculateDiscount = (price: number, percent: number) => (price * percent) / 100;
   const calculateFinalPrice = (price: number, percent: number) => price - calculateDiscount(price, percent);
+  const calculateDiscountPercent = (mrpValue: number, dealerPriceValue: number): number => {
+    if (!mrpValue || mrpValue <= 0) return 0;
+    return Math.round(((mrpValue - dealerPriceValue) / mrpValue) * 100);
+  };
+
+  const handleMrpChange = (newMrp: number) => {
+    setMrp(newMrp);
+    if (newMrp > 0) setDiscountPercent(calculateDiscountPercent(newMrp, dealerPrice));
+  };
+
+  const handleDealerPriceChange = (newDealerPrice: number) => {
+    setDealerPrice(newDealerPrice);
+    if (mrp > 0) setDiscountPercent(calculateDiscountPercent(mrp, newDealerPrice));
+  };
+
+  const handleDiscountChange = (newDiscount: number) => {
+    const capped = Math.max(0, Math.min(100, newDiscount));
+    setDiscountPercent(capped);
+    if (mrp > 0) {
+      setDealerPrice(Math.round(mrp * (1 - capped / 100)));
+    }
+  };
 
   const handleNext = () => {
     const stepErrors: Record<string, string> = {};
@@ -265,8 +300,18 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
     const existingIndex = materialData.products.findIndex(p => p.productId === currentProduct.id);
     if (existingIndex >= 0) {
       const updated = [...materialData.products];
-      updated[existingIndex].quantity += quantity;
-      updated[existingIndex].serialNumbers = [...updated[existingIndex].serialNumbers, ...serialNumbers];
+      const existing = updated[existingIndex];
+      updated[existingIndex] = {
+        ...existing,
+        quantity: existing.quantity + quantity,
+        serialNumbers: [...(existing.serialNumbers || []), ...serialNumbers],
+        dealerPrice,
+        mrp,
+        discountPercent,
+        discountAmount: calculateDiscount(dealerPrice, discountPercent),
+        finalPrice,
+        remarks: remarks || existing.remarks,
+      };
       const total = updated.reduce((s, p) => s + ((p.finalPrice || p.dealerPrice || 0) * p.quantity), 0);
       update({ products: updated, totalAmount: total });
     } else {
@@ -281,6 +326,114 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
     const updated = materialData.products.filter((_, i) => i !== idx);
     const total = updated.reduce((s, p) => s + ((p.finalPrice || p.dealerPrice || 0) * p.quantity), 0);
     update({ products: updated, totalAmount: total });
+  };
+
+  const handleOpenLineEdit = (index: number) => {
+    const target = materialData.products[index];
+    if (!target) return;
+    const fallbackDiscount =
+      typeof target.discountPercent === 'number'
+        ? target.discountPercent
+        : calculateDiscountPercent(target.mrp || 0, target.dealerPrice || 0);
+    setLineEditIndex(index);
+    setLineEditDraft({
+      quantity: target.quantity,
+      mrp: target.mrp || 0,
+      dealerPrice: target.dealerPrice || 0,
+      discountPercent: fallbackDiscount,
+    });
+    setLineEditError('');
+  };
+
+  const handleCancelLineEdit = () => {
+    setLineEditIndex(null);
+    setLineEditDraft(null);
+    setLineEditError('');
+  };
+
+  const handleLineEditMrpChange = (value: number) => {
+    setLineEditDraft((prev) => {
+      if (!prev) return prev;
+      const nextDiscount = value > 0 ? calculateDiscountPercent(value, prev.dealerPrice) : 0;
+      return { ...prev, mrp: value, discountPercent: nextDiscount };
+    });
+  };
+
+  const handleLineEditDealerPriceChange = (value: number) => {
+    setLineEditDraft((prev) => {
+      if (!prev) return prev;
+      const nextDiscount = prev.mrp > 0 ? calculateDiscountPercent(prev.mrp, value) : 0;
+      return { ...prev, dealerPrice: value, discountPercent: nextDiscount };
+    });
+  };
+
+  const handleLineEditDiscountChange = (value: number) => {
+    setLineEditDraft((prev) => {
+      if (!prev) return prev;
+      const capped = Math.max(0, Math.min(100, value));
+      if (prev.mrp <= 0) return { ...prev, discountPercent: capped };
+      return {
+        ...prev,
+        discountPercent: capped,
+        dealerPrice: Math.round(prev.mrp * (1 - capped / 100)),
+      };
+    });
+  };
+
+  const handleSaveLineEdit = () => {
+    if (lineEditIndex === null || !lineEditDraft) return;
+    const target = materialData.products[lineEditIndex];
+    if (!target) return;
+
+    const { quantity, mrp: editMrp, dealerPrice: editDealerPrice, discountPercent: editDiscount } = lineEditDraft;
+
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setLineEditError('Quantity must be greater than zero.');
+      return;
+    }
+    if (!Number.isFinite(editDealerPrice) || editDealerPrice < 0) {
+      setLineEditError('Amount / dealer price cannot be negative.');
+      return;
+    }
+    if (!Number.isFinite(editMrp) || editMrp < 0) {
+      setLineEditError('MRP cannot be negative.');
+      return;
+    }
+
+    const serialCount = Array.isArray(target.serialNumbers) ? target.serialNumbers.length : 0;
+    if (serialCount > 0) {
+      const isPair = target.type === 'Hearing Aid' && target.quantityType === 'pair';
+      const expected = isPair ? quantity * 2 : quantity;
+      if (expected !== serialCount) {
+        setLineEditError(
+          `This row has ${serialCount} serial number${serialCount === 1 ? '' : 's'} attached. Quantity must remain ${
+            isPair ? serialCount / 2 : serialCount
+          } (remove the row or change serials to change the count).`,
+        );
+        return;
+      }
+    }
+
+    const finalPrice = calculateFinalPrice(editDealerPrice, editDiscount);
+    const updatedProducts = materialData.products.map((product, idx) =>
+      idx === lineEditIndex
+        ? {
+            ...product,
+            quantity,
+            mrp: editMrp,
+            dealerPrice: editDealerPrice,
+            discountPercent: editDiscount,
+            discountAmount: calculateDiscount(editDealerPrice, editDiscount),
+            finalPrice,
+          }
+        : product,
+    );
+    const newTotalAmount = updatedProducts.reduce(
+      (sum, product) => sum + ((product.finalPrice || product.dealerPrice || 0) * product.quantity),
+      0,
+    );
+    update({ products: updatedProducts, totalAmount: newTotalAmount });
+    handleCancelLineEdit();
   };
 
   const handleSubmit = () => {
@@ -433,7 +586,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
               <Box>
                 <Box sx={{ p: 2, bgcolor: (t) => (t.palette.mode === 'dark' ? alpha(t.palette.common.white, 0.06) : '#f8f9fa'), borderRadius: 2, mb: 2 }}>
                   <Typography variant="subtitle2" color="primary" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
-                    <CalculateIcon fontSize="small" sx={{ mr: 1 }} /> Step 2: {isSerialRequiredForCurrent ? 'Serial Numbers' : 'Enter Quantity'}
+                    <CalculateIcon fontSize="small" sx={{ mr: 1 }} /> Step 2: Quantity, Serials & Pricing
                   </Typography>
                   {currentProduct.type === 'Hearing Aid' && currentProduct.quantityType === 'pair' && isSerialRequiredForCurrent && (
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
@@ -449,9 +602,10 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                       value={serialNumbers}
                       onChange={(_, vals) => { setSerialNumbers(vals); setQuantity(vals.length || 0); setErrors({}); }}
                       renderInput={(params) => <TextField {...params} label={`Select available serials (${availableSerials.length} available)`} placeholder="Type to search serials" />}
+                      sx={{ mb: 2 }}
                     />
                       ) : (
-                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', flexWrap: 'wrap', mb: 2 }}>
                           <TextField
                             label="Enter serial numbers"
                             value={serialNumber}
@@ -489,7 +643,7 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                       )}
                     </>
                   ) : (
-                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2, mb: 2 }}>
                       <TextField
                         label={`Quantity${Number.isFinite(availableQty) ? ` (Available: ${availableQty})` : ''}`}
                         fullWidth
@@ -509,9 +663,72 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                       <TextField label="Remarks" fullWidth value={remarks} onChange={e => setRemarks(e.target.value)} size="medium" />
                     </Box>
                   )}
+
+                  <Box sx={{
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: 'repeat(3, 1fr)' },
+                    gap: 2,
+                    mt: isSerialRequiredForCurrent ? 0 : 0,
+                  }}>
+                    <TextField
+                      label="Unit Amount / Dealer Price"
+                      fullWidth
+                      type="number"
+                      value={dealerPrice}
+                      onChange={(e) => handleDealerPriceChange(Math.max(0, parseFloat(e.target.value) || 0))}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <RupeeIcon fontSize="small" color="action" />
+                          </InputAdornment>
+                        ),
+                        inputProps: { min: 0 },
+                      }}
+                      size="medium"
+                      helperText="Amount charged per unit"
+                    />
+                    <TextField
+                      label="MRP"
+                      fullWidth
+                      type="number"
+                      value={mrp}
+                      onChange={(e) => handleMrpChange(Math.max(0, parseFloat(e.target.value) || 0))}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <RupeeIcon fontSize="small" color="action" />
+                          </InputAdornment>
+                        ),
+                        inputProps: { min: 0 },
+                      }}
+                      size="medium"
+                    />
+                    <TextField
+                      label="Discount %"
+                      fullWidth
+                      type="number"
+                      value={discountPercent}
+                      onChange={(e) => handleDiscountChange(parseFloat(e.target.value) || 0)}
+                      InputProps={{
+                        inputProps: { min: 0, max: 100 },
+                        endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                      }}
+                      size="medium"
+                      helperText={`Final: ${formatCurrency(calculateFinalPrice(dealerPrice, discountPercent))} × ${quantity || 1} = ${formatCurrency(calculateFinalPrice(dealerPrice, discountPercent) * (quantity || 1))}`}
+                    />
+                    {isSerialRequiredForCurrent && (
+                      <TextField
+                        label="Remarks"
+                        fullWidth
+                        value={remarks}
+                        onChange={(e) => setRemarks(e.target.value)}
+                        size="medium"
+                        sx={{ gridColumn: { xs: '1', sm: '1 / -1' } }}
+                      />
+                    )}
+                  </Box>
                 </Box>
               </Box>
-              {/* Serial selection handled above when inventory provides serials */}
               <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <Button variant="contained" startIcon={<AddIcon />} onClick={addProduct} disabled={!currentProduct}>Add to Material</Button>
               </Box>
@@ -534,6 +751,8 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                 <TableRow>
                   <TableCell>Product</TableCell>
                   <TableCell align="center">Quantity</TableCell>
+                  <TableCell align="right">Unit Amount</TableCell>
+                  <TableCell align="right">Discount</TableCell>
                   <TableCell align="right">Total</TableCell>
                   <TableCell align="center">Action</TableCell>
                 </TableRow>
@@ -558,15 +777,22 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
                       </Box>
                     </TableCell>
                     <TableCell align="center">{p.quantity}</TableCell>
+                    <TableCell align="right">{formatCurrency(p.finalPrice || p.dealerPrice || 0)}</TableCell>
+                    <TableCell align="right">{p.discountPercent ? `${p.discountPercent}%` : '-'}</TableCell>
                     <TableCell align="right">{formatCurrency((p.finalPrice || p.dealerPrice || 0) * p.quantity)}</TableCell>
                     <TableCell align="center">
+                      <Tooltip title="Edit amount / pricing">
+                        <IconButton color="primary" size="small" onClick={() => handleOpenLineEdit(idx)}>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
                       <IconButton color="error" size="small" onClick={() => removeProduct(idx)}><DeleteIcon /></IconButton>
                     </TableCell>
                   </TableRow>
                 );
                 })}
                 <TableRow>
-                  <TableCell colSpan={2} align="right"><Typography variant="subtitle1">Total Amount:</Typography></TableCell>
+                  <TableCell colSpan={4} align="right"><Typography variant="subtitle1">Total Amount:</Typography></TableCell>
                   <TableCell align="right"><Typography variant="subtitle1">{formatCurrency(materialData.totalAmount)}</Typography></TableCell>
                   <TableCell />
                 </TableRow>
@@ -671,6 +897,88 @@ const MaterialOutForm: React.FC<Props> = ({ initialData, products, parties, avai
           )}
         </Box>
       </Box>
+
+      <Dialog open={lineEditIndex !== null} onClose={handleCancelLineEdit} fullWidth maxWidth="sm">
+        <DialogTitle>Edit product amount</DialogTitle>
+        <DialogContent>
+          {lineEditDraft && lineEditIndex !== null && (
+            <Stack spacing={2} sx={{ pt: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                {materialData.products[lineEditIndex]?.name}
+              </Typography>
+              <TextField
+                label="Quantity"
+                type="number"
+                fullWidth
+                value={lineEditDraft.quantity}
+                onChange={(e) =>
+                  setLineEditDraft((prev) =>
+                    prev ? { ...prev, quantity: Math.max(0, parseInt(e.target.value) || 0) } : prev,
+                  )
+                }
+                InputProps={{ inputProps: { min: 1 } }}
+              />
+              <TextField
+                label="Unit Amount / Dealer Price"
+                type="number"
+                fullWidth
+                value={lineEditDraft.dealerPrice}
+                onChange={(e) => handleLineEditDealerPriceChange(Math.max(0, parseFloat(e.target.value) || 0))}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <RupeeIcon fontSize="small" color="action" />
+                    </InputAdornment>
+                  ),
+                  inputProps: { min: 0 },
+                }}
+              />
+              <TextField
+                label="MRP"
+                type="number"
+                fullWidth
+                value={lineEditDraft.mrp}
+                onChange={(e) => handleLineEditMrpChange(Math.max(0, parseFloat(e.target.value) || 0))}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <RupeeIcon fontSize="small" color="action" />
+                    </InputAdornment>
+                  ),
+                  inputProps: { min: 0 },
+                }}
+              />
+              <TextField
+                label="Discount %"
+                type="number"
+                fullWidth
+                value={lineEditDraft.discountPercent}
+                onChange={(e) => handleLineEditDiscountChange(parseFloat(e.target.value) || 0)}
+                InputProps={{
+                  inputProps: { min: 0, max: 100 },
+                  endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                }}
+              />
+              <Alert severity="info" variant="outlined">
+                Line total:{' '}
+                <strong>
+                  {formatCurrency(
+                    calculateFinalPrice(lineEditDraft.dealerPrice, lineEditDraft.discountPercent) *
+                      lineEditDraft.quantity,
+                  )}
+                </strong>
+              </Alert>
+              {lineEditError && <Alert severity="error">{lineEditError}</Alert>}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelLineEdit}>Cancel</Button>
+          <Button variant="contained" onClick={handleSaveLineEdit}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

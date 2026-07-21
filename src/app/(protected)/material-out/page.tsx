@@ -704,15 +704,73 @@ export default function MaterialOutPage() {
   // Render Material Out form (styled like Material In)
   // replaced by full MaterialOutForm component
 
-  // Handle editing a material
+  // Handle editing a material (including already-dispatched challans)
   const handleEditMaterial = (material: MaterialOut) => {
-    if (material.status === 'dispatched') {
-      setErrorMsg("Cannot edit material that has been already dispatched");
-      return;
-    }
     setCurrentMaterial(material);
     setOpenDialog(true);
   };
+
+  // When editing, treat items already on this challan as still available
+  // so serials/qty can be kept or reassigned without inventory blocking them.
+  const availableItemsForForm = React.useMemo(() => {
+    if (!currentMaterial?.id || !Array.isArray(currentMaterial.products)) {
+      return availableInventory;
+    }
+
+    const items = [...availableInventory];
+    const qtyBoost: Record<string, number> = {};
+
+    currentMaterial.products.forEach((p) => {
+      const productId = p.productId;
+      if (!productId) return;
+      const serials = Array.isArray(p.serialNumbers)
+        ? p.serialNumbers
+        : (p as any).serialNumber
+          ? [(p as any).serialNumber]
+          : [];
+
+      if (serials.length > 0) {
+        serials.forEach((sn) => {
+          if (!sn) return;
+          const already = items.some(
+            (i) => i.productId === productId && i.isSerialTracked && i.serialNumber === String(sn),
+          );
+          if (!already) {
+            const prod = products.find((x) => x.id === productId);
+            items.push({
+              productId,
+              name: p.name || prod?.name || 'Product',
+              type: p.type || prod?.type || '',
+              serialNumber: String(sn),
+              isSerialTracked: true,
+            });
+          }
+        });
+      } else {
+        qtyBoost[productId] = (qtyBoost[productId] || 0) + Number(p.quantity || 0);
+      }
+    });
+
+    Object.entries(qtyBoost).forEach(([productId, boost]) => {
+      if (!boost) return;
+      const existing = items.find((i) => i.productId === productId && !i.isSerialTracked);
+      if (existing) {
+        existing.quantity = (existing.quantity || 0) + boost;
+      } else {
+        const prod = products.find((x) => x.id === productId);
+        const line = currentMaterial.products.find((p) => p.productId === productId);
+        items.push({
+          productId,
+          name: line?.name || prod?.name || 'Product',
+          type: line?.type || prod?.type || '',
+          isSerialTracked: false,
+          quantity: boost,
+        });
+      }
+    });
+
+    return items;
+  }, [availableInventory, currentMaterial, products]);
 
   // Close dialog
   const handleCloseDialog = () => {
@@ -753,8 +811,9 @@ export default function MaterialOutPage() {
       const sanitized = pruneUndefined(withDefaultStatus) as MaterialOut;
       if (material.id) {
         // Update existing material
+        const { id: _omitId, ...payload } = sanitized as MaterialOut & { id?: string };
         await updateDoc(doc(db, 'materialsOut', material.id), {
-          ...sanitized,
+          ...payload,
           updatedAt: serverTimestamp(),
         });
         void logActivity(db, userProfile, userProfile?.centerId, {
@@ -768,8 +827,9 @@ export default function MaterialOutPage() {
         
         // Update local state
         setMaterials(prevMaterials => 
-          prevMaterials.map(m => m.id === material.id ? { ...sanitized, updatedAt: Timestamp.now() } as any : m)
+          prevMaterials.map(m => m.id === material.id ? { ...sanitized, id: material.id, updatedAt: Timestamp.now() } as any : m)
         );
+        void loadAvailableInventory();
         
         setSuccessMsg('Material updated successfully');
       } else {
@@ -1279,7 +1339,7 @@ export default function MaterialOutPage() {
               initialData={currentMaterial as any}
               products={products as any}
               parties={[]} 
-              availableItems={availableInventory as any}
+              availableItems={availableItemsForForm as any}
               onCancel={handleCloseDialog}
               onSave={(mat: any) => handleSaveMaterial(mat as any)}
               isSaving={savingMaterial}
