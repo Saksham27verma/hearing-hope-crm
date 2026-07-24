@@ -1,10 +1,15 @@
+/**
+ * Public HTTPS image URL for lifecycle WhatsApp IMAGE-header templates.
+ * Uses Firebase Storage signed URLs — same pattern as invoice PDF links that
+ * already deliver successfully via Pinnacle.
+ */
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { adminStorageBucket } from '@/server/firebaseAdmin';
 
 const STORAGE_OBJECT = 'whatsapp/lifecycle-header.jpg';
 const SIGNED_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const CACHE_MS = 6 * 60 * 60 * 1000; // refresh signed URL before weekly expiry
+const CACHE_MS = 6 * 60 * 60 * 1000;
 
 let cached: { url: string; expiresAt: number } | null = null;
 
@@ -12,29 +17,19 @@ function isHttpsUrl(url: string): boolean {
   return /^https:\/\//i.test(url.trim());
 }
 
-/**
- * Public HTTPS image URL for lifecycle WhatsApp templates that use an IMAGE header.
- * Prefers PINNACLE_LIFECYCLE_HEADER_IMAGE_URL, then production static asset, then Firebase upload.
- */
+function isFirebaseHostedUrl(url: string): boolean {
+  return (
+    /storage\.googleapis\.com/i.test(url) ||
+    /firebasestorage\.googleapis\.com/i.test(url)
+  );
+}
+
 export async function ensureLifecycleHeaderImageUrl(): Promise<string> {
   const fromEnv = (process.env.PINNACLE_LIFECYCLE_HEADER_IMAGE_URL || '').trim();
-  if (isHttpsUrl(fromEnv)) return fromEnv;
-
-  // Bundled asset on production CRM (Meta can fetch this; localhost cannot).
-  const appOrigin = (
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.PINNACLE_WEBHOOK_URL?.replace(/\/api\/webhook\/whatsapp\/?$/, '') ||
-    'https://hearing-hope-crm.vercel.app'
-  )
-    .trim()
-    .replace(/\/$/, '');
-  const productionFallback = 'https://hearing-hope-crm.vercel.app/images/whatsapp-lifecycle-header.jpg';
-  if (isHttpsUrl(appOrigin) && !/localhost|127\.0\.0\.1/i.test(appOrigin)) {
-    return `${appOrigin}/images/whatsapp-lifecycle-header.jpg`;
-  }
-  // Local CRM still uses the production-hosted header so Meta can download it.
-  if (isHttpsUrl(productionFallback)) {
-    return productionFallback;
+  // Only trust env URLs that Meta can fetch the same way as invoice PDFs (Firebase).
+  // Plain Vercel static URLs often get API-accepted then fail delivery for IMAGE headers.
+  if (isHttpsUrl(fromEnv) && isFirebaseHostedUrl(fromEnv)) {
+    return fromEnv;
   }
 
   const now = Date.now();
@@ -57,6 +52,24 @@ export async function ensureLifecycleHeaderImageUrl(): Promise<string> {
       setTimeout(() => reject(new Error('Firebase header image upload timed out')), 15_000),
     ),
   ]);
+
+  try {
+    await file.makePublic();
+  } catch {
+    // Bucket may disallow ACL; signed URL below still works (invoice path).
+  }
+
+  // Prefer stable public URL when ACL allows; else signed URL (invoice style).
+  const publicUrl = `https://storage.googleapis.com/${bucket.name}/${STORAGE_OBJECT}`;
+  try {
+    const head = await fetch(publicUrl, { method: 'HEAD' });
+    if (head.ok) {
+      cached = { url: publicUrl, expiresAt: now + CACHE_MS };
+      return publicUrl;
+    }
+  } catch {
+    // fall through to signed
+  }
 
   const [signedUrl] = await file.getSignedUrl({
     version: 'v4',

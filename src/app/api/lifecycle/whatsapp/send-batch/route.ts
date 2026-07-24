@@ -64,6 +64,8 @@ export async function POST(req: Request) {
       phone: r.phone,
       templateKey,
       bodyParams,
+      customerName: r.customerName,
+      externalSaleId: r.externalSaleId,
     });
     if (out.ok) {
       const messageId = out.messageId || extractMessageId(out.response);

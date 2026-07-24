@@ -1,9 +1,10 @@
-import { pinnacleConfig, postToPinnacle } from '@/server/invoices/pinnacleSend';
+import { buildPinnaclePayload, pinnacleConfig, postToPinnacle } from '@/server/invoices/pinnacleSend';
 import { normalizePhoneForWhatsApp } from '@/server/invoices/whatsappInvoiceRecord';
 import {
   headerImageParameter,
   resolveLifecycleHeaderMedia,
 } from '@/server/lifecycle/lifecycleHeaderMedia';
+import { ensureLifecycleReminderPdfUrl } from '@/server/lifecycle/ensureLifecycleReminderPdfUrl';
 
 const TEMPLATE_ENV_MAP: Record<string, string> = {
   service_6mo: 'PINNACLE_LIFECYCLE_TEMPLATE_SERVICE_6MO',
@@ -49,6 +50,16 @@ export function resolveLifecycleTemplateCandidates(templateKey: string): string[
   return out;
 }
 
+/**
+ * Delivery mode:
+ * - document (default): same proven path as Sales & Invoicing — utility DOCUMENT template + Firebase PDF
+ * - image: Meta IMAGE-header templates (service_reminder_6mo etc.). Often accepted then not delivered if MARKETING.
+ */
+function lifecycleDeliveryMode(): 'document' | 'image' {
+  const mode = (process.env.PINNACLE_LIFECYCLE_DELIVERY_MODE || 'document').trim().toLowerCase();
+  return mode === 'image' ? 'image' : 'document';
+}
+
 export async function buildLifecyclePinnaclePayload(params: {
   to: string;
   templateName: string;
@@ -59,7 +70,6 @@ export async function buildLifecyclePinnaclePayload(params: {
   const languageCode = (params.languageCode || templateLanguage || 'en').trim();
   const headerMedia = await resolveLifecycleHeaderMedia();
 
-  // Lifecycle templates: IMAGE header, no body placeholders.
   const components: Array<Record<string, unknown>> = [
     {
       type: 'header',
@@ -98,7 +108,65 @@ function isTemplateNotFoundError(message: string): boolean {
   );
 }
 
-export async function sendLifecycleWhatsApp(params: {
+/**
+ * Proven delivery path (same as invoice WhatsApp button).
+ * Attaches a service-reminder PDF via the configured utility DOCUMENT template.
+ */
+async function sendLifecycleWhatsAppAsDocument(params: {
+  phone: string;
+  templateKey: string;
+  customerName: string;
+  externalSaleId?: string;
+}): Promise<
+  | { ok: true; response: unknown; messageId: string; templateName: string; to: string }
+  | { ok: false; error: string }
+> {
+  try {
+    const to = normalizePhoneForWhatsApp(params.phone);
+    if (!to || to.length < 10) {
+      return { ok: false, error: 'Invalid phone number' };
+    }
+
+    const { templateName } = pinnacleConfig();
+    const { pdfUrl } = await ensureLifecycleReminderPdfUrl({
+      templateKey: params.templateKey,
+      customerName: params.customerName,
+      phone: to,
+      externalSaleId: params.externalSaleId,
+    });
+
+    const payload = buildPinnaclePayload({
+      to,
+      pdfUrl,
+      invoiceNumber: `SVC_${params.templateKey || 'reminder'}`,
+      customerName: params.customerName || 'Customer',
+    });
+
+    const response = await postToPinnacle(payload);
+    const messageId = extractMessageId(response);
+    if (!messageId) {
+      return {
+        ok: false,
+        error: `Pinnacle returned no message id: ${JSON.stringify(response).slice(0, 300)}`,
+      };
+    }
+
+    return {
+      ok: true,
+      response,
+      messageId,
+      templateName: `${templateName}+${params.templateKey}`,
+      to,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Pinnacle document send failed',
+    };
+  }
+}
+
+async function sendLifecycleWhatsAppAsImage(params: {
   phone: string;
   templateKey: string;
   bodyParams?: string[];
@@ -109,15 +177,12 @@ export async function sendLifecycleWhatsApp(params: {
   const candidates = resolveLifecycleTemplateCandidates(params.templateKey);
   const bodyParams = Array.isArray(params.bodyParams) ? params.bodyParams : [];
   try {
-    // Same phone normalization as sales/invoicing invoice WhatsApp sends.
     const to = normalizePhoneForWhatsApp(params.phone);
     if (!to || to.length < 10) {
       return { ok: false, error: 'Invalid phone number' };
     }
 
-    // Ensure invoice-path Pinnacle credentials are present before attempting send.
     pinnacleConfig();
-
     const { templateLanguage } = pinnacleConfig();
     const languages = Array.from(
       new Set([templateLanguage, 'en', 'en_US'].map((x) => String(x || '').trim()).filter(Boolean)),
@@ -136,7 +201,6 @@ export async function sendLifecycleWhatsApp(params: {
             bodyParams,
             languageCode,
           });
-          // Same HTTP client as executeInvoiceWhatsAppSend (partnersv1.pinbot.ai).
           const response = await postToPinnacle(payload);
           const messageId = extractMessageId(response);
           if (!messageId) {
@@ -168,6 +232,29 @@ export async function sendLifecycleWhatsApp(params: {
       error: `${base} (key=${params.templateKey}, pinnacleName=${candidates[0] || params.templateKey})`,
     };
   }
+}
+
+export async function sendLifecycleWhatsApp(params: {
+  phone: string;
+  templateKey: string;
+  bodyParams?: string[];
+  customerName?: string;
+  externalSaleId?: string;
+}): Promise<
+  | { ok: true; response: unknown; messageId: string; templateName: string; to: string }
+  | { ok: false; error: string }
+> {
+  if (lifecycleDeliveryMode() === 'image') {
+    return sendLifecycleWhatsAppAsImage(params);
+  }
+
+  // Default: document/utility path that matches working Sales & Invoicing delivery.
+  return sendLifecycleWhatsAppAsDocument({
+    phone: params.phone,
+    templateKey: params.templateKey,
+    customerName: params.customerName || 'Customer',
+    externalSaleId: params.externalSaleId,
+  });
 }
 
 export function extractMessageId(response: unknown): string | undefined {

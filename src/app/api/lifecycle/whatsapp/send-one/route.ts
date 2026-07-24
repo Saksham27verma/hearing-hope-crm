@@ -30,7 +30,13 @@ export async function POST(req: Request) {
     return jsonError('externalSaleId and phone required', 400);
   }
 
-  const result = await sendLifecycleWhatsApp({ phone, templateKey, bodyParams });
+  const result = await sendLifecycleWhatsApp({
+    phone,
+    templateKey,
+    bodyParams,
+    customerName,
+    externalSaleId,
+  });
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error }, { status: 502 });
   }
@@ -49,7 +55,7 @@ export async function POST(req: Request) {
     templateName: result.templateName,
     to: result.to,
     externalSaleId,
-    // Helpful for lifecycle logs / debugging (same shape invoice path relies on).
+    deliveryMode: (process.env.PINNACLE_LIFECYCLE_DELIVERY_MODE || 'document').trim() || 'document',
     pinnacle: result.response,
   });
 }
