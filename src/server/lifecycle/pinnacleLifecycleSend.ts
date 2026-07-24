@@ -56,8 +56,11 @@ export function resolveLifecycleTemplateCandidates(templateKey: string): string[
  * - image: Meta IMAGE-header templates (service_reminder_6mo etc.). Often accepted then not delivered if MARKETING.
  */
 function lifecycleDeliveryMode(): 'document' | 'image' {
-  const mode = (process.env.PINNACLE_LIFECYCLE_DELIVERY_MODE || 'document').trim().toLowerCase();
-  return mode === 'image' ? 'image' : 'document';
+  // Default = image: send the exact Meta-approved template (service_reminder_6mo, etc.)
+  // with its approved body text and IMAGE header. Set to `document` only as a fallback
+  // when the approved template is MARKETING-category and Meta silently drops it.
+  const mode = (process.env.PINNACLE_LIFECYCLE_DELIVERY_MODE || 'image').trim().toLowerCase();
+  return mode === 'document' ? 'document' : 'image';
 }
 
 export async function buildLifecyclePinnaclePayload(params: {
