@@ -35,9 +35,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: result.error }, { status: 502 });
   }
 
+  const messageId = result.messageId || extractMessageId(result.response);
+  if (!messageId) {
+    return NextResponse.json(
+      { ok: false, error: 'Pinnacle did not return a WhatsApp message id' },
+      { status: 502 },
+    );
+  }
+
   return NextResponse.json({
     ok: true,
-    messageId: extractMessageId(result.response),
+    messageId,
+    templateName: result.templateName,
+    to: result.to,
     externalSaleId,
+    // Helpful for lifecycle logs / debugging (same shape invoice path relies on).
+    pinnacle: result.response,
   });
 }

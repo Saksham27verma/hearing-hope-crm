@@ -102,14 +102,21 @@ export async function sendLifecycleWhatsApp(params: {
   phone: string;
   templateKey: string;
   bodyParams?: string[];
-}): Promise<{ ok: true; response: unknown } | { ok: false; error: string }> {
+}): Promise<
+  | { ok: true; response: unknown; messageId: string; templateName: string; to: string }
+  | { ok: false; error: string }
+> {
   const candidates = resolveLifecycleTemplateCandidates(params.templateKey);
   const bodyParams = Array.isArray(params.bodyParams) ? params.bodyParams : [];
   try {
+    // Same phone normalization as sales/invoicing invoice WhatsApp sends.
     const to = normalizePhoneForWhatsApp(params.phone);
     if (!to || to.length < 10) {
       return { ok: false, error: 'Invalid phone number' };
     }
+
+    // Ensure invoice-path Pinnacle credentials are present before attempting send.
+    pinnacleConfig();
 
     const { templateLanguage } = pinnacleConfig();
     const languages = Array.from(
@@ -129,8 +136,15 @@ export async function sendLifecycleWhatsApp(params: {
             bodyParams,
             languageCode,
           });
+          // Same HTTP client as executeInvoiceWhatsAppSend (partnersv1.pinbot.ai).
           const response = await postToPinnacle(payload);
-          return { ok: true, response };
+          const messageId = extractMessageId(response);
+          if (!messageId) {
+            throw new Error(
+              `Pinnacle returned HTTP success but no message id: ${JSON.stringify(response).slice(0, 300)}`,
+            );
+          }
+          return { ok: true, response, messageId, templateName, to };
         } catch (e) {
           lastError = e instanceof Error ? e.message : 'Pinnacle send failed';
           if (!isTemplateNotFoundError(lastError)) {

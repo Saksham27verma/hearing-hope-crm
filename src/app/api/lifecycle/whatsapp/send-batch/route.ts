@@ -66,12 +66,22 @@ export async function POST(req: Request) {
       bodyParams,
     });
     if (out.ok) {
-      sent += 1;
-      results.push({
-        externalSaleId: r.externalSaleId,
-        ok: true,
-        messageId: extractMessageId(out.response),
-      });
+      const messageId = out.messageId || extractMessageId(out.response);
+      if (!messageId) {
+        failed += 1;
+        results.push({
+          externalSaleId: r.externalSaleId,
+          ok: false,
+          error: 'Pinnacle did not return a WhatsApp message id',
+        });
+      } else {
+        sent += 1;
+        results.push({
+          externalSaleId: r.externalSaleId,
+          ok: true,
+          messageId,
+        });
+      }
     } else {
       failed += 1;
       results.push({ externalSaleId: r.externalSaleId, ok: false, error: out.error });

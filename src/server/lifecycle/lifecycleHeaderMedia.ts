@@ -54,26 +54,27 @@ async function uploadHeaderImageToPinnacle(): Promise<string> {
 
 /**
  * Resolve IMAGE header media for lifecycle templates.
- * Prefer uploading once to Pinnacle (media id). Fall back to a public HTTPS link.
+ * Prefer a public HTTPS link (same pattern as invoice PDF document links, which
+ * already work with Pinnacle). Fall back to uploading a media id if needed.
  */
 export async function resolveLifecycleHeaderMedia(): Promise<HeaderMedia> {
-  const now = Date.now();
-  if (cachedMediaId && cachedMediaId.expiresAt > now) {
-    return { kind: 'id', id: cachedMediaId.id };
-  }
-
   try {
-    const id = await uploadHeaderImageToPinnacle();
-    cachedMediaId = { id, expiresAt: now + MEDIA_CACHE_MS };
-    return { kind: 'id', id };
-  } catch (uploadErr) {
+    const link = await ensureLifecycleHeaderImageUrl();
+    return { kind: 'link', link };
+  } catch (linkErr) {
+    const now = Date.now();
+    if (cachedMediaId && cachedMediaId.expiresAt > now) {
+      return { kind: 'id', id: cachedMediaId.id };
+    }
     try {
-      const link = await ensureLifecycleHeaderImageUrl();
-      return { kind: 'link', link };
-    } catch {
-      const msg = uploadErr instanceof Error ? uploadErr.message : 'Media upload failed';
+      const id = await uploadHeaderImageToPinnacle();
+      cachedMediaId = { id, expiresAt: now + MEDIA_CACHE_MS };
+      return { kind: 'id', id };
+    } catch (uploadErr) {
+      const linkMsg = linkErr instanceof Error ? linkErr.message : 'Header image URL failed';
+      const uploadMsg = uploadErr instanceof Error ? uploadErr.message : 'Media upload failed';
       throw new Error(
-        `${msg}. Also could not build a public header image URL. Set PINNACLE_LIFECYCLE_HEADER_IMAGE_URL to a public https JPG/PNG.`,
+        `${linkMsg}. Media upload also failed: ${uploadMsg}. Set PINNACLE_LIFECYCLE_HEADER_IMAGE_URL to a public https JPG/PNG.`,
       );
     }
   }
