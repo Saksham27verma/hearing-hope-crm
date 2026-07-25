@@ -10,8 +10,8 @@ type HeaderMedia =
  * Prefer Firebase-hosted HTTPS link (same as working invoice PDF links).
  * Pinbot partnersv1 /media upload returns Unexpected field, so we do not rely on media ids.
  */
-export async function resolveLifecycleHeaderMedia(): Promise<HeaderMedia> {
-  const link = await ensureLifecycleHeaderImageUrl();
+export async function resolveLifecycleHeaderMedia(templateKey?: string): Promise<HeaderMedia> {
+  const link = await ensureLifecycleHeaderImageUrl(templateKey);
   return { kind: 'link', link };
 }
 

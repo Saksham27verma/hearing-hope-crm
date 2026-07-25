@@ -68,10 +68,11 @@ export async function buildLifecyclePinnaclePayload(params: {
   templateName: string;
   bodyParams: string[];
   languageCode?: string;
+  templateKey?: string;
 }) {
   const { templateLanguage } = pinnacleConfig();
   const languageCode = (params.languageCode || templateLanguage || 'en').trim();
-  const headerMedia = await resolveLifecycleHeaderMedia();
+  const headerMedia = await resolveLifecycleHeaderMedia(params.templateKey);
 
   const components: Array<Record<string, unknown>> = [
     {
@@ -203,6 +204,7 @@ async function sendLifecycleWhatsAppAsImage(params: {
             templateName,
             bodyParams,
             languageCode,
+            templateKey: params.templateKey,
           });
           const response = await postToPinnacle(payload);
           const messageId = extractMessageId(response);
