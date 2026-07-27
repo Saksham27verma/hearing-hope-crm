@@ -16,7 +16,7 @@ const TEMPLATE_ENV_MAP: Record<string, string> = {
 /** Preferred Pinnacle names + common aliases (env overrides preferred first). */
 const TEMPLATE_CANDIDATES: Record<string, string[]> = {
   service_6mo: ['service_reminder_6mo_second', 'service_reminder_6mo', 'service_6mo'],
-  service_1yr: ['service_reminder_1yr', 'service_1yr'],
+  service_1yr: ['service_reminder_1yr_second', 'service_reminder_1yr', 'service_1yr'],
   upgrade_2yr: [
     'upgrade_offer_2yr',
     'upgrade_reminder_2yr',
