@@ -17,6 +17,7 @@ import { sendStaffPaymentNotifyEmail } from '@/server/sendStaffPaymentNotifyEmai
 import { getStaffPaymentNotifyEmailList } from '@/server/staffPaymentNotifyEmails';
 import { allocateNextInvoiceNumberAdmin } from '@/server/allocateInvoiceNumber';
 import { allocateNextReceiptNumberAdmin, type ReceiptNumberKind } from '@/server/allocateReceiptNumber';
+import { syncSaleToLifecycleById } from '@/server/lifecycle/lifecycleSalesSync';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { visitAccessoryToSaleAccessories } from '@/lib/sales-invoicing/visitAccessoryInvoice';
@@ -736,7 +737,10 @@ export async function POST(req: Request) {
           staffName,
           paymentMethod,
         });
-        await db.collection('sales').add(deepStripUndefined(saleDoc) as Record<string, unknown>);
+        const newSaleRef = await db
+          .collection('sales')
+          .add(deepStripUndefined(saleDoc) as Record<string, unknown>);
+        void syncSaleToLifecycleById(newSaleRef.id);
       } else {
         // Ensure invoice numbering stays in sync even if a sales doc already exists (e.g. previously provisional).
         const saleId = existingSaleSnap.docs[0]?.id;
@@ -748,6 +752,7 @@ export async function POST(req: Request) {
             },
             { merge: true }
           );
+          void syncSaleToLifecycleById(saleId);
         }
       }
     }

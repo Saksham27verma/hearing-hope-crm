@@ -116,6 +116,7 @@ import { prefillSaleFromDerivedEnquiry } from '@/lib/sales-invoicing/enquiryPref
 import { allocateNextInvoiceNumber, peekNextInvoiceNumber } from '@/services/invoiceNumbering';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { notifyLifecycleSaleSync } from '@/lib/lifecycle/notifyLifecycleSaleSync';
 import { useFieldOptions } from '@/hooks/useFieldOptions';
 import type { AccountingExportOptions } from '@/lib/sales-invoicing/accountingExport';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
@@ -501,6 +502,7 @@ export default function SalesInvoicingPageInner() {
     try {
       setRestoringInvoice(true);
       await restoreCancelledSale({ db, saleId: id, actorUid: user?.uid });
+      notifyLifecycleSaleSync(id);
       setSales((prev) =>
         prev.map((s) =>
           s.id === id
@@ -546,6 +548,7 @@ export default function SalesInvoicingPageInner() {
         ...(reason ? { cancelReason: reason } : {}),
         updatedAt: serverTimestamp(),
       });
+      notifyLifecycleSaleSync(id);
       setSales((prev) =>
         prev.map((s) =>
           s.id === id
@@ -649,6 +652,7 @@ export default function SalesInvoicingPageInner() {
         ...auditPatch,
         updatedAt: serverTimestamp(),
       });
+      notifyLifecycleSaleSync(saleToSave.id);
       if (
         saleToSave.source === 'enquiry' &&
         typeof saleToSave.enquiryId === 'string' &&
@@ -697,6 +701,7 @@ export default function SalesInvoicingPageInner() {
             ...saveData,
             updatedAt: serverTimestamp(),
           });
+          notifyLifecycleSaleSync(existing.id);
           await dedupeEnquiryVisitSales(db, saleToSave.enquiryId, saleToSave.enquiryVisitIndex, {
             actorUid: user?.uid,
           });
@@ -747,6 +752,7 @@ export default function SalesInvoicingPageInner() {
         metadata: { invoiceNumber: saleToSave.invoiceNumber, grandTotal: saleToSave.grandTotal, patientName: saleToSave.patientName },
       }, user);
       if (createdNewDoc && targetId) void notifyAdminsNewSale(targetId);
+      if (targetId) notifyLifecycleSaleSync(targetId);
       setSuccessMsg(createdNewDoc ? 'Sale created' : 'Sale updated');
     }
     return true;

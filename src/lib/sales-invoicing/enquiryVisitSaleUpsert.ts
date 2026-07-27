@@ -23,6 +23,7 @@ import {
 } from '@/lib/sales-invoicing/enquiryVisitSaleMirror';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import { syncEnquiryVisitSaleLinkFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
+import { notifyLifecycleSaleSync } from '@/lib/lifecycle/notifyLifecycleSaleSync';
 import { isSaleCancelled, normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
@@ -219,6 +220,7 @@ export async function upsertSaleForEnquiryVisit(
       exchangeCreditInr: hasExchangeCredit ? exchangeCredit : deleteField(),
       exchangePriorVisitIndex: hasExchangePrior ? exchangePriorVisitIndex : deleteField(),
     });
+    notifyLifecycleSaleSync(saleId);
   } else {
     const newDocPayload: Record<string, unknown> = {
       ...basePayload,
@@ -230,6 +232,7 @@ export async function upsertSaleForEnquiryVisit(
     saleId = saleRef.id;
     created = true;
     args.onNewSale?.(saleId);
+    notifyLifecycleSaleSync(saleId);
   }
 
   await dedupeEnquiryVisitSales(args.db, args.enquiryId, visitIndex, {

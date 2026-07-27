@@ -4,6 +4,7 @@ import { adminAuth, adminDb } from '@/server/firebaseAdmin';
 import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { collectSaleVisitIndicesVoidedByReturns } from '@/lib/enquiries/salesReturnVisitTargets';
+import { syncSaleToLifecycleById } from '@/server/lifecycle/lifecycleSalesSync';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -118,14 +119,17 @@ export async function POST(req: Request) {
         }
 
         if (existingSaleSnap.empty) {
-          await db.collection('sales').add({
+          const created = await db.collection('sales').add({
             ...payload,
             createdAt: FieldValue.serverTimestamp(),
           });
           createdSales++;
+          void syncSaleToLifecycleById(created.id);
         } else {
-          await db.collection('sales').doc(existingSaleSnap.docs[0].id).set(payload, { merge: true });
+          const targetId = existingSaleSnap.docs[0].id;
+          await db.collection('sales').doc(targetId).set(payload, { merge: true });
           updatedSales++;
+          void syncSaleToLifecycleById(targetId);
         }
       }
 
