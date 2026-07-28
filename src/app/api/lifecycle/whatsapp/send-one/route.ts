@@ -21,6 +21,8 @@ export async function POST(req: Request) {
   const phone = String(body.phone || '').trim();
   const customerName = String(body.customerName || '').trim();
   const templateKey = String(body.templateKey || 'service_1yr').trim();
+  const templateNameOverride = String(body.templateName || body.templateNameOverride || '').trim();
+  const headerImageUrl = String(body.headerImageUrl || '').trim();
   // Templates are static (no Meta placeholders) — do not invent body params.
   const bodyParams = Array.isArray(body.bodyParams)
     ? body.bodyParams.map((x) => String(x))
@@ -36,6 +38,8 @@ export async function POST(req: Request) {
     bodyParams,
     customerName,
     externalSaleId,
+    templateNameOverride: templateNameOverride || undefined,
+    headerImageUrl: headerImageUrl || undefined,
   });
   if (!result.ok) {
     return NextResponse.json({ ok: false, error: result.error }, { status: 502 });

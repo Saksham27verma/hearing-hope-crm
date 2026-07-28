@@ -69,10 +69,16 @@ export async function buildLifecyclePinnaclePayload(params: {
   bodyParams: string[];
   languageCode?: string;
   templateKey?: string;
+  /** When set, skip Firebase/env image resolution and use this HTTPS link. */
+  headerImageUrl?: string;
 }) {
   const { templateLanguage } = pinnacleConfig();
   const languageCode = (params.languageCode || templateLanguage || 'en').trim();
-  const headerMedia = await resolveLifecycleHeaderMedia(params.templateKey);
+  const overrideLink = String(params.headerImageUrl || '').trim();
+  const headerMedia =
+    overrideLink && /^https:\/\//i.test(overrideLink)
+      ? ({ kind: 'link' as const, link: overrideLink })
+      : await resolveLifecycleHeaderMedia(params.templateKey);
 
   const components: Array<Record<string, unknown>> = [
     {
@@ -174,11 +180,18 @@ async function sendLifecycleWhatsAppAsImage(params: {
   phone: string;
   templateKey: string;
   bodyParams?: string[];
+  /** Prefer this exact Meta template name (from lifecycle Settings). */
+  templateNameOverride?: string;
+  /** Prefer this HTTPS header image URL (from lifecycle Settings). */
+  headerImageUrl?: string;
 }): Promise<
   | { ok: true; response: unknown; messageId: string; templateName: string; to: string }
   | { ok: false; error: string }
 > {
-  const candidates = resolveLifecycleTemplateCandidates(params.templateKey);
+  const overrideName = String(params.templateNameOverride || '').trim();
+  const candidates = overrideName
+    ? [overrideName, ...resolveLifecycleTemplateCandidates(params.templateKey).filter((n) => n !== overrideName)]
+    : resolveLifecycleTemplateCandidates(params.templateKey);
   const bodyParams = Array.isArray(params.bodyParams) ? params.bodyParams : [];
   try {
     const to = normalizePhoneForWhatsApp(params.phone);
@@ -205,6 +218,7 @@ async function sendLifecycleWhatsAppAsImage(params: {
             bodyParams,
             languageCode,
             templateKey: params.templateKey,
+            headerImageUrl: params.headerImageUrl,
           });
           const response = await postToPinnacle(payload);
           const messageId = extractMessageId(response);
@@ -245,6 +259,8 @@ export async function sendLifecycleWhatsApp(params: {
   bodyParams?: string[];
   customerName?: string;
   externalSaleId?: string;
+  templateNameOverride?: string;
+  headerImageUrl?: string;
 }): Promise<
   | { ok: true; response: unknown; messageId: string; templateName: string; to: string }
   | { ok: false; error: string }

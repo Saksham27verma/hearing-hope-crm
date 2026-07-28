@@ -30,6 +30,9 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => null)) as {
     templateKey?: string;
+    templateName?: string;
+    templateNameOverride?: string;
+    headerImageUrl?: string;
     recipients?: Recipient[];
     delayMs?: number;
   } | null;
@@ -38,6 +41,8 @@ export async function POST(req: Request) {
   }
 
   const templateKey = String(body.templateKey || 'service_1yr');
+  const templateNameOverride = String(body.templateName || body.templateNameOverride || '').trim();
+  const headerImageUrl = String(body.headerImageUrl || '').trim();
   const delayMs = Math.max(500, Math.min(5000, Number(body.delayMs) || 1500));
   const recipients = body.recipients.slice(0, 500);
   const jobId = randomUUID();
@@ -66,6 +71,8 @@ export async function POST(req: Request) {
       bodyParams,
       customerName: r.customerName,
       externalSaleId: r.externalSaleId,
+      templateNameOverride: templateNameOverride || undefined,
+      headerImageUrl: headerImageUrl || undefined,
     });
     if (out.ok) {
       const messageId = out.messageId || extractMessageId(out.response);
