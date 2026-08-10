@@ -7,7 +7,7 @@ import UniversalSearch from '@/components/universal-search/UniversalSearch';
 import { LazyHopeAIDrawer } from '@/components/common/LazyComponents';
 import CrmSidebar from '@/components/Layout/CrmSidebar';
 import CrmHeader from '@/components/Layout/CrmHeader';
-import { filterCrmNavForUser } from '@/components/Layout/crm-nav-config';
+import { filterCrmNavForUser, PRIMARY_ADMIN_EMAIL } from '@/components/Layout/crm-nav-config';
 import { HEADER_HEIGHT, mainOffsetLeftPx } from '@/components/Layout/crm-theme';
 import { useTheme } from '@mui/material/styles';
 import { alpha } from '@mui/material/styles';
@@ -357,6 +357,16 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
     if (userProfile.isSuperAdmin === true) return;
     const superAdminPaths = ['/profit', '/expenses'];
     if (!superAdminPaths.some((p) => pathname === p || pathname.startsWith(p + '/'))) return;
+    router.replace('/dashboard');
+  }, [loading, userProfile, pathname, router]);
+
+  /** Primary-admin-only routes (must match `primaryAdminOnly` in crm-nav-config, e.g. Incentives). */
+  useEffect(() => {
+    if (loading || !userProfile || !pathname) return;
+    const email = (userProfile.email || '').trim().toLowerCase();
+    if (email === PRIMARY_ADMIN_EMAIL) return;
+    const primaryAdminPaths = ['/incentives'];
+    if (!primaryAdminPaths.some((p) => pathname === p || pathname.startsWith(p + '/'))) return;
     router.replace('/dashboard');
   }, [loading, userProfile, pathname, router]);
 

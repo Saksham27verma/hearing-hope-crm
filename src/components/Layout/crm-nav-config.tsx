@@ -29,7 +29,15 @@ import {
   MessageSquare,
   Inbox,
   BookOpen,
+  Coins,
 } from 'lucide-react';
+
+/**
+ * Email of the single "primary admin" allowed to see modules gated by
+ * `primaryAdminOnly`. This is intentionally a hardcoded email so that even
+ * other admins (with or without `isSuperAdmin`) cannot access those routes.
+ */
+export const PRIMARY_ADMIN_EMAIL = 'saksham27verma@gmail.com';
 
 export interface NavChild {
   text: string;
@@ -44,6 +52,8 @@ export interface CrmNavItem {
   adminOnly?: boolean;
   /** When true, visible only to users where `isSuperAdminViewer` is true */
   superAdminOnly?: boolean;
+  /** When true, visible only to the single primary admin (matched by email == PRIMARY_ADMIN_EMAIL). */
+  primaryAdminOnly?: boolean;
 }
 
 export const CRM_NAV_ITEMS: CrmNavItem[] = [
@@ -89,6 +99,13 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
   },
   { text: 'Appointment Scheduler', path: '/appointments', icon: CalendarDays },
   { text: 'Reports', path: '/reports', icon: BarChart3 },
+  {
+    text: 'Incentives',
+    path: '/incentives',
+    icon: Coins,
+    adminOnly: true,
+    primaryAdminOnly: true,
+  },
   { text: 'Profit', path: '/profit', icon: TrendingUp, adminOnly: true, superAdminOnly: true },
   { text: 'Expenses', path: '/expenses', icon: Wallet, adminOnly: true, superAdminOnly: true },
   {
@@ -211,7 +228,9 @@ export type UserRole = 'admin' | 'staff' | 'audiologist' | string;
  * When `allowedModules` is set on the profile (non-empty, not `*`), it overrides the default role lists.
  */
 export function filterCrmNavForUser(
-  userProfile: { role: UserRole; allowedModules?: string[]; isSuperAdmin?: boolean } | null,
+  userProfile:
+    | { role: UserRole; email?: string | null; allowedModules?: string[]; isSuperAdmin?: boolean }
+    | null,
   isAllowedModule?: (moduleKey: string) => boolean,
 ): CrmNavItem[] {
   if (!userProfile) return [];
@@ -223,10 +242,14 @@ export function filterCrmNavForUser(
     !customMods.map((m) => m.toLowerCase()).includes('*');
 
   const isSuperAdmin = userProfile.isSuperAdmin === true;
+  const isPrimaryAdmin =
+    typeof userProfile.email === 'string' &&
+    userProfile.email.trim().toLowerCase() === PRIMARY_ADMIN_EMAIL;
 
   return CRM_NAV_ITEMS.filter((item) => {
     if (item.adminOnly && userProfile.role !== 'admin') return false;
     if (item.superAdminOnly && !isSuperAdmin) return false;
+    if (item.primaryAdminOnly && !isPrimaryAdmin) return false;
     if (userProfile.role === 'staff') {
       if (useCustomAccess) {
         return navItemAllowedByKeys(item, customMods!);
