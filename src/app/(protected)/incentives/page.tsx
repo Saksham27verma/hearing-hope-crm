@@ -155,6 +155,34 @@ function istMonthEndFromDate(d: Date): Date {
   return new Date(nextStart.getTime() - 1);
 }
 
+/** Every IST calendar month from `from` through `to` inclusive (YYYY-MM keys). */
+function enumerateIstMonthsInclusive(
+  from: Date,
+  to: Date,
+): Array<{ monthKey: string; label: string }> {
+  let startKey = istMonthKey(from);
+  let endKey = istMonthKey(to);
+  if (startKey > endKey) {
+    const tmp = startKey;
+    startKey = endKey;
+    endKey = tmp;
+  }
+  const out: Array<{ monthKey: string; label: string }> = [];
+  let [y, m] = startKey.split('-').map(Number);
+  const [endY, endM] = endKey.split('-').map(Number);
+  while (y < endY || (y === endY && m <= endM)) {
+    const monthKey = `${y}-${String(m).padStart(2, '0')}`;
+    const anchor = new Date(`${monthKey}-15T12:00:00+05:30`);
+    out.push({ monthKey, label: istMonthLabel(anchor) });
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
 /** First/last instant of an IST calendar day (for day-picker mode). */
 function istDayStart(d: Date): Date {
   const ymd = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -268,17 +296,24 @@ export default function IncentivesPage() {
           const enquiry = s.enquiryId ? enquiryMap.get(s.enquiryId) ?? null : null;
           return saleMatchesEmployeeSalesperson(s, employee, enquiry);
         });
+
+        // Seed EVERY month in the selected range (even with ₹0 / 0 sales),
+        // so Apr–Jun always shows 3 rows / Months in Range = 3.
         const byMonth = new Map<string, { label: string; sales: SaleRow[]; total: number }>();
+        for (const m of enumerateIstMonthsInclusive(dateFrom, dateTo)) {
+          byMonth.set(m.monthKey, { label: m.label, sales: [], total: 0 });
+        }
+
         for (const sale of empSales) {
           const d = parseSaleDate(sale.saleDate);
           if (!d) continue;
           const monthKey = istMonthKey(d);
-          const label = istMonthLabel(d);
-          const bucket = byMonth.get(monthKey) ?? { label, sales: [], total: 0 };
+          const bucket = byMonth.get(monthKey);
+          if (!bucket) continue; // outside selected months (shouldn't happen with IST bounds)
           bucket.sales.push(sale);
           bucket.total += resolveSaleIncentiveAmount(sale);
-          byMonth.set(monthKey, bucket);
         }
+
         const monthKeys = Array.from(byMonth.keys()).sort().reverse();
         const monthly: MonthlyRow[] = [];
         const perSale: Row[] = [];
@@ -639,7 +674,11 @@ export default function IncentivesPage() {
               icon={<PhoneIcon />}
               color={theme.palette.info.main}
               label="Active Rules"
-              value={String(employee?.rules.length ?? 0)}
+              value={String(
+                isMonthlyTiered
+                  ? (employee?.monthlyTiered?.tiers.length ?? 0)
+                  : (employee?.rules.length ?? 0),
+              )}
             />
           </Grid>
         </Grid>
@@ -655,7 +694,7 @@ export default function IncentivesPage() {
                   key={b.label}
                   size="small"
                   variant="outlined"
-                  label={`${b.label} — ${b.count} sales · ${formatCurrency(b.amount)}`}
+                  label={`${b.label} — ${b.count} ${isMonthlyTiered ? 'month(s)' : 'sales'} · ${formatCurrency(b.amount)}`}
                 />
               ))}
             </Stack>
