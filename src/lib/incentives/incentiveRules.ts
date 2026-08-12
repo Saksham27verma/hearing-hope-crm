@@ -461,8 +461,8 @@ const BHAWNA: IncentiveEmployee = {
   id: 'bhawna',
   displayName: 'Bhawna',
   role: 'Sales',
-  // "Bhavna" is a common alternate spelling stored on some invoices / staff records.
-  matchNames: ['Bhawna', 'Bhavna'],
+  // Invoices store full name "Bhawna Sharma"; "Bhavna" is a common alternate spelling.
+  matchNames: ['Bhawna Sharma', 'Bhawna', 'Bhavna'],
   requiresEnquiry: false,
   rules: [],
   monthlyTiered: {
