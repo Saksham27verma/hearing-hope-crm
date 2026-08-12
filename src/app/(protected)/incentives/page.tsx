@@ -65,6 +65,7 @@ import {
   parseSaleDate,
   resolveEffectiveSalespersonName,
   resolveSaleIncentiveAmount,
+  roundMoney2,
   saleMatchesEmployeeSalesperson,
   type EnquiryLike,
   type IncentiveResult,
@@ -107,23 +108,65 @@ const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(amount);
 
 const formatDate = (ts?: Timestamp | unknown) => {
   const d = parseSaleDate(ts);
   if (!d) return '-';
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  });
 };
 
+/** Calendar YYYY-MM in Asia/Kolkata (matches how enquiry sale dates are stored). */
+function istMonthKey(d: Date): string {
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 7);
+}
+
+function istMonthLabel(d: Date): string {
+  return d.toLocaleDateString('en-IN', {
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  });
+}
+
+/** First instant of the IST calendar month containing `d`. */
+function istMonthStartFromDate(d: Date): Date {
+  const key = istMonthKey(d); // YYYY-MM
+  return new Date(`${key}-01T00:00:00+05:30`);
+}
+
+/** Last millisecond of the IST calendar month containing `d`. */
+function istMonthEndFromDate(d: Date): Date {
+  const [yStr, mStr] = istMonthKey(d).split('-');
+  let y = Number(yStr);
+  let m = Number(mStr) + 1;
+  if (m > 12) {
+    m = 1;
+    y += 1;
+  }
+  const nextStart = new Date(`${y}-${String(m).padStart(2, '0')}-01T00:00:00+05:30`);
+  return new Date(nextStart.getTime() - 1);
+}
+
+/** First/last instant of an IST calendar day (for day-picker mode). */
+function istDayStart(d: Date): Date {
+  const ymd = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  return new Date(`${ymd}T00:00:00+05:30`);
+}
+function istDayEnd(d: Date): Date {
+  const ymd = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  return new Date(`${ymd}T23:59:59.999+05:30`);
+}
+
 function firstDayOfMonth(d = new Date()): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
-}
-function endOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-}
-function startOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  return istMonthStartFromDate(d);
 }
 
 function csvEscape(v: unknown): string {
@@ -188,8 +231,14 @@ export default function IncentivesPage() {
     setLoading(true);
     setError(null);
     try {
-      const startTs = Timestamp.fromDate(startOfDay(dateFrom));
-      const endTs = Timestamp.fromDate(endOfDay(dateTo));
+      // Monthly-tiered employees: snap to full IST calendar months so Apr–Jun includes all of April.
+      // Day-based employees: use IST day bounds (sale dates are stored as IST midnight).
+      const startTs = Timestamp.fromDate(
+        employee.monthlyTiered ? istMonthStartFromDate(dateFrom) : istDayStart(dateFrom),
+      );
+      const endTs = Timestamp.fromDate(
+        employee.monthlyTiered ? istMonthEndFromDate(dateTo) : istDayEnd(dateTo),
+      );
       const salesQ = query(
         collection(db, 'sales'),
         where('saleDate', '>=', startTs),
@@ -223,8 +272,8 @@ export default function IncentivesPage() {
         for (const sale of empSales) {
           const d = parseSaleDate(sale.saleDate);
           if (!d) continue;
-          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-          const label = d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+          const monthKey = istMonthKey(d);
+          const label = istMonthLabel(d);
           const bucket = byMonth.get(monthKey) ?? { label, sales: [], total: 0 };
           bucket.sales.push(sale);
           bucket.total += resolveSaleIncentiveAmount(sale);
@@ -253,7 +302,7 @@ export default function IncentivesPage() {
             for (const sale of bucket.sales) {
               const enquiry = sale.enquiryId ? enquiryMap.get(sale.enquiryId) ?? null : null;
               const saleTotal = resolveSaleIncentiveAmount(sale);
-              const share = Math.round(saleTotal * rate);
+              const share = roundMoney2(saleTotal * rate);
               if (share > 0) {
                 perSale.push({
                   sale,
@@ -486,18 +535,48 @@ export default function IncentivesPage() {
             </Grid>
             <Grid item xs={12} sm={6} md={3}>
               <DatePicker
-                label="From"
+                label={isMonthlyTiered ? 'From month' : 'From'}
                 value={dateFrom}
-                onChange={(d) => setDateFrom(d)}
-                slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                onChange={(d) => {
+                  if (!d) {
+                    setDateFrom(null);
+                    return;
+                  }
+                  setDateFrom(isMonthlyTiered ? istMonthStartFromDate(d) : d);
+                }}
+                views={isMonthlyTiered ? ['year', 'month'] : undefined}
+                openTo={isMonthlyTiered ? 'month' : undefined}
+                format={isMonthlyTiered ? 'MMM yyyy' : undefined}
+                slotProps={{
+                  textField: {
+                    size: 'small',
+                    fullWidth: true,
+                    helperText: isMonthlyTiered ? 'Full calendar month (IST)' : undefined,
+                  },
+                }}
               />
             </Grid>
             <Grid item xs={12} sm={6} md={3}>
               <DatePicker
-                label="To"
+                label={isMonthlyTiered ? 'To month' : 'To'}
                 value={dateTo}
-                onChange={(d) => setDateTo(d)}
-                slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                onChange={(d) => {
+                  if (!d) {
+                    setDateTo(null);
+                    return;
+                  }
+                  setDateTo(isMonthlyTiered ? istMonthStartFromDate(d) : d);
+                }}
+                views={isMonthlyTiered ? ['year', 'month'] : undefined}
+                openTo={isMonthlyTiered ? 'month' : undefined}
+                format={isMonthlyTiered ? 'MMM yyyy' : undefined}
+                slotProps={{
+                  textField: {
+                    size: 'small',
+                    fullWidth: true,
+                    helperText: isMonthlyTiered ? 'Inclusive through month-end (IST)' : undefined,
+                  },
+                }}
               />
             </Grid>
             <Grid item xs={12} md={2}>
@@ -596,7 +675,7 @@ export default function IncentivesPage() {
                 Monthly Incentive Summary
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Sales are grouped by calendar month (based on Sale Date). The tier reached in a month applies to that month's full total.
+                Sales are grouped by calendar month in Asia/Kolkata. Selecting Apr–Jun includes every sale from 1 Apr through 30 Jun (IST).
               </Typography>
             </Box>
             <TableContainer>

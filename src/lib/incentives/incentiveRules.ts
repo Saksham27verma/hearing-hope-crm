@@ -201,6 +201,12 @@ function toSafeNumber(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Round to 2 decimal places (paise) without integer rounding. */
+export function roundMoney2(n: number): number {
+  const x = toSafeNumber(n);
+  return Math.round(x * 100) / 100;
+}
+
 /** Read salesperson name whether stored as `{ name }` or a plain string. */
 export function readSalespersonName(sale: SaleLike | null | undefined): string {
   if (!sale) return '';
@@ -331,7 +337,7 @@ export function buildIncentiveContext(
 function resolveRuleAmount(rule: IncentiveRule, ctx: IncentiveContext): number {
   const raw = typeof rule.amount === 'function' ? rule.amount(ctx) : rule.amount;
   const n = toSafeNumber(raw);
-  return n > 0 ? Math.round(n) : 0;
+  return n > 0 ? roundMoney2(n) : 0;
 }
 
 export function computeIncentiveForSale(
@@ -406,7 +412,7 @@ export function saleMatchesEmployeeSalesperson(
 
 /**
  * Given a monthly total and the employee's tier config, return the highest
- * qualifying tier plus the resulting incentive amount (rounded to nearest ₹).
+ * qualifying tier plus the resulting incentive amount (2 decimal places).
  * Below the lowest threshold → `{ tier: null, rate: 0, amount: 0 }`.
  */
 export function computeMonthlyTierIncentive(
@@ -421,7 +427,7 @@ export function computeMonthlyTierIncentive(
     }
   }
   const rate = selected?.rate ?? 0;
-  return { tier: selected, rate, amount: Math.round(total * rate) };
+  return { tier: selected, rate, amount: roundMoney2(total * rate) };
 }
 
 const ASHOK: IncentiveEmployee = {
