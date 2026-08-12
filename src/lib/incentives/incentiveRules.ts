@@ -12,8 +12,7 @@
  *       - Manual sales (no linked enquiry) are ignored.
  *   - Ashok (sales) — salesperson-based
  *       - 1% of the sale's grand total (invoice total) on every non-cancelled sale
- *         where `sale.salesperson.name` matches Ashok. Applies to manual + enquiry
- *         sales alike (no enquiry needed).
+ *         where salesperson matches Ashok. Applies to manual + enquiry sales alike.
  *   - Bhavik (sales) — monthly tiered (flat rate on FULL monthly total once threshold hit)
  *       Tiers (per calendar month, non-cancelled sales where he is salesperson):
  *         ₹3,00,000+ → 1%
@@ -36,16 +35,23 @@ export type EnquiryLike = {
   reference?: unknown;
   telecaller?: string | null;
   followUps?: FollowUpLike[] | null;
+  visits?: unknown;
+  visitHistory?: unknown;
+  [key: string]: unknown;
 };
 
 export type SaleLike = {
   id?: string;
   enquiryId?: string | null;
+  enquiryVisitIndex?: number | null;
   source?: string | null;
   cancelled?: boolean | null;
-  salesperson?: { id?: string | null; name?: string | null } | null;
+  salesperson?: { id?: string | null; name?: string | null } | string | null;
   grandTotal?: number | null;
   totalAmount?: number | null;
+  gstAmount?: number | null;
+  products?: Array<{ sellingPrice?: number | null; finalAmount?: number | null; quantity?: number | null }> | null;
+  saleDate?: unknown;
 };
 
 export interface IncentiveRule {
@@ -76,16 +82,17 @@ export interface IncentiveEmployee {
   displayName: string;
   role: string;
   /**
-   * Names to match against `followUps[].callerName` (call records) AND
-   * `sale.salesperson.name` (salesperson-based rules). Matching is
-   * case-insensitive and whitespace-trimmed.
+   * Names / aliases to match against call records and salesperson fields.
+   * Matching is case-insensitive and accepts full names that contain these
+   * as whole-word tokens (e.g. "Bhawna" matches "Bhawna Sharma").
    */
   matchNames: string[];
   rules: IncentiveRule[];
   /**
    * When true, page will fetch the linked enquiry and skip manual sales
    * (needed for call-record / reference rules). When false, page evaluates
-   * rules on the sale alone (salesperson-based rules).
+   * rules on the sale alone (salesperson-based rules), with enquiry used only
+   * as a salesperson fallback when available.
    */
   requiresEnquiry: boolean;
   /**
@@ -106,7 +113,7 @@ export interface IncentiveContext {
   matchedCallerNames: string[];
   /** Normalized reference values (lowercased, trimmed). */
   referenceValues: string[];
-  /** True if `sale.salesperson.name` matches one of `employee.matchNames`. */
+  /** True if resolved salesperson name matches one of `employee.matchNames`. */
   matchesSalesperson: boolean;
   /** Matched salesperson name taken verbatim (for display). */
   matchedSalespersonName: string | null;
@@ -132,6 +139,34 @@ function normalize(name: unknown): string {
   return typeof name === 'string' ? name.trim().toLowerCase() : '';
 }
 
+function tokenize(name: string): string[] {
+  return name
+    .split(/[\s.,\-_/|()]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+/**
+ * Flexible person-name match:
+ * - exact equality after normalize
+ * - OR every token of the match alias appears as a whole-word token in the candidate
+ *   (so "Bhawna" matches "Bhawna Sharma", but "Ashok" does not match "Ashoka")
+ */
+export function personNameMatches(candidate: unknown, matchNames: string[]): boolean {
+  const c = normalize(candidate);
+  if (!c) return false;
+  const cTokens = tokenize(c);
+  for (const raw of matchNames) {
+    const n = normalize(raw);
+    if (!n) continue;
+    if (c === n) return true;
+    const nTokens = tokenize(n);
+    if (nTokens.length === 0) continue;
+    if (nTokens.every((t) => cTokens.includes(t))) return true;
+  }
+  return false;
+}
+
 function extractReferenceList(reference: unknown): string[] {
   if (Array.isArray(reference)) {
     return reference
@@ -145,7 +180,7 @@ function extractReferenceList(reference: unknown): string[] {
   return [];
 }
 
-function collectMatchedCallers(enquiry: EnquiryLike | null, matchSet: Set<string>): string[] {
+function collectMatchedCallers(enquiry: EnquiryLike | null, matchNames: string[]): string[] {
   if (!enquiry) return [];
   const out: string[] = [];
   const seen = new Set<string>();
@@ -153,7 +188,7 @@ function collectMatchedCallers(enquiry: EnquiryLike | null, matchSet: Set<string
   for (const fu of followUps) {
     const raw = typeof fu?.callerName === 'string' ? fu.callerName.trim() : '';
     if (!raw) continue;
-    if (!matchSet.has(raw.toLowerCase())) continue;
+    if (!personNameMatches(raw, matchNames)) continue;
     if (seen.has(raw.toLowerCase())) continue;
     seen.add(raw.toLowerCase());
     out.push(raw);
@@ -166,16 +201,119 @@ function toSafeNumber(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Read salesperson name whether stored as `{ name }` or a plain string. */
+export function readSalespersonName(sale: SaleLike | null | undefined): string {
+  if (!sale) return '';
+  const sp = sale.salesperson;
+  if (typeof sp === 'string') return sp.trim();
+  if (sp && typeof sp === 'object' && typeof sp.name === 'string') return sp.name.trim();
+  return '';
+}
+
+/**
+ * Prefer invoice grandTotal; fall back to totalAmount+GST, then product line totals.
+ * Some legacy / partially-synced sales have grandTotal missing or 0.
+ */
+export function resolveSaleIncentiveAmount(sale: SaleLike): number {
+  const gt = toSafeNumber(sale.grandTotal);
+  if (gt > 0) return gt;
+  const sub = toSafeNumber(sale.totalAmount);
+  const gst = toSafeNumber(sale.gstAmount);
+  if (sub + gst > 0) return sub + gst;
+  if (sub > 0) return sub;
+  if (Array.isArray(sale.products)) {
+    const fromLines = sale.products.reduce((sum, p) => {
+      const unit = toSafeNumber(p?.sellingPrice ?? p?.finalAmount);
+      const qty = Math.max(1, toSafeNumber(p?.quantity) || 1);
+      return sum + unit * qty;
+    }, 0);
+    if (fromLines > 0) return fromLines;
+  }
+  return 0;
+}
+
+/** Parse saleDate from Firestore Timestamp, Date, millis, or ISO string. */
+export function parseSaleDate(saleDate: unknown): Date | null {
+  if (!saleDate) return null;
+  if (saleDate instanceof Date && !Number.isNaN(saleDate.getTime())) return saleDate;
+  if (typeof saleDate === 'object') {
+    const ts = saleDate as { toDate?: () => Date; seconds?: number; _seconds?: number };
+    if (typeof ts.toDate === 'function') {
+      try {
+        const d = ts.toDate();
+        if (d instanceof Date && !Number.isNaN(d.getTime())) return d;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (typeof ts.seconds === 'number') return new Date(ts.seconds * 1000);
+    if (typeof ts._seconds === 'number') return new Date(ts._seconds * 1000);
+  }
+  if (typeof saleDate === 'number' && Number.isFinite(saleDate)) {
+    const d = new Date(saleDate > 1e12 ? saleDate : saleDate * 1000);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof saleDate === 'string') {
+    const d = new Date(saleDate);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+function visitWhoSoldName(visit: Record<string, unknown> | null | undefined): string {
+  if (!visit) return '';
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  return String(
+    details?.whoSold ?? visit.whoSold ?? visit.whoSoldName ?? visit.hearingAidBrand ?? '',
+  ).trim();
+}
+
+/**
+ * Resolve the salesperson name for incentive attribution.
+ * 1) sale.salesperson.name
+ * 2) linked enquiry visit "Who Sold" (hearingAidBrand / whoSold) when sale has enquiryId
+ * 3) enquiry.sales top-level field when present
+ */
+export function resolveEffectiveSalespersonName(
+  sale: SaleLike,
+  enquiry: EnquiryLike | null,
+): string {
+  const fromSale = readSalespersonName(sale);
+  if (fromSale) return fromSale;
+  if (!enquiry) return '';
+
+  const visitsRaw = enquiry.visits ?? enquiry.visitHistory;
+  const visits = Array.isArray(visitsRaw) ? (visitsRaw as Record<string, unknown>[]) : [];
+  const idx =
+    typeof sale.enquiryVisitIndex === 'number' && Number.isFinite(sale.enquiryVisitIndex)
+      ? sale.enquiryVisitIndex
+      : -1;
+  if (idx >= 0 && idx < visits.length) {
+    const fromVisit = visitWhoSoldName(visits[idx]);
+    if (fromVisit) return fromVisit;
+  }
+  // Prefer any sale visit that looks sold and has whoSold
+  for (const v of visits) {
+    const sold =
+      v?.hearingAidSale === true ||
+      v?.purchaseFromTrial === true ||
+      v?.hearingAidStatus === 'sold';
+    if (!sold) continue;
+    const name = visitWhoSoldName(v);
+    if (name) return name;
+  }
+  const topLevelSales = typeof enquiry.sales === 'string' ? enquiry.sales.trim() : '';
+  return topLevelSales;
+}
+
 export function buildIncentiveContext(
   sale: SaleLike,
   enquiry: EnquiryLike | null,
   employee: IncentiveEmployee,
 ): IncentiveContext {
-  const matchSet = new Set(employee.matchNames.map((n) => n.trim().toLowerCase()));
-  const matchedCallerNames = collectMatchedCallers(enquiry, matchSet);
-
-  const spNameRaw = typeof sale.salesperson?.name === 'string' ? sale.salesperson.name.trim() : '';
-  const matchesSalesperson = !!spNameRaw && matchSet.has(spNameRaw.toLowerCase());
+  const matchedCallerNames = collectMatchedCallers(enquiry, employee.matchNames);
+  const spNameRaw = resolveEffectiveSalespersonName(sale, enquiry);
+  const matchesSalesperson = personNameMatches(spNameRaw, employee.matchNames);
 
   return {
     sale,
@@ -186,7 +324,7 @@ export function buildIncentiveContext(
     referenceValues: extractReferenceList(enquiry?.reference),
     matchesSalesperson,
     matchedSalespersonName: matchesSalesperson ? spNameRaw : null,
-    saleGrandTotal: toSafeNumber(sale.grandTotal),
+    saleGrandTotal: resolveSaleIncentiveAmount(sale),
   };
 }
 
@@ -255,16 +393,15 @@ const MOHIT_KUMAR: IncentiveEmployee = {
 };
 
 /**
- * Match against `sale.salesperson.name` (case-insensitive, trimmed).
- * Used by the monthly-tiered page path to filter which sales belong to the employee.
+ * Match against resolved salesperson name (sale + enquiry whoSold fallback).
  */
 export function saleMatchesEmployeeSalesperson(
   sale: SaleLike,
   employee: IncentiveEmployee,
+  enquiry: EnquiryLike | null = null,
 ): boolean {
-  const raw = typeof sale.salesperson?.name === 'string' ? sale.salesperson.name.trim().toLowerCase() : '';
-  if (!raw) return false;
-  return employee.matchNames.map((n) => n.trim().toLowerCase()).includes(raw);
+  const raw = resolveEffectiveSalespersonName(sale, enquiry);
+  return personNameMatches(raw, employee.matchNames);
 }
 
 /**
@@ -324,7 +461,8 @@ const BHAWNA: IncentiveEmployee = {
   id: 'bhawna',
   displayName: 'Bhawna',
   role: 'Sales',
-  matchNames: ['Bhawna'],
+  // "Bhavna" is a common alternate spelling stored on some invoices / staff records.
+  matchNames: ['Bhawna', 'Bhavna'],
   requiresEnquiry: false,
   rules: [],
   monthlyTiered: {

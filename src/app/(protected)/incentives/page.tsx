@@ -27,7 +27,6 @@ import {
   TableHead,
   TablePagination,
   TableRow,
-  TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
@@ -63,6 +62,9 @@ import {
   computeIncentiveForSale,
   computeMonthlyTierIncentive,
   getIncentiveEmployee,
+  parseSaleDate,
+  resolveEffectiveSalespersonName,
+  resolveSaleIncentiveAmount,
   saleMatchesEmployeeSalesperson,
   type EnquiryLike,
   type IncentiveResult,
@@ -108,9 +110,9 @@ const formatCurrency = (amount: number) =>
     maximumFractionDigits: 0,
   }).format(amount);
 
-const formatDate = (ts?: Timestamp) => {
-  if (!ts) return '-';
-  const d = new Date(ts.seconds * 1000);
+const formatDate = (ts?: Timestamp | unknown) => {
+  const d = parseSaleDate(ts);
+  if (!d) return '-';
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
@@ -122,11 +124,6 @@ function endOfDay(d: Date): Date {
 }
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-}
-
-function toSafeNumber(v: unknown): number {
-  const n = typeof v === 'number' ? v : Number(v);
-  return Number.isFinite(n) ? n : 0;
 }
 
 function csvEscape(v: unknown): string {
@@ -210,17 +207,27 @@ export default function IncentivesPage() {
       );
       setSalesScanned(scopedSales.length);
 
+      // Always fetch linked enquiries when present — needed for call-record rules
+      // and as a salesperson "Who Sold" fallback for Ashok / Bhavik / Bhawna.
+      const enquiryIds = scopedSales
+        .map((s) => s.enquiryId)
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+      const enquiryMap = await fetchEnquiriesByIds(enquiryIds);
+
       if (employee.monthlyTiered) {
-        const empSales = scopedSales.filter((s) => saleMatchesEmployeeSalesperson(s, employee));
+        const empSales = scopedSales.filter((s) => {
+          const enquiry = s.enquiryId ? enquiryMap.get(s.enquiryId) ?? null : null;
+          return saleMatchesEmployeeSalesperson(s, employee, enquiry);
+        });
         const byMonth = new Map<string, { label: string; sales: SaleRow[]; total: number }>();
         for (const sale of empSales) {
-          if (!sale.saleDate) continue;
-          const d = new Date(sale.saleDate.seconds * 1000);
+          const d = parseSaleDate(sale.saleDate);
+          if (!d) continue;
           const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
           const label = d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
           const bucket = byMonth.get(monthKey) ?? { label, sales: [], total: 0 };
           bucket.sales.push(sale);
-          bucket.total += toSafeNumber(sale.grandTotal);
+          bucket.total += resolveSaleIncentiveAmount(sale);
           byMonth.set(monthKey, bucket);
         }
         const monthKeys = Array.from(byMonth.keys()).sort().reverse();
@@ -244,12 +251,13 @@ export default function IncentivesPage() {
           });
           if (rate > 0) {
             for (const sale of bucket.sales) {
-              const saleTotal = toSafeNumber(sale.grandTotal);
+              const enquiry = sale.enquiryId ? enquiryMap.get(sale.enquiryId) ?? null : null;
+              const saleTotal = resolveSaleIncentiveAmount(sale);
               const share = Math.round(saleTotal * rate);
               if (share > 0) {
                 perSale.push({
                   sale,
-                  enquiry: null,
+                  enquiry,
                   result: {
                     amount: share,
                     ruleId: `monthly-tier-${tier?.threshold ?? 0}`,
@@ -258,7 +266,7 @@ export default function IncentivesPage() {
                     matchedCallerNames: [],
                     referenceValues: [],
                     matchesSalesperson: true,
-                    matchedSalespersonName: sale.salesperson?.name ?? null,
+                    matchedSalespersonName: resolveEffectiveSalespersonName(sale, enquiry) || null,
                     saleGrandTotal: saleTotal,
                   },
                 });
@@ -270,10 +278,6 @@ export default function IncentivesPage() {
         setRows(perSale);
         setPage(0);
       } else {
-        const enquiryMap = employee.requiresEnquiry
-          ? await fetchEnquiriesByIds(scopedSales.map((s) => s.enquiryId as string))
-          : new Map<string, EnquiryLike>();
-
         const computedRows: Row[] = [];
         for (const sale of scopedSales) {
           const enquiry = sale.enquiryId ? enquiryMap.get(sale.enquiryId) ?? null : null;
@@ -290,6 +294,7 @@ export default function IncentivesPage() {
       console.error('Failed to load incentives:', e);
       setError(e instanceof Error ? e.message : 'Failed to load incentives');
       setRows([]);
+      setMonthlyRows([]);
     } finally {
       setLoading(false);
     }
@@ -372,7 +377,9 @@ export default function IncentivesPage() {
         r.sale.invoiceNumber || r.sale.id,
         formatDate(r.sale.saleDate),
         r.sale.patientName || '',
-        r.result.matchedSalespersonName || r.sale.salesperson?.name || '',
+        r.result.matchedSalespersonName ||
+          resolveEffectiveSalespersonName(r.sale, r.enquiry) ||
+          '',
         r.result.saleGrandTotal,
         r.result.referenceValues.join(' | '),
         r.result.matchedCallerNames.join(' | '),
@@ -540,8 +547,12 @@ export default function IncentivesPage() {
             <SummaryCard
               icon={<ReceiptIcon />}
               color={theme.palette.primary.main}
-              label="Sales Scanned"
-              value={String(salesScanned)}
+              label={isMonthlyTiered ? 'Matched Sales' : 'Sales Scanned'}
+              value={String(
+                isMonthlyTiered
+                  ? monthlyRows.reduce((n, m) => n + m.salesCount, 0)
+                  : salesScanned,
+              )}
             />
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
@@ -611,7 +622,10 @@ export default function IncentivesPage() {
                     <TableRow>
                       <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
                         <Typography color="text.secondary">
-                          No sales found for this employee in the selected range.
+                          No sales matched for this employee in the selected range
+                          {salesScanned > 0
+                            ? ` (${salesScanned} sales scanned — check salesperson name on invoices).`
+                            : '.'}
                         </Typography>
                       </TableCell>
                     </TableRow>
@@ -725,7 +739,7 @@ export default function IncentivesPage() {
                               />
                             ) : (
                               <Typography variant="body2" color="text.disabled">
-                                {r.sale.salesperson?.name || '—'}
+                                {resolveEffectiveSalespersonName(r.sale, r.enquiry) || '—'}
                               </Typography>
                             )}
                           </TableCell>
