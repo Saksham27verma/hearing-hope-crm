@@ -159,14 +159,17 @@ export function processInvoiceHtmlTemplate(
   }
 
   if (invoiceData.items && invoiceData.items.length > 0) {
-    const isSixColumnInvoiceTemplate =
-      /class=["']item-table["']/i.test(html) &&
+    const hasHopeItemTable = /class=["']item-table["']/i.test(html);
+    const hasHopeLineHeaders =
       /Description\s*&(?:amp;)?\s*Specification/i.test(html) &&
       /<th[^>]*>\s*HSN\s*<\/th>/i.test(html) &&
       /<th[^>]*>\s*Qty\s*<\/th>/i.test(html) &&
       /<th[^>]*>\s*Price\s*<\/th>/i.test(html) &&
       /<th[^>]*>\s*GST\s*Amount\s*<\/th>/i.test(html) &&
       /<th[^>]*>\s*Total\s*Amount\s*<\/th>/i.test(html);
+    const hasMrpColumn = /<th[^>]*>\s*MRP\s*<\/th>/i.test(html);
+    const isSevenColumnInvoiceTemplate = hasHopeItemTable && hasHopeLineHeaders && hasMrpColumn;
+    const isSixColumnInvoiceTemplate = hasHopeItemTable && hasHopeLineHeaders && !hasMrpColumn;
     const itemsHTML = invoiceData.items
       .map((raw, index) => {
         const item = raw as InvoiceLineItem;
@@ -184,6 +187,26 @@ export function processInvoiceHtmlTemplate(
             ? item.gstPercent
             : Number((invoiceData as { taxRate?: number }).taxRate) || 0;
         const hsn = item.hsnCode || '9021';
+
+        if (isSevenColumnInvoiceTemplate) {
+          return `
+        <tr>
+          <td>
+            <div class="product-title">${index + 1}. ${item.name || item.description || ''}</div>
+            <div class="product-meta">
+              ${item.description ? `${item.description}<br/>` : ''}
+              ${item.serialNumber ? `S/N: ${item.serialNumber}` : ''}
+            </div>
+          </td>
+          <td>${hsn}</td>
+          <td class="text-center">${quantity}</td>
+          <td class="text-right">${formatCurrency(mrpUnit)}</td>
+          <td class="text-right">${formatCurrency(unitSelling)}</td>
+          <td class="text-right">${formatCurrency(gstAmount)}</td>
+          <td class="text-right">${formatCurrency(lineTotal)}</td>
+        </tr>
+        `;
+        }
 
         if (isSixColumnInvoiceTemplate) {
           return `
