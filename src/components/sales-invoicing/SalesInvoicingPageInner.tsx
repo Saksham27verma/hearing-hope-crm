@@ -103,6 +103,7 @@ import {
 import { buildUnifiedInvoiceRows } from '@/lib/sales-invoicing/mergeUnifiedRows';
 import { filterUnifiedRows } from '@/lib/sales-invoicing/filterRows';
 import { timestampToMs } from '@/lib/sales-invoicing/timestamps';
+import { formatSaleDateLabel, parseEnquiryVisitSaleDate } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import type {
   DerivedEnquirySale,
   InvoiceTablePaymentFilter,
@@ -216,8 +217,7 @@ interface Center {
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
 
-const formatDate = (timestamp: Timestamp) =>
-  new Date(timestamp.seconds * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+const formatDate = (timestamp: unknown) => formatSaleDateLabel(timestamp);
 
 // ─── Section Header component ───
 
@@ -1468,7 +1468,7 @@ export default function SalesInvoicingPageInner() {
                 <Grid container spacing={2}>
                   <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>
                     <LocalizationProvider dateAdapter={AdapterDateFns}>
-                      <DatePicker label="Sale Date" value={new Date(currentSale.saleDate.seconds * 1000)} onChange={(d) => d && updateSaleField('saleDate', Timestamp.fromDate(d))} slotProps={{ textField: { fullWidth: true, size: 'small' } }} />
+                      <DatePicker label="Sale Date" value={parseEnquiryVisitSaleDate(currentSale.saleDate)} onChange={(d) => d && updateSaleField('saleDate', Timestamp.fromDate(d))} slotProps={{ textField: { fullWidth: true, size: 'small' } }} />
                     </LocalizationProvider>
                   </Grid>
                   <Grid sx={{ gridColumn: { xs: 'span 12', sm: 'span 6', md: 'span 3' } }}>

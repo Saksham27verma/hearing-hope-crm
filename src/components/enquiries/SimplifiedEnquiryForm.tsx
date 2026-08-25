@@ -59,6 +59,7 @@ import {
   parseEnquiryAddressStored,
 } from '@/utils/enquiryAddress';
 import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiryPayments';
+import { previewInvoicesCancelledByReturnVisit } from '@/lib/enquiries/salesReturnVisitTargets';
 import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
@@ -931,6 +932,7 @@ interface SalesReturnLine {
   visitIndex?: number;
   saleDate?: string;
   finalAmount?: number;
+  invoiceNumber?: string;
 }
 
 function newSalesReturnLineId(): string {
@@ -969,6 +971,7 @@ function normalizeSalesReturnItemsFromSaved(
         visitIndex: typeof it.visitIndex === 'number' ? it.visitIndex : undefined,
         saleDate: it.saleDate,
         finalAmount: it.finalAmount,
+        invoiceNumber: it.invoiceNumber ? String(it.invoiceNumber).trim() : undefined,
       }))
       .filter((it) => it.serialNumber);
   }
@@ -2619,7 +2622,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
             Boolean(mergedVisit.hearingAidBooked);
           const isSaleService =
             medicalServices.includes('hearing_aid_sale') ||
-            medicalServices.includes('hearing_aid') ||
             Boolean(mergedVisit.hearingAidSale) ||
             mergedVisit.hearingAidStatus === 'sold';
           const allowBookingFallbackFromSaleTotals = isBookingService && !isSaleService;
@@ -2645,7 +2647,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           hearingAidBooked: medicalServices.includes('hearing_aid_booked') || Boolean(mergedVisit.hearingAidBooked),
           hearingAidSale:
             medicalServices.includes('hearing_aid_sale') ||
-            medicalServices.includes('hearing_aid') ||
             Boolean(mergedVisit.hearingAidSale || mergedVisit.purchaseFromTrial || mergedVisit.hearingAidStatus === 'sold'),
           accessory: medicalServices.includes('accessory') || Boolean(mergedVisit.accessory),
           programming: medicalServices.includes('programming') || Boolean(mergedVisit.programming),
@@ -3673,28 +3674,34 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const fetchPreviousSales = () => {
     const currentVisits = getValues('visits');
     const salesData: any[] = [];
-    
+
     currentVisits.forEach((visit, visitIndex) => {
-      if (visit.hearingAidSale && visit.products && visit.products.length > 0) {
-        visit.products.forEach((product: any) => {
-          if (product.serialNumber) {
-            salesData.push({
-              visitIndex,
-              visitDate: visit.visitDate,
-              serialNumber: product.serialNumber,
-              productName: product.name,
-              brand: visit.hearingAidBrand || product.company || '',
-              model: product.name || visit.hearingAidModel || '',
-              mrp: product.mrp || 0,
-              sellingPrice: product.sellingPrice || 0,
-              finalAmount: product.finalAmount || 0,
-              saleDate: product.saleDate || visit.visitDate
-            });
-          }
-        });
-      }
+      if (visitIndex === activeVisit) return;
+      const isSale = Boolean(
+        visit.hearingAidSale || visit.purchaseFromTrial || visit.hearingAidStatus === 'sold'
+      );
+      if (!isSale || !visit.products || visit.products.length === 0) return;
+      const invoiceNumber = String(visit.invoiceNumber || '').trim();
+      visit.products.forEach((product: any) => {
+        if (product.serialNumber) {
+          salesData.push({
+            visitIndex,
+            visitDate: visit.visitDate,
+            serialNumber: product.serialNumber,
+            productName: product.name,
+            brand: visit.hearingAidBrand || product.company || '',
+            model: product.name || visit.hearingAidModel || '',
+            mrp: product.mrp || 0,
+            sellingPrice: product.sellingPrice || 0,
+            finalAmount: product.finalAmount || 0,
+            saleDate: product.saleDate || visit.purchaseDate || visit.visitDate,
+            invoiceNumber,
+            linkedSaleId: String(visit.linkedSaleId || '').trim(),
+          });
+        }
+      });
     });
-    
+
     setPreviousSales(salesData);
   };
 
@@ -4235,6 +4242,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           homeVisitCharges:
             visit.visitType === 'home' ? Math.max(0, Number(visit.homeVisitCharges) || 0) : 0,
           notes: visit.visitNotes,
+          invoiceNumber: visit.invoiceNumber || undefined,
+          linkedSaleId: visit.linkedSaleId || undefined,
           medicalServices: [
             ...(visit.hearingTest ? ['hearing_test'] : []),
             ...(visit.hearingAidTrial ? ['hearing_aid_trial'] : []),
@@ -4258,7 +4267,6 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           trialPeriod: visit.warranty,
           whichEar: visit.whichEar,
           hearingAidStatus: visit.hearingAidStatus,
-          saleDate: '',
           hearingAidGivenForTrial: false,
           products: visit.products,
           grossMRP: visit.grossMRP,
@@ -4266,6 +4274,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           taxAmount: visit.taxAmount,
           salesAfterTax: visit.salesAfterTax,
           totalDiscountPercent: visit.totalDiscountPercent,
+          invoiceNumber: visit.invoiceNumber || undefined,
+          linkedSaleId: visit.linkedSaleId || undefined,
           // Persist journey fields
           hearingAidJourneyId: visit.hearingAidJourneyId,
           previousVisitId: visit.previousVisitId,
@@ -8518,19 +8528,26 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                     multiple
                                     options={previousSales}
                                     disableCloseOnSelect
-                                    getOptionLabel={(sale) =>
-                                      `${sale.serialNumber} — ${sale.productName || 'Product'} (${sale.brand || ''} ${sale.model || ''})`.trim()
+                                    getOptionLabel={(sale) => {
+                                      const inv = String(sale.invoiceNumber || '').trim();
+                                      const visitBit = `Visit ${(sale.visitIndex ?? 0) + 1}`;
+                                      const invBit = inv ? ` · ${inv}` : '';
+                                      return `${visitBit}${invBit} · S/N ${sale.serialNumber} — ${sale.productName || 'Product'}`.trim();
+                                    }}
+                                    isOptionEqualToValue={(a, b) =>
+                                      a.visitIndex === b.visitIndex && a.serialNumber === b.serialNumber
                                     }
-                                    isOptionEqualToValue={(a, b) => a.serialNumber === b.serialNumber}
                                     value={previousSales.filter((sale) =>
                                       (currentVisit.salesReturnItems || []).some(
-                                        (line) => line.serialNumber === sale.serialNumber
+                                        (line) =>
+                                          line.serialNumber === sale.serialNumber &&
+                                          (line.visitIndex == null || line.visitIndex === sale.visitIndex)
                                       )
                                     )}
                                     onChange={(_, newValue) => {
                                       const prevLines = currentVisit.salesReturnItems || [];
                                       const fromPicker: SalesReturnLine[] = newValue.map((sale, i) => ({
-                                        id: `pick-${sale.serialNumber}-${i}`,
+                                        id: `pick-${sale.visitIndex}-${sale.serialNumber}-${i}`,
                                         serialNumber: sale.serialNumber,
                                         model: String(sale.model || '').trim(),
                                         productName: sale.productName,
@@ -8538,10 +8555,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                         visitIndex: sale.visitIndex,
                                         saleDate: sale.saleDate,
                                         finalAmount: sale.finalAmount,
+                                        invoiceNumber: String(sale.invoiceNumber || '').trim() || undefined,
                                       }));
                                       const manualOnly = prevLines.filter(
                                         (line) =>
-                                          !previousSales.some((ps) => ps.serialNumber === line.serialNumber)
+                                          !previousSales.some(
+                                            (ps) =>
+                                              ps.serialNumber === line.serialNumber &&
+                                              (line.visitIndex == null || ps.visitIndex === line.visitIndex)
+                                          )
                                       );
                                       const merged = [...fromPicker, ...manualOnly];
                                       const first = fromPicker[0];
@@ -8564,13 +8586,14 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                       />
                                     )}
                                     renderOption={(props, sale) => (
-                                      <li {...props} key={sale.serialNumber}>
+                                      <li {...props} key={`${sale.visitIndex}-${sale.serialNumber}`}>
                                         <Box>
                                           <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                            S/N: {sale.serialNumber}
+                                            Visit {(sale.visitIndex ?? 0) + 1}
+                                            {sale.invoiceNumber ? ` · Invoice ${sale.invoiceNumber}` : ' · No invoice yet'}
                                           </Typography>
                                           <Typography variant="caption" color="text.secondary" display="block">
-                                            {sale.productName} • {sale.brand} {sale.model}
+                                            S/N: {sale.serialNumber} • {sale.productName} • {sale.brand} {sale.model}
                                           </Typography>
                                           <Typography variant="caption" color="text.secondary" display="block">
                                             Sold on: {sale.saleDate} • {formatCurrencySale(sale.finalAmount ?? 0)}
@@ -8703,6 +8726,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                           sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}
                                         >
                                           <Chip size="small" label={`S/N: ${line.serialNumber || '—'}`} />
+                                          {line.visitIndex != null ? (
+                                            <Chip size="small" variant="outlined" label={`Visit ${line.visitIndex + 1}`} />
+                                          ) : null}
+                                          {line.invoiceNumber ? (
+                                            <Chip size="small" color="warning" label={`Invoice ${line.invoiceNumber}`} />
+                                          ) : null}
                                           {line.model ? (
                                             <Chip size="small" variant="outlined" label={line.model} />
                                           ) : null}
@@ -8718,6 +8747,41 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                   </Paper>
                                 </Grid>
                               )}
+
+                            {currentVisit.salesReturn &&
+                              (currentVisit.salesReturnItems || []).length > 0 &&
+                              (() => {
+                                const previews = previewInvoicesCancelledByReturnVisit(
+                                  watchedVisits as unknown[],
+                                  currentVisit as unknown as Record<string, unknown>,
+                                  activeVisit,
+                                );
+                                if (previews.length === 0) return null;
+                                return (
+                                  <Grid item xs={12}>
+                                    <Alert severity="warning" sx={{ borderRadius: 2 }}>
+                                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                                        Saving will cancel {previews.length === 1 ? 'this invoice' : 'these invoices'}
+                                      </Typography>
+                                      {previews.map((p) => (
+                                        <Typography key={p.visitIndex} variant="body2" component="div">
+                                          Visit {p.visitNumber}
+                                          {p.invoiceNumber
+                                            ? ` — invoice ${p.invoiceNumber} will be cancelled`
+                                            : ' — the linked sale invoice will be cancelled'}
+                                          {p.serialNumbers.length
+                                            ? ` (S/N ${p.serialNumbers.join(', ')})`
+                                            : ''}
+                                          . That device returns to stock. Other invoices on this enquiry stay unchanged.
+                                        </Typography>
+                                      ))}
+                                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                                        A later new sale on another visit will get its own invoice. The returned sale will not be invoiced again.
+                                      </Typography>
+                                    </Alert>
+                                  </Grid>
+                                );
+                              })()}
 
                             {/* Return Condition */}
                             <Grid item xs={12} md={6}>

@@ -34,7 +34,7 @@ async function hasDuplicateInvoiceNumber(
   return dupSnap.docs.some((d) => d.id !== currentSaleId);
 }
 
-function collectCandidateInvoiceNumbers(values: unknown[]): string[] {
+export function collectCandidateInvoiceNumbers(values: unknown[]): string[] {
   const seen = new Set<string>();
   const candidates: string[] = [];
 
@@ -48,6 +48,15 @@ function collectCandidateInvoiceNumbers(values: unknown[]): string[] {
   return candidates;
 }
 
+/** Allocate only when this visit has no invoice yet and is not updating an existing sale. */
+export function shouldAllocateNewInvoiceNumber(args: {
+  currentSaleId?: string;
+  candidateInvoiceNumbers: string[];
+}): boolean {
+  if (args.currentSaleId) return false;
+  return args.candidateInvoiceNumbers.length === 0;
+}
+
 export async function resolveEnquirySaleInvoiceNumber({
   db,
   existingVisitInvoice,
@@ -56,31 +65,23 @@ export async function resolveEnquirySaleInvoiceNumber({
   currentSaleId,
   allocationRetryLimit = DEFAULT_ALLOCATION_RETRY_LIMIT,
 }: ResolveEnquirySaleInvoiceNumberArgs): Promise<string> {
-  // Updating an existing sale row: never allocate a new number — reuse the sale doc's invoice.
-  if (currentSaleId) {
-    const locked = collectCandidateInvoiceNumbers([
-      existingSalesInvoice,
-      existingVisitInvoice,
-      priorVisitInvoice,
-    ]);
-    if (locked.length > 0) return locked[0];
-
-    const snap = await getDoc(doc(db, 'sales', currentSaleId));
-    const fromDoc = normalizeInvoiceNumberString(snap.data()?.invoiceNumber);
-    if (saleHasBillableInvoiceNumber(fromDoc)) return fromDoc;
-
-    throw new Error('Existing sale is missing a billable invoice number.');
-  }
-
   const invoiceCandidates = collectCandidateInvoiceNumbers([
-    existingVisitInvoice,
     existingSalesInvoice,
+    existingVisitInvoice,
     priorVisitInvoice,
   ]);
 
-  for (const candidate of invoiceCandidates) {
-    const isDuplicate = await hasDuplicateInvoiceNumber(db, candidate, currentSaleId);
-    if (!isDuplicate) return candidate;
+  // Updating an existing sale row, or the visit already carries an invoice #:
+  // never allocate a new number — that existing number IS this visit's invoice.
+  if (!shouldAllocateNewInvoiceNumber({ currentSaleId, candidateInvoiceNumbers: invoiceCandidates })) {
+    if (invoiceCandidates.length > 0) return invoiceCandidates[0];
+
+    if (currentSaleId) {
+      const snap = await getDoc(doc(db, 'sales', currentSaleId));
+      const fromDoc = normalizeInvoiceNumberString(snap.data()?.invoiceNumber);
+      if (saleHasBillableInvoiceNumber(fromDoc)) return fromDoc;
+      throw new Error('Existing sale is missing a billable invoice number.');
+    }
   }
 
   const attempts = Math.max(1, Math.floor(allocationRetryLimit));

@@ -390,6 +390,23 @@ const deriveFromVisitsFunnel = (
     return journeyKeyToMeta('in_process');
   }
 
+  // An older booking/trial must not keep the enquiry tagged Booked/In Trial after
+  // a later aftercare-only visit (programming, repair, accessory). Sold and not
+  // interested stay sticky.
+  if (maxRank < RANK.sold) {
+    const latest = pickVisitForStatus(schedules);
+    if (latest) {
+      const latestRank = deriveVisitRank(latest);
+      if (
+        latestRank === RANK.programming ||
+        latestRank === RANK.repair ||
+        latestRank === RANK.accessory
+      ) {
+        maxRank = latestRank;
+      }
+    }
+  }
+
   const key = rankToKey(maxRank);
 
   if (

@@ -33,7 +33,6 @@ import {
   Undo as RestoreInvoiceIcon,
 } from '@mui/icons-material';
 import type { PatientPaymentLine, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
-import { Timestamp } from 'firebase/firestore';
 import { isDetailOrEditPath } from '@/utils/openInNewTab';
 import InvoiceWhatsAppButton from '@/components/sales-invoicing/InvoiceWhatsAppButton';
 import { invoiceWhatsAppPropsFromRow } from '@/lib/sales-invoicing/invoiceWhatsAppFromRow';
@@ -145,7 +144,7 @@ interface SalesInvoicesDataTableProps {
   sortDir: 'asc' | 'desc';
   onSort: (key: SortKey) => void;
   formatCurrency: (n: number) => string;
-  formatDate: (ts: Timestamp) => string;
+  formatDate: (ts: unknown) => string;
   onEditSaved: (row: UnifiedInvoiceRow) => void;
   onDeleteSaved: (id: string) => void;
   onPrint: (row: UnifiedInvoiceRow) => void;
@@ -262,7 +261,7 @@ export default function SalesInvoicesDataTable({
                       )}
                     </Box>
                   </TableCell>
-                  <TableCell sx={{ color: voided ? 'text.secondary' : undefined }}>{formatDate(r.date as Timestamp)}</TableCell>
+                  <TableCell sx={{ color: voided ? 'text.secondary' : undefined }}>{formatDate(r.date)}</TableCell>
                   <TableCell>
                     <Typography variant="body2" fontWeight={600} sx={{ color: voided ? 'text.secondary' : undefined }}>
                       {r.clientName}

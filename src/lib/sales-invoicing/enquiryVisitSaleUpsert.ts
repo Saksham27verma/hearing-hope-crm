@@ -8,7 +8,10 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import { resolveEnquirySaleInvoiceNumber } from '@/lib/sales-invoicing/enquiryInvoiceNumber';
-import { enquiryVisitSaleDateToTimestamp } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
+import {
+  enquiryVisitSaleDateToTimestamp,
+  parseEnquiryVisitSaleDate,
+} from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import {
   chooseCanonicalSaleRecord,
   dedupeEnquiryVisitSales,
@@ -19,14 +22,15 @@ import {
   readVisitSaleTotals,
   saleGrandTotalFromVisit,
   saleRecordMatchesVisitMirror,
+  toIstCalendarDateKey,
   visitInvoiceNumberFromVisit,
+  visitLinkedSaleIdFromVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleMirror';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
 import { syncEnquiryVisitSaleLinkFromSale } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import { notifyLifecycleSaleSync } from '@/lib/lifecycle/notifyLifecycleSaleSync';
 import { isSaleCancelled, normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
-import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 
 export { normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 
@@ -42,11 +46,32 @@ export function resolveSalespersonFromEnquiryVisit(
   return { id, name };
 }
 
+function visitMedicalServices(visit: Record<string, unknown>): string[] {
+  return Array.isArray(visit.medicalServices)
+    ? visit.medicalServices.map((s) => String(s))
+    : [];
+}
+
+/** True sale flags only — generic `hearing_aid` medical service is not a sale. */
+export function isExplicitEnquirySaleVisit(visit: Record<string, unknown> | undefined | null): boolean {
+  if (!visit) return false;
+  const details = visit.hearingAidDetails as Record<string, unknown> | undefined;
+  const services = visitMedicalServices(visit);
+  return Boolean(
+    visit.hearingAidSale ||
+      visit.purchaseFromTrial ||
+      details?.purchaseFromTrial ||
+      visit.hearingAidStatus === 'sold' ||
+      details?.hearingAidStatus === 'sold' ||
+      services.includes('hearing_aid_sale'),
+  );
+}
+
 export function isInvoicableEnquirySaleVisit(visit: Record<string, unknown> | undefined | null): boolean {
   if (!visit) return false;
-  return Boolean(
-    visit.hearingAidSale || visit.purchaseFromTrial || visit.hearingAidStatus === 'sold',
-  );
+  if (isExplicitEnquirySaleVisit(visit)) return true;
+  // Already invoiced: keep updating the existing row in place (never mint a new number).
+  return Boolean(visitInvoiceNumberFromVisit(visit) || visitLinkedSaleIdFromVisit(visit));
 }
 
 export type UpsertEnquiryVisitSaleArgs = {
@@ -71,19 +96,36 @@ export type UpsertEnquiryVisitSaleResult = {
   created: boolean;
   visitInvoicePatched: boolean;
   skippedUnchanged: boolean;
+  skipped?: boolean;
 };
 
-function resolveSaleDateForUpsert(
+/**
+ * Create: visit purchaseDate/visitDate. Update: keep existing saleDate unless that visit date changed.
+ * Returns null when creating and the visit has no usable date (caller should skip invoicing).
+ */
+export function resolveSaleDateForUpsert(
   visit: Record<string, unknown>,
   existingSale: Record<string, unknown> | undefined,
-): ReturnType<typeof enquiryVisitSaleDateToTimestamp> {
+): ReturnType<typeof enquiryVisitSaleDateToTimestamp> | null {
   const raw = visit.purchaseDate || visit.visitDate;
-  if (raw != null && String(raw).trim() !== '') {
+  const parsedNew = parseEnquiryVisitSaleDate(raw);
+  const existing = existingSale?.saleDate;
+  const parsedExisting = parseEnquiryVisitSaleDate(existing);
+
+  if (parsedExisting) {
+    if (!parsedNew) {
+      return existing as ReturnType<typeof enquiryVisitSaleDateToTimestamp>;
+    }
+    const oldKey = toIstCalendarDateKey(parsedExisting);
+    const newKey = toIstCalendarDateKey(parsedNew);
+    if (oldKey && newKey && oldKey === newKey) {
+      return existing as ReturnType<typeof enquiryVisitSaleDateToTimestamp>;
+    }
     return enquiryVisitSaleDateToTimestamp(raw);
   }
-  const existing = existingSale?.saleDate;
-  if (existing) return existing as ReturnType<typeof enquiryVisitSaleDateToTimestamp>;
-  return enquiryVisitSaleDateToTimestamp(raw);
+
+  if (parsedNew) return enquiryVisitSaleDateToTimestamp(raw);
+  return null;
 }
 
 /**
@@ -173,6 +215,17 @@ export async function upsertSaleForEnquiryVisit(
     existingData as Record<string, unknown> | undefined,
   );
 
+  if (!saleDate && !canonical?.id) {
+    return {
+      saleId: '',
+      invoiceNumber: '',
+      created: false,
+      visitInvoicePatched: false,
+      skippedUnchanged: false,
+      skipped: true,
+    };
+  }
+
   const basePayload: Record<string, unknown> = {
     invoiceNumber,
     patientName: data.name || 'Patient',
@@ -196,7 +249,6 @@ export async function upsertSaleForEnquiryVisit(
     paymentMethod: 'cash',
     paymentStatus: 'pending',
     notes: visit.visitNotes || '',
-    saleDate,
     source: 'enquiry',
     enquiryId: args.enquiryId,
     enquiryVisitIndex: visitIndex,
@@ -210,6 +262,7 @@ export async function upsertSaleForEnquiryVisit(
     updatedByRole: args.actor.role ?? '',
     updatedAt: serverTimestamp(),
   };
+  if (saleDate) basePayload.saleDate = saleDate;
 
   let saleId = canonical?.id ?? null;
   let created = false;

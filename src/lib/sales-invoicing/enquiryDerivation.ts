@@ -2,6 +2,7 @@ import { Timestamp } from 'firebase/firestore';
 import type { DerivedEnquirySale } from './types';
 import { toTimestamp, timestampToMs } from './timestamps';
 import { accessoryLinesTotal, visitAccessoryToSaleAccessories } from '@/lib/sales-invoicing/visitAccessoryInvoice';
+import { parseEnquiryVisitSaleDate } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 
 export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enquiry'): DerivedEnquirySale[] {
   const derived: DerivedEnquirySale[] = [];
@@ -27,8 +28,12 @@ export function deriveEnquirySalesFromDocs(docs: any[], source: 'visitor' | 'enq
       const prods: any[] = Array.isArray(visit.products) ? visit.products : [];
       const accessories = visitAccessoryToSaleAccessories(visit as Record<string, unknown>);
       const accessoryTotal = accessoryLinesTotal(accessories);
-      const dateStr: string = visit.visitDate || visit.purchaseDate || visit.hearingAidPurchaseDate || '';
-      const ts = dateStr ? Timestamp.fromDate(new Date(dateStr)) : toTimestamp(rec.updatedAt) || Timestamp.now();
+      const parsedDate = parseEnquiryVisitSaleDate(
+        visit.visitDate || visit.purchaseDate || visit.hearingAidPurchaseDate,
+      );
+      const ts = parsedDate
+        ? Timestamp.fromDate(parsedDate)
+        : toTimestamp(rec.updatedAt) || Timestamp.now();
       const productTotal = prods.reduce((sum: number, p: any) => sum + (p.finalAmount || p.sellingPrice || 0), 0);
       const salesAfterTax = Number(visit.salesAfterTax);
       const taxAmount = Number(visit.taxAmount) || 0;

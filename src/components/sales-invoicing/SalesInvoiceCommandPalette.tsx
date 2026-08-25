@@ -15,10 +15,10 @@ import {
 } from '@mui/material';
 import { Search as SearchIcon } from '@mui/icons-material';
 import type { UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
-import { Timestamp } from 'firebase/firestore';
+import { formatSaleDateLabel } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 
-function formatRowDate(ts: Timestamp) {
-  return new Date(ts.seconds * 1000).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+function formatRowDate(ts: unknown) {
+  return formatSaleDateLabel(ts);
 }
 
 interface SalesInvoiceCommandPaletteProps {

@@ -47,6 +47,7 @@ import {
   isInvoicableEnquirySaleVisit,
   upsertSaleForEnquiryVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
+import { cancelActiveSalesForEnquiryVisitReturn } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 import { syncInvoiceRemarksToLinkedSales } from '@/lib/sales-invoicing/syncInvoiceRemarksToSales';
 
 interface EditEnquiryPageProps {
@@ -336,10 +337,15 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         }
       }
 
+      // Sales returns void the original sale visit's invoice — skip upsert so we do not
+      // recreate an active invoice for a returned sale when saving or adding a later sale.
+      const voidVisitIndices = new Set(collectSaleVisitIndicesVoidedByReturns(visits));
+
       // One `sales` invoice per sale visit — update in place on re-save (no duplicate invoice numbers).
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
         if (!isInvoicableEnquirySaleVisit(visit) || !resolvedParams?.id) continue;
+        if (voidVisitIndices.has(visitIndex)) continue;
 
         const savedVisit = getSavedVisitSnapshot(enquiry || {}, visitIndex);
         const upsert = await upsertSaleForEnquiryVisit({
@@ -352,6 +358,7 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
           priorVisitInvoice: savedVisit.invoiceNumber,
           onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });
+        if (upsert.skipped) continue;
         visits[visitIndex] = {
           ...visit,
           invoiceNumber: upsert.invoiceNumber,
@@ -392,27 +399,18 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       await updateDoc(doc(db, 'enquiries', resolvedParams.id), enquiryData);
       await syncInvoiceRemarksToLinkedSales(db, resolvedParams.id, data.invoiceRemarks);
 
-      const voidVisitIndices = collectSaleVisitIndicesVoidedByReturns(visits);
       const centerFallback = String(
         data.visitingCenter || data.center || ''
       ).trim();
       for (const saleVisitIdx of voidVisitIndices) {
-        const saleSnap = await getDocs(
-          query(
-            collection(db, 'sales'),
-            where('enquiryId', '==', resolvedParams.id),
-            where('enquiryVisitIndex', '==', saleVisitIdx),
-            limit(1)
-          )
-        );
-        if (saleSnap.empty) continue;
-        const sid = saleSnap.docs[0].id;
-        await updateDoc(doc(db, 'sales', sid), {
-          cancelled: true,
-          cancelledAt: serverTimestamp(),
-          cancelledByUid: actor.uid ?? null,
-          cancelReason: 'Sales return',
-          updatedAt: serverTimestamp(),
+        const saleVisit = (visits[saleVisitIdx] || {}) as Record<string, unknown>;
+        await cancelActiveSalesForEnquiryVisitReturn({
+          db,
+          enquiryId: resolvedParams.id,
+          visitIndex: saleVisitIdx,
+          visit: saleVisit,
+          enquiry: data,
+          actorUid: actor.uid,
         });
       }
 

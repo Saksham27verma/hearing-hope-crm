@@ -104,9 +104,11 @@ function pickLatestBookingVisit(schedules: any[]): any | null {
 }
 
 function isLiveBookedEnquiry(enquiry: any): boolean {
-  const meta = getEnquiryStatusMeta(enquiry);
-  if (meta.key === 'sold' || meta.key === 'not_interested') return false;
   if (String(enquiry?.status || '').toLowerCase() === 'inactive') return false;
+  const meta = getEnquiryStatusMeta(enquiry);
+  // Current journey tag must be Booked — a historical booking visit is not enough
+  // (e.g. later programming / repair / accessory visits, or a Programming chip).
+  if (meta.key !== 'booked') return false;
   const schedules = getSchedules(enquiry);
   return pickLatestBookingVisit(schedules) != null;
 }
@@ -393,8 +395,8 @@ export default function BookedEnquiriesReportTab() {
             <Box>
               <Typography variant="h6">Booked Report</Typography>
               <Typography variant="body2" color="text.secondary">
-                Active enquiries with a hearing-aid booking (latest booking visit per enquiry).
-                Excludes sold / not interested / inactive.
+                Enquiries currently tagged Booked (latest booking visit for product/advance).
+                Excludes programming / sold / not interested / inactive and other tags.
               </Typography>
             </Box>
           </Box>

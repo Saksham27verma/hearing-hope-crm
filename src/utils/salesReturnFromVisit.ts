@@ -7,9 +7,18 @@ export function expandSalesReturnLinesFromVisit(visit: {
     model?: string;
     productName?: string;
     brand?: string;
+    visitIndex?: number;
+    invoiceNumber?: string;
   }>;
   returnSerialNumber?: string;
-}): Array<{ serialNumber: string; model?: string; productName?: string; brand?: string }> {
+}): Array<{
+  serialNumber: string;
+  model?: string;
+  productName?: string;
+  brand?: string;
+  visitIndex?: number;
+  invoiceNumber?: string;
+}> {
   const items = visit.salesReturnItems;
   if (Array.isArray(items) && items.length > 0) {
     return items
@@ -18,6 +27,8 @@ export function expandSalesReturnLinesFromVisit(visit: {
         model: it.model ? String(it.model).trim() : undefined,
         productName: it.productName,
         brand: it.brand,
+        visitIndex: typeof it.visitIndex === 'number' ? it.visitIndex : undefined,
+        invoiceNumber: it.invoiceNumber ? String(it.invoiceNumber).trim() : undefined,
       }))
       .filter((x) => x.serialNumber);
   }

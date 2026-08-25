@@ -135,9 +135,9 @@ function pickLatestBookingVisit(schedules: any[]): any | null {
 }
 
 function isLiveBookedEnquiry(enquiry: any): boolean {
-  const meta = getEnquiryStatusMeta(enquiry);
-  if (meta.key === 'sold' || meta.key === 'not_interested') return false;
   if (String(enquiry?.status || '').toLowerCase() === 'inactive') return false;
+  const meta = getEnquiryStatusMeta(enquiry);
+  if (meta.key !== 'booked') return false;
   const schedules = getSchedules(enquiry);
   return pickLatestBookingVisit(schedules) != null;
 }
@@ -709,7 +709,7 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
                     Booked pipeline
                   </Typography>
                   <Typography variant="caption" color="text.secondary" display="block">
-                    Active HA bookings (not sold / inactive) · same rules as Booked Report
+                    Currently tagged Booked · same rules as Booked Report
                   </Typography>
                 </Box>
               </Box>

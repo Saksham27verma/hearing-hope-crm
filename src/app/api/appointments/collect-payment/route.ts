@@ -21,6 +21,7 @@ import { syncSaleToLifecycleById } from '@/server/lifecycle/lifecycleSalesSync';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { visitAccessoryToSaleAccessories } from '@/lib/sales-invoicing/visitAccessoryInvoice';
+import { parseEnquiryVisitSaleDate } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 import {
   isComplianceFullyComplete,
   isHomeVisitAppointment,
@@ -92,8 +93,8 @@ function buildSalesDocFromStaffInvoice(args: {
   const gstAmount = Number(args.visit.taxAmount) || 0;
   const grandTotal = Number(args.visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;
   const paymentStatus = args.amountPaidNow >= grandTotal ? 'paid' : 'pending';
-  const visitDate = firstNonEmptyString(args.visit.purchaseDate, args.visit.visitDate);
-  const saleDate = visitDate ? Timestamp.fromDate(new Date(`${visitDate}T00:00:00+05:30`)) : Timestamp.now();
+  const parsedSaleDate = parseEnquiryVisitSaleDate(args.visit.purchaseDate || args.visit.visitDate);
+  const saleDate = parsedSaleDate ? Timestamp.fromDate(parsedSaleDate) : Timestamp.now();
 
   const accessories = args.visit.accessory
     ? visitAccessoryToSaleAccessories(args.visit as Record<string, unknown>)

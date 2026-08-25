@@ -5,6 +5,7 @@ import { assertAdmin, getRequesterTenant } from '@/server/tenant/requesterTenant
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { collectSaleVisitIndicesVoidedByReturns } from '@/lib/enquiries/salesReturnVisitTargets';
 import { syncSaleToLifecycleById } from '@/server/lifecycle/lifecycleSalesSync';
+import { parseEnquiryVisitSaleDate } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
@@ -44,10 +45,8 @@ export async function POST(req: Request) {
 
         const visitInvoiceNumber = String(visit.invoiceNumber || '').trim();
 
-        const saleDateRaw = String(visit.purchaseDate || visit.visitDate || '').trim();
-        const saleDate = saleDateRaw
-          ? Timestamp.fromDate(new Date(`${saleDateRaw}T00:00:00+05:30`))
-          : Timestamp.now();
+        const parsedSaleDate = parseEnquiryVisitSaleDate(visit.purchaseDate || visit.visitDate);
+        const saleDate = parsedSaleDate ? Timestamp.fromDate(parsedSaleDate) : Timestamp.now();
         const grossSalesBeforeTax = Number(visit.grossSalesBeforeTax) || 0;
         const gstAmount = Number(visit.taxAmount) || 0;
         const baseGrand = Number(visit.salesAfterTax) || grossSalesBeforeTax + gstAmount;

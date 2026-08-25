@@ -18,6 +18,7 @@ import {
   normalizeEnquiryVisitIndex,
 } from '@/lib/sales-invoicing/saleCancelled';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
+import { notifyLifecycleSaleSync } from '@/lib/lifecycle/notifyLifecycleSaleSync';
 import { filterSalesForExchangeUpgradeVisit } from '@/lib/sales-invoicing/exchangePriorSale';
 import {
   productSerialSetFromVisit,
@@ -123,60 +124,73 @@ export async function fetchSalesForEnquiryVisit(
   return all.filter((s) => normalizeEnquiryVisitIndex(s.enquiryVisitIndex) === wantIdx);
 }
 
-/**
- * Find every `sales` row that could belong to this enquiry visit (index, invoice #, serials, exchange, fingerprint).
- */
-export async function findSalesForEnquiryVisitMirror(
+export async function fetchSalesByInvoiceNumbers(
   db: Firestore,
-  enquiryId: string,
-  visitIndex: number,
-  visit: Record<string, unknown>,
-  enquiry: Record<string, unknown>,
-  opts?: { priorVisitInvoice?: unknown },
+  invoiceNumbers: string[],
 ): Promise<SaleRecord[]> {
-  const wantIdx = normalizeEnquiryVisitIndex(visitIndex);
-  const all = await fetchAllSalesForEnquiry(db, enquiryId);
-  const active = all.filter((s) => !isSaleCancelled(s));
+  const groups: SaleRecord[][] = [];
+  for (const inv of invoiceNumbers) {
+    if (!saleHasBillableInvoiceNumber(inv)) continue;
+    const snap = await getDocs(
+      query(collection(db, 'sales'), where('invoiceNumber', '==', inv), limit(50)),
+    );
+    groups.push(snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as SaleRecord[]);
+  }
+  return mergeSalesById(...groups);
+}
 
-  const linkedId = visitLinkedSaleIdFromVisit(visit);
-  if (linkedId) {
-    const linked = active.find((s) => s.id === linkedId);
-    if (
-      linked &&
-      normalizeEnquiryVisitIndex(linked.enquiryVisitIndex) === wantIdx
-    ) {
-      return [linked];
-    }
-    try {
-      const snap = await getDoc(doc(db, 'sales', linkedId));
-      if (snap.exists()) {
-        const row = { id: snap.id, ...(snap.data() as object) } as SaleRecord;
-        if (
-          !isSaleCancelled(row) &&
-          normalizeEnquiryVisitIndex(row.enquiryVisitIndex) === wantIdx
-        ) {
-          return [row];
-        }
-      }
-    } catch {
-      /* ignore — wrong-index linkedSaleId from prior visit */
-    }
+async function loadLinkedSaleRecord(
+  db: Firestore,
+  linkedId: string,
+  enquirySales: SaleRecord[],
+): Promise<SaleRecord | null> {
+  const fromEnquiry = enquirySales.find((s) => s.id === linkedId);
+  if (fromEnquiry) return fromEnquiry;
+  try {
+    const snap = await getDoc(doc(db, 'sales', linkedId));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...(snap.data() as object) } as SaleRecord;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pure merge of every `sales` row that could belong to this enquiry visit.
+ * Used by lookup and by unit tests (no Firestore).
+ */
+export function mergeEnquiryVisitSaleCandidates(args: {
+  visitIndex: number;
+  visit: Record<string, unknown>;
+  enquiry: Record<string, unknown>;
+  enquirySales: SaleRecord[];
+  linkedSale?: SaleRecord | null;
+  globalInvoiceSales?: SaleRecord[];
+  priorVisitInvoice?: unknown;
+}): SaleRecord[] {
+  const wantIdx = normalizeEnquiryVisitIndex(args.visitIndex);
+  const active = args.enquirySales.filter((s) => !isSaleCancelled(s));
+
+  const linkedParts: SaleRecord[] = [];
+  if (args.linkedSale && !isSaleCancelled(args.linkedSale)) {
+    linkedParts.push(args.linkedSale);
   }
 
   const byIndex = active.filter((s) => normalizeEnquiryVisitIndex(s.enquiryVisitIndex) === wantIdx);
 
-  const invoiceNums = collectInvoiceCandidates(visit, [opts?.priorVisitInvoice]);
+  const invoiceNums = collectInvoiceCandidates(args.visit, [args.priorVisitInvoice]);
   const byInvoice = invoiceNums.flatMap((inv) =>
     active.filter((s) => normalizeInvoiceNumberString(s.invoiceNumber) === inv),
   );
+  const globalInvoice = (args.globalInvoiceSales || []).filter((s) => !isSaleCancelled(s));
 
-  const visitSerials = productSerialSetFromVisit(visit);
+  const visitSerials = productSerialSetFromVisit(args.visit);
   const bySerials =
     visitSerials.size > 0
       ? active.filter((s) => productSerialsOverlap(visitSerials, s.products))
       : [];
 
-  const { exchangeCredit } = readExchangeFieldsFromVisit(visit);
+  const { exchangeCredit } = readExchangeFieldsFromVisit(args.visit);
   const byExchange =
     exchangeCredit > 0
       ? active.filter((s) => {
@@ -186,13 +200,56 @@ export async function findSalesForEnquiryVisitMirror(
       : [];
 
   const byFingerprint = active.filter((s) =>
-    saleRecordMatchesVisitMirror(s, visit, enquiry, visitIndex),
+    saleRecordMatchesVisitMirror(s, args.visit, args.enquiry, args.visitIndex),
   );
 
-  const byLoose = active.filter((s) => saleLooselyMatchesEnquiryVisit(s, visit, visitIndex));
+  const byLoose = active.filter((s) =>
+    saleLooselyMatchesEnquiryVisit(s, args.visit, args.visitIndex),
+  );
 
-  const merged = mergeSalesById(byIndex, byInvoice, bySerials, byExchange, byFingerprint, byLoose);
-  return filterSalesForExchangeUpgradeVisit(merged, visitIndex, visit);
+  const merged = mergeSalesById(
+    linkedParts,
+    byIndex,
+    byInvoice,
+    globalInvoice,
+    bySerials,
+    byExchange,
+    byFingerprint,
+    byLoose,
+  );
+  return filterSalesForExchangeUpgradeVisit(merged, args.visitIndex, args.visit);
+}
+
+/**
+ * Find every `sales` row that could belong to this enquiry visit (index, invoice #, serials, exchange, fingerprint).
+ * Honors `linkedSaleId` even when `enquiryVisitIndex` is missing, and looks up invoice numbers globally
+ * so legacy sales without `enquiryId` are still reused instead of duplicated.
+ */
+export async function findSalesForEnquiryVisitMirror(
+  db: Firestore,
+  enquiryId: string,
+  visitIndex: number,
+  visit: Record<string, unknown>,
+  enquiry: Record<string, unknown>,
+  opts?: { priorVisitInvoice?: unknown },
+): Promise<SaleRecord[]> {
+  const all = await fetchAllSalesForEnquiry(db, enquiryId);
+
+  const linkedId = visitLinkedSaleIdFromVisit(visit);
+  const linkedSale = linkedId ? await loadLinkedSaleRecord(db, linkedId, all) : null;
+
+  const invoiceNums = collectInvoiceCandidates(visit, [opts?.priorVisitInvoice]);
+  const globalInvoiceSales = await fetchSalesByInvoiceNumbers(db, invoiceNums);
+
+  return mergeEnquiryVisitSaleCandidates({
+    visitIndex,
+    visit,
+    enquiry,
+    enquirySales: all,
+    linkedSale,
+    globalInvoiceSales,
+    priorVisitInvoice: opts?.priorVisitInvoice,
+  });
 }
 
 /** Void duplicate `sales` docs so only one invoice exists per enquiry visit. */
@@ -249,4 +306,38 @@ export async function findExistingActiveSaleForVisit(
       : await fetchSalesForEnquiryVisit(db, enquiryId, visitIndex);
   const active = sales.filter((s) => !isSaleCancelled(s));
   return chooseCanonicalSaleRecord(active.length > 0 ? active : sales);
+}
+
+/** Soft-cancel every active invoice for a sale visit that a sales return is voiding. */
+export async function cancelActiveSalesForEnquiryVisitReturn(args: {
+  db: Firestore;
+  enquiryId: string;
+  visitIndex: number;
+  visit: Record<string, unknown>;
+  enquiry: Record<string, unknown>;
+  actorUid?: string | null;
+}): Promise<{ cancelledIds: string[] }> {
+  const mirrored = await findSalesForEnquiryVisitMirror(
+    args.db,
+    args.enquiryId,
+    args.visitIndex,
+    args.visit,
+    args.enquiry,
+  );
+  const byIndex = await fetchSalesForEnquiryVisit(args.db, args.enquiryId, args.visitIndex);
+  const sales = mergeSalesById(mirrored, byIndex);
+  const cancelledIds: string[] = [];
+  for (const s of sales) {
+    if (!s.id || isSaleCancelled(s)) continue;
+    await updateDoc(doc(args.db, 'sales', s.id), {
+      cancelled: true,
+      cancelledAt: serverTimestamp(),
+      cancelledByUid: args.actorUid ?? null,
+      cancelReason: 'Sales return',
+      updatedAt: serverTimestamp(),
+    });
+    cancelledIds.push(s.id);
+    notifyLifecycleSaleSync(s.id);
+  }
+  return { cancelledIds };
 }

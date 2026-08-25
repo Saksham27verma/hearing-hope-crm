@@ -36,7 +36,12 @@ import {
   upsertSaleForEnquiryVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
 import { buildExchangeInventoryRestores } from '@/lib/enquiries/exchangeInventoryRestore';
+import {
+  buildSalesReturnInventoryRestores,
+  collectSaleVisitIndicesVoidedByReturns,
+} from '@/lib/enquiries/salesReturnVisitTargets';
 import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInventoryForSalesReturn';
+import { cancelActiveSalesForEnquiryVisitReturn } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 import { assignReceiptNumbersToVisits } from '@/lib/sales-invoicing/enquiryReceiptNumber';
 import { notifyAdminsNewSale } from '@/lib/notifications/notifyNewSaleClient';
 import { logActivity } from '@/lib/activityLogger';
@@ -291,10 +296,15 @@ export default function NewEnquiryPage() {
         : Array.isArray(data.visits)
           ? [...data.visits]
           : [];
+      const visitSchedules = Array.isArray(visitSchedulesWithReceiptNumbers)
+        ? [...visitSchedulesWithReceiptNumbers]
+        : [];
+      const voidVisitIndices = new Set(collectSaleVisitIndicesVoidedByReturns(visits));
       let visitsPatched = false;
       for (let visitIndex = 0; visitIndex < visits.length; visitIndex++) {
         const visit = visits[visitIndex] || {};
         if (!isInvoicableEnquirySaleVisit(visit)) continue;
+        if (voidVisitIndices.has(visitIndex)) continue;
 
         const upsert = await upsertSaleForEnquiryVisit({
           db,
@@ -305,25 +315,55 @@ export default function NewEnquiryPage() {
           actor,
           onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });
+        if (upsert.skipped) continue;
         visits[visitIndex] = {
           ...visit,
           invoiceNumber: upsert.invoiceNumber,
           linkedSaleId: upsert.saleId,
         };
+        if (visitSchedules[visitIndex]) {
+          const sched = visitSchedules[visitIndex] as Record<string, unknown>;
+          const had = (sched.hearingAidDetails as Record<string, unknown> | undefined) || {};
+          visitSchedules[visitIndex] = {
+            ...sched,
+            invoiceNumber: upsert.invoiceNumber,
+            linkedSaleId: upsert.saleId,
+            hearingAidDetails: {
+              ...had,
+              invoiceNumber: upsert.invoiceNumber,
+              linkedSaleId: upsert.saleId,
+            },
+          };
+        }
         visitsPatched = true;
       }
 
       if (visitsPatched) {
         await updateDoc(doc(db, 'enquiries', docRef.id), {
           visits,
+          visitSchedules,
           updatedAt: serverTimestamp(),
         });
       }
 
       const centerFallback = String(data.visitingCenter || data.center || '').trim();
-      const exchangeRestoreRows = buildExchangeInventoryRestores(visits, centerFallback);
-      if (exchangeRestoreRows.length > 0) {
-        await restoreInventoryForSalesReturnRows(db, exchangeRestoreRows);
+      for (const saleVisitIdx of voidVisitIndices) {
+        const saleVisit = (visits[saleVisitIdx] || {}) as Record<string, unknown>;
+        await cancelActiveSalesForEnquiryVisitReturn({
+          db,
+          enquiryId: docRef.id,
+          visitIndex: saleVisitIdx,
+          visit: saleVisit,
+          enquiry: data,
+          actorUid: actor.uid,
+        });
+      }
+      const restoreRows = [
+        ...buildSalesReturnInventoryRestores(visits, centerFallback),
+        ...buildExchangeInventoryRestores(visits, centerFallback),
+      ];
+      if (restoreRows.length > 0) {
+        await restoreInventoryForSalesReturnRows(db, restoreRows);
       }
       
       // Reduce inventory for any sales in the visits
