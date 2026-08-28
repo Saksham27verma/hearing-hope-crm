@@ -7,6 +7,7 @@ import {
 import { ensureLifecycleReminderPdfUrl } from '@/server/lifecycle/ensureLifecycleReminderPdfUrl';
 
 const TEMPLATE_ENV_MAP: Record<string, string> = {
+  service_1mo: 'PINNACLE_LIFECYCLE_TEMPLATE_SERVICE_1MO',
   service_6mo: 'PINNACLE_LIFECYCLE_TEMPLATE_SERVICE_6MO',
   service_1yr: 'PINNACLE_LIFECYCLE_TEMPLATE_SERVICE',
   upgrade_2yr: 'PINNACLE_LIFECYCLE_TEMPLATE_UPGRADE',
@@ -15,6 +16,7 @@ const TEMPLATE_ENV_MAP: Record<string, string> = {
 
 /** Preferred Pinnacle names + common aliases (env overrides preferred first). */
 const TEMPLATE_CANDIDATES: Record<string, string[]> = {
+  service_1mo: ['1mo_reprogramming_reminder', 'service_1mo'],
   service_6mo: ['service_reminder_6mo_second', 'service_reminder_6mo', 'service_6mo'],
   service_1yr: ['service_reminder_1yr_second', 'service_reminder_1yr', 'service_1yr'],
   upgrade_2yr: [

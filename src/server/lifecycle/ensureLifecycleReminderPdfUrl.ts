@@ -7,6 +7,11 @@ const REMINDER_COPY: Record<
   string,
   { title: string; filename: string; body: string }
 > = {
+  service_1mo: {
+    title: '1-Month Reprogramming Reminder',
+    filename: 'Reprogramming_Reminder_1mo.pdf',
+    body: 'It has been one month since your Hearing Hope device purchase. Please visit Hearing Hope for reprogramming.',
+  },
   service_6mo: {
     title: '6-Month Service Reminder',
     filename: 'Service_Reminder_6mo.pdf',

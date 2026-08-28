@@ -8,6 +8,8 @@ import {
   sendLifecycleWhatsApp,
 } from '@/server/lifecycle/pinnacleLifecycleSend';
 
+export const maxDuration = 300;
+
 function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
