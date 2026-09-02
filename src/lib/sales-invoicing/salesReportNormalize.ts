@@ -4,7 +4,6 @@
  * Product lines: `sale.products` or legacy `sale.items` (matches inventory / older saves).
  */
 
-import type { Timestamp } from 'firebase/firestore';
 import type { SaleRecord, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 import {
@@ -18,6 +17,7 @@ import {
   buildCanonicalSaleIdByVisitKey,
   isCanonicalSaleForVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
+import { parseEnquiryVisitSaleDate } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
 
 export type NormalizedSale = {
   rowId: string;
@@ -156,9 +156,25 @@ export function resolveCenter(
   };
 }
 
-function tsToDate(t: Timestamp | undefined): Date {
-  if (!t) return new Date();
-  return t.toDate ? t.toDate() : new Date();
+/**
+ * Calendar date for Sales / Profit / GST reports.
+ * Never substitutes "now" — missing or unparseable values return null so the row
+ * cannot leak into the current month as today's invoice.
+ */
+export function resolveSaleReportDate(
+  sale: { saleDate?: unknown; createdAt?: unknown } | null | undefined,
+  visit?: Record<string, unknown> | null,
+): Date | null {
+  const fromSale = sale
+    ? parseEnquiryVisitSaleDate(sale.saleDate) ?? parseEnquiryVisitSaleDate(sale.createdAt)
+    : null;
+  if (fromSale) return fromSale;
+  if (!visit) return null;
+  return (
+    parseEnquiryVisitSaleDate(visit.purchaseDate) ??
+    parseEnquiryVisitSaleDate(visit.visitDate) ??
+    parseEnquiryVisitSaleDate(visit.hearingAidPurchaseDate)
+  );
 }
 
 export function saleGrandTotalRecord(s: SaleRecord): number {
@@ -302,13 +318,14 @@ export function mapUnifiedRowsToRecords(
       const s = r.savedSale;
       if (isSaleCancelled(s)) continue;
       if (!isCanonicalSaleForVisit(s, canonicalSaleIdByVisitKey)) continue;
-      const date = tsToDate(s.saleDate);
       const branch = (s.branch || '').toString();
       const eid = s.enquiryId != null ? String(s.enquiryId) : '';
       const vIdx = s.enquiryVisitIndex;
       const enq = eid ? enquiryById.get(eid) : undefined;
       const visit = enq && typeof vIdx === 'number' ? resolveVisitAtIndex(enq, vIdx) : {};
       if (isVisitSaleInvoiceDeleted(visit as Record<string, unknown>)) continue;
+      const date = resolveSaleReportDate(s, visit as Record<string, unknown>);
+      if (!date) continue;
       const visitAny = visit as Record<string, unknown>;
       const enqAny = enq as Record<string, unknown> | undefined;
       const centerFallback = String(
@@ -363,7 +380,10 @@ export function mapUnifiedRowsToRecords(
       ) {
         continue;
       }
-      const date = tsToDate(d.visitDate);
+      const date =
+        parseEnquiryVisitSaleDate(d.visitDate) ??
+        resolveSaleReportDate(null, visit as Record<string, unknown>);
+      if (!date) continue;
       const visitAny = visit as Record<string, unknown>;
       const enqAny = e as Record<string, unknown> | undefined;
       const rawCenter = String(

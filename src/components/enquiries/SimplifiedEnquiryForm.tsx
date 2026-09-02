@@ -19,6 +19,13 @@ import {
 import type { AppointmentComplianceFields } from '@/lib/visitCompliance/types';
 import ExternalPtaReportPicker from './ExternalPtaReportPicker';
 import JourneyConfirmDialog, { type JourneySelectValue } from './JourneyConfirmDialog';
+import GoogleReviewPromptDialog, {
+  type GoogleReviewPromptAnswer,
+} from './GoogleReviewPromptDialog';
+import {
+  shouldAskGoogleReviewOnSaleSave,
+  type GoogleReviewPromptRecord,
+} from '@/lib/enquiries/googleReviewPrompt';
 import {
   getEnquiryStatusMeta,
   LEAD_OUTCOME_OPTIONS,
@@ -1473,6 +1480,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   } | null>(null);
   const journeyPromiseRef = useRef<{
     resolve: (v: 'cancel' | { override: EnquiryJourneyStatus | null }) => void;
+  } | null>(null);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [reviewPatientName, setReviewPatientName] = useState('');
+  const reviewPromiseRef = useRef<{
+    resolve: (answer: GoogleReviewPromptAnswer) => void;
   } | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [currentFollowUp, setCurrentFollowUp] = useState(newFollowUpDraft);
@@ -4381,9 +4393,37 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
 
     if (result === 'cancel') return;
 
+    let googleReviewPrompt: GoogleReviewPromptRecord | undefined;
+    if (
+      shouldAskGoogleReviewOnSaleSave({
+        existingEnquiry: enquiry,
+        nextVisits: visitsForSave,
+      })
+    ) {
+      setReviewPatientName(String(data.name || enquiry?.name || 'this patient').trim() || 'this patient');
+      const reviewAnswer = await new Promise<GoogleReviewPromptAnswer>((resolve) => {
+        reviewPromiseRef.current = { resolve };
+        setReviewDialogOpen(true);
+      });
+      googleReviewPrompt = {
+        completed: true,
+        taken: reviewAnswer.taken,
+        reason: reviewAnswer.taken ? '' : reviewAnswer.reason,
+        answeredAt: new Date().toISOString(),
+        answeredByUid: user?.uid || userProfile?.uid || '',
+        answeredByName:
+          userProfile?.displayName ||
+          user?.displayName ||
+          userProfile?.email ||
+          user?.email ||
+          'Unknown user',
+      };
+    }
+
     await onSubmit({
       ...cleanedData,
       journeyStatusOverride: result.override,
+      ...(googleReviewPrompt ? { googleReviewPrompt } : {}),
     });
   };
 
@@ -4398,6 +4438,12 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     journeyPromiseRef.current?.resolve('cancel');
     journeyPromiseRef.current = null;
     setJourneyDialogOpen(false);
+  };
+
+  const handleGoogleReviewConfirm = (answer: GoogleReviewPromptAnswer) => {
+    reviewPromiseRef.current?.resolve(answer);
+    reviewPromiseRef.current = null;
+    setReviewDialogOpen(false);
   };
 
   const stepTitles = ['Patient Information & Services', 'Review & Submit'];
@@ -11389,6 +11435,11 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           onCancel={handleJourneyDialogCancel}
         />
       )}
+      <GoogleReviewPromptDialog
+        open={reviewDialogOpen}
+        patientName={reviewPatientName}
+        onConfirm={handleGoogleReviewConfirm}
+      />
     </Box>
     </EnquiryFormDatePickerProvider>
   );

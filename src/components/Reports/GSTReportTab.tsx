@@ -36,6 +36,8 @@ import {
   isSaleCancelled,
 } from '@/lib/sales-invoicing/saleCancelled';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
+import { parseEnquiryVisitSaleDate } from '@/lib/sales-invoicing/enquiryVisitSaleTimestamp';
+import { resolveSaleReportDate } from '@/lib/sales-invoicing/salesReportNormalize';
 
 // Format currency
 const formatCurrency = (amount: number) => {
@@ -130,8 +132,8 @@ export default function GSTReportTab() {
       salesSnap.docs.forEach((docSnap) => {
         const data: any = docSnap.data();
         if (isSaleCancelled(data)) return;
-        const ts: Timestamp | undefined = data.saleDate;
-        const date = ts?.toDate ? ts.toDate() : start;
+        const date = resolveSaleReportDate(data);
+        if (!date) return;
         if (date < start || date >= end) return;
         const subtotal = Number(data.totalAmount || 0);
         const gstAmount = Number(data.gstAmount || 0);
@@ -178,9 +180,11 @@ export default function GSTReportTab() {
           );
           if (!isSale) return;
 
-          const dateStr: string = visit.purchaseDate || visit.hearingAidPurchaseDate || visit.visitDate || '';
-          const date = dateStr ? new Date(dateStr) : (e.updatedAt?.toDate ? e.updatedAt.toDate() : start);
-          if (Number.isNaN(date.getTime())) return;
+          const date =
+            resolveSaleReportDate(null, visit as Record<string, unknown>) ??
+            parseEnquiryVisitSaleDate(e.updatedAt) ??
+            parseEnquiryVisitSaleDate(e.createdAt);
+          if (!date) return;
           if (date < start || date >= end) return;
 
           const products: any[] = Array.isArray(visit.products) ? visit.products : [];
@@ -211,16 +215,17 @@ export default function GSTReportTab() {
       salesGST.sort((a, b) => a.date.getTime() - b.date.getTime());
 
       // Purchases (Input tax)
-      const purchaseGST: PurchaseGSTItem[] = purchasesSnap.docs.map((docSnap) => {
+      const purchaseGST: PurchaseGSTItem[] = [];
+      purchasesSnap.docs.forEach((docSnap) => {
         const data: any = docSnap.data();
-        const ts: Timestamp | undefined = data.purchaseDate;
-        const date = ts?.toDate ? ts.toDate() : start;
+        const date = parseEnquiryVisitSaleDate(data.purchaseDate) ?? parseEnquiryVisitSaleDate(data.createdAt);
+        if (!date) return;
         const subtotal = Number(data.totalAmount || 0);
         const gstType = (data.gstType || '').toString();
         const gstPercentage = gstType === 'GST Exempted' ? 0 : Number(data.gstPercentage || 0);
         const gstAmount = gstType === 'GST Exempted' ? 0 : (subtotal * gstPercentage) / 100;
         const total = subtotal + gstAmount;
-        return {
+        purchaseGST.push({
           id: data.invoiceNo || docSnap.id,
           date,
           vendorName: (data.party?.name || '—').toString(),
@@ -228,7 +233,7 @@ export default function GSTReportTab() {
           gstPercentage,
           gstAmount,
           total,
-        };
+        });
       });
 
       const totalCollected = salesGST.reduce((sum, item) => sum + item.gstAmount, 0);
