@@ -55,6 +55,7 @@ import {
   Store as StoreIcon,
   OpenInNew as OpenInNewIcon,
   SwapVert as SwapVertIcon,
+  Print as PrintIcon,
 } from '@mui/icons-material';
 
 import { useAuth } from '@/context/AuthContext';
@@ -72,6 +73,10 @@ import {
 } from 'firebase/firestore';
 import { fetchAllCenters, getCenterLabel, type Center } from '@/utils/centerUtils';
 import { fetchBusinessCompanies } from '@/utils/businessCompanies';
+import {
+  openPartyPurchaseLedgerPrintWindow,
+  renderPartyPurchaseLedgerHtml,
+} from '@/utils/partyPurchaseLedgerPrintHtml';
 
 // Define the Purchase interface to match Firestore structure
 interface PurchaseParty {
@@ -636,6 +641,56 @@ export default function PartiesPage() {
     if (row.gstType === 'GST Exempted') return sub;
     return sub * (1 + (Number(row.gstPercentage) || 0) / 100);
   };
+
+  const sortedPurchaseLedgerRows = (party: Party): PartyPurchaseLedgerRow[] => {
+    const rows = [...(party.purchaseLedger || [])];
+    rows.sort((a, b) => {
+      const sa = a.purchaseDate?.seconds ?? 0;
+      const sb = b.purchaseDate?.seconds ?? 0;
+      return ledgerSortNewestFirst ? sb - sa : sa - sb;
+    });
+    return rows;
+  };
+
+  const handlePrintPartyLedger = (party: Party) => {
+    const rows = sortedPurchaseLedgerRows(party);
+    const sumSub = rows.reduce((s, r) => s + (r.totalAmount || 0), 0);
+    const sumGrand = rows.reduce((s, r) => s + purchaseLedgerGrandTotal(r), 0);
+    const html = renderPartyPurchaseLedgerHtml({
+      party: {
+        name: party.name,
+        type: party.type,
+        gstType: party.gstType,
+        gstNumber: party.gstNumber,
+        address: party.address,
+        contactPerson: party.contactPerson,
+        phone: party.phone,
+        email: party.email,
+      },
+      rows: rows.map((r) => ({
+        dateLabel: formatDate(r.purchaseDate),
+        invoiceNo: r.invoiceNo,
+        company: r.company,
+        centerLabel: r.location ? getCenterLabel(r.location, centers) : '—',
+        subtotal: r.totalAmount || 0,
+        grandTotal: purchaseLedgerGrandTotal(r),
+      })),
+      sortNewestFirst: ledgerSortNewestFirst,
+      printedAtLabel: new Date().toLocaleString('en-IN', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      sumSubtotal: sumSub,
+      sumGrandTotal: sumGrand,
+    });
+    const opened = openPartyPurchaseLedgerPrintWindow(html);
+    if (!opened) {
+      setErrorMessage('Could not open print window. Allow pop-ups for this site and try again.');
+    }
+  };
   
   // Render party details for preview
   const renderPartyDetails = (party: Party) => {
@@ -930,28 +985,33 @@ export default function PartiesPage() {
               <Typography variant="h6" sx={{ fontWeight: 'medium' }}>
                 Purchase ledger
               </Typography>
-              <Tooltip title={ledgerSortNewestFirst ? 'Newest first' : 'Oldest first'}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Tooltip title={ledgerSortNewestFirst ? 'Newest first' : 'Oldest first'}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<SwapVertIcon />}
+                    onClick={() => setLedgerSortNewestFirst((v) => !v)}
+                  >
+                    {ledgerSortNewestFirst ? 'Newest first' : 'Oldest first'}
+                  </Button>
+                </Tooltip>
                 <Button
                   size="small"
-                  variant="outlined"
-                  startIcon={<SwapVertIcon />}
-                  onClick={() => setLedgerSortNewestFirst((v) => !v)}
+                  variant="contained"
+                  startIcon={<PrintIcon />}
+                  onClick={() => handlePrintPartyLedger(party)}
                 >
-                  {ledgerSortNewestFirst ? 'Newest first' : 'Oldest first'}
+                  Print ledger
                 </Button>
-              </Tooltip>
+              </Box>
             </Box>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Purchase invoices where this party is the supplier. Subtotal is before GST; total includes GST where applicable.
             </Typography>
 
             {(() => {
-              const rows = [...(party.purchaseLedger || [])];
-              rows.sort((a, b) => {
-                const sa = a.purchaseDate?.seconds ?? 0;
-                const sb = b.purchaseDate?.seconds ?? 0;
-                return ledgerSortNewestFirst ? sb - sa : sa - sb;
-              });
+              const rows = sortedPurchaseLedgerRows(party);
               const sumSub = rows.reduce((s, r) => s + (r.totalAmount || 0), 0);
               const sumGrand = rows.reduce((s, r) => s + purchaseLedgerGrandTotal(r), 0);
 
@@ -1182,6 +1242,19 @@ export default function PartiesPage() {
                             sx={{ bgcolor: 'info.lighter', '&:hover': { bgcolor: 'info.light' } }}
                           >
                             <VisibilityIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Print account ledger">
+                          <IconButton
+                            color="secondary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePrintPartyLedger(party);
+                            }}
+                            size="small"
+                            sx={{ bgcolor: 'secondary.lighter', '&:hover': { bgcolor: 'secondary.light' } }}
+                          >
+                            <PrintIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="Edit Party">
