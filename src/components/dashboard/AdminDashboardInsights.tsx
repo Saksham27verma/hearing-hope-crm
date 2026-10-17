@@ -2,7 +2,7 @@
 
 /**
  * Admin dashboard: current-month center-wise sales bar chart + booked-pipeline summary.
- * Respects center data scope (same helpers as main dashboard).
+ * Sales figures come from `buildEnquirySaleRecords` — identical to the Sales Report and Incentives.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -19,16 +19,18 @@ import { useTheme } from '@mui/material/styles';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import BookmarkAddedIcon from '@mui/icons-material/BookmarkAdded';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import { collection, getDocs, Timestamp } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useCenterScope } from '@/hooks/useCenterScope';
-import { enquiryMatchesDataScope, saleMatchesDataScope } from '@/lib/tenant/centerScope';
+import { enquiryMatchesDataScope } from '@/lib/tenant/centerScope';
 import { getEnquiryStatusMeta } from '@/utils/enquiryStatus';
 import { extractBookingVisitCommercials } from '@/utils/bookingVisitDetails';
-import { fetchAllCenters } from '@/utils/centerUtils';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
-import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
-import { isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
+import type { Center } from '@/lib/sales-invoicing/salesReportNormalize';
+import {
+  buildEnquirySaleRecords,
+  currentLocalMonthBounds,
+} from '@/lib/sales-invoicing/enquirySalesAggregate';
 import {
   Bar,
   CartesianGrid,
@@ -57,41 +59,6 @@ const formatAxisInr = (n: number) => {
   if (v >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
   return String(Math.round(n));
 };
-
-function saleGrandTotal(s: Record<string, unknown>): number {
-  return saleInvoiceFaceTotal(s as Pick<SaleRecord, 'totalAmount' | 'gstAmount' | 'grandTotal'>);
-}
-
-/** Same as Sales report: MRP-weighted discount on product lines. */
-function aggregateDiscountFromProductLines(products: unknown[] | undefined): {
-  mrpSum: number;
-  discountSum: number;
-} {
-  let mrpSum = 0;
-  let discountSum = 0;
-  if (!Array.isArray(products)) return { mrpSum, discountSum };
-  for (const raw of products) {
-    const p = raw as Record<string, unknown>;
-    const mrp = Number(p.mrp) || 0;
-    if (mrp <= 0) continue;
-    const selling = Number(p.sellingPrice ?? p.finalAmount ?? 0) || 0;
-    const explicit = Number(p.discount);
-    let off = 0;
-    if (Number.isFinite(explicit) && explicit >= 0) {
-      off = Math.min(explicit, mrp);
-    } else {
-      const dp = Number(p.discountPercent);
-      if (Number.isFinite(dp) && dp >= 0 && dp <= 100) {
-        off = Math.min(mrp, (mrp * dp) / 100);
-      } else {
-        off = Math.max(0, mrp - selling);
-      }
-    }
-    mrpSum += mrp;
-    discountSum += off;
-  }
-  return { mrpSum, discountSum };
-}
 
 // —— Booked enquiry helpers (aligned with BookedEnquiriesReportTab) ——
 function getSchedules(enquiry: any): any[] {
@@ -189,18 +156,19 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
       setMonthLabel(
         now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }),
       );
-      const start = new Date(now.getFullYear(), now.getMonth(), 1);
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      const { start, end } = currentLocalMonthBounds(now);
 
-      const [allSalesSnap, centersList, enquiriesSnap] = await Promise.all([
+      const [allSalesSnap, centersSnap, enquiriesSnap] = await Promise.all([
         getDocs(collection(db, 'sales')),
-        fetchAllCenters(),
+        getDocs(collection(db, 'centers')),
         getDocs(collection(db, 'enquiries')),
       ]);
 
-      const idToName = new Map<string, string>();
-      centersList.forEach((c: { id: string; name?: string }) => {
-        idToName.set(c.id, (c.name || c.id).toString());
+      const saleRecords = buildEnquirySaleRecords({
+        sales: allSalesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as SaleRecord[],
+        enquiries: enquiriesSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+        centers: centersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Center[],
+        scope: { effectiveScopeCenterId, allowedCenterIds },
       });
 
       const byCenter = new Map<
@@ -223,54 +191,34 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
       let monthDiscBasis = 0;
       let monthDiscOff = 0;
 
-      allSalesSnap.docs.forEach((docSnap) => {
-        const s = docSnap.data() as Record<string, unknown>;
-        if (isSaleCancelled(s)) return;
-        if (!saleMatchesDataScope(s, effectiveScopeCenterId, allowedCenterIds)) return;
+      for (const r of saleRecords) {
+        allTimeInScope += r.total;
+        if (r.date < start || r.date > end) continue;
 
-        const gt = saleGrandTotal(s);
-        const taxable = Number(s.totalAmount) || 0;
-        const gst = Number(s.gstAmount) || 0;
-        allTimeInScope += gt;
-
-        const sd = s.saleDate as Timestamp | undefined;
-        if (!sd || typeof sd.toDate !== 'function') return;
-        const d = sd.toDate();
-        if (d < start || d > end) return;
-
-        monthTaxable += taxable;
-        monthGst += gst;
-        monthGrand += gt;
+        monthTaxable += r.subtotal;
+        monthGst += r.gstAmount;
+        monthGrand += r.total;
         monthInvoices += 1;
-        const discAgg = aggregateDiscountFromProductLines(s.products as unknown[]);
-        monthDiscBasis += discAgg.mrpSum;
-        monthDiscOff += discAgg.discountSum;
+        monthDiscBasis += r.discountMrpBasis;
+        monthDiscOff += r.discountOffMrp;
 
-        const cid = String(s.centerId || '').trim();
-        const branch = String(s.branch || '').trim();
-        const label =
-          (cid && idToName.get(cid)) ||
-          branch ||
-          (cid ? cid : 'Unassigned');
-        const key = cid || `__b:${branch.toLowerCase() || 'na'}`;
-
-        const prev = byCenter.get(key) || {
-          label,
+        const prev = byCenter.get(r.centerKey) || {
+          label: r.centerName,
           subtotal: 0,
           grandTotal: 0,
           count: 0,
           discountMrpBasis: 0,
           discountOffMrp: 0,
         };
-        byCenter.set(key, {
-          label: prev.label || label,
-          subtotal: prev.subtotal + taxable,
-          grandTotal: prev.grandTotal + gt,
+        byCenter.set(r.centerKey, {
+          label: prev.label || r.centerName,
+          subtotal: prev.subtotal + r.subtotal,
+          grandTotal: prev.grandTotal + r.total,
           count: prev.count + 1,
-          discountMrpBasis: prev.discountMrpBasis + discAgg.mrpSum,
-          discountOffMrp: prev.discountOffMrp + discAgg.discountSum,
+          discountMrpBasis: prev.discountMrpBasis + r.discountMrpBasis,
+          discountOffMrp: prev.discountOffMrp + r.discountOffMrp,
         });
-      });
+      }
 
       const rows: CenterRow[] = Array.from(byCenter.values())
         .map((r) => ({
@@ -422,7 +370,7 @@ export default function AdminDashboardInsights({ refreshSignal }: { refreshSigna
                   Center-wise sales (month)
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Taxable (bars) + MRP-weighted avg. discount % (line) · voided excluded
+                  Taxable (bars) + MRP-weighted avg. discount % (line) · enquiry sales only · voided excluded
                 </Typography>
               </Box>
             </Box>

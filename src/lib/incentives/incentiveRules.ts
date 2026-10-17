@@ -12,7 +12,10 @@
  *       - Manual sales (no linked enquiry) are ignored.
  *   - Ashok (sales) — salesperson-based
  *       - 1% of the sale's grand total (invoice total) on every non-cancelled sale
- *         where salesperson matches Ashok. Applies to manual + enquiry sales alike.
+ *         where salesperson matches Ashok.
+ *
+ *   All employees only see enquiry-linked sales (same set as Dashboard / Sales Report);
+ *   direct / manual invoices from Sales & Invoicing are excluded.
  *   - Bhavik (sales) — monthly tiered (flat rate on FULL monthly total once threshold hit)
  *       Tiers (per calendar month, non-cancelled sales where he is salesperson):
  *         ₹3,00,000+ → 1%
@@ -312,13 +315,23 @@ export function resolveEffectiveSalespersonName(
   return topLevelSales;
 }
 
+/**
+ * Values already resolved by the shared sales aggregate (`buildEnquirySaleRecords`) so incentives
+ * attribute and total each sale exactly like the Sales Report.
+ */
+export type IncentiveSaleOverrides = {
+  salespersonName?: string;
+  saleTotal?: number;
+};
+
 export function buildIncentiveContext(
   sale: SaleLike,
   enquiry: EnquiryLike | null,
   employee: IncentiveEmployee,
+  overrides?: IncentiveSaleOverrides,
 ): IncentiveContext {
   const matchedCallerNames = collectMatchedCallers(enquiry, employee.matchNames);
-  const spNameRaw = resolveEffectiveSalespersonName(sale, enquiry);
+  const spNameRaw = overrides?.salespersonName ?? resolveEffectiveSalespersonName(sale, enquiry);
   const matchesSalesperson = personNameMatches(spNameRaw, employee.matchNames);
 
   return {
@@ -330,7 +343,7 @@ export function buildIncentiveContext(
     referenceValues: extractReferenceList(enquiry?.reference),
     matchesSalesperson,
     matchedSalespersonName: matchesSalesperson ? spNameRaw : null,
-    saleGrandTotal: resolveSaleIncentiveAmount(sale),
+    saleGrandTotal: overrides?.saleTotal ?? resolveSaleIncentiveAmount(sale),
   };
 }
 
@@ -344,8 +357,9 @@ export function computeIncentiveForSale(
   sale: SaleLike,
   enquiry: EnquiryLike | null,
   employee: IncentiveEmployee,
+  overrides?: IncentiveSaleOverrides,
 ): IncentiveResult {
-  const ctx = buildIncentiveContext(sale, enquiry, employee);
+  const ctx = buildIncentiveContext(sale, enquiry, employee, overrides);
 
   const emptyMatch: Omit<IncentiveResult, 'amount' | 'ruleId' | 'ruleLabel'> = {
     hasCallRecord: ctx.hasCallRecord,

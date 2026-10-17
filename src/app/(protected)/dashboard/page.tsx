@@ -33,7 +33,7 @@ import {
   BookmarkAdded as BookmarkAddedIcon,
   Phone as PhoneIcon,
 } from '@mui/icons-material';
-import { collection, getDocs, query, orderBy, limit, where, Timestamp } from 'firebase/firestore';
+import { collection, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import { useCenterScope } from '@/hooks/useCenterScope';
@@ -45,8 +45,12 @@ import {
   stockTransferMatchesDataScope,
 } from '@/lib/tenant/centerScope';
 import { isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
-import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import {
+  buildEnquirySaleRecords,
+  currentLocalMonthBounds,
+  filterRecordsByDate,
+} from '@/lib/sales-invoicing/enquirySalesAggregate';
 import { useRouter } from 'next/navigation';
 import { openInNewTab } from '@/utils/openInNewTab';
 import { alpha, useTheme } from '@mui/material/styles';
@@ -454,24 +458,17 @@ export default function DashboardPage() {
         getDocs(collection(db, 'appointments')),
       ]);
       
-      // Calculate monthly data (current month)
-      const now = new Date();
-      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      const firstDayTimestamp = Timestamp.fromDate(firstDayOfMonth);
-      
-      const monthlySalesQuery = query(
-        collection(db, 'sales'),
-        where('saleDate', '>=', firstDayTimestamp)
+      const { start: monthStart, end: monthEnd } = currentLocalMonthBounds();
+      const monthSaleRecords = filterRecordsByDate(
+        buildEnquirySaleRecords({
+          sales: salesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as SaleRecord[],
+          enquiries: enquiriesSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })),
+          scope: { effectiveScopeCenterId, allowedCenterIds },
+        }),
+        monthStart,
+        monthEnd,
       );
-      const monthlySalesSnapshot = await getDocs(monthlySalesQuery);
-
-      let monthlyRevenue = 0;
-      monthlySalesSnapshot.forEach((doc) => {
-        const saleData = doc.data() as Record<string, unknown>;
-        if (isSaleCancelled(saleData)) return;
-        if (!saleMatchesDataScope(saleData, effectiveScopeCenterId, allowedCenterIds)) return;
-        monthlyRevenue += saleInvoiceFaceTotal(saleData as SaleRecord);
-      });
+      const monthlyRevenue = monthSaleRecords.reduce((sum, r) => sum + r.total, 0);
 
       const { start: dayStart, end: dayEnd } = getLocalDayBounds();
       const tDay0 = dayStart.getTime();
@@ -612,9 +609,6 @@ export default function DashboardPage() {
       const salesRows = salesSnapshot.docs
         .map((d) => ({ id: d.id, ...d.data() }))
         .filter((row) => saleMatchesDataScope(row as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds));
-      const monthlySalesScoped = monthlySalesSnapshot.docs.filter((d) =>
-        saleMatchesDataScope(d.data() as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds),
-      ).length;
       /** In-stock rows: sum units like the inventory list; legacy rows may omit status (treat as in stock if not sold/reserved). */
       const isInventoryRowInStock = (row: Record<string, unknown>) => {
         const s = row.status;
@@ -641,7 +635,7 @@ export default function DashboardPage() {
         totalProducts: productsSnapshot.size,
         totalEnquiries: scopeActive ? enquiriesRows.length : enquiriesSnapshot.size,
         totalSales: scopeActive ? salesRows.length : salesSnapshot.size,
-        monthlySales: scopeActive ? monthlySalesScoped : monthlySalesSnapshot.size,
+        monthlySales: monthSaleRecords.length,
         monthlyRevenue,
         totalInventory: totalInventoryUnits,
         totalStockTransfers: scopeActive ? transfersRows.length : transfersSnapshot.size,

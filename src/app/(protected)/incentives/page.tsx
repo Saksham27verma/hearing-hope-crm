@@ -42,31 +42,25 @@ import {
   Bolt as BoltIcon,
   ReceiptLong as ReceiptIcon,
 } from '@mui/icons-material';
-import {
-  Timestamp,
-  collection,
-  documentId,
-  getDocs,
-  query,
-  where,
-  orderBy,
-} from 'firebase/firestore';
+import { Timestamp, collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import { useAuth } from '@/context/AuthContext';
 import { useCenterScope } from '@/hooks/useCenterScope';
 import { PRIMARY_ADMIN_EMAIL } from '@/components/Layout/crm-nav-config';
-import { saleMatchesDataScope } from '@/lib/tenant/centerScope';
-import { isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import {
+  buildEnquirySaleRecords,
+  filterRecordsByDate,
+  type EnquirySaleRecord,
+} from '@/lib/sales-invoicing/enquirySalesAggregate';
 import {
   INCENTIVE_EMPLOYEES,
   computeIncentiveForSale,
   computeMonthlyTierIncentive,
   getIncentiveEmployee,
   parseSaleDate,
-  resolveEffectiveSalespersonName,
-  resolveSaleIncentiveAmount,
+  personNameMatches,
   roundMoney2,
-  saleMatchesEmployeeSalesperson,
   type EnquiryLike,
   type IncentiveResult,
   type MonthlyTier,
@@ -90,6 +84,7 @@ type SaleRow = {
 type Row = {
   sale: SaleRow;
   enquiry: EnquiryLike | null;
+  salespersonName: string;
   result: IncentiveResult;
 };
 
@@ -203,21 +198,6 @@ function csvEscape(v: unknown): string {
   return s;
 }
 
-async function fetchEnquiriesByIds(ids: string[]): Promise<Map<string, EnquiryLike>> {
-  const out = new Map<string, EnquiryLike>();
-  if (ids.length === 0) return out;
-  const unique = Array.from(new Set(ids.filter((x) => !!x)));
-  for (let i = 0; i < unique.length; i += 10) {
-    const chunk = unique.slice(i, i + 10);
-    const q = query(collection(db, 'enquiries'), where(documentId(), 'in', chunk));
-    const snap = await getDocs(q);
-    snap.forEach((docSnap) => {
-      out.set(docSnap.id, { id: docSnap.id, ...(docSnap.data() as Record<string, unknown>) } as EnquiryLike);
-    });
-  }
-  return out;
-}
-
 export default function IncentivesPage() {
   const router = useRouter();
   const theme = useTheme();
@@ -261,57 +241,43 @@ export default function IncentivesPage() {
     try {
       // Monthly-tiered employees: snap to full IST calendar months so Apr–Jun includes all of April.
       // Day-based employees: use IST day bounds (sale dates are stored as IST midnight).
-      const startTs = Timestamp.fromDate(
-        employee.monthlyTiered ? istMonthStartFromDate(dateFrom) : istDayStart(dateFrom),
-      );
-      const endTs = Timestamp.fromDate(
-        employee.monthlyTiered ? istMonthEndFromDate(dateTo) : istDayEnd(dateTo),
-      );
-      const salesQ = query(
-        collection(db, 'sales'),
-        where('saleDate', '>=', startTs),
-        where('saleDate', '<=', endTs),
-        orderBy('saleDate', 'desc'),
-      );
-      const salesSnap = await getDocs(salesQ);
+      const rangeStart = employee.monthlyTiered ? istMonthStartFromDate(dateFrom) : istDayStart(dateFrom);
+      const rangeEnd = employee.monthlyTiered ? istMonthEndFromDate(dateTo) : istDayEnd(dateTo);
+      const [salesSnap, enquiriesSnap] = await Promise.all([
+        getDocs(collection(db, 'sales')),
+        getDocs(collection(db, 'enquiries')),
+      ]);
 
-      const allSales = salesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) })) as SaleRow[];
-      const scopedSales = allSales.filter(
-        (s) =>
-          !isSaleCancelled(s) &&
-          saleMatchesDataScope(s as Record<string, unknown>, effectiveScopeCenterId, allowedCenterIds) &&
-          (employee.requiresEnquiry ? !!s.enquiryId : true),
+      // Same sale set, amounts and salesperson attribution as the Dashboard and Sales Report.
+      const records = filterRecordsByDate(
+        buildEnquirySaleRecords({
+          sales: salesSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as SaleRecord[],
+          enquiries: enquiriesSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+          scope: { effectiveScopeCenterId, allowedCenterIds },
+        }),
+        rangeStart,
+        rangeEnd,
       );
-      setSalesScanned(scopedSales.length);
+      setSalesScanned(records.length);
 
-      // Always fetch linked enquiries when present — needed for call-record rules
-      // and as a salesperson "Who Sold" fallback for Ashok / Bhavik / Bhawna.
-      const enquiryIds = scopedSales
-        .map((s) => s.enquiryId)
-        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
-      const enquiryMap = await fetchEnquiriesByIds(enquiryIds);
+      const salespersonOf = (r: EnquirySaleRecord) => (r.executiveName === '—' ? '' : r.executiveName);
 
       if (employee.monthlyTiered) {
-        const empSales = scopedSales.filter((s) => {
-          const enquiry = s.enquiryId ? enquiryMap.get(s.enquiryId) ?? null : null;
-          return saleMatchesEmployeeSalesperson(s, employee, enquiry);
-        });
+        const empRecords = records.filter((r) => personNameMatches(salespersonOf(r), employee.matchNames));
 
         // Seed EVERY month in the selected range (even with ₹0 / 0 sales),
         // so Apr–Jun always shows 3 rows / Months in Range = 3.
-        const byMonth = new Map<string, { label: string; sales: SaleRow[]; total: number }>();
+        const byMonth = new Map<string, { label: string; sales: SaleRow[]; records: EnquirySaleRecord[]; total: number }>();
         for (const m of enumerateIstMonthsInclusive(dateFrom, dateTo)) {
-          byMonth.set(m.monthKey, { label: m.label, sales: [], total: 0 });
+          byMonth.set(m.monthKey, { label: m.label, sales: [], records: [], total: 0 });
         }
 
-        for (const sale of empSales) {
-          const d = parseSaleDate(sale.saleDate);
-          if (!d) continue;
-          const monthKey = istMonthKey(d);
-          const bucket = byMonth.get(monthKey);
-          if (!bucket) continue; // outside selected months (shouldn't happen with IST bounds)
-          bucket.sales.push(sale);
-          bucket.total += resolveSaleIncentiveAmount(sale);
+        for (const r of empRecords) {
+          const bucket = byMonth.get(istMonthKey(r.date));
+          if (!bucket) continue;
+          bucket.sales.push(r.sale as unknown as SaleRow);
+          bucket.records.push(r);
+          bucket.total += r.total;
         }
 
         const monthKeys = Array.from(byMonth.keys()).sort().reverse();
@@ -334,14 +300,13 @@ export default function IncentivesPage() {
             sales: bucket.sales,
           });
           if (rate > 0) {
-            for (const sale of bucket.sales) {
-              const enquiry = sale.enquiryId ? enquiryMap.get(sale.enquiryId) ?? null : null;
-              const saleTotal = resolveSaleIncentiveAmount(sale);
-              const share = roundMoney2(saleTotal * rate);
+            for (const r of bucket.records) {
+              const share = roundMoney2(r.total * rate);
               if (share > 0) {
                 perSale.push({
-                  sale,
-                  enquiry,
+                  sale: r.sale as unknown as SaleRow,
+                  enquiry: r.enquiry as EnquiryLike | null,
+                  salespersonName: salespersonOf(r),
                   result: {
                     amount: share,
                     ruleId: `monthly-tier-${tier?.threshold ?? 0}`,
@@ -350,8 +315,8 @@ export default function IncentivesPage() {
                     matchedCallerNames: [],
                     referenceValues: [],
                     matchesSalesperson: true,
-                    matchedSalespersonName: resolveEffectiveSalespersonName(sale, enquiry) || null,
-                    saleGrandTotal: saleTotal,
+                    matchedSalespersonName: salespersonOf(r) || null,
+                    saleGrandTotal: r.total,
                   },
                 });
               }
@@ -363,11 +328,16 @@ export default function IncentivesPage() {
         setPage(0);
       } else {
         const computedRows: Row[] = [];
-        for (const sale of scopedSales) {
-          const enquiry = sale.enquiryId ? enquiryMap.get(sale.enquiryId) ?? null : null;
-          const result = computeIncentiveForSale(sale, enquiry, employee);
+        for (const r of records) {
+          const sale = r.sale as unknown as SaleRow;
+          const enquiry = r.enquiry as EnquiryLike | null;
+          const salespersonName = salespersonOf(r);
+          const result = computeIncentiveForSale(sale, enquiry, employee, {
+            salespersonName,
+            saleTotal: r.total,
+          });
           if (result.amount > 0) {
-            computedRows.push({ sale, enquiry, result });
+            computedRows.push({ sale, enquiry, salespersonName, result });
           }
         }
         setMonthlyRows([]);
@@ -461,9 +431,7 @@ export default function IncentivesPage() {
         r.sale.invoiceNumber || r.sale.id,
         formatDate(r.sale.saleDate),
         r.sale.patientName || '',
-        r.result.matchedSalespersonName ||
-          resolveEffectiveSalespersonName(r.sale, r.enquiry) ||
-          '',
+        r.result.matchedSalespersonName || r.salespersonName || '',
         r.result.saleGrandTotal,
         r.result.referenceValues.join(' | '),
         r.result.matchedCallerNames.join(' | '),
@@ -857,7 +825,7 @@ export default function IncentivesPage() {
                               />
                             ) : (
                               <Typography variant="body2" color="text.disabled">
-                                {resolveEffectiveSalespersonName(r.sale, r.enquiry) || '—'}
+                                {r.salespersonName || '—'}
                               </Typography>
                             )}
                           </TableCell>

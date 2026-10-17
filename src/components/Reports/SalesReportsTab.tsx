@@ -34,14 +34,10 @@ import { Download as DownloadIcon, Refresh as RefreshIcon } from '@mui/icons-mat
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase/config';
 import EnquiryProfileLink from '@/components/common/EnquiryProfileLink';
-import { buildUnifiedInvoiceRows } from '@/lib/sales-invoicing/mergeUnifiedRows';
-import {
-  type Center,
-  type NormalizedSale,
-  buildCenterResolveContext,
-  mapUnifiedRowsToRecords,
-} from '@/lib/sales-invoicing/salesReportNormalize';
-import type { SaleRecord, UnifiedInvoiceRow } from '@/lib/sales-invoicing/types';
+import { type Center, type NormalizedSale } from '@/lib/sales-invoicing/salesReportNormalize';
+import { buildEnquirySaleRecords } from '@/lib/sales-invoicing/enquirySalesAggregate';
+import type { SaleRecord } from '@/lib/sales-invoicing/types';
+import { useCenterScope } from '@/hooks/useCenterScope';
 import {
   Bar,
   BarChart,
@@ -463,6 +459,7 @@ type WeekBucketRow = {
 };
 
 export default function SalesReportsTab() {
+  const { effectiveScopeCenterId, allowedCenterIds } = useCenterScope();
   const [tab, setTab] = useState(0);
 
   const [dateFrom, setDateFrom] = useState(() => getLocalMonthDateStrings().fromStr);
@@ -500,27 +497,29 @@ export default function SalesReportsTab() {
 
       const centersList: Center[] = centersSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
       setCenters(centersList);
-      const resolveCtx = buildCenterResolveContext(centersList);
 
       const enquiryDocs = enquiriesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-      const enquiryById = new Map<string, any>(enquiryDocs.map((e) => [e.id, e]));
 
       const saleRecords: SaleRecord[] = salesSnap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as object),
       })) as SaleRecord[];
 
-      // Invoiced sales only — do not merge enquiry visit rows that lack a `sales` document.
-      const unified = buildUnifiedInvoiceRows(saleRecords, []);
-      const mapped = mapUnifiedRowsToRecords(unified, resolveCtx, enquiryById);
-      setRecords(mapped);
+      setRecords(
+        buildEnquirySaleRecords({
+          sales: saleRecords,
+          enquiries: enquiryDocs,
+          centers: centersList,
+          scope: { effectiveScopeCenterId, allowedCenterIds },
+        }),
+      );
     } catch (err) {
       console.error('Failed to fetch sales reports:', err);
       setRecords([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [effectiveScopeCenterId, allowedCenterIds]);
 
   useEffect(() => {
     fetchData();
@@ -556,7 +555,7 @@ export default function SalesReportsTab() {
 
   const sourceWiseChartSubtitle = useMemo(() => {
     const base =
-      'Enquiry reference (primary), else doctor on invoice, else direct. Same taxable vs discount line as other tabs.';
+      'Enquiry reference (primary), else doctor on invoice. Same taxable vs discount line as other tabs.';
     if (centerFilter === 'all') {
       return `${base} Use Center on this tab (or above) to limit the breakdown by location.`;
     }
@@ -1106,8 +1105,8 @@ export default function SalesReportsTab() {
           </Grid>
           <Grid item xs={12} md={8}>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', pt: 0.5 }}>
-              From enquiry <strong>Reference</strong> (first selected), else invoice <strong>Doctor referral</strong>, else
-              direct/manual.
+              From enquiry <strong>Reference</strong> (first selected), else invoice <strong>Doctor referral</strong>.
+              Only enquiry-linked invoices are counted — direct/manual invoices from Sales &amp; Invoicing are excluded.
             </Typography>
           </Grid>
         </Grid>
