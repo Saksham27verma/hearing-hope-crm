@@ -6,7 +6,14 @@ import {
 } from '@/lib/sales-invoicing/visitAccessoryInvoice';
 import { isProvisionalInvoiceNumber, normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { resolveInvoicePdfGrandTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
-import { extractPatientPaymentsFromEnquiryDoc } from '@/lib/sales-invoicing/enquiryPayments';
+import {
+  extractPatientPaymentsFromEnquiryDoc,
+  patientPaymentsForSaleVisit,
+} from '@/lib/sales-invoicing/enquiryPayments';
+import {
+  enquiryVisitsForAttribution,
+  visitIndexById,
+} from '@/lib/enquiries/visitPaymentAttribution';
 
 /** Enquiry-level remarks printed on tax invoices when the template supports them. */
 export function resolveInvoiceRemarks(
@@ -30,26 +37,42 @@ export function saleHasBillableInvoiceNumber(inv: unknown): boolean {
 /** Map enquiry + visit into the shape expected by `convertSaleToInvoiceData` / invoice PDF. */
 export function enquiryVisitToInvoiceSalePayload(
   enquiry: Record<string, unknown>,
-  visit: Record<string, unknown>
+  visit: Record<string, unknown>,
+  opts?: { visitIndex?: number }
 ): Record<string, unknown> {
+  // `visitSchedules` rows keep sale fields under `hearingAidDetails`; flat `visits` rows keep them on top.
+  const had = (visit?.hearingAidDetails as Record<string, unknown> | undefined) || {};
   const accessories = visitAccessoryToSaleAccessories(visit);
   const accessoryTotal = accessoryLinesTotal(accessories);
-  const salesAfterTax = Number(visit?.salesAfterTax) || 0;
-  const taxAmount = Number(visit?.taxAmount) || 0;
+  const salesAfterTax = Number(visit?.salesAfterTax ?? had.salesAfterTax) || 0;
+  const taxAmount = Number(visit?.taxAmount ?? had.taxAmount) || 0;
   /** Pre-tax hearing-aid subtotal (visit stores after-tax + tax separately). */
   const hearingAidPreTax = Math.max(0, salesAfterTax - taxAmount);
   const totalAmount = hearingAidPreTax + accessoryTotal;
   const grandTotal = salesAfterTax + accessoryTotal;
+  // Only this visit's own invoice # — never the enquiry-level / first visit's number.
   const invoiceNumberFromRecord = normalizeInvoiceNumberString(
-    visit?.invoiceNumber ?? visit?.salesInvoiceNumber ?? enquiry?.invoiceNumber ?? ''
+    visit?.invoiceNumber ?? visit?.salesInvoiceNumber ?? had.invoiceNumber ?? ''
   );
   const invoiceNumber = saleHasBillableInvoiceNumber(invoiceNumberFromRecord) ? invoiceNumberFromRecord : '';
 
-  const paymentLines = extractPatientPaymentsFromEnquiryDoc(enquiry);
+  const visitIndex =
+    typeof opts?.visitIndex === 'number' && opts.visitIndex >= 0
+      ? opts.visitIndex
+      : visitIndexById(enquiryVisitsForAttribution(enquiry), visit?.id);
+  const paymentLines = patientPaymentsForSaleVisit(
+    extractPatientPaymentsFromEnquiryDoc(enquiry),
+    visitIndex >= 0 ? visitIndex : undefined,
+  );
   const paymentMethod = joinPaymentModesFromLines(paymentLines);
+  const products = Array.isArray(visit?.products)
+    ? visit.products
+    : Array.isArray(had.products)
+      ? had.products
+      : [];
 
   return {
-    products: visit?.products || [],
+    products,
     accessories,
     gstAmount: taxAmount,
     totalAmount,
@@ -60,9 +83,15 @@ export function enquiryVisitToInvoiceSalePayload(
     address: enquiry?.address || '',
     customerGstNumber:
       enquiry?.customerGstNumber || enquiry?.customerGSTIN || enquiry?.customerGSTNumber || '',
-    saleDate: visit?.purchaseDate || visit?.visitDate || visit?.date || new Date().toISOString().slice(0, 10),
+    saleDate:
+      visit?.purchaseDate ||
+      had.purchaseDate ||
+      visit?.visitDate ||
+      visit?.date ||
+      new Date().toISOString().slice(0, 10),
     invoiceNumber,
     paymentMethod,
+    ...(visitIndex >= 0 ? { enquiryVisitIndex: visitIndex } : {}),
     notes: visit?.saleNotes || visit?.notes || '',
     invoiceRemarks: resolveInvoiceRemarks({}, enquiry),
   };
@@ -102,7 +131,10 @@ export function resolveInvoicePaymentMethodLabel(
   enquiry?: Record<string, unknown> | null,
 ): string {
   if (enquiry) {
-    const fromEnquiry = joinPaymentModesFromLines(extractPatientPaymentsFromEnquiryDoc(enquiry));
+    // Repeat customers: only the payments of this invoice's purchase, not earlier visits' payments.
+    const fromEnquiry = joinPaymentModesFromLines(
+      patientPaymentsForSaleVisit(extractPatientPaymentsFromEnquiryDoc(enquiry), sale.enquiryVisitIndex),
+    );
     if (fromEnquiry) return fromEnquiry;
   }
 

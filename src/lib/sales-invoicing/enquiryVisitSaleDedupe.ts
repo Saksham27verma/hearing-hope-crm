@@ -21,6 +21,11 @@ import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { notifyLifecycleSaleSync } from '@/lib/lifecycle/notifyLifecycleSaleSync';
 import { filterSalesForExchangeUpgradeVisit } from '@/lib/sales-invoicing/exchangePriorSale';
 import {
+  collectVisitSaleClaims,
+  isInvoiceOwnedByAnotherVisit,
+  isSaleOwnedByAnotherVisit,
+} from '@/lib/sales-invoicing/visitSaleClaims';
+import {
   productSerialSetFromVisit,
   productSerialsOverlap,
   readExchangeFieldsFromVisit,
@@ -48,18 +53,30 @@ function mergeSalesById(...groups: SaleRecord[][]): SaleRecord[] {
 function collectInvoiceCandidates(
   visit: Record<string, unknown>,
   extra: unknown[] = [],
+  isForeign: (invoiceNumber: string) => boolean = () => false,
 ): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (raw: unknown) => {
     const n = normalizeInvoiceNumberString(raw);
-    if (!saleHasBillableInvoiceNumber(n) || seen.has(n)) return;
+    if (!saleHasBillableInvoiceNumber(n) || seen.has(n) || isForeign(n)) return;
     seen.add(n);
     out.push(n);
   };
   add(visitInvoiceNumberFromVisit(visit));
   for (const raw of extra) add(raw);
   return out;
+}
+
+function hasStoredVisitIndex(sale: SaleRecord): boolean {
+  const raw: unknown = sale.enquiryVisitIndex;
+  if (raw === null || raw === undefined) return false;
+  return String(raw).trim() !== '';
+}
+
+/** Heuristic matches (serials, totals) may only use rows for this visit index or legacy rows without one. */
+function saleMayBelongToVisitIndex(sale: SaleRecord, wantIdx: number): boolean {
+  return !hasStoredVisitIndex(sale) || normalizeEnquiryVisitIndex(sale.enquiryVisitIndex) === wantIdx;
 }
 
 /** Pick the single invoice row that should represent an enquiry visit in reports and UI. */
@@ -170,6 +187,9 @@ export function mergeEnquiryVisitSaleCandidates(args: {
 }): SaleRecord[] {
   const wantIdx = normalizeEnquiryVisitIndex(args.visitIndex);
   const active = args.enquirySales.filter((s) => !isSaleCancelled(s));
+  // Invoices already issued to other visits of this enquiry are never candidates for this one.
+  const claims = collectVisitSaleClaims(args.enquiry?.visits);
+  const ownedElsewhere = (s: SaleRecord) => isSaleOwnedByAnotherVisit(claims, s, wantIdx);
 
   const linkedParts: SaleRecord[] = [];
   if (args.linkedSale && !isSaleCancelled(args.linkedSale)) {
@@ -178,16 +198,22 @@ export function mergeEnquiryVisitSaleCandidates(args: {
 
   const byIndex = active.filter((s) => normalizeEnquiryVisitIndex(s.enquiryVisitIndex) === wantIdx);
 
-  const invoiceNums = collectInvoiceCandidates(args.visit, [args.priorVisitInvoice]);
+  const invoiceNums = collectInvoiceCandidates(args.visit, [args.priorVisitInvoice], (inv) =>
+    isInvoiceOwnedByAnotherVisit(claims, inv, wantIdx),
+  );
   const byInvoice = invoiceNums.flatMap((inv) =>
     active.filter((s) => normalizeInvoiceNumberString(s.invoiceNumber) === inv),
   );
-  const globalInvoice = (args.globalInvoiceSales || []).filter((s) => !isSaleCancelled(s));
+  const globalInvoice = (args.globalInvoiceSales || []).filter(
+    (s) => !isSaleCancelled(s) && invoiceNums.includes(normalizeInvoiceNumberString(s.invoiceNumber)),
+  );
 
   const visitSerials = productSerialSetFromVisit(args.visit);
   const bySerials =
     visitSerials.size > 0
-      ? active.filter((s) => productSerialsOverlap(visitSerials, s.products))
+      ? active.filter(
+          (s) => saleMayBelongToVisitIndex(s, wantIdx) && productSerialsOverlap(visitSerials, s.products),
+        )
       : [];
 
   const { exchangeCredit } = readExchangeFieldsFromVisit(args.visit);
@@ -216,7 +242,7 @@ export function mergeEnquiryVisitSaleCandidates(args: {
     byExchange,
     byFingerprint,
     byLoose,
-  );
+  ).filter((s) => !ownedElsewhere(s));
   return filterSalesForExchangeUpgradeVisit(merged, args.visitIndex, args.visit);
 }
 
@@ -238,8 +264,17 @@ export async function findSalesForEnquiryVisitMirror(
   const linkedId = visitLinkedSaleIdFromVisit(visit);
   const linkedSale = linkedId ? await loadLinkedSaleRecord(db, linkedId, all) : null;
 
-  const invoiceNums = collectInvoiceCandidates(visit, [opts?.priorVisitInvoice]);
-  const globalInvoiceSales = await fetchSalesByInvoiceNumbers(db, invoiceNums);
+  const claims = collectVisitSaleClaims(enquiry?.visits);
+  const wantIdx = normalizeEnquiryVisitIndex(visitIndex);
+  const invoiceNums = collectInvoiceCandidates(visit, [opts?.priorVisitInvoice], (inv) =>
+    isInvoiceOwnedByAnotherVisit(claims, inv, wantIdx),
+  );
+  // Same invoice # on another patient's sale must never be pulled in; only legacy rows with no link.
+  const globalInvoiceSales = (await fetchSalesByInvoiceNumbers(db, invoiceNums)).filter((s) => {
+    const eid = String(s.enquiryId || '').trim();
+    if (eid) return eid === enquiryId;
+    return !String(s.visitorId || '').trim();
+  });
 
   return mergeEnquiryVisitSaleCandidates({
     visitIndex,
@@ -324,7 +359,11 @@ export async function cancelActiveSalesForEnquiryVisitReturn(args: {
     args.visit,
     args.enquiry,
   );
-  const byIndex = await fetchSalesForEnquiryVisit(args.db, args.enquiryId, args.visitIndex);
+  const claims = collectVisitSaleClaims(args.enquiry?.visits);
+  const wantIdx = normalizeEnquiryVisitIndex(args.visitIndex);
+  const byIndex = (await fetchSalesForEnquiryVisit(args.db, args.enquiryId, args.visitIndex)).filter(
+    (s) => !isSaleOwnedByAnotherVisit(claims, s, wantIdx),
+  );
   const sales = mergeSalesById(mirrored, byIndex);
   const cancelledIds: string[] = [];
   for (const s of sales) {

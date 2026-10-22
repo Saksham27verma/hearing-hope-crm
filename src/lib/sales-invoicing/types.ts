@@ -102,6 +102,12 @@ export interface PatientPaymentLine {
   remarks?: string;
   /** ISO date string (YYYY-MM-DD) when available */
   date?: string;
+  /** CRM `paymentFor` / `paymentType` (what the payment was for). */
+  category?: string;
+  /** Enquiry visit this payment belongs to (explicit link, else matched by date). */
+  visitIndex?: number | null;
+  /** Sale visit whose purchase cycle this payment falls in — scopes payments per invoice. */
+  saleCycleVisitIndex?: number | null;
 }
 
 export interface UnifiedInvoiceRow {
@@ -121,7 +127,7 @@ export interface UnifiedInvoiceRow {
   source: InvoiceSource | 'enquiry_pending';
   savedSale?: SaleRecord;
   derivedEnquiry?: DerivedEnquirySale;
-  /** All payments recorded on the linked enquiry (UTR, cheque #, modes, amounts). */
+  /** Payments on the linked enquiry for this invoice's purchase (all of them when not attributable). */
   patientPayments?: PatientPaymentLine[];
 }
 

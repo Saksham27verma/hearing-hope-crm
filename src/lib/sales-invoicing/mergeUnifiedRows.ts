@@ -37,6 +37,8 @@ function isDerivedCoveredBySale(sale: SaleRecord, d: DerivedEnquirySale): boolea
     if (sale.enquiryId && d.enquiryId && sale.enquiryId === d.enquiryId) return true;
     if (sale.visitorId && d.visitorId && sale.visitorId === d.visitorId) return true;
   }
+  // A sale tied to a different visit never covers this one (repeat customers can buy twice the same day).
+  if (typeof vIdx === 'number') return false;
   if (isSaleCancelled(sale)) return false;
   const saleTs = sale.saleDate?.seconds;
   const dTs = d.visitDate?.seconds;

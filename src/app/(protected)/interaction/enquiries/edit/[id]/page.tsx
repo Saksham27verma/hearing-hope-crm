@@ -45,6 +45,7 @@ import { buildExchangeInventoryRestores } from '@/lib/enquiries/exchangeInventor
 import { restoreInventoryForSalesReturnRows } from '@/lib/inventory/restoreInventoryForSalesReturn';
 import {
   isInvoicableEnquirySaleVisit,
+  stripVisitInvoiceLink,
   upsertSaleForEnquiryVisit,
 } from '@/lib/sales-invoicing/enquiryVisitSaleUpsert';
 import { cancelActiveSalesForEnquiryVisitReturn } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
@@ -118,11 +119,29 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
     fetchEnquiry();
   }, [resolvedParams]);
 
-  const getSavedVisitSnapshot = (source: { visits?: unknown[]; visitSchedules?: unknown[] }, index: number) => {
-    const flat = (Array.isArray(source.visits) ? source.visits[index] : null) as Record<string, unknown> | null;
-    const sched = (Array.isArray(source.visitSchedules) ? source.visitSchedules[index] : null) as
-      | Record<string, unknown>
-      | null;
+  /**
+   * The saved (pre-edit) copy of a visit. Matched by visit id — visits can be deleted or added in the
+   * form, so the same array position may now hold a different visit (e.g. a repeat customer's new visit).
+   */
+  const getSavedVisitSnapshot = (
+    source: { visits?: unknown[]; visitSchedules?: unknown[] },
+    visitId: unknown,
+    index: number,
+  ) => {
+    const flatList = (Array.isArray(source.visits) ? source.visits : []) as Record<string, unknown>[];
+    const schedList = (Array.isArray(source.visitSchedules) ? source.visitSchedules : []) as Record<
+      string,
+      unknown
+    >[];
+    const id = String(visitId ?? '').trim();
+    const locate = (list: Record<string, unknown>[]) => {
+      if (!id) return index;
+      return list.findIndex((v) => String(v?.id ?? '').trim() === id);
+    };
+    const flatIdx = locate(flatList);
+    const schedIdx = locate(schedList);
+    const flat = flatIdx >= 0 ? flatList[flatIdx] ?? null : null;
+    const sched = schedIdx >= 0 ? schedList[schedIdx] ?? null : null;
     const had = (sched?.hearingAidDetails as Record<string, unknown> | undefined) || {};
     return {
       ...(sched || {}),
@@ -134,29 +153,33 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
     };
   };
 
-  // Helper function to find new sales (products that didn't exist before)
+  // Products on sale visits that were not on the same visit before this edit (matched by visit id,
+  // so deleting/adding visits does not make existing sale lines look "new" and reduce stock twice).
   const findNewSales = (oldVisits: any[], newVisits: any[]) => {
     const newSales: any[] = [];
-    
+
     newVisits.forEach((newVisit, visitIndex) => {
       if (newVisit.hearingAidSale && newVisit.products && newVisit.products.length > 0) {
-        const oldVisit = oldVisits[visitIndex];
+        const id = String(newVisit.id ?? '').trim();
+        const oldVisit = id
+          ? oldVisits.find((v: any) => String(v?.id ?? '').trim() === id)
+          : oldVisits[visitIndex];
         const oldProducts = oldVisit?.products || [];
-        
+
         newVisit.products.forEach((newProduct: any) => {
           // Check if this product existed in the old version
-          const existedBefore = oldProducts.some((oldProduct: any) => 
-            oldProduct.serialNumber === newProduct.serialNumber && 
+          const existedBefore = oldProducts.some((oldProduct: any) =>
+            oldProduct.serialNumber === newProduct.serialNumber &&
             oldProduct.productId === newProduct.productId
           );
-          
+
           if (!existedBefore) {
             newSales.push(newProduct);
           }
         });
       }
     });
-    
+
     return newSales;
   };
 
@@ -296,8 +319,15 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
             updatedByRole: actor.role,
           }))
         : [];
+      // Keep fields the form does not edit (staff-app receipt category, appointment, verification).
+      const savedPaymentRecordsById = new Map<string, Record<string, unknown>>(
+        (Array.isArray(enquiry?.paymentRecords) ? (enquiry.paymentRecords as Record<string, unknown>[]) : [])
+          .filter((p) => p?.id != null)
+          .map((p) => [String(p.id), p]),
+      );
       const paymentRecords = Array.isArray(data.paymentRecords)
         ? data.paymentRecords.map((payment: Record<string, unknown>) => ({
+            ...(payment?.id != null ? savedPaymentRecordsById.get(String(payment.id)) : undefined),
             ...payment,
             createdByUid: payment.createdByUid ?? actor.uid,
             createdByName: payment.createdByName ?? actor.name,
@@ -347,17 +377,26 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
         if (!isInvoicableEnquirySaleVisit(visit) || !resolvedParams?.id) continue;
         if (voidVisitIndices.has(visitIndex)) continue;
 
-        const savedVisit = getSavedVisitSnapshot(enquiry || {}, visitIndex);
+        const savedVisit = getSavedVisitSnapshot(enquiry || {}, visit.id, visitIndex);
         const upsert = await upsertSaleForEnquiryVisit({
           db,
           enquiryId: resolvedParams.id,
           visitIndex,
           visit,
-          enquiry: data,
+          // Live array (with invoices assigned earlier in this loop) so no visit can take another's invoice.
+          enquiry: { ...data, visits },
           actor,
           priorVisitInvoice: savedVisit.invoiceNumber,
           onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });
+        if (upsert.foreignInvoiceDropped) {
+          visits[visitIndex] = stripVisitInvoiceLink(visit);
+          if (visitSchedules[visitIndex]) {
+            visitSchedules[visitIndex] = stripVisitInvoiceLink(
+              visitSchedules[visitIndex] as Record<string, unknown>,
+            );
+          }
+        }
         if (upsert.skipped) continue;
         visits[visitIndex] = {
           ...visit,
@@ -464,7 +503,8 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
       
     } catch (error) {
       console.error('Error updating enquiry:', error);
-      alert('Failed to update enquiry. Please try again.');
+      const detail = error instanceof Error && error.message ? `\n\n${error.message}` : '';
+      alert(`Failed to update enquiry. Please try again.${detail}`);
     } finally {
       setSaving(false);
     }

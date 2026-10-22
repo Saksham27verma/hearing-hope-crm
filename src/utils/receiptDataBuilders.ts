@@ -1,12 +1,14 @@
 import type { BookingReceiptData } from '@/components/receipts/BookingReceiptTemplate';
 import type { TrialReceiptData } from '@/components/receipts/TrialReceiptTemplate';
 import {
+  attributeEnquiryPaymentLedgerLines,
   getEnquiryPaymentLedgerLines,
   sumEnquiryPaymentLedgerAmounts,
   sumEnquiryPaymentLedgerIncoming,
   sumEnquiryPaymentLedgerOutgoing,
   type EnquiryPaymentLedgerLine,
 } from '@/utils/enquiryPaymentLedger';
+import { visitIndexById } from '@/lib/enquiries/visitPaymentAttribution';
 
 export const receiptDefaultCompany = {
   companyName: 'Hope Digital Innovations Pvt Ltd',
@@ -47,13 +49,17 @@ export type EnquiryLike = {
     paymentFor?: string;
     paymentMode?: string;
     paymentDate?: string;
+    relatedVisitId?: string;
   }>;
   paymentRecords?: Array<{
     amount?: number;
     paymentType?: string;
     paymentMethod?: string;
     paymentDate?: string;
+    relatedVisitId?: string;
   }>;
+  visits?: unknown[];
+  visitSchedules?: unknown[];
 };
 
 export type VisitLike = {
@@ -102,7 +108,20 @@ function stableReceiptNumber(prefix: 'BR' | 'TR', visit: VisitLike, fallbackDate
   return `${prefix}-${safeDate || Date.now()}`;
 }
 
-export const getBookingPaymentMode = (enquiry: EnquiryLike): string | undefined => {
+/** Payment mode of the booking advance — the one recorded for this visit when there are several bookings. */
+export const getBookingPaymentMode = (enquiry: EnquiryLike, visit?: VisitLike): string | undefined => {
+  const lines = getEnquiryPaymentLedgerLines(enquiry as EnquiryLike & Record<string, unknown>).filter(
+    (l) => !l.isOutgoing && (l.category === 'booking_advance' || l.category === 'hearing_aid_booking'),
+  );
+  if (visit?.id != null && lines.length > 1) {
+    const visits = Array.isArray(enquiry.visits) ? enquiry.visits : enquiry.visitSchedules;
+    const visitIndex = visitIndexById(visits, visit.id);
+    if (visitIndex >= 0) {
+      const byId = attributeEnquiryPaymentLedgerLines(enquiry as EnquiryLike & Record<string, unknown>, lines);
+      const own = lines.find((l) => byId.get(l.id)?.visitIndex === visitIndex && l.mode);
+      if (own?.mode) return own.mode;
+    }
+  }
   const fromPayments = enquiry.payments?.find((payment) => payment.paymentFor === 'booking_advance');
   if (fromPayments?.paymentMode) return fromPayments.paymentMode;
   const fromRecords = enquiry.paymentRecords?.find((payment) => payment.paymentType === 'hearing_aid_booking');
@@ -171,7 +190,7 @@ export function buildBookingReceiptData(
     sellingPrice: sellingPrice || undefined,
     quantity,
     balanceAmount: bookingTotal > 0 ? Math.max(bookingTotal - advanceAmount, 0) : undefined,
-    paymentMode: options?.paymentMode ?? getBookingPaymentMode(enquiry),
+    paymentMode: options?.paymentMode ?? getBookingPaymentMode(enquiry, visit),
     centerName: options?.centerName,
     visitDate: visit.visitDate,
     terms: defaultBookingTerms,
@@ -251,25 +270,60 @@ export type PaymentAcknowledgmentData = {
   footer: string;
 };
 
-/** Build payment acknowledgment / statement data from enquiry (all ledger lines). */
+export type PaymentAcknowledgmentOptions = {
+  documentNumber?: string;
+  centerName?: string;
+  statementDate?: string;
+  /** Only these ledger line ids (e.g. one visit's payments). Omit for every payment on the enquiry. */
+  paymentIds?: string[];
+  /** Shown after the title, e.g. "Visit 2 · 12 Oct 2026". */
+  scopeLabel?: string;
+};
+
+/** Short stable code for a payment selection, so re-printing the same selection keeps its number. */
+function selectionCode(ids: string[]): string {
+  let h = 2166136261;
+  for (const ch of [...ids].sort().join('|')) {
+    h ^= ch.charCodeAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36).toUpperCase().slice(0, 6);
+}
+
+/** Ledger lines for a payment acknowledgment — all, or only the selected ids. */
+export function selectPaymentAcknowledgmentLines(
+  enquiry: EnquiryLike,
+  paymentIds?: string[] | null,
+): EnquiryPaymentLedgerLine[] {
+  const lines = getEnquiryPaymentLedgerLines(enquiry as EnquiryLike & Record<string, unknown>);
+  if (!Array.isArray(paymentIds)) return lines;
+  const wanted = new Set(paymentIds.map((id) => String(id)));
+  return lines.filter((l) => wanted.has(l.id));
+}
+
+/** Build payment acknowledgment / statement data from enquiry (all ledger lines, or a selection). */
 export function buildPaymentAcknowledgmentData(
   enquiry: EnquiryLike,
-  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+  options?: PaymentAcknowledgmentOptions
 ): PaymentAcknowledgmentData {
-  const asDoc = enquiry as EnquiryLike & Record<string, unknown>;
-  const lines = getEnquiryPaymentLedgerLines(asDoc);
+  const allLines = getEnquiryPaymentLedgerLines(enquiry as EnquiryLike & Record<string, unknown>);
+  const lines = selectPaymentAcknowledgmentLines(enquiry, options?.paymentIds);
+  const isSubset = Array.isArray(options?.paymentIds) && lines.length < allLines.length;
   const statementDate = options?.statementDate?.trim() || new Date().toLocaleDateString('en-IN');
   const enquiryId = String(enquiry.id ?? '').trim() || 'enquiry';
   const documentNumber =
     options?.documentNumber !== undefined && String(options.documentNumber).trim() !== ''
       ? String(options.documentNumber).trim()
-      : `PA-${enquiryId}`;
+      : isSubset
+        ? `PA-${enquiryId}-${selectionCode(lines.map((l) => l.id))}`
+        : `PA-${enquiryId}`;
+  const scopeLabel = String(options?.scopeLabel ?? '').trim();
   const totalReceived = sumEnquiryPaymentLedgerIncoming(lines);
   const totalRefunded = sumEnquiryPaymentLedgerOutgoing(lines);
   const totalPaid = sumEnquiryPaymentLedgerAmounts(lines);
   return {
     ...receiptDefaultCompany,
-    documentTitle: 'Payment acknowledgment',
+    documentTitle: scopeLabel ? `Payment acknowledgment — ${scopeLabel}` : 'Payment acknowledgment',
     documentNumber,
     statementDate,
     patientName: enquiry.name || 'Customer',

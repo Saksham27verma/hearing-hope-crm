@@ -1,4 +1,5 @@
 import { receiptDefaultCompany } from '@/utils/receiptDataBuilders';
+import { patientPaymentsForSaleVisit } from '@/lib/sales-invoicing/enquiryPayments';
 import {
   buildAccountingLedgerDataset,
   formatPatientPaymentsForPdf,
@@ -106,7 +107,8 @@ export async function downloadSalesAccountingLedgerPdf(opts: DownloadLedgerPdfOp
   const savedRowsForPdf = opts.rows.filter((r) => r.kind === 'saved' && r.savedSale);
   const patientPayCellPdf = savedRowsForPdf.map((r) => {
     const eid = String(r.savedSale?.enquiryId ?? '').trim();
-    const pays = eid ? opts.patientPaymentsByEnquiryId[eid] : undefined;
+    const allPays = eid ? opts.patientPaymentsByEnquiryId[eid] : undefined;
+    const pays = allPays ? patientPaymentsForSaleVisit(allPays, r.savedSale?.enquiryVisitIndex) : undefined;
     const s = formatPatientPaymentsForPdf(pays);
     return s || '—';
   });

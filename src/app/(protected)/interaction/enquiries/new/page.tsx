@@ -311,7 +311,7 @@ export default function NewEnquiryPage() {
           enquiryId: docRef.id,
           visitIndex,
           visit,
-          enquiry: data,
+          enquiry: { ...data, visits },
           actor,
           onNewSale: (saleId) => void notifyAdminsNewSale(saleId),
         });

@@ -67,6 +67,7 @@ import {
 } from '@/utils/enquiryAddress';
 import { netPayableAfterHearingAidExchange } from '@/lib/sales-invoicing/enquiryPayments';
 import { previewInvoicesCancelledByReturnVisit } from '@/lib/enquiries/salesReturnVisitTargets';
+import { attributePaymentToVisit } from '@/lib/enquiries/visitPaymentAttribution';
 import { ENT_PROCEDURE_OPTIONS } from './enquiryFormFieldOptions';
 import AsyncActionButton from '@/components/common/AsyncActionButton';
 import { mergeMenuPropsForReselectClear } from '@/utils/toggleableSelectMenuProps';
@@ -1153,6 +1154,29 @@ interface Visit {
   updatedByRole?: string | null;
 }
 
+/** Today's date (YYYY-MM-DD) in the browser's local time — `toISOString()` is UTC and gives yesterday before 5:30 am IST. */
+function todayYmd(): string {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/**
+ * Next visit id: numeric like the existing "1", "2"… but never re-used after a visit is deleted —
+ * payments, bookings and sales link to visits by id.
+ */
+function nextUniqueVisitId(visits: { id?: string }[]): string {
+  const used = new Set(visits.map((v) => String(v?.id ?? '').trim()));
+  let n = visits.length + 1;
+  for (const v of visits) {
+    const k = Number(String(v?.id ?? '').trim());
+    if (Number.isInteger(k) && k >= n) n = k + 1;
+  }
+  while (used.has(String(n))) n += 1;
+  return String(n);
+}
+
 function newHearingTestEntryId(): string {
   return `ht-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -1265,6 +1289,8 @@ function findLinkedHomeTrialVisitWithSecurity(visits: Visit[], currentIndex: num
   }
   for (let i = currentIndex - 1; i >= 0; i--) {
     const v = visits[i];
+    // An earlier sale closed that purchase — its trial deposit was already credited there.
+    if (v.hearingAidSale) break;
     if (visitHomeTrialSecurityAmount(v) > 0) return v;
   }
   return null;
@@ -1377,6 +1403,8 @@ function findLinkedPriorBookingVisitWithAdvance(visits: Visit[], saleIndex: numb
   }
   for (let i = saleIndex - 1; i >= 0; i--) {
     const v = visits[i];
+    // Repeat customer: a booking before an earlier sale belongs to that sale, not this one.
+    if (v.hearingAidSale) break;
     if (v.hearingAidBooked && !v.hearingAidSale && visitBookingAdvanceAmount(v) > 0) return v;
   }
   return null;
@@ -1553,7 +1581,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     serialNumber: '',
     unit: 'piece' as 'piece' | 'pair' | 'quantity',
     quantity: 1,
-    saleDate: new Date().toISOString().split('T')[0],
+    saleDate: todayYmd(),
     mrp: 0,
     dealerPrice: 0,
     sellingPrice: 0,
@@ -1588,7 +1616,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     remarks: string;
     relatedVisitId?: string;
   }>({
-    paymentDate: new Date().toISOString().split('T')[0],
+    paymentDate: todayYmd(),
     amount: 0,
     paymentFor: 'full_payment',
     paymentMode: 'Cash',
@@ -2844,6 +2872,20 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           };
         });
 
+        // Older saves could give two visits the same id (id re-used after a delete). Links resolve to the
+        // first one anyway, so keep that and give later duplicates a fresh id.
+        const seenVisitIds = new Set<string>();
+        visits.forEach((v: { id: string }, i: number) => {
+          const id = String(v.id ?? '').trim();
+          if (id && !seenVisitIds.has(id)) {
+            seenVisitIds.add(id);
+            return;
+          }
+          const fresh = nextUniqueVisitId([...visits.slice(0, i), ...visits.slice(i + 1)]);
+          visits[i] = { ...visits[i], id: fresh };
+          seenVisitIds.add(fresh);
+        });
+
         const parsedAddr = parseEnquiryAddressStored(enquiry.address || '');
         reset({
           name: enquiry.name || '',
@@ -2881,7 +2923,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       setStep(0);
       setCurrentFollowUp(newFollowUpDraft());
       setCurrentPayment({
-        paymentDate: new Date().toISOString().split('T')[0],
+        paymentDate: todayYmd(),
         amount: 0,
         paymentFor: 'full_payment',
         paymentMode: 'Cash',
@@ -3143,7 +3185,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
           serialNumber: '',
           unit: 'piece',
           quantity: 1,
-          saleDate: new Date().toISOString().split('T')[0],
+          saleDate: todayYmd(),
           mrp: roundInrRupee(mrp),
           dealerPrice: 0,
           sellingPrice: roundInrRupee(sellingPrice),
@@ -3269,7 +3311,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     const actorName =
       userProfile?.displayName || user?.displayName || userProfile?.email || user?.email || 'Unknown user';
     const newVisit: Visit = {
-      id: (watchedVisits.length + 1).toString(),
+      id: nextUniqueVisitId(watchedVisits),
       visitDate: '',
       visitTime: '',
       visitType: 'center',
@@ -3513,7 +3555,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       serialNumber: '',
       unit: 'piece',
       quantity: 1,
-      saleDate: new Date().toISOString().split('T')[0],
+      saleDate: todayYmd(),
       mrp: 0,
       dealerPrice: 0,
       sellingPrice: 0,
@@ -3591,7 +3633,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       serialNumber: p.serialNumber || '',
       unit: p.unit || 'piece',
       quantity: hearingAidLineQty(p),
-      saleDate: p.saleDate || new Date().toISOString().split('T')[0],
+      saleDate: p.saleDate || todayYmd(),
       mrp: p.mrp || 0,
       dealerPrice: p.dealerPrice || 0,
       sellingPrice: p.sellingPrice || 0,
@@ -3768,37 +3810,82 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     return total;
   };
 
-  const getAvailablePaymentOptions = () => {
+  /** Visit tab label for payment rows / options: "Visit 2 · 2026-10-12". */
+  const visitLabelForId = (visitId?: string | null): string => {
+    const id = String(visitId ?? '').trim();
+    if (!id) return '';
     const visits = getValues('visits');
-    const options = [];
+    const idx = visits.findIndex((v) => v.id === id);
+    if (idx < 0) return '';
+    const date = visits[idx].visitDate;
+    return date ? `Visit ${idx + 1} · ${date}` : `Visit ${idx + 1}`;
+  };
+
+  /**
+   * Incoming / refunded amounts per visit index — explicit `relatedVisitId`, else matched by date.
+   * Lets the payment picker tell an old, already-paid visit from today's visit for repeat customers.
+   */
+  const paymentsByVisitIndex = () => {
+    const visits = getValues('visits');
+    const payments = getValues('payments') || [];
+    const byVisit = new Map<number, { incoming: number; refunded: number; byFor: Map<string, number> }>();
+    for (const p of payments) {
+      const { visitIndex } = attributePaymentToVisit(
+        { relatedVisitId: p.relatedVisitId, date: p.paymentDate, category: p.paymentFor },
+        visits as unknown as Record<string, unknown>[],
+      );
+      if (visitIndex == null) continue;
+      const row = byVisit.get(visitIndex) || { incoming: 0, refunded: 0, byFor: new Map<string, number>() };
+      const amt = Number(p.amount) || 0;
+      if (isOutgoingPayment(p.paymentFor)) row.refunded += amt;
+      else row.incoming += amt;
+      row.byFor.set(p.paymentFor, (row.byFor.get(p.paymentFor) || 0) + amt);
+      byVisit.set(visitIndex, row);
+    }
+    return byVisit;
+  };
+
+  type PaymentOption = {
+    value: PaymentRecord['paymentFor'];
+    label: string;
+    amount: number;
+    description: string;
+    /** Set for options that belong to one visit (selecting links the payment to that visit). */
+    visitId?: string;
+    /** Payments already recorded against this visit cover this charge. */
+    settled?: boolean;
+  };
+
+  /** Select value: visit-scoped options are unique per visit ("hearing_aid::3"). */
+  const paymentOptionKey = (value: string, visitId?: string) => (visitId ? `${value}::${visitId}` : value);
+
+  const getAvailablePaymentOptions = (): PaymentOption[] => {
+    const visits = getValues('visits');
+    const paid = paymentsByVisitIndex();
+    const visitOptions: PaymentOption[][] = [];
 
     visits.forEach((visit, visitIndex) => {
+      const options: PaymentOption[] = [];
+      const visitTag = visit.visitDate ? `Visit ${visitIndex + 1} · ${visit.visitDate}` : `Visit ${visitIndex + 1}`;
+      const push = (opt: Omit<PaymentOption, 'visitId' | 'description'> & { description: string }) =>
+        options.push({ ...opt, visitId: visit.id, description: `${visitTag} · ${opt.description}` });
+
       const htAmt = sumHearingTestEntryPrices(visit);
       if (visit.hearingTest && htAmt > 0) {
-        options.push({
-          value: 'hearing_test',
-          label: 'Hearing Test',
-          amount: htAmt,
-          description: `Test on ${visit.visitDate || 'scheduled date'}`
-        });
+        push({ value: 'hearing_test', label: 'Hearing Test', amount: htAmt, description: 'Hearing test' });
       }
 
       const entAmt = sumEntProcedurePrices(visit);
       if (visit.entService && entAmt > 0) {
-        options.push({
-          value: 'ent_service',
-          label: 'ENT service',
-          amount: entAmt,
-          description: `ENT procedures on ${visit.visitDate || 'scheduled date'}`
-        });
+        push({ value: 'ent_service', label: 'ENT service', amount: entAmt, description: 'ENT procedures' });
       }
 
       if (visit.hearingAidBooked && visit.bookingAdvanceAmount > 0) {
-        options.push({
+        push({
           value: 'booking_advance',
           label: 'Booking Advance',
           amount: visit.bookingAdvanceAmount,
-          description: `Advance for Visit ${visit.id} on ${visit.bookingDate || visit.visitDate || ''}`
+          description: `Advance on ${visit.bookingDate || visit.visitDate || 'booking'}`,
         });
       }
 
@@ -3811,12 +3898,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       );
 
       if (visit.hearingAidBooked && !visit.hearingAidSale && bookingGross > 0) {
-        options.push({
-          value: 'hearing_aid',
-          label: 'Hearing Aid',
-          amount: bookingNetDue,
-          description: `Booked device x ${Number(visit.bookingQuantity) || 1}${bookingSd > 0 ? ' (after trial security adjustment)' : ''}`
-        });
+        // Once a later sale continues this booking, the balance is collected on that sale instead.
+        if (!bookingVisitSupersededByLaterSale(visits, visitIndex)) {
+          push({
+            value: 'hearing_aid',
+            label: 'Hearing Aid',
+            amount: bookingNetDue,
+            description: `Booked device x ${Number(visit.bookingQuantity) || 1}${bookingSd > 0 ? ' (after trial security adjustment)' : ''}`,
+          });
+        }
       } else if ((visit.hearingAidSale || visit.purchaseFromTrial) && visit.salesAfterTax > 0) {
         const saleSd = getSaleHomeTrialSecurityCredit(visits, visitIndex);
         const saleAdv = getBookingAdvanceCreditForSale(visits, visitIndex);
@@ -3830,35 +3920,40 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         if (saleAdv > 0) creditParts.push('booking advance');
         const creditNote =
           creditParts.length > 0 ? ` (after ${creditParts.join(' + ')})` : '';
-        options.push({
+        push({
           value: 'hearing_aid',
           label: 'Hearing Aid',
           amount: saleNet,
           description: `${visit.products?.length || 0} product(s)${creditNote}`,
         });
       }
-      
+
       const totalAccessoryAmount = sumAccessoryEntryPrices(visit);
       if (visit.accessory && totalAccessoryAmount > 0) {
         const accNames = (visit.accessoryEntries || [])
           .filter((e) => String(e.accessoryName || '').trim())
           .map((e) => e.accessoryName)
           .join(', ');
-        options.push({
+        push({
           value: 'accessory',
           label: 'Accessory',
           amount: totalAccessoryAmount,
           description: accNames || visit.accessoryName || 'Accessory item',
         });
       }
-      
+
       if (visit.programming && visit.programmingAmount > 0) {
-        options.push({
-          value: 'programming' as const,
+        push({
+          value: 'programming',
           label: 'Programming',
           amount: visit.programmingAmount,
-          description: visit.hearingAidName || 'Hearing aid programming'
+          description: visit.hearingAidName || 'Hearing aid programming',
         });
+      }
+
+      const homeCharges = visit.visitType === 'home' ? Math.max(0, Number(visit.homeVisitCharges) || 0) : 0;
+      if (homeCharges > 0) {
+        push({ value: 'other', label: 'Home visit charges', amount: homeCharges, description: 'Home visit' });
       }
 
       if (
@@ -3866,33 +3961,48 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         visit.trialHearingAidType === 'home' &&
         Number(visit.trialHomeSecurityDepositAmount) > 0
       ) {
-        options.push({
-          value: 'trial_home_security_deposit' as const,
+        push({
+          value: 'trial_home_security_deposit',
           label: 'Home trial security deposit',
           amount: Number(visit.trialHomeSecurityDepositAmount) || 0,
-          description: `Refundable deposit · Visit ${visit.id}${visit.visitDate ? ` (${visit.visitDate})` : ''}`,
-          visitId: visit.id,
+          description: 'Refundable deposit',
         });
-        
+
         if (visit.trialResult === 'unsuccessful') {
-          options.push({
-            value: 'trial_home_security_deposit_refund' as const,
+          push({
+            value: 'trial_home_security_deposit_refund',
             label: 'Home trial security deposit refund',
             amount: Number(visit.trialRefundAmount) || Number(visit.trialHomeSecurityDepositAmount) || 0,
-            description: `Outgoing refund entry for unsuccessful trial · Source Visit ${visit.id}${visit.visitDate ? ` (${visit.visitDate})` : ''} · record on separate refund/follow-up date`,
-            visitId: visit.id,
+            description: 'Outgoing refund for unsuccessful trial · record on a separate refund/follow-up date',
           });
         }
       }
+
+      // Mark charges already covered by payments recorded against this visit.
+      const visitPaid = paid.get(visitIndex);
+      const incomingDue = options
+        .filter((o) => !isOutgoingPayment(o.value))
+        .reduce((sum, o) => sum + o.amount, 0);
+      const visitSettled = Boolean(visitPaid) && incomingDue > 0 && visitPaid!.incoming >= incomingDue;
+      for (const o of options) {
+        if (isOutgoingPayment(o.value)) {
+          o.settled = Boolean(visitPaid) && visitPaid!.refunded >= o.amount;
+        } else {
+          o.settled = visitSettled || (visitPaid?.byFor.get(o.value) || 0) >= o.amount;
+        }
+      }
+      visitOptions.push(options);
     });
 
-    // Add general options
+    // Newest visit first — for a returning patient, today's visit is what they are paying for.
+    const options: PaymentOption[] = visitOptions.reverse().flat();
+
     options.push(
       {
         value: 'full_payment',
         label: 'Full Payment',
-        amount: calculateTotalDue(),
-        description: 'Complete payment for all services'
+        amount: calculateIncomingOutstanding(),
+        description: 'Clear the full outstanding balance',
       },
       {
         value: 'partial_payment',
@@ -3907,61 +4017,32 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
         description: 'Miscellaneous payment'
       }
     );
-    
+
     return options;
   };
 
-  const handlePaymentForChange = (paymentFor: PaymentRecord['paymentFor']) => {
-    const paymentOptions = getAvailablePaymentOptions();
-    const selectedOption = paymentOptions.find(
-      (opt) => opt.value === paymentFor && !(opt as { visitId?: string }).visitId
-    );
-
-    setCurrentPayment((prev) => ({
-      ...prev,
-      paymentFor,
-      relatedVisitId: undefined,
-      amount: selectedOption?.amount || 0,
-      paymentDate:
-        paymentFor === 'booking_advance'
-          ? getValues('visits').find((v) => v.hearingAidBooked)?.bookingDate ||
-            getValues('visits').find((v) => v.hearingAidBooked)?.visitDate ||
-            prev.paymentDate
-          : prev.paymentDate,
-    }));
-  };
-
-  const applyTrialHomeSecurityPaymentForVisit = (visitId: string) => {
-    const visit = getValues('visits').find((v) => v.id === visitId);
-    const amt = Number(visit?.trialHomeSecurityDepositAmount) || 0;
-    setCurrentPayment((prev) => ({
-      ...prev,
-      paymentFor: 'trial_home_security_deposit',
-      relatedVisitId: visitId,
-      amount: amt,
-      paymentDate: visit?.trialStartDate || visit?.visitDate || prev.paymentDate,
-    }));
-  };
-
+  /** Pick what the payment is for; visit-scoped choices also link the payment to that visit. */
   const handlePaymentPurposeRawChange = (raw: string) => {
-    if (raw.startsWith('trial_sd_ref__')) {
-      const visitId = raw.slice('trial_sd_ref__'.length);
-      const visit = getValues('visits').find((v) => v.id === visitId);
-      const amt = Number(visit?.trialRefundAmount) || Number(visit?.trialHomeSecurityDepositAmount) || 0;
-      setCurrentPayment((prev) => ({
+    const [value, visitId] = raw.split('::') as [PaymentRecord['paymentFor'], string | undefined];
+    const option = getAvailablePaymentOptions().find(
+      (opt) => opt.value === value && (opt.visitId || undefined) === (visitId || undefined),
+    );
+    const visit = visitId ? getValues('visits').find((v) => v.id === visitId) : undefined;
+    setCurrentPayment((prev) => {
+      let paymentDate = prev.paymentDate;
+      if (visit) {
+        if (value === 'booking_advance') paymentDate = visit.bookingDate || visit.visitDate || prev.paymentDate;
+        else if (value === 'trial_home_security_deposit') paymentDate = visit.trialStartDate || visit.visitDate || prev.paymentDate;
+        else if (value === 'trial_home_security_deposit_refund') paymentDate = visit.trialRefundDate || todayYmd();
+      }
+      return {
         ...prev,
-        paymentFor: 'trial_home_security_deposit_refund',
-        relatedVisitId: visitId,
-        amount: amt,
-        paymentDate: visit?.trialRefundDate || new Date().toISOString().split('T')[0],
-      }));
-      return;
-    }
-    if (raw.startsWith('trial_sd__')) {
-      applyTrialHomeSecurityPaymentForVisit(raw.slice('trial_sd__'.length));
-      return;
-    }
-    handlePaymentForChange(raw as PaymentRecord['paymentFor']);
+        paymentFor: value,
+        relatedVisitId: visitId || undefined,
+        amount: option?.amount || 0,
+        paymentDate,
+      };
+    });
   };
 
   const calculateTotalPaid = () => {
@@ -4009,12 +4090,13 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
     }, 0);
   };
 
+  /** Still to collect from the patient (ignores refunds the center still owes). */
+  const calculateIncomingOutstanding = () =>
+    Math.max(calculateTotalDue() + calculateTotalOutgoing() - calculateTotalIncoming(), 0);
+
   const calculateOutstanding = () => {
     // Due should be settled by net cash retained (incoming minus outgoing refunds).
-    const incomingOutstanding = Math.max(
-      calculateTotalDue() + calculateTotalOutgoing() - calculateTotalIncoming(),
-      0
-    );
+    const incomingOutstanding = calculateIncomingOutstanding();
     const refundOutstanding = Math.max(calculatePendingRefundDue() - calculateTotalOutgoing(), 0);
     return incomingOutstanding + refundOutstanding;
   };
@@ -4066,7 +4148,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
       
       // Reset current payment form
       setCurrentPayment({
-        paymentDate: new Date().toISOString().split('T')[0],
+        paymentDate: todayYmd(),
         amount: 0,
         paymentFor: 'full_payment',
         paymentMode: 'Cash',
@@ -4080,6 +4162,22 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const removePayment = (paymentId: string) => {
     const payments = getValues('payments');
     setValue('payments', payments.filter(p => p.id !== paymentId));
+  };
+
+  /** Link an existing payment to a visit ('' = auto by date) — drives per-visit payment receipts. */
+  const setPaymentVisitLink = (paymentId: string, visitId: string) => {
+    const payments = getValues('payments');
+    setValue(
+      'payments',
+      payments.map((p) => {
+        if (p.id !== paymentId) return p;
+        const next = { ...p };
+        if (visitId) next.relatedVisitId = visitId;
+        else delete next.relatedVisitId;
+        return next;
+      }),
+      { shouldDirty: true },
+    );
   };
 
   // Submit form
@@ -9875,46 +9973,56 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     Record payment
                   </Typography>
                   
+                  {(() => {
+                    const paymentOptions = getAvailablePaymentOptions();
+                    const selectedKey = paymentOptionKey(currentPayment.paymentFor, currentPayment.relatedVisitId);
+                    const purposeValue = paymentOptions.some(
+                      (o) => paymentOptionKey(o.value, o.visitId) === selectedKey,
+                    )
+                      ? selectedKey
+                      : paymentOptions.some((o) => !o.visitId && o.value === currentPayment.paymentFor)
+                        ? currentPayment.paymentFor
+                        : '';
+                    const visitsForLink = getValues('visits');
+                    const quickOptions = paymentOptions.filter(
+                      (opt) =>
+                        opt.amount > 0 &&
+                        !opt.settled &&
+                        opt.value !== 'partial_payment' &&
+                        !(opt.value === 'other' && !opt.visitId),
+                    );
+                    return (
+                      <>
                   {/* First Row - Payment Purpose */}
                   <Grid container spacing={2} sx={{ mb: 2 }}>
-                    <Grid item xs={12}>
+                    <Grid item xs={12} md={8}>
                       <FormControl fullWidth size="small">
                         <InputLabel>Payment For</InputLabel>
                         <Select
-                          value={
-                            currentPayment.paymentFor === 'trial_home_security_deposit' &&
-                            currentPayment.relatedVisitId
-                              ? `trial_sd__${currentPayment.relatedVisitId}`
-                              : currentPayment.paymentFor === 'trial_home_security_deposit_refund' &&
-                                currentPayment.relatedVisitId
-                              ? `trial_sd_ref__${currentPayment.relatedVisitId}`
-                              : currentPayment.paymentFor
-                          }
+                          value={purposeValue}
                           onChange={(e) => handlePaymentPurposeRawChange(String(e.target.value))}
                           label="Payment For"
                           sx={{ borderRadius: 2 }}
                         >
-                          {getAvailablePaymentOptions().map((option) => {
-                            const visitId = (option as { visitId?: string }).visitId;
-                            const selectValue = visitId
-                              ? (option.value === 'trial_home_security_deposit_refund' ? `trial_sd_ref__${visitId}` : `trial_sd__${visitId}`)
-                              : option.value;
+                          {paymentOptions.map((option) => {
+                            const selectValue = paymentOptionKey(option.value, option.visitId);
                             return (
                             <MenuItem key={selectValue} value={selectValue}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                                <Box>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 1 }}>
+                                <Box sx={{ opacity: option.settled ? 0.6 : 1 }}>
                                   <Typography variant="body1" sx={{ fontWeight: 500 }}>
                                     {option.label}
                                   </Typography>
                                   <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
                                     {option.description}
+                                    {option.settled ? ' · already paid' : ''}
                                   </Typography>
                                 </Box>
                                 {option.amount > 0 && (
-                                  <Chip 
-                                    label={formatCurrency(option.amount)} 
-                                    size="small" 
-                                    color="primary" 
+                                  <Chip
+                                    label={formatCurrency(option.amount)}
+                                    size="small"
+                                    color={option.settled ? 'default' : 'primary'}
                                     variant="outlined"
                                   />
                                 )}
@@ -9922,6 +10030,37 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                             </MenuItem>
                           );
                           })}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={12} md={4}>
+                      <FormControl fullWidth size="small">
+                        <InputLabel shrink>For visit</InputLabel>
+                        <Select
+                          notched
+                          value={
+                            visitsForLink.some((v) => v.id === currentPayment.relatedVisitId)
+                              ? currentPayment.relatedVisitId
+                              : ''
+                          }
+                          onChange={(e) =>
+                            setCurrentPayment((prev) => ({
+                              ...prev,
+                              relatedVisitId: String(e.target.value) || undefined,
+                            }))
+                          }
+                          label="For visit"
+                          displayEmpty
+                          sx={{ borderRadius: 2 }}
+                        >
+                          <MenuItem value="">
+                            <em>Auto (match by payment date)</em>
+                          </MenuItem>
+                          {visitsForLink.map((v, i) => (
+                            <MenuItem key={v.id} value={v.id}>
+                              {v.visitDate ? `Visit ${i + 1} · ${v.visitDate}` : `Visit ${i + 1}`}
+                            </MenuItem>
+                          ))}
                         </Select>
                       </FormControl>
                     </Grid>
@@ -9943,8 +10082,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         label="Amount"
                         type="number"
                         value={currentPayment.amount || ''}
-                        onChange={(e) => setCurrentPayment(prev => ({ ...prev, amount: Number(e.target.value) || 0 }))}
-                        disabled={currentPayment.paymentFor === 'full_payment' || (currentPayment.paymentFor !== 'partial_payment' && currentPayment.paymentFor !== 'other' && currentPayment.amount > 0)}
+                        onChange={(e) => setCurrentPayment(prev => ({ ...prev, amount: Math.max(0, Number(e.target.value) || 0) }))}
                         InputProps={{
                           startAdornment: (
                             <InputAdornment position="start">
@@ -9953,15 +10091,15 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                           ),
                         }}
                         helperText={
-                          currentPayment.paymentFor === 'full_payment' 
-                            ? 'Auto-filled for full payment'
+                          currentPayment.paymentFor === 'full_payment'
+                            ? 'Outstanding balance — edit if paying less'
                             : currentPayment.paymentFor === 'partial_payment' || currentPayment.paymentFor === 'other'
                             ? 'Enter custom amount'
                             : currentPayment.paymentFor === 'trial_home_security_deposit'
                             ? 'Matches home trial security amount for this visit'
                             : currentPayment.paymentFor === 'trial_home_security_deposit_refund'
                             ? 'Outgoing refund amount (money out). Record this on a separate refund/follow-up visit date.'
-                            : 'Auto-filled from service'
+                            : 'Suggested from the visit — edit for a part payment'
                         }
                         size="small"
                         sx={enquiryFormFieldSx}
@@ -10026,8 +10164,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                     </Grid>
                   </Grid>
 
-                  {/* Quick Payment Suggestions */}
-                  {calculateTotalDue() > 0 && (
+                  {/* Quick Payment Suggestions — unpaid charges only, newest visit first */}
+                  {quickOptions.length > 0 && (
                     <Box
                       sx={(t) => ({
                         mt: 2,
@@ -10042,47 +10180,36 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                         Quick payment options
                       </Typography>
                       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                        {getAvailablePaymentOptions()
-                          .filter(opt => opt.amount > 0 && opt.value !== 'partial_payment' && opt.value !== 'other')
-                          .map((option) => {
-                            const vid = (option as { visitId?: string }).visitId;
-                            const chipActive =
-                              option.value === 'trial_home_security_deposit' && vid
-                                ? currentPayment.paymentFor === 'trial_home_security_deposit' &&
-                                  currentPayment.relatedVisitId === vid
-                                : option.value === 'trial_home_security_deposit_refund' && vid
-                                ? currentPayment.paymentFor === 'trial_home_security_deposit_refund' &&
-                                  currentPayment.relatedVisitId === vid
-                                : currentPayment.paymentFor === option.value;
-                            return (
+                        {quickOptions.map((option) => {
+                          const key = paymentOptionKey(option.value, option.visitId);
+                          const visitIdx = option.visitId
+                            ? visitsForLink.findIndex((v) => v.id === option.visitId)
+                            : -1;
+                          return (
                             <Chip
-                              key={vid ? `${option.value}-${vid}` : option.value}
-                              label={`${option.label} - ${formatCurrency(option.amount)}`}
+                              key={key}
+                              label={`${option.label}${visitIdx >= 0 ? ` (Visit ${visitIdx + 1})` : ''} - ${formatCurrency(option.amount)}`}
                               variant="outlined"
                               size="small"
                               clickable
-                              onClick={() =>
-                                vid
-                                  ? handlePaymentPurposeRawChange(
-                                      option.value === 'trial_home_security_deposit_refund'
-                                        ? `trial_sd_ref__${vid}`
-                                        : `trial_sd__${vid}`
-                                    )
-                                  : handlePaymentForChange(option.value as PaymentRecord['paymentFor'])
-                              }
-                              color={chipActive ? 'primary' : 'default'}
+                              onClick={() => handlePaymentPurposeRawChange(key)}
+                              color={purposeValue === key ? 'primary' : 'default'}
                               sx={{ cursor: 'pointer' }}
                             />
                           );
-                          })}
+                        })}
                       </Box>
                     </Box>
                   )}
+                      </>
+                    );
+                  })()}
                 </Box>
 
                 {/* Payments Table */}
                 {(() => {
                   const payments = getValues('payments');
+                  const visitsForLedger = getValues('visits');
                   return payments.length > 0 ? (
                     <Box>
                     <Typography component="h3" sx={{ ...enquiryGroupTitleSx, mb: 1.25 }}>
@@ -10109,6 +10236,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                            >
                              <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Date</TableCell>
                              <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Payment For</TableCell>
+                             <TableCell sx={{ fontWeight: 600, py: 1.25, minWidth: 170 }}>Visit</TableCell>
                              <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Direction</TableCell>
                              <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Amount</TableCell>
                              <TableCell sx={{ fontWeight: 600, py: 1.25 }}>Payment Mode</TableCell>
@@ -10152,15 +10280,52 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                                  <TableCell>{payment.paymentDate}</TableCell>
                                  <TableCell>
                                    <Chip 
-                                     label={
-                                      (payment.paymentFor === 'trial_home_security_deposit' || payment.paymentFor === 'trial_home_security_deposit_refund') && payment.relatedVisitId
-                                         ? `${paymentForLabels[payment.paymentFor]} (Visit ${payment.relatedVisitId})`
-                                         : paymentForLabels[payment.paymentFor] || payment.paymentFor
-                                     } 
+                                     label={paymentForLabels[payment.paymentFor] || payment.paymentFor}
                                      size="small" 
                                      color={paymentForColors[payment.paymentFor] || 'default'} 
                                      variant="outlined" 
                                    />
+                                 </TableCell>
+                                 <TableCell>
+                                   {(() => {
+                                     const linked = visitsForLedger.some((v) => v.id === payment.relatedVisitId);
+                                     const auto = linked
+                                       ? null
+                                       : attributePaymentToVisit(
+                                           {
+                                             date: payment.paymentDate,
+                                             category: payment.paymentFor,
+                                           },
+                                           visitsForLedger as unknown as Record<string, unknown>[],
+                                         ).visitIndex;
+                                     return (
+                                       <Select
+                                         size="small"
+                                         variant="standard"
+                                         disableUnderline
+                                         displayEmpty
+                                         value={linked ? payment.relatedVisitId : ''}
+                                         onChange={(e) => setPaymentVisitLink(payment.id, String(e.target.value))}
+                                         renderValue={(v) =>
+                                           v
+                                             ? visitLabelForId(String(v))
+                                             : auto != null
+                                               ? `Auto: Visit ${auto + 1}`
+                                               : 'Not linked'
+                                         }
+                                         sx={{ fontSize: '0.8125rem', color: linked ? 'text.primary' : 'text.secondary' }}
+                                       >
+                                         <MenuItem value="">
+                                           <em>Auto (match by payment date)</em>
+                                         </MenuItem>
+                                         {visitsForLedger.map((v, i) => (
+                                           <MenuItem key={v.id} value={v.id}>
+                                             {v.visitDate ? `Visit ${i + 1} · ${v.visitDate}` : `Visit ${i + 1}`}
+                                           </MenuItem>
+                                         ))}
+                                       </Select>
+                                     );
+                                   })()}
                                  </TableCell>
                                  <TableCell>
                                    <Chip
@@ -10203,6 +10368,7 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                              })}
                            >
                              <TableCell sx={{ fontWeight: 700, py: 1.25 }}>Net collected</TableCell>
+                             <TableCell sx={{ py: 1.25 }} />
                              <TableCell sx={{ py: 1.25 }} />
                              <TableCell sx={{ py: 1.25 }} />
                              <TableCell sx={{ fontWeight: 700, py: 1.25, color: 'primary.main' }}>
@@ -10770,10 +10936,10 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
                            partial_payment: 'Partial Payment',
                            other: 'Other'
                          };
-                         const forLabel =
-                           payment.paymentFor === 'trial_home_security_deposit' && payment.relatedVisitId
-                             ? `${paymentForLabels[payment.paymentFor] || payment.paymentFor} (Visit ${payment.relatedVisitId})`
-                             : paymentForLabels[payment.paymentFor] || payment.paymentFor;
+                         const linkedVisitLabel = visitLabelForId(payment.relatedVisitId);
+                         const forLabel = linkedVisitLabel
+                           ? `${paymentForLabels[payment.paymentFor] || payment.paymentFor} (${linkedVisitLabel})`
+                           : paymentForLabels[payment.paymentFor] || payment.paymentFor;
                          
                          return (
                            <Box key={payment.id} sx={{ 

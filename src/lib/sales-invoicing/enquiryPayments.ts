@@ -1,4 +1,10 @@
 import type { PatientPaymentLine, UnifiedInvoiceRow } from './types';
+import {
+  attributePaymentToVisit,
+  enquiryVisitsForAttribution,
+  isNonSalePaymentCategory,
+  saleCycleVisitIndexFor,
+} from '@/lib/enquiries/visitPaymentAttribution';
 
 /**
  * Net amount still owed for a hearing-aid sale after trade-in / exchange credit.
@@ -18,11 +24,26 @@ export function netPayableAfterHearingAidExchange(visit: Record<string, unknown>
 /**
  * Normalize payments from an enquiry Firestore document (`paymentRecords` + legacy `payments`),
  * matching patient profile semantics (merge parallel `payments` row by id for staff-submitted ref/remarks).
+ * Each line is attributed to a visit and to that visit's purchase cycle (see `visitPaymentAttribution`).
  */
 export function extractPatientPaymentsFromEnquiryDoc(
   data: Record<string, unknown> | undefined | null
 ): PatientPaymentLine[] {
   if (!data || typeof data !== 'object') return [];
+
+  const visits = enquiryVisitsForAttribution(data);
+  const withVisit = (line: PatientPaymentLine, relatedVisitId: unknown): PatientPaymentLine => {
+    if (visits.length === 0) return line;
+    const { visitIndex } = attributePaymentToVisit(
+      { relatedVisitId, date: line.date, category: line.category },
+      visits,
+    );
+    return {
+      ...line,
+      visitIndex,
+      saleCycleVisitIndex: saleCycleVisitIndexFor(visits, visitIndex),
+    };
+  };
 
   const legacyById = new Map<string, Record<string, unknown>>(
     (Array.isArray(data.payments) ? (data.payments as Record<string, unknown>[]) : []).map((p) => [
@@ -41,13 +62,18 @@ export function extractPatientPaymentsFromEnquiryDoc(
       const dateRaw = pr.paymentDate ?? legacy?.paymentDate;
       const date =
         dateRaw != null && String(dateRaw).trim() ? String(dateRaw).trim().slice(0, 10) : undefined;
-      return {
-        amount,
-        mode,
-        ...(referenceNumber ? { referenceNumber } : {}),
-        ...(remarks ? { remarks } : {}),
-        ...(date ? { date } : {}),
-      };
+      const category = String(legacy?.paymentFor || pr.paymentType || '').trim();
+      return withVisit(
+        {
+          amount,
+          mode,
+          ...(referenceNumber ? { referenceNumber } : {}),
+          ...(remarks ? { remarks } : {}),
+          ...(date ? { date } : {}),
+          ...(category ? { category } : {}),
+        },
+        pr.relatedVisitId ?? legacy?.relatedVisitId,
+      );
     });
   }
 
@@ -60,17 +86,40 @@ export function extractPatientPaymentsFromEnquiryDoc(
       const dateRaw = p.paymentDate;
       const date =
         dateRaw != null && String(dateRaw).trim() ? String(dateRaw).trim().slice(0, 10) : undefined;
-      return {
-        amount,
-        mode,
-        ...(referenceNumber ? { referenceNumber } : {}),
-        ...(remarks ? { remarks } : {}),
-        ...(date ? { date } : {}),
-      };
+      const category = String(p.paymentFor || p.paymentType || '').trim();
+      return withVisit(
+        {
+          amount,
+          mode,
+          ...(referenceNumber ? { referenceNumber } : {}),
+          ...(remarks ? { remarks } : {}),
+          ...(date ? { date } : {}),
+          ...(category ? { category } : {}),
+        },
+        p.relatedVisitId,
+      );
     });
   }
 
   return [];
+}
+
+/**
+ * Payments that belong to the invoice for this sale visit: the visit's purchase cycle, minus
+ * test / ENT / programming fees. A repeat customer's second invoice then shows only its own payments.
+ * Falls back to every line when the enquiry's payments cannot be attributed to visits.
+ */
+export function patientPaymentsForSaleVisit(
+  lines: PatientPaymentLine[],
+  saleVisitIndex: unknown,
+): PatientPaymentLine[] {
+  const want = Math.floor(Number(saleVisitIndex));
+  if (saleVisitIndex === null || saleVisitIndex === '' || !Number.isFinite(want) || want < 0) return lines;
+  const attributed = lines.some((l) => typeof l.saleCycleVisitIndex === 'number');
+  if (!attributed) return lines;
+  return lines.filter(
+    (l) => l.saleCycleVisitIndex === want && !isNonSalePaymentCategory(l.category),
+  );
 }
 
 export function buildPatientPaymentsIndexFromEnquiryDocs(
@@ -95,8 +144,12 @@ export function enrichUnifiedRowsWithPatientPayments(
           ? r.derivedEnquiry.enquiryId
           : null;
     if (!enqId) return r;
-    const patientPayments = byEnquiryId[enqId];
-    if (!patientPayments || patientPayments.length === 0) return r;
+    const all = byEnquiryId[enqId];
+    if (!all || all.length === 0) return r;
+    const visitIndex =
+      r.kind === 'saved' ? r.savedSale?.enquiryVisitIndex : r.derivedEnquiry?.visitIndex;
+    const patientPayments = patientPaymentsForSaleVisit(all, visitIndex);
+    if (patientPayments.length === 0) return r;
     return { ...r, patientPayments };
   });
 }

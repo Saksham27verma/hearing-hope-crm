@@ -23,12 +23,13 @@ import {
   buildBookingReceiptData,
   buildPaymentAcknowledgmentData,
   buildTrialReceiptData,
+  selectPaymentAcknowledgmentLines,
   type EnquiryLike,
+  type PaymentAcknowledgmentOptions,
   type VisitLike,
 } from '@/utils/receiptDataBuilders';
-import { getEnquiryPaymentLedgerLines } from '@/utils/enquiryPaymentLedger';
 
-export type { EnquiryLike, VisitLike };
+export type { EnquiryLike, PaymentAcknowledgmentOptions, VisitLike };
 
 type StoredDocumentTemplate = {
   id: string;
@@ -206,7 +207,7 @@ async function generateReceiptPdfServer(
 
 async function generatePaymentAcknowledgmentPdfServer(
   enquiry: EnquiryLike,
-  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+  options?: PaymentAcknowledgmentOptions
 ): Promise<Blob> {
   const res = await fetch('/api/receipts/render', {
     method: 'POST',
@@ -260,7 +261,7 @@ async function generateReceiptPdfFromServerHtmlFragment(
 
 async function generatePaymentAcknowledgmentPdfFromServerHtmlFragment(
   enquiry: EnquiryLike,
-  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+  options?: PaymentAcknowledgmentOptions
 ): Promise<Blob> {
   const res = await fetch('/api/receipts/render-html', {
     method: 'POST',
@@ -368,13 +369,9 @@ async function _legacyClientTrialPdf(
 
 async function _legacyClientPaymentAcknowledgmentPdf(
   enquiry: EnquiryLike,
-  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+  options?: PaymentAcknowledgmentOptions
 ): Promise<Blob> {
-  const data = buildPaymentAcknowledgmentData(enquiry, {
-    documentNumber: options?.documentNumber,
-    centerName: options?.centerName,
-    statementDate: options?.statementDate,
-  });
+  const data = buildPaymentAcknowledgmentData(enquiry, options);
   const customTemplate = await getPreferredCustomTemplate('payment_acknowledgment');
   if (!customTemplate?.htmlContent) {
     throw new Error('Payment acknowledgment HTML template is not configured in Invoice Manager.');
@@ -385,14 +382,14 @@ async function _legacyClientPaymentAcknowledgmentPdf(
   );
 }
 
-/** Generate payment acknowledgment PDF (all payments on the enquiry). */
+/** Generate payment acknowledgment PDF (all payments on the enquiry, or `options.paymentIds`). */
 export async function generatePaymentAcknowledgmentPDF(
   enquiry: EnquiryLike,
-  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+  options?: PaymentAcknowledgmentOptions
 ): Promise<Blob> {
-  const lines = getEnquiryPaymentLedgerLines(enquiry as Record<string, unknown>);
+  const lines = selectPaymentAcknowledgmentLines(enquiry, options?.paymentIds);
   if (lines.length === 0) {
-    throw new Error('No payments recorded for this enquiry.');
+    throw new Error(options?.paymentIds ? 'Select at least one payment.' : 'No payments recorded for this enquiry.');
   }
   try {
     return await generatePaymentAcknowledgmentPdfServer(enquiry, options);
@@ -411,7 +408,7 @@ export async function generatePaymentAcknowledgmentPDF(
 export async function downloadPaymentAcknowledgmentPDF(
   enquiry: EnquiryLike,
   filename?: string,
-  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+  options?: PaymentAcknowledgmentOptions
 ): Promise<void> {
   const blob = await generatePaymentAcknowledgmentPDF(enquiry, options);
   const url = URL.createObjectURL(blob);
@@ -428,7 +425,7 @@ export async function downloadPaymentAcknowledgmentPDF(
 /** Open payment acknowledgment PDF in a new tab. */
 export async function openPaymentAcknowledgmentPDF(
   enquiry: EnquiryLike,
-  options?: { documentNumber?: string; centerName?: string; statementDate?: string }
+  options?: PaymentAcknowledgmentOptions
 ): Promise<void> {
   const blob = await generatePaymentAcknowledgmentPDF(enquiry, options);
   const url = URL.createObjectURL(blob);

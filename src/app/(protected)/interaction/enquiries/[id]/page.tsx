@@ -95,11 +95,17 @@ import {
   downloadPaymentAcknowledgmentPDF,
 } from '@/utils/receiptGenerator';
 import {
+  attributeEnquiryPaymentLedgerLines,
   getEnquiryPaymentLedgerLines,
   sumEnquiryPaymentLedgerIncoming,
   sumEnquiryPaymentLedgerNetPaid,
   sumEnquiryPaymentLedgerOutgoing,
 } from '@/utils/enquiryPaymentLedger';
+import {
+  enquiryVisitsForAttribution,
+  visitDisplayLabel,
+} from '@/lib/enquiries/visitPaymentAttribution';
+import PaymentReceiptDialog from '@/components/enquiries/PaymentReceiptDialog';
 import { convertSaleToInvoiceData, buildInvoiceDataForPdf, enquiryVisitToInvoiceSalePayload } from '@/utils/pdfGenerator';
 import InvoicePrintConfirmModal from '@/components/sales-invoicing/InvoicePrintConfirmModal';
 import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
@@ -371,6 +377,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
   const [telecallerDialogOptions, setTelecallerDialogOptions] = useState<string[]>([]);
   const [enquiryAppointments, setEnquiryAppointments] = useState<any[]>([]);
   const [invoicePdfOpen, setInvoicePdfOpen] = useState(false);
+  /** Payment receipt picker: `visitIndex` pre-selects that visit's payments (null = all). */
+  const [paymentReceiptDialog, setPaymentReceiptDialog] = useState<{ open: boolean; visitIndex: number | null }>({
+    open: false,
+    visitIndex: null,
+  });
   const [invoicePdfData, setInvoicePdfData] = useState<ReturnType<typeof buildInvoiceDataForPdf> | null>(null);
   const [fieldCheckoutDialogOpen, setFieldCheckoutDialogOpen] = useState(false);
 
@@ -754,6 +765,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
   const paymentEntries = getEnquiryPaymentLedgerLines(enquiry);
   const hasPayments = paymentEntries.length > 0 || Boolean(enquiry?.financialSummary);
+  /** Which visit each payment belongs to — explicit link, else matched by date. */
+  const attributionVisits = enquiryVisitsForAttribution(enquiry);
+  const paymentVisitAttribution = attributeEnquiryPaymentLedgerLines(enquiry, paymentEntries);
+  const paymentCountForVisit = (visitIndex: number) =>
+    paymentEntries.filter((p) => paymentVisitAttribution.get(p.id)?.visitIndex === visitIndex).length;
 
   const hasValue = (value: any) => {
     if (value === null || value === undefined) return false;
@@ -824,6 +840,20 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     const centerId =
       visit?.centerId || enquiry.visitingCenter || (enquiry as { center?: string }).center;
     return centerId ? (centers.find(c => c.id === centerId)?.name) || undefined : undefined;
+  };
+
+  /** PDF buttons: surface failures (missing template, server error) instead of failing silently. */
+  const runReceiptAction = async (action: () => Promise<void>, failMessage: string) => {
+    try {
+      await action();
+    } catch (e) {
+      console.error(failMessage, e);
+      setFollowUpFeedback({
+        open: true,
+        message: e instanceof Error && e.message ? e.message : failMessage,
+        severity: 'error',
+      });
+    }
   };
 
   const getVisitInvoiceNumber = async (visitIndex: number): Promise<string> => {
@@ -904,8 +934,9 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
       } else if (visit.hearingAidSale || visit.purchaseFromTrial) {
         total += netPayableAfterHearingAidExchange(visit as Record<string, unknown>);
       }
-      if (visit.accessory && !visit.accessoryFOC) {
-        total += (Number(visit.accessoryAmount) || 0) * (Number(visit.accessoryQuantity) || 1);
+      if (visit.accessory) {
+        // All accessory rows on the visit (free rows excluded) — same as the enquiry form total.
+        total += sumAccessoryEntryPrices(visit);
       }
       if (visit.programming) {
         total += Number(visit.programmingAmount) || 0;
@@ -1625,6 +1656,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
 
                         <Grid item xs={12} md={4}>
                           <MetricCard label="Visit Amount" value={formatCurrency(getVisitAmount(activeVisit)) || '—'} />
+                          {paymentCountForVisit(activeVisitTab) > 0 ? (
+                            <Button
+                              fullWidth
+                              size="small"
+                              variant="outlined"
+                              startIcon={<ReceiptIcon />}
+                              onClick={() => setPaymentReceiptDialog({ open: true, visitIndex: activeVisitTab })}
+                              sx={{ mt: 1.25, borderRadius: 99, textTransform: 'none', fontWeight: 700 }}
+                            >
+                              Payment receipt for this visit ({paymentCountForVisit(activeVisitTab)})
+                            </Button>
+                          ) : null}
                         </Grid>
                       </Grid>
                     </Paper>
@@ -2365,7 +2408,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
                         <Chip label="Booking Receipt" size="small" color="primary" sx={{ borderRadius: 99, fontWeight: 700 }} />
                         <Typography variant="caption" color="text.secondary">
-                          {visit.bookingDate || visit.visitDate || '—'}
+                          Visit {index + 1} · {visit.bookingDate || visit.visitDate || '—'}
                         </Typography>
                       </Box>
                       <Typography variant="body2" sx={{ mb: 0.5, fontWeight: 700 }}>
@@ -2394,7 +2437,12 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         <Button
                           size="small"
                           startIcon={<VisibilityIcon />}
-                          onClick={() => openBookingReceiptPDF(enquiry, visit, { centerName: getCenterName(visit) })}
+                          onClick={() =>
+                            runReceiptAction(
+                              () => openBookingReceiptPDF(enquiry, visit, { centerName: getCenterName(visit) }),
+                              'Could not open the booking receipt.',
+                            )
+                          }
                           sx={{ borderRadius: 99 }}
                         >
                           View
@@ -2402,7 +2450,12 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         <Button
                           size="small"
                           startIcon={<DownloadIcon />}
-                          onClick={() => downloadBookingReceiptPDF(enquiry, visit, undefined, { centerName: getCenterName(visit) })}
+                          onClick={() =>
+                            runReceiptAction(
+                              () => downloadBookingReceiptPDF(enquiry, visit, undefined, { centerName: getCenterName(visit) }),
+                              'Could not download the booking receipt.',
+                            )
+                          }
                           sx={{ borderRadius: 99 }}
                         >
                           Download
@@ -2416,7 +2469,7 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
                         <Chip label="Trial Receipt" size="small" color="warning" sx={{ borderRadius: 99, fontWeight: 700 }} />
                         <Typography variant="caption" color="text.secondary">
-                          {visit.trialStartDate || visit.visitDate || '—'}
+                          Visit {index + 1} · {visit.trialStartDate || visit.visitDate || '—'}
                         </Typography>
                       </Box>
                       <Typography variant="body2" sx={{ mb: 0.5, fontWeight: 700 }}>
@@ -2431,7 +2484,12 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         <Button
                           size="small"
                           startIcon={<VisibilityIcon />}
-                          onClick={() => openTrialReceiptPDF(enquiry, visit, { centerName: getCenterName(visit) })}
+                          onClick={() =>
+                            runReceiptAction(
+                              () => openTrialReceiptPDF(enquiry, visit, { centerName: getCenterName(visit) }),
+                              'Could not open the trial receipt.',
+                            )
+                          }
                           sx={{ borderRadius: 99 }}
                         >
                           View
@@ -2439,7 +2497,12 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         <Button
                           size="small"
                           startIcon={<DownloadIcon />}
-                          onClick={() => downloadTrialReceiptPDF(enquiry, visit, undefined, { centerName: getCenterName(visit) })}
+                          onClick={() =>
+                            runReceiptAction(
+                              () => downloadTrialReceiptPDF(enquiry, visit, undefined, { centerName: getCenterName(visit) }),
+                              'Could not download the trial receipt.',
+                            )
+                          }
                           sx={{ borderRadius: 99 }}
                         >
                           Download
@@ -2471,32 +2534,50 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         </Typography>
                       </Box>
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.6 }}>
-                        All recorded payments with mode and references (PDF).
+                        Recorded payments with mode and references (PDF) — all of them, one visit, or the
+                        payments you pick.
                       </Typography>
-                      <Stack direction="row" spacing={1}>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          startIcon={<ReceiptIcon />}
+                          onClick={() => setPaymentReceiptDialog({ open: true, visitIndex: null })}
+                          sx={{ borderRadius: 99 }}
+                        >
+                          Choose payments…
+                        </Button>
                         <Button
                           size="small"
                           startIcon={<VisibilityIcon />}
                           onClick={() =>
-                            openPaymentAcknowledgmentPDF(enquiry, {
-                              centerName: getCenterName(Array.isArray(visits) ? visits[0] : undefined),
-                            })
+                            runReceiptAction(
+                              () =>
+                                openPaymentAcknowledgmentPDF(enquiry, {
+                                  centerName: getCenterName(Array.isArray(visits) ? visits[0] : undefined),
+                                }),
+                              'Could not open the payment acknowledgment.',
+                            )
                           }
                           sx={{ borderRadius: 99 }}
                         >
-                          View
+                          View all
                         </Button>
                         <Button
                           size="small"
                           startIcon={<DownloadIcon />}
                           onClick={() =>
-                            downloadPaymentAcknowledgmentPDF(enquiry, undefined, {
-                              centerName: getCenterName(Array.isArray(visits) ? visits[0] : undefined),
-                            })
+                            runReceiptAction(
+                              () =>
+                                downloadPaymentAcknowledgmentPDF(enquiry, undefined, {
+                                  centerName: getCenterName(Array.isArray(visits) ? visits[0] : undefined),
+                                }),
+                              'Could not download the payment acknowledgment.',
+                            )
                           }
                           sx={{ borderRadius: 99 }}
                         >
-                          Download
+                          Download all
                         </Button>
                       </Stack>
                     </Paper>
@@ -2514,9 +2595,18 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       }}
                     >
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
-                        <Chip label="Sales invoice" size="small" color="success" sx={{ borderRadius: 99, fontWeight: 700 }} />
+                        <Chip
+                          label={
+                            saleHasBillableInvoiceNumber(visit.invoiceNumber)
+                              ? `Sales invoice · ${normalizeInvoiceNumberString(visit.invoiceNumber)}`
+                              : 'Sales invoice'
+                          }
+                          size="small"
+                          color="success"
+                          sx={{ borderRadius: 99, fontWeight: 700 }}
+                        />
                         <Typography variant="caption" color="text.secondary">
-                          {visit.purchaseDate || visit.visitDate || '—'}
+                          Visit {index + 1} · {visit.purchaseDate || visit.visitDate || '—'}
                         </Typography>
                       </Box>
                       <Typography variant="body2" sx={{ mb: 0.5, fontWeight: 700 }}>
@@ -2544,10 +2634,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                           onClick={async () => {
                             try {
                               const invoiceNumber = await getVisitInvoiceNumber(index);
-                              const payload = enquiryVisitToInvoiceSalePayload(enquiry, {
-                                ...visit,
-                                invoiceNumber,
-                              });
+                              const payload = enquiryVisitToInvoiceSalePayload(
+                                enquiry,
+                                { ...visit, invoiceNumber },
+                                { visitIndex: index },
+                              );
                               setInvoicePdfData(
                                 buildInvoiceDataForPdf(payload, enquiry as Record<string, unknown>),
                               );
@@ -2672,6 +2763,11 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                         <Typography variant="caption" color="text.secondary" component="div">
                           {payment.date || '—'}
                           {payment.mode ? ` · ${String(payment.mode).toUpperCase()}` : ''}
+                          {(() => {
+                            const a = paymentVisitAttribution.get(payment.id);
+                            if (!a || a.visitIndex == null || attributionVisits.length < 2) return '';
+                            return ` · ${visitDisplayLabel(attributionVisits, a.visitIndex)}`;
+                          })()}
                         </Typography>
                         {payment.actorName ? (
                           <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.35 }}>
@@ -3186,6 +3282,19 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
             </Button>
           </DialogActions>
         </Dialog>
+      )}
+
+      {enquiry && paymentEntries.length > 0 && (
+        <PaymentReceiptDialog
+          open={paymentReceiptDialog.open}
+          initialVisitIndex={paymentReceiptDialog.visitIndex}
+          onClose={() => setPaymentReceiptDialog({ open: false, visitIndex: null })}
+          enquiry={enquiry}
+          centerName={getCenterName(
+            paymentReceiptDialog.visitIndex != null ? visits[paymentReceiptDialog.visitIndex] : visits[0],
+          )}
+          onError={(message) => setFollowUpFeedback({ open: true, message, severity: 'error' })}
+        />
       )}
 
       {invoicePdfData && (

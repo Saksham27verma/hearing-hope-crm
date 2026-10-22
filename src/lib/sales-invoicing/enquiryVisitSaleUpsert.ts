@@ -31,6 +31,11 @@ import { syncEnquiryVisitSaleLinkFromSale } from '@/lib/sales-invoicing/enquiryV
 import { notifyLifecycleSaleSync } from '@/lib/lifecycle/notifyLifecycleSaleSync';
 import { isSaleCancelled, normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
+import {
+  collectVisitSaleClaims,
+  isInvoiceOwnedByAnotherVisit,
+  isSaleOwnedByAnotherVisit,
+} from '@/lib/sales-invoicing/visitSaleClaims';
 
 export { normalizeEnquiryVisitIndex } from '@/lib/sales-invoicing/saleCancelled';
 
@@ -79,6 +84,7 @@ export type UpsertEnquiryVisitSaleArgs = {
   enquiryId: string;
   visitIndex: number;
   visit: Record<string, unknown>;
+  /** Pass the same `visits` array being saved so other visits' invoices are recognised and left alone. */
   enquiry: Record<string, unknown>;
   actor: {
     uid?: string | null;
@@ -97,6 +103,8 @@ export type UpsertEnquiryVisitSaleResult = {
   visitInvoicePatched: boolean;
   skippedUnchanged: boolean;
   skipped?: boolean;
+  /** The visit carried another visit's invoice #; callers should drop it from the saved visit. */
+  foreignInvoiceDropped?: boolean;
 };
 
 /**
@@ -128,6 +136,21 @@ export function resolveSaleDateForUpsert(
   return null;
 }
 
+export function stripVisitInvoiceLink(visit: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...visit };
+  delete next.invoiceNumber;
+  delete next.salesInvoiceNumber;
+  delete next.linkedSaleId;
+  const had = next.hearingAidDetails as Record<string, unknown> | undefined;
+  if (had && typeof had === 'object') {
+    const nextHad = { ...had };
+    delete nextHad.invoiceNumber;
+    delete nextHad.linkedSaleId;
+    next.hearingAidDetails = nextHad;
+  }
+  return next;
+}
+
 /**
  * One `sales` document per enquiry visit — update in place, never add a second invoice on re-save.
  */
@@ -135,8 +158,33 @@ export async function upsertSaleForEnquiryVisit(
   args: UpsertEnquiryVisitSaleArgs,
 ): Promise<UpsertEnquiryVisitSaleResult> {
   const visitIndex = normalizeEnquiryVisitIndex(args.visitIndex);
-  const visit = args.visit;
   const data = args.enquiry;
+  // An invoice # copied onto this visit from another visit (older data) is not this visit's invoice:
+  // drop it so a new number is allocated instead of re-using / overwriting the other visit's sale.
+  const claims = collectVisitSaleClaims(data.visits);
+  const visitInvoiceIsForeign = isSaleOwnedByAnotherVisit(
+    claims,
+    { id: visitLinkedSaleIdFromVisit(args.visit), invoiceNumber: visitInvoiceNumberFromVisit(args.visit) },
+    visitIndex,
+  );
+  const visit: Record<string, unknown> = visitInvoiceIsForeign
+    ? stripVisitInvoiceLink(args.visit)
+    : args.visit;
+  const priorVisitInvoice = isInvoiceOwnedByAnotherVisit(claims, args.priorVisitInvoice, visitIndex)
+    ? undefined
+    : args.priorVisitInvoice;
+  if (visitInvoiceIsForeign && !isExplicitEnquirySaleVisit(visit)) {
+    // Only reached because of the copied invoice — not a sale visit, so nothing to invoice.
+    return {
+      saleId: '',
+      invoiceNumber: '',
+      created: false,
+      visitInvoicePatched: false,
+      skippedUnchanged: false,
+      skipped: true,
+      foreignInvoiceDropped: true,
+    };
+  }
   const products = Array.isArray(visit.products) ? visit.products : [];
 
   const totals = readVisitSaleTotals(visit);
@@ -154,7 +202,7 @@ export async function upsertSaleForEnquiryVisit(
     visitIndex,
     visit,
     data,
-    { priorVisitInvoice: args.priorVisitInvoice },
+    { priorVisitInvoice },
   );
   const activeSales = existingSales.filter((s) => !isSaleCancelled(s));
   const canonical = chooseCanonicalSaleRecord(activeSales);
@@ -164,7 +212,7 @@ export async function upsertSaleForEnquiryVisit(
     db: args.db,
     existingVisitInvoice,
     existingSalesInvoice: canonical?.invoiceNumber,
-    priorVisitInvoice: args.priorVisitInvoice,
+    priorVisitInvoice,
     currentSaleId: canonical?.id,
   });
 
@@ -192,7 +240,7 @@ export async function upsertSaleForEnquiryVisit(
       actorUid: args.actor.uid,
       visit,
       enquiry: data,
-      priorVisitInvoice: args.priorVisitInvoice,
+      priorVisitInvoice,
     });
     await syncEnquiryVisitSaleLinkFromSale({
       db: args.db,
@@ -292,7 +340,7 @@ export async function upsertSaleForEnquiryVisit(
     actorUid: args.actor.uid,
     visit,
     enquiry: data,
-    priorVisitInvoice: args.priorVisitInvoice,
+    priorVisitInvoice,
   });
 
   await syncEnquiryVisitSaleLinkFromSale({

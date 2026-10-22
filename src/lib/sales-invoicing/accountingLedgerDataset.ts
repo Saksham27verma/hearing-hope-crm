@@ -1,6 +1,7 @@
 import type { PatientPaymentLine, SaleRecord, UnifiedInvoiceRow } from './types';
 import { saleInvoiceFaceTotal } from '@/lib/sales-invoicing/saleInvoiceFaceTotal';
 import { isSaleCancelled } from '@/lib/sales-invoicing/saleCancelled';
+import { patientPaymentsForSaleVisit } from '@/lib/sales-invoicing/enquiryPayments';
 
 export interface AccountingExportOptions {
   organizationName?: string;
@@ -181,7 +182,8 @@ export function buildAccountingLedgerDataset(opts: AccountingExportOptions): Acc
     const inv = str(s.invoiceNumber) || '—';
     const invDate = tsToIsoDate(s.saleDate);
     const eid = str(s.enquiryId);
-    const pays = eid ? opts.patientPaymentsByEnquiryId[eid] : undefined;
+    const allPays = eid ? opts.patientPaymentsByEnquiryId[eid] : undefined;
+    const pays = allPays ? patientPaymentsForSaleVisit(allPays, s.enquiryVisitIndex) : undefined;
     const center = s.centerId ? opts.centerNameById[str(s.centerId)] || s.centerId : '';
     const payStatus = str(s.paymentStatus) || 'paid';
     const payMethod = str(s.paymentMethod) || '';

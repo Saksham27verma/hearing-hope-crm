@@ -7,6 +7,7 @@ import {
   buildBookingReceiptData,
   buildPaymentAcknowledgmentData,
   buildTrialReceiptData,
+  selectPaymentAcknowledgmentLines,
   type EnquiryLike,
   type VisitLike,
 } from '@/utils/receiptDataBuilders';
@@ -15,7 +16,6 @@ import {
   buildPaymentAcknowledgmentHtmlString,
   buildTrialReceiptHtmlString,
 } from '@/utils/receiptTemplateHtml';
-import { getEnquiryPaymentLedgerLines } from '@/utils/enquiryPaymentLedger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -38,6 +38,9 @@ type RenderReceiptBody = {
     paymentMode?: string;
     documentNumber?: string;
     statementDate?: string;
+    /** Payment acknowledgment: only these payment ids (one visit / a hand-picked set). */
+    paymentIds?: string[];
+    scopeLabel?: string;
   };
 };
 
@@ -61,9 +64,10 @@ export async function POST(req: Request) {
     const origin = publicSiteOrigin();
 
     if (receiptType === 'payment_acknowledgment') {
-      const lines = getEnquiryPaymentLedgerLines(body?.enquiry as Record<string, unknown>);
+      const paymentIds = Array.isArray(opts.paymentIds) ? opts.paymentIds.map((id) => String(id)) : undefined;
+      const lines = selectPaymentAcknowledgmentLines(enquiry, paymentIds);
       if (lines.length === 0) {
-        return NextResponse.json({ ok: false, error: 'No payments recorded for this enquiry.' }, { status: 400 });
+        return NextResponse.json({ ok: false, error: paymentIds ? 'No matching payments selected.' : 'No payments recorded for this enquiry.' }, { status: 400 });
       }
       const template = await getResolvedHtmlTemplateAdmin('payment_acknowledgment');
       if (!template?.htmlContent) {
@@ -80,6 +84,8 @@ export async function POST(req: Request) {
         documentNumber: opts.documentNumber,
         centerName,
         statementDate: opts.statementDate,
+        paymentIds,
+        scopeLabel: opts.scopeLabel,
       });
       const htmlFragment = buildPaymentAcknowledgmentHtmlString(template, data, { logoPublicOrigin: origin });
       return NextResponse.json({ ok: true, htmlFragment, templateId: template.id });

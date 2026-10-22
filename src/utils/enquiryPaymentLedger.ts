@@ -2,6 +2,11 @@
  * Normalized payment lines for enquiry profile UI and payment acknowledgment PDF.
  * Matches Firestore shape: prefer `paymentRecords` merged by `id` with legacy `payments`; if no records, use legacy only.
  */
+import {
+  attributePaymentToVisit,
+  enquiryVisitsForAttribution,
+  type PaymentVisitAttribution,
+} from '@/lib/enquiries/visitPaymentAttribution';
 
 export type EnquiryPaymentLedgerLine = {
   id: string;
@@ -14,6 +19,10 @@ export type EnquiryPaymentLedgerLine = {
   actorName: string;
   referenceNumber?: string;
   remarks?: string;
+  /** Visit id the payment was recorded against (CRM form / staff app), when set. */
+  relatedVisitId?: string;
+  /** CRM `paymentFor` or normalized `paymentType`. */
+  category?: string;
 };
 
 const OUTGOING_LEGACY_PAYMENT_FOR = 'trial_home_security_deposit_refund';
@@ -152,6 +161,8 @@ export function getEnquiryPaymentLedgerLines(enquiry: EnquiryLike | null | undef
       const modeRaw = payment.paymentMethod ?? legacy?.paymentMode;
       const mode = String(modeRaw ?? '').trim() || undefined;
       const dateRaw = payment.paymentDate ?? legacy?.paymentDate;
+      const relatedVisitId = String(payment.relatedVisitId ?? legacy?.relatedVisitId ?? '').trim();
+      const category = String(legacy?.paymentFor || payment.paymentType || '').trim();
       rawRows.push({
         id,
         label: resolveLabel(payment, legacy),
@@ -162,6 +173,8 @@ export function getEnquiryPaymentLedgerLines(enquiry: EnquiryLike | null | undef
         actorName: actorFromPayment(payment) || (legacy ? actorFromPayment(legacy) : ''),
         ...(referenceNumber ? { referenceNumber } : {}),
         ...(remarks ? { remarks } : {}),
+        ...(relatedVisitId ? { relatedVisitId } : {}),
+        ...(category ? { category } : {}),
       });
     });
   } else {
@@ -171,6 +184,8 @@ export function getEnquiryPaymentLedgerLines(enquiry: EnquiryLike | null | undef
       const remarks = String(payment.remarks ?? '').trim();
       const mode = String(payment.paymentMode ?? '').trim() || undefined;
       const pf = String(payment.paymentFor || '').trim();
+      const relatedVisitId = String(payment.relatedVisitId ?? '').trim();
+      const category = pf || String(payment.paymentType || '').trim();
       rawRows.push({
         id,
         label:
@@ -183,6 +198,8 @@ export function getEnquiryPaymentLedgerLines(enquiry: EnquiryLike | null | undef
         actorName: actorFromPayment(payment),
         ...(referenceNumber ? { referenceNumber } : {}),
         ...(remarks ? { remarks } : {}),
+        ...(relatedVisitId ? { relatedVisitId } : {}),
+        ...(category ? { category } : {}),
       });
     });
   }
@@ -212,4 +229,33 @@ export function sumEnquiryPaymentLedgerNetPaid(lines: EnquiryPaymentLedgerLine[]
 /** @deprecated Prefer {@link sumEnquiryPaymentLedgerNetPaid} — name kept for callers expecting net paid. */
 export function sumEnquiryPaymentLedgerAmounts(lines: EnquiryPaymentLedgerLine[]): number {
   return sumEnquiryPaymentLedgerNetPaid(lines);
+}
+
+/** Which visit each ledger line belongs to (explicit `relatedVisitId`, else matched by date / service). */
+export function attributeEnquiryPaymentLedgerLines(
+  enquiry: EnquiryLike | null | undefined,
+  lines: EnquiryPaymentLedgerLine[],
+): Map<string, PaymentVisitAttribution> {
+  const visits = enquiryVisitsForAttribution(enquiry ?? null);
+  const out = new Map<string, PaymentVisitAttribution>();
+  for (const line of lines) {
+    out.set(
+      line.id,
+      attributePaymentToVisit(
+        { relatedVisitId: line.relatedVisitId, date: line.date, category: line.category },
+        visits,
+      ),
+    );
+  }
+  return out;
+}
+
+/** Ledger line ids attributed to one visit. */
+export function enquiryPaymentIdsForVisit(
+  enquiry: EnquiryLike | null | undefined,
+  visitIndex: number,
+): string[] {
+  const lines = getEnquiryPaymentLedgerLines(enquiry);
+  const byId = attributeEnquiryPaymentLedgerLines(enquiry, lines);
+  return lines.filter((l) => byId.get(l.id)?.visitIndex === visitIndex).map((l) => l.id);
 }

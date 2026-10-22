@@ -32,10 +32,11 @@ export type InvoicePdfGenerationOptions = {
   config?: Partial<InvoiceConfig>;
 };
 
-export function enquiryVisitToInvoiceSalePayload(enquiry: any, visit: any) {
+export function enquiryVisitToInvoiceSalePayload(enquiry: any, visit: any, opts?: { visitIndex?: number }) {
   return enquiryVisitToInvoiceSalePayloadImpl(
     enquiry as Record<string, unknown>,
-    visit as Record<string, unknown>
+    visit as Record<string, unknown>,
+    opts
   );
 }
 
