@@ -153,17 +153,17 @@ export default function EditEnquiryPage({ params }: EditEnquiryPageProps) {
     };
   };
 
-  // Products on sale visits that were not on the same visit before this edit (matched by visit id,
-  // so deleting/adding visits does not make existing sale lines look "new" and reduce stock twice).
+  // Products on sale visits that were not on the same visit before this edit. Matched by visit id so
+  // deleting/adding visits does not make existing sale lines look "new" and reduce stock twice; falls
+  // back to the same position when the id is new (e.g. a duplicate id that was renamed on load).
   const findNewSales = (oldVisits: any[], newVisits: any[]) => {
     const newSales: any[] = [];
 
     newVisits.forEach((newVisit, visitIndex) => {
       if (newVisit.hearingAidSale && newVisit.products && newVisit.products.length > 0) {
         const id = String(newVisit.id ?? '').trim();
-        const oldVisit = id
-          ? oldVisits.find((v: any) => String(v?.id ?? '').trim() === id)
-          : oldVisits[visitIndex];
+        const byId = id ? oldVisits.find((v: any) => String(v?.id ?? '').trim() === id) : undefined;
+        const oldVisit = byId ?? oldVisits[visitIndex];
         const oldProducts = oldVisit?.products || [];
 
         newVisit.products.forEach((newProduct: any) => {

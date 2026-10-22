@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { Timestamp } from 'firebase/firestore';
 import { mergeEnquiryVisitSaleCandidates } from './enquiryVisitSaleDedupe';
+import { buildUnifiedInvoiceRows } from './mergeUnifiedRows';
 import {
   collectVisitSaleClaims,
   isInvoiceOwnedByAnotherVisit,
   ownerVisitIndexForSale,
 } from './visitSaleClaims';
-import type { SaleRecord } from './types';
+import type { DerivedEnquirySale, SaleRecord } from './types';
 
 function sale(overrides: Partial<SaleRecord> & { id: string }): SaleRecord {
   return {
@@ -119,4 +121,47 @@ test('a visit still finds its own invoice after an earlier visit was deleted (in
     found.map((s) => s.id),
     ['sale-2'],
   );
+});
+
+test('a visit linking its own sale keeps it even if it also carries a stale copied number', () => {
+  const claims = collectVisitSaleClaims([
+    firstVisit,
+    { id: '2', invoiceNumber: 'INV-0101', linkedSaleId: 'sale-2' },
+  ]);
+  assert.equal(ownerVisitIndexForSale(claims, { id: 'sale-2', invoiceNumber: 'INV-0200' }), 1);
+  assert.equal(ownerVisitIndexForSale(claims, { id: 'sale-1', invoiceNumber: 'INV-0101' }), 0);
+});
+
+function derived(visitIndex: number, seconds: number): DerivedEnquirySale {
+  return {
+    id: `enq-1-${visitIndex}`,
+    enquiryId: 'enq-1',
+    visitIndex,
+    patientName: 'Repeat Patient',
+    visitDate: { seconds } as Timestamp,
+    products: [],
+    totalAmount: 30000,
+  };
+}
+
+test('same-day second purchase without an invoice still shows as uninvoiced', () => {
+  const day = 1775000000;
+  const rows = buildUnifiedInvoiceRows(
+    [sale({ id: 'sale-1', enquiryVisitIndex: 0, saleDate: { seconds: day } as SaleRecord['saleDate'] })],
+    [derived(0, day), derived(1, day)],
+  );
+  assert.deepEqual(
+    rows.filter((r) => r.kind === 'enquiry_pending').map((r) => r.derivedEnquiry?.visitIndex),
+    [1],
+  );
+});
+
+test('a sale whose visit index went stale still covers its visit by date (no double count)', () => {
+  const day = 1775000000;
+  // Sale stored for visit index 2, but an earlier visit was deleted so it is now visit index 1.
+  const rows = buildUnifiedInvoiceRows(
+    [sale({ id: 'sale-1', enquiryVisitIndex: 2, saleDate: { seconds: day } as SaleRecord['saleDate'] })],
+    [derived(1, day)],
+  );
+  assert.equal(rows.filter((r) => r.kind === 'enquiry_pending').length, 0);
 });

@@ -156,6 +156,26 @@ export async function fetchSalesByInvoiceNumbers(
   return mergeSalesById(...groups);
 }
 
+/**
+ * True when an active sale outside this enquiry (another patient / visitor record) already uses this
+ * invoice # — reusing it would create two invoices with the same number.
+ */
+export async function invoiceNumberHeldOutsideEnquiry(
+  db: Firestore,
+  invoiceNumber: unknown,
+  enquiryId: string,
+): Promise<boolean> {
+  const inv = normalizeInvoiceNumberString(invoiceNumber);
+  if (!saleHasBillableInvoiceNumber(inv)) return false;
+  const holders = await fetchSalesByInvoiceNumbers(db, [inv]);
+  return holders.some((s) => {
+    if (isSaleCancelled(s)) return false;
+    const eid = String(s.enquiryId || '').trim();
+    if (eid) return eid !== enquiryId;
+    return Boolean(String(s.visitorId || '').trim());
+  });
+}
+
 async function loadLinkedSaleRecord(
   db: Firestore,
   linkedId: string,

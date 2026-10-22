@@ -1772,6 +1772,8 @@ const SimplifiedEnquiryForm: React.FC<Props> = ({
   const watchedTelecaller = watch('telecaller');
   const watchedAssignedTo = watch('assignedTo');
   const watchedFollowUps = watch('followUps');
+  // Subscribe to payments so the ledger re-renders when a payment is removed or linked to a visit.
+  watch('payments');
   // Helpers to derive brand/model from selected product if not explicitly set
   const getProductById = (productId?: string) =>
     (productId ? hearingAidProducts.find(p => p.id === productId) : undefined);

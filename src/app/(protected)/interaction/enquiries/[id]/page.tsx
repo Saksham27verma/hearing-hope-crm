@@ -112,6 +112,10 @@ import { saleHasBillableInvoiceNumber } from '@/utils/invoiceSaleToData';
 import { normalizeInvoiceNumberString } from '@/lib/invoice-numbering/core';
 import { getCanonicalInvoiceNumberForEnquiryVisit } from '@/lib/sales-invoicing/enquiryVisitInvoiceSync';
 import {
+  collectVisitSaleClaims,
+  isInvoiceOwnedByAnotherVisit,
+} from '@/lib/sales-invoicing/visitSaleClaims';
+import {
   ENQUIRY_STATUS_OPTIONS,
   getEnquiryStatusMeta,
   parseJourneyStatusOverride,
@@ -856,17 +860,31 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
     }
   };
 
+  /** Invoice # this visit owns — one copied from an earlier visit (older data) is never used. */
+  const visitInvoiceClaims = collectVisitSaleClaims(enquiry?.visits || enquiry?.visitSchedules);
+  const ownVisitInvoiceNumber = (visit: any, visitIndex: number): string => {
+    const inv = normalizeInvoiceNumberString(visit?.invoiceNumber);
+    if (!saleHasBillableInvoiceNumber(inv)) return '';
+    return isInvoiceOwnedByAnotherVisit(visitInvoiceClaims, inv, visitIndex) ? '' : inv;
+  };
+
   const getVisitInvoiceNumber = async (visitIndex: number): Promise<string> => {
     const visitsKey = Array.isArray(enquiry?.visits) ? 'visits' : 'visitSchedules';
     const visitList = Array.isArray(enquiry?.[visitsKey]) ? [...enquiry[visitsKey]] : [];
     const currentVisit = visitList[visitIndex] || {};
-    const existing = normalizeInvoiceNumberString(currentVisit.invoiceNumber);
-    if (saleHasBillableInvoiceNumber(existing)) {
+    const existing = ownVisitInvoiceNumber(currentVisit, visitIndex);
+    if (existing) {
       return existing;
     }
     if (resolvedParams?.id) {
       const fromCanonicalSale = await getCanonicalInvoiceNumberForEnquiryVisit(db, resolvedParams.id, visitIndex);
-      if (saleHasBillableInvoiceNumber(fromCanonicalSale.invoiceNumber)) return fromCanonicalSale.invoiceNumber;
+      const canonical = fromCanonicalSale.invoiceNumber;
+      if (
+        saleHasBillableInvoiceNumber(canonical) &&
+        !isInvoiceOwnedByAnotherVisit(visitInvoiceClaims, canonical, visitIndex)
+      ) {
+        return canonical;
+      }
     }
     throw new Error('Invoice number is missing for this visit');
   };
@@ -2597,8 +2615,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
                         <Chip
                           label={
-                            saleHasBillableInvoiceNumber(visit.invoiceNumber)
-                              ? `Sales invoice · ${normalizeInvoiceNumberString(visit.invoiceNumber)}`
+                            ownVisitInvoiceNumber(visit, index)
+                              ? `Sales invoice · ${ownVisitInvoiceNumber(visit, index)}`
                               : 'Sales invoice'
                           }
                           size="small"
@@ -2647,7 +2665,8 @@ export default function EnquiryDetailsPage({ params }: { params: Promise<{ id: s
                               console.error('Failed to prepare invoice PDF number:', e);
                               setFollowUpFeedback({
                                 open: true,
-                                message: 'Invoice number is missing. Ask admin to set it in Sales & Invoicing.',
+                                message:
+                                  'This visit has no invoice number of its own yet. Open Edit and save the enquiry to assign one (or ask admin in Sales & Invoicing).',
                                 severity: 'error',
                               });
                             }

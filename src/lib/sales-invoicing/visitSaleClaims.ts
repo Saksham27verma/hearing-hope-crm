@@ -32,19 +32,28 @@ export function collectVisitSaleClaims(visits: unknown): VisitSaleClaim[] {
   return out;
 }
 
-/** Earliest visit index that claims this sale (by linked id or invoice #), or null when unclaimed. */
+/**
+ * Visit index that owns this sale, or null when unclaimed. A linked sale id is decisive; the invoice #
+ * is only used when no visit links the sale id. Earliest visit wins when several claim it.
+ */
 export function ownerVisitIndexForSale(
   claims: VisitSaleClaim[],
   sale: { id?: string; invoiceNumber?: unknown },
 ): number | null {
+  const earliest = (hit: (c: VisitSaleClaim) => boolean): number | null => {
+    let owner: number | null = null;
+    for (const c of claims) {
+      if (hit(c) && (owner === null || c.visitIndex < owner)) owner = c.visitIndex;
+    }
+    return owner;
+  };
   const id = String(sale.id || '').trim();
-  const inv = normalizeInvoiceNumberString(sale.invoiceNumber);
-  let owner: number | null = null;
-  for (const c of claims) {
-    const hit = (id && c.saleId === id) || (inv && c.invoiceNumber === inv);
-    if (hit && (owner === null || c.visitIndex < owner)) owner = c.visitIndex;
+  if (id) {
+    const byId = earliest((c) => c.saleId === id);
+    if (byId !== null) return byId;
   }
-  return owner;
+  const inv = normalizeInvoiceNumberString(sale.invoiceNumber);
+  return inv ? earliest((c) => c.invoiceNumber === inv) : null;
 }
 
 export function isSaleOwnedByAnotherVisit(

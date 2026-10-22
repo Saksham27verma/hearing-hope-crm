@@ -195,8 +195,12 @@ export function saleCycleVisitIndexFor(visits: unknown, visitIndex: number | nul
   for (let p = pos; p < order.length; p++) {
     if (isSaleVisitRecord(arr[order[p]])) return order[p];
   }
-  for (let p = pos - 1; p >= 0; p--) {
-    if (isSaleVisitRecord(arr[order[p]])) return order[p];
+  // After the last sale: follow-ups belong to it, but a new trial / booking starts the next purchase.
+  for (let p = pos; p >= 0; p--) {
+    const v = arr[order[p]];
+    if (isSaleVisitRecord(v)) return order[p];
+    const s = services(v);
+    if (s.has('hearing_aid_booked') || s.has('hearing_aid_trial')) return null;
   }
   return null;
 }

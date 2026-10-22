@@ -16,6 +16,7 @@ import {
   chooseCanonicalSaleRecord,
   dedupeEnquiryVisitSales,
   findSalesForEnquiryVisitMirror,
+  invoiceNumberHeldOutsideEnquiry,
 } from '@/lib/sales-invoicing/enquiryVisitSaleDedupe';
 import {
   readExchangeFieldsFromVisit,
@@ -207,12 +208,22 @@ export async function upsertSaleForEnquiryVisit(
   const activeSales = existingSales.filter((s) => !isSaleCancelled(s));
   const canonical = chooseCanonicalSaleRecord(activeSales);
 
-  const existingVisitInvoice = visitInvoiceNumberFromVisit(visit);
+  // No sale of ours carries the visit's number: if another patient's sale holds it, allocate a new one.
+  let existingVisitInvoice = visitInvoiceNumberFromVisit(visit);
+  let priorInvoiceForResolve = priorVisitInvoice;
+  if (!canonical) {
+    if (await invoiceNumberHeldOutsideEnquiry(args.db, existingVisitInvoice, args.enquiryId)) {
+      existingVisitInvoice = '';
+    }
+    if (await invoiceNumberHeldOutsideEnquiry(args.db, priorInvoiceForResolve, args.enquiryId)) {
+      priorInvoiceForResolve = undefined;
+    }
+  }
   const invoiceNumber = await resolveEnquirySaleInvoiceNumber({
     db: args.db,
     existingVisitInvoice,
     existingSalesInvoice: canonical?.invoiceNumber,
-    priorVisitInvoice,
+    priorVisitInvoice: priorInvoiceForResolve,
     currentSaleId: canonical?.id,
   });
 
@@ -271,6 +282,7 @@ export async function upsertSaleForEnquiryVisit(
       visitInvoicePatched: false,
       skippedUnchanged: false,
       skipped: true,
+      ...(visitInvoiceIsForeign ? { foreignInvoiceDropped: true } : {}),
     };
   }
 

@@ -1,6 +1,6 @@
 import type { Timestamp } from 'firebase/firestore';
 import type { DerivedEnquirySale, PaymentStatus, SaleRecord, UnifiedInvoiceRow } from './types';
-import { isSaleCancelled } from './saleCancelled';
+import { enquiryVisitKey, isSaleCancelled } from './saleCancelled';
 import { saleInvoiceFaceTotal } from './saleInvoiceFaceTotal';
 import { timestampToMs } from './timestamps';
 
@@ -29,7 +29,15 @@ function statusChip(status: PaymentStatus): { label: string; variant: UnifiedInv
   }
 }
 
-function isDerivedCoveredBySale(sale: SaleRecord, d: DerivedEnquirySale): boolean {
+/**
+ * @param derivedVisitKeys keys of every derived sale visit — a sale whose own index is one of them
+ *   belongs to that visit and must not also cover another visit by date.
+ */
+function isDerivedCoveredBySale(
+  sale: SaleRecord,
+  d: DerivedEnquirySale,
+  derivedVisitKeys: Set<string>,
+): boolean {
   const vIdx = sale.enquiryVisitIndex;
   // Same visit index always "covers" the derived row — including voided invoices —
   // so we do not show a phantom Uninvoiced duplicate after cancel.
@@ -37,8 +45,10 @@ function isDerivedCoveredBySale(sale: SaleRecord, d: DerivedEnquirySale): boolea
     if (sale.enquiryId && d.enquiryId && sale.enquiryId === d.enquiryId) return true;
     if (sale.visitorId && d.visitorId && sale.visitorId === d.visitorId) return true;
   }
-  // A sale tied to a different visit never covers this one (repeat customers can buy twice the same day).
-  if (typeof vIdx === 'number') return false;
+  // A sale tied to another existing sale visit never covers this one (repeat customers can buy twice the
+  // same day). A stale index (visit list shifted) still falls through to the same-day match below.
+  const ownKey = enquiryVisitKey(sale.enquiryId, sale.visitorId, vIdx);
+  if (ownKey && derivedVisitKeys.has(ownKey)) return false;
   if (isSaleCancelled(sale)) return false;
   const saleTs = sale.saleDate?.seconds;
   const dTs = d.visitDate?.seconds;
@@ -94,8 +104,13 @@ export function buildUnifiedInvoiceRows(sales: SaleRecord[], derived: DerivedEnq
     });
   }
 
+  const derivedVisitKeys = new Set(
+    derived
+      .map((d) => enquiryVisitKey(d.enquiryId, d.visitorId, d.visitIndex))
+      .filter((k): k is string => Boolean(k)),
+  );
   for (const d of derived) {
-    if (sales.some((s) => isDerivedCoveredBySale(s, d))) continue;
+    if (sales.some((s) => isDerivedCoveredBySale(s, d, derivedVisitKeys))) continue;
     rows.push({
       kind: 'enquiry_pending',
       rowId: `enq-${d.id}`,

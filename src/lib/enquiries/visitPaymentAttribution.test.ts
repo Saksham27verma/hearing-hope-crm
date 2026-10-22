@@ -53,6 +53,11 @@ test('sale cycle: visits up to a sale belong to it; after the last sale they bel
   assert.equal(saleCycleVisitIndexFor([{ id: '1', visitDate: '2026-01-01', hearingTest: true }], 0), null);
 });
 
+test('a booking for the next aid (no sale yet) is not folded into the previous invoice', () => {
+  const next = [...visits, { id: '5', visitDate: '2026-09-01', hearingAidBooked: true }];
+  assert.equal(saleCycleVisitIndexFor(next, 4), null);
+});
+
 test('visit labels are position based', () => {
   assert.equal(visitDisplayLabel(visits, 3).startsWith('Visit 4'), true);
   assert.equal(visitDisplayLabel(visits, null), 'Not linked to a visit');
