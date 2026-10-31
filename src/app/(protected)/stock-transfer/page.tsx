@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
@@ -85,6 +85,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { getHeadOfficeId } from '@/utils/centerUtils';
+import { computeSerialStockPositions, type SerialStockPosition } from '@/lib/inventory/serialStockPositions';
 
 interface StockTransferProduct {
   productId: string;
@@ -166,6 +167,7 @@ const StockTransferPage = () => {
   const [centers, setCenters] = useState<Center[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [availableStock, setAvailableStock] = useState<AvailableStockItem[]>([]);
+  const [serialPositions, setSerialPositions] = useState<SerialStockPosition[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<SelectableStockProduct | null>(null);
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [selectedQuantity, setSelectedQuantity] = useState(1);
@@ -268,12 +270,13 @@ const StockTransferPage = () => {
     }
   };
 
-  // SAME LOGIC AS INVENTORY MODULE - Build available stock from materialInward and purchases
+  // Serial stock uses the Inventory module's rules (computeSerialStockPositions), so every
+  // serial Inventory shows "In Stock" at a center can be picked here.
   const fetchAvailableStock = async () => {
     try {
       setStockLoading(true);
       console.log('🔍 Fetching available stock using inventory module logic...');
-      
+
       const headOfficeId = await getHeadOfficeId();
       // Use a fresh centers snapshot here so mapping works even if state hasn't loaded yet.
       const centersSnap = await getDocs(collection(db, 'centers'));
@@ -288,25 +291,78 @@ const StockTransferPage = () => {
         // Already an id?
         if (centersList.some(c => c.id === raw)) return raw;
         // Legacy data may store center name instead of id
-        const byName = centersList.find(c => String(c.name || '').trim() === raw);
+        const lower = raw.toLowerCase();
+        const byName = centersList.find(c => String(c.name || '').trim().toLowerCase() === lower);
         return byName?.id || raw;
       };
-      
-      const [productsSnap, materialInSnap, purchasesSnap, materialsOutSnap, salesSnap, enquiriesSnap, stockTransfersSnap] = await Promise.all([
+
+      // A denied read on these must not hide all stock (Inventory reads them the same way).
+      const optionalDocs = (name: string) =>
+        getDocs(collection(db, name)).catch((error) => {
+          console.error(`Could not read ${name} for stock transfer availability`, error);
+          return null;
+        });
+
+      const [
+        productsSnap,
+        materialInSnap,
+        purchasesSnap,
+        materialsOutSnap,
+        salesSnap,
+        enquiriesSnap,
+        stockTransfersSnap,
+        staffTrialCustodySnap,
+        purchaseReturnsSnap,
+      ] = await Promise.all([
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'materialInward')),
         getDocs(collection(db, 'purchases')),
         getDocs(collection(db, 'materialsOut')),
         getDocs(collection(db, 'sales')),
         getDocs(collection(db, 'enquiries')),
-        // Order by createdAt asc so applyStockTransferMoves processes moves in
-        // strict chronological order even when transferDate ties.
+        // Order by createdAt asc so stock transfer moves apply in strict
+        // chronological order even when transferDate ties.
         getDocs(query(collection(db, 'stockTransfers'), orderBy('createdAt', 'asc'))),
+        optionalDocs('staffTrialCustody'),
+        optionalDocs('purchaseReturns'),
       ]);
 
       const productById = new Map<string, any>();
       productsSnap.docs.forEach(d => productById.set(d.id, d.data()));
 
+      const docsOf = (snap: { docs: { id: string; data: () => any }[] } | null) =>
+        (snap?.docs || []).map(d => ({ id: d.id, ...d.data() }));
+
+      const positions = Array.from(
+        computeSerialStockPositions({
+          headOfficeId,
+          normalizeLocation,
+          productById,
+          materialInward: docsOf(materialInSnap),
+          purchases: docsOf(purchasesSnap),
+          materialsOut: docsOf(materialsOutSnap),
+          sales: docsOf(salesSnap),
+          enquiries: docsOf(enquiriesSnap),
+          stockTransfers: docsOf(stockTransfersSnap),
+          staffTrialCustody: docsOf(staffTrialCustodySnap),
+          purchaseReturns: docsOf(purchaseReturnsSnap),
+        }).values()
+      );
+
+      const serialAvailable: AvailableStockItem[] = positions
+        .filter(p => p.status === 'In Stock')
+        .map(p => ({
+          productId: p.productId,
+          name: p.name,
+          type: p.type,
+          company: p.company,
+          businessCompany: p.businessCompany,
+          location: p.location,
+          isSerialTracked: true,
+          serialNumber: p.serialNumber,
+        }));
+
+      // Non-serial quantities: inward − outward per product / center / company
       const normKeyForSet = (pid: string, sn: string) =>
         `${String(pid || '').trim()}|${String(sn || '').trim()}`;
       // Track stock transfer serials that were received elsewhere (normalized keys)
@@ -327,314 +383,24 @@ const StockTransferPage = () => {
         }
       });
 
-      console.log('🔄 Stock Transfer Tracking:', {
-        incomingTransferSerials: stockTransferInSerials.size,
-        sampleSerials: Array.from(stockTransferInSerials).slice(0, 5)
-      });
-
-      // Track outgoing serials from materials out and sales
-      const pendingOutSerials = new Set<string>();
-      const dispatchedOutSerials = new Set<string>();
-      let stockTransferOutCount = 0;
-      let regularOutCount = 0;
-      
-      materialsOutSnap.docs.forEach(docSnap => {
-        const data: any = docSnap.data();
-        const status = (data.status as string) || 'dispatched';
-        const notes = data.notes || '';
-        const reason = data.reason || '';
-        const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
-        
-        (data.products || []).forEach((prod: any) => {
-          const productId = prod.productId || prod.id || '';
-          const serialArray: string[] = Array.isArray(prod.serialNumbers)
-            ? prod.serialNumbers
-            : (prod.serialNumber ? [prod.serialNumber] : []);
-          serialArray.forEach((sn: string) => {
-            const key = normKeyForSet(productId, sn);
-            
-            // If this is a stock transfer AND the item was received elsewhere, don't subtract it
-            if (isStockTransfer && stockTransferInSerials.has(key)) {
-              return;
-            }
-            
-            if (isStockTransfer) {
-              stockTransferOutCount++;
-            } else {
-              regularOutCount++;
-            }
-            
-            if (status === 'pending') pendingOutSerials.add(key);
-            if (status === 'dispatched') dispatchedOutSerials.add(key);
-          });
-        });
-      });
-
-      console.log('📤 Materials Out Tracking:', {
-        stockTransferOuts: stockTransferOutCount,
-        regularOuts: regularOutCount,
-        totalPending: pendingOutSerials.size,
-        totalDispatched: dispatchedOutSerials.size
-      });
-
-      // Sold serials: any serial sold from ANY branch must be excluded from available stock everywhere
-      // Use normalized key (trimmed) so we match regardless of how material in/sales store ids
-      const soldSerials = new Set<string>();
-      const soldKey = (productId: string, serial: string) =>
-        `${String(productId || '').trim()}|${String(serial || '').trim()}`;
-      const addSoldSerial = (productId: string, serial: string) => {
-        const key = soldKey(productId, serial);
-        if (key.length <= 1) return; // need both parts
-        soldSerials.add(key);
-      };
-      salesSnap.docs.forEach(docSnap => {
-        const data: any = docSnap.data();
-        (data.products || []).forEach((prod: any) => {
-          const productId = (prod.productId || prod.id || '').toString();
-          const single = (prod.serialNumber || '').toString().trim();
-          const arr: string[] = Array.isArray(prod.serialNumbers)
-            ? (prod.serialNumbers || []).map((s: any) => String(s || '').trim()).filter(Boolean)
-            : [];
-          if (single) addSoldSerial(productId, single);
-          arr.forEach((sn: string) => addSoldSerial(productId, sn));
-        });
-      });
-
-      // Enquiry visits that count as sales (same logic as inventory module)
-      enquiriesSnap.docs.forEach(docSnap => {
-        const data: any = docSnap.data();
-        const visits: any[] = Array.isArray(data.visits) ? data.visits : [];
-        visits.forEach((visit: any) => {
-          const isSale = !!(
-            visit?.hearingAidSale ||
-            (Array.isArray(visit?.medicalServices) && visit.medicalServices.includes('hearing_aid_sale')) ||
-            visit?.journeyStage === 'sale' ||
-            visit?.hearingAidStatus === 'sold' ||
-            (Array.isArray(visit?.products) && visit.products.length > 0 && ((visit.salesAfterTax || 0) > 0 || (visit.grossSalesBeforeTax || 0) > 0))
-          );
-          if (isSale) {
-            const products: any[] = Array.isArray(visit.products) ? visit.products : [];
-            products.forEach((prod: any) => {
-              const productId = (prod.productId || prod.id || prod.hearingAidProductId || '').toString().trim();
-              const single = (prod.serialNumber || prod.trialSerialNumber || '').toString().trim();
-              const arr: string[] = Array.isArray(prod.serialNumbers)
-                ? (prod.serialNumbers || []).map((s: any) => String(s || '').trim()).filter(Boolean)
-                : [];
-              if (single && productId) addSoldSerial(productId, single);
-              arr.forEach((sn: string) => addSoldSerial(productId, sn));
-            });
-          }
-        });
-      });
-
-      console.log('🚫 Sold serials (excluded from available stock):', soldSerials.size);
-
-      // Build available stock from material inward and purchases
-      const serialAvailableByKey = new Map<string, { item: AvailableStockItem; ts: number }>();
       const nonSerialInByProductLoc = new Map<string, number>();
-      
-      const getTs = (t: any): number => {
-        if (!t) return 0;
-        if (typeof t === 'number') return t;
-        if (t?.toMillis) return t.toMillis();
-        if (t?.seconds) return t.seconds * 1000;
-        const d = new Date(t);
-        return isNaN(d.getTime()) ? 0 : d.getTime();
-      };
-
-      const upsertSerial = (key: string, next: AvailableStockItem, ts: number) => {
-        const existing = serialAvailableByKey.get(key);
-        if (!existing || ts >= existing.ts) {
-          serialAvailableByKey.set(key, { item: next, ts });
-        }
-      };
-
-      // Apply stockTransfers as authoritative "moves" using createdAt (a
-      // serverTimestamp that is strictly monotonic per write). This guarantees
-      // chronological order even when transferDate ties for transfers created
-      // in the same browser session.
-      const applyStockTransferMoves = () => {
-        const transfers: any[] = stockTransfersSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        const moveOrderTs = (t: any) => getTs(t.createdAt) || getTs(t.transferDate) || 0;
-        transfers.sort((a, b) => moveOrderTs(a) - moveOrderTs(b));
-        for (const tr of transfers) {
-          const toBranch = normalizeLocation(tr.toBranch);
-          const transferCompany =
-            tr.transferType === 'intercompany'
-              ? (tr.toCompany || tr.company || '')
-              : (tr.company || tr.toCompany || '');
-          // Ensure a strictly increasing per-move timestamp so that no later
-          // upsertSerial call from materialIn (with a tied receivedDate) can
-          // silently overwrite this move with stale source data.
-          const trTs = moveOrderTs(tr);
-          (tr.products || []).forEach((p: any) => {
-            const productId = p.productId || p.id || '';
-            const serials: string[] = Array.isArray(p.serialNumbers)
-              ? p.serialNumbers
-              : (p.serialNumber ? [p.serialNumber] : []);
-            serials.forEach((sn) => {
-              const key = `${productId}|${sn}`;
-              const existing = serialAvailableByKey.get(key);
-              // If legacy material-in/out docs are missing for a transfer chain,
-              // still materialize the serial from stockTransfers so downstream
-              // modules (stock transfer form, hearing-aid sale, material out)
-              // can pick it reliably.
-              if (!existing) {
-                const p = productById.get(productId) || {};
-                serialAvailableByKey.set(key, {
-                  item: {
-                    productId,
-                    name: p.name || p.productName || p.modelName || 'Product',
-                    type: p.type || '',
-                    company: p.company || '',
-                    businessCompany: transferCompany || p.company || '',
-                    location: toBranch,
-                    isSerialTracked: true,
-                    serialNumber: sn,
-                  },
-                  ts: Math.max(1, trTs || 1),
-                });
-                return;
-              }
-              const moved: AvailableStockItem = {
-                ...existing.item,
-                location: toBranch,
-                businessCompany: transferCompany || existing.item.businessCompany,
-              };
-              const moveTs = Math.max(existing.ts + 1, trTs || existing.ts + 1);
-              serialAvailableByKey.set(key, { item: moved, ts: moveTs });
-            });
-          });
-        }
-      };
-
-      let materialInItemsCount = 0;
-
-      // Process Material Inward
-      console.log('📥 Processing Material Inward documents:', materialInSnap.size);
-      // Sort so latest transfer-in wins deterministically
-      const materialInDocsSorted = [...materialInSnap.docs].sort((a, b) => {
-        const ad: any = a.data();
-        const bd: any = b.data();
-        return getTs(ad.receivedDate) - getTs(bd.receivedDate);
-      });
-      materialInDocsSorted.forEach(docSnap => {
-        const data: any = docSnap.data();
-        const receivedTs = getTs(data.receivedDate);
-        const supplierName = data.supplier?.name || '';
-        const isStockTransferIn = supplierName.includes('Stock Transfer from');
+      const addNonSerialInward = (data: any) => {
         const companyLocation = data.company || '';
         const documentLocation = normalizeLocation(data.location || headOfficeId);
-        
         (data.products || []).forEach((prod: any) => {
           const productId = prod.productId || prod.id;
           const productRef = productById.get(productId) || {};
-          const name = prod.name || productRef.name || '';
-          const type = prod.type || productRef.type || '';
-          // Align with Inventory module: business company from doc.company, fallback to product.company
           const businessCompany = companyLocation || productRef.company || '';
-          const manufacturerCompany = productRef.company || '';
           const serials: string[] = Array.isArray(prod.serialNumbers)
             ? prod.serialNumbers
             : (prod.serialNumber ? [prod.serialNumber] : []);
-          const hasSerial = serials.length > 0;
-          
-          if (hasSerial) {
-            serials.forEach(sn => {
-              const key = `${productId}|${sn}`;
-              const nk = soldKey(productId, sn);
-              const reserved = pendingOutSerials.has(nk) || dispatchedOutSerials.has(nk);
-              const sold = soldSerials.has(nk);
-              
-              if (!reserved && !sold) {
-                // Stock transfer IN should override location/company (move) if newer
-                if (isStockTransferIn) {
-                  upsertSerial(key, {
-                    productId,
-                    name,
-                    type,
-                    company: manufacturerCompany,
-                    businessCompany,
-                    location: documentLocation,
-                    isSerialTracked: true,
-                    serialNumber: sn
-                  }, receivedTs);
-                } else {
-                  // Normal inbound: only set if not already set by a newer movement
-                  upsertSerial(key, {
-                    productId,
-                    name,
-                    type,
-                    company: manufacturerCompany,
-                    businessCompany,
-                    location: documentLocation,
-                    isSerialTracked: true,
-                    serialNumber: sn
-                  }, receivedTs);
-                }
-              }
-            });
-          } else if (prod.quantity && prod.quantity > 0) {
-            const k = `${productId}|${documentLocation}|${businessCompany}`;
-            nonSerialInByProductLoc.set(k, (nonSerialInByProductLoc.get(k) || 0) + prod.quantity);
-            materialInItemsCount++;
-          }
+          if (serials.length > 0 || !(prod.quantity > 0)) return;
+          const k = `${productId}|${documentLocation}|${businessCompany}`;
+          nonSerialInByProductLoc.set(k, (nonSerialInByProductLoc.get(k) || 0) + prod.quantity);
         });
-      });
-
-      console.log('✅ Material Inward processed - Added items:', materialInItemsCount);
-
-      // Process Purchases
-      console.log('📥 Processing Purchases documents:', purchasesSnap.size);
-      const purchaseDocsSorted = [...purchasesSnap.docs].sort((a, b) => {
-        const ad: any = a.data();
-        const bd: any = b.data();
-        return getTs(ad.purchaseDate) - getTs(bd.purchaseDate);
-      });
-      purchaseDocsSorted.forEach(docSnap => {
-        const data: any = docSnap.data();
-        const purchaseTs = getTs(data.purchaseDate);
-        const companyLocation = data.company || '';
-        const documentLocation = normalizeLocation(data.location || headOfficeId);
-        
-        (data.products || []).forEach((prod: any) => {
-          const productId = prod.productId || prod.id;
-          const productRef = productById.get(productId) || {};
-          const name = prod.name || productRef.name || '';
-          const type = prod.type || productRef.type || '';
-          const businessCompany = companyLocation || productRef.company || '';
-          const manufacturerCompany = productRef.company || '';
-          const serials: string[] = Array.isArray(prod.serialNumbers)
-            ? prod.serialNumbers
-            : (prod.serialNumber ? [prod.serialNumber] : []);
-          const hasSerial = serials.length > 0;
-          
-          if (hasSerial) {
-            serials.forEach(sn => {
-              const key = `${productId}|${sn}`;
-              const nk = soldKey(productId, sn);
-              const reserved = pendingOutSerials.has(nk) || dispatchedOutSerials.has(nk);
-              const sold = soldSerials.has(nk);
-              
-              if (!reserved && !sold) {
-                upsertSerial(key, {
-                  productId,
-                  name,
-                  type,
-                  company: manufacturerCompany,
-                  businessCompany,
-                  location: documentLocation,
-                  isSerialTracked: true,
-                  serialNumber: sn
-                }, purchaseTs);
-              }
-            });
-          } else if (prod.quantity && prod.quantity > 0) {
-            const k = `${productId}|${documentLocation}|${businessCompany}`;
-            nonSerialInByProductLoc.set(k, (nonSerialInByProductLoc.get(k) || 0) + prod.quantity);
-          }
-        });
-      });
+      };
+      materialInSnap.docs.forEach(docSnap => addNonSerialInward(docSnap.data()));
+      purchasesSnap.docs.forEach(docSnap => addNonSerialInward(docSnap.data()));
 
       // Subtract materials out
       materialsOutSnap.docs.forEach(docSnap => {
@@ -644,7 +410,7 @@ const StockTransferPage = () => {
         const notes = data.notes || '';
         const reason = data.reason || '';
         const isStockTransfer = notes.includes('Stock Transfer') || reason.includes('Stock Transfer');
-        
+
         (data.products || []).forEach((prod: any) => {
           const productId = prod.productId || prod.id;
           const productRef = productById.get(productId) || {};
@@ -652,7 +418,7 @@ const StockTransferPage = () => {
           const hasSerial = !!productRef.hasSerialNumber;
           const serials: string[] = Array.isArray(prod.serialNumbers) ? prod.serialNumbers : (prod.serialNumber ? [prod.serialNumber] : []);
           const qty = Number(prod.quantity) || 0;
-          
+
           if (!hasSerial && (!serials || serials.length === 0) && qty > 0) {
             if (isStockTransfer) {
               let shouldSkip = false;
@@ -666,7 +432,7 @@ const StockTransferPage = () => {
               });
               if (shouldSkip) return;
             }
-            
+
             const k = `${productId}|${documentLocation}|${businessCompany}`;
             nonSerialInByProductLoc.set(k, Math.max(0, (nonSerialInByProductLoc.get(k) || 0) - qty));
           } else if (isStockTransfer && serials.length > 0) {
@@ -716,43 +482,12 @@ const StockTransferPage = () => {
         });
       });
 
-      // Final pass: apply stock transfer moves (authoritative)
-      applyStockTransferMoves();
+      const totalAvailable = [...serialAvailable, ...nonSerialAvailable];
 
-      // Safety: remove any sold serial that might have slipped in (e.g. key format mismatch)
-      const keysToRemove: string[] = [];
-      serialAvailableByKey.forEach((_, key) => {
-        const parts = key.split('|');
-        const pid = parts[0] || '';
-        const sn = parts.slice(1).join('|') || '';
-        if (soldSerials.has(soldKey(pid, sn))) keysToRemove.push(key);
-      });
-      keysToRemove.forEach(k => serialAvailableByKey.delete(k));
-      if (keysToRemove.length > 0) {
-        console.log('🚫 Removed sold serials from available stock (safety pass):', keysToRemove.length);
-      }
-
-      const uniqueSerialAvailable: AvailableStockItem[] = Array.from(serialAvailableByKey.values()).map(v => v.item);
-
-      const totalAvailable = [...uniqueSerialAvailable, ...nonSerialAvailable];
-      
-      // Log detailed information about stock by location and company
-      const stockByLocationAndCompany = new Map<string, any[]>();
-      totalAvailable.forEach(item => {
-        const key = `${item.location}|${item.businessCompany || 'No Company'}`;
-        if (!stockByLocationAndCompany.has(key)) {
-          stockByLocationAndCompany.set(key, []);
-        }
-        stockByLocationAndCompany.get(key)!.push(item);
-      });
-      
       console.log('📦 Available stock summary:', {
-        serialItems: uniqueSerialAvailable.length,
+        serialItems: serialAvailable.length,
         nonSerialItems: nonSerialAvailable.length,
         totalItems: totalAvailable.length,
-        // We now de-duplicate via a map keyed by productId|serial, so "duplicates removed"
-        // isn't tracked as an array diff anymore.
-        duplicatesRemoved: 0,
         byLocation: totalAvailable.reduce((acc, item) => {
           const centerName = getCenterName(item.location);
           acc[centerName] = (acc[centerName] || 0) + 1;
@@ -760,20 +495,7 @@ const StockTransferPage = () => {
         }, {} as Record<string, number>),
       });
 
-      console.log('📍 Stock by Location & Company:');
-      stockByLocationAndCompany.forEach((items, key) => {
-        const [location, company] = key.split('|');
-        console.log(`  ${getCenterName(location)} (${company}): ${items.length} items`, {
-          serialTracked: items.filter(i => i.isSerialTracked).length,
-          nonSerial: items.filter(i => !i.isSerialTracked).length,
-          sampleProducts: items.slice(0, 3).map(i => ({
-            name: i.name,
-            serial: i.serialNumber || `Qty: ${i.quantity}`,
-            company: i.businessCompany
-          }))
-        });
-      });
-      
+      setSerialPositions(positions);
       setAvailableStock(totalAvailable);
       setStockLoading(false);
     } catch (error) {
@@ -839,26 +561,53 @@ const StockTransferPage = () => {
     });
   }, [centers, currentTransfer?.transferType, currentTransfer?.company, currentTransfer?.toCompany]);
 
+  const sourceCompany = (
+    (currentTransfer?.transferType === 'intercompany' ? currentTransfer?.fromCompany : currentTransfer?.company) || ''
+  ).trim();
+
+  // Stock lines only belong to another company when their company is one of ours. Older
+  // material-in / purchase docs have no company and fall back to the manufacturer
+  // (e.g. "Signia"), which must not hide them.
+  const otherOwnerCompany = useCallback((businessCompany?: string): string => {
+    if (!sourceCompany) return '';
+    const bc = String(businessCompany || '').trim().toLowerCase();
+    const owner = companies.find(c => String(c.name || '').trim().toLowerCase() === bc);
+    if (!owner || owner.name.trim().toLowerCase() === sourceCompany.toLowerCase()) return '';
+    return owner.name;
+  }, [companies, sourceCompany]);
+
   const filteredAvailableStock = useMemo(() => {
     if (!currentTransfer?.fromBranch) return [];
-    
-    let filtered = availableStock.filter(item => item.location === currentTransfer.fromBranch);
-    
-    // Filter by company if applicable
-    if (currentTransfer.transferType === 'intracompany' && currentTransfer.company) {
-      filtered = filtered.filter(item => 
-        item.businessCompany === currentTransfer.company || !item.businessCompany
-      );
-    } else if (currentTransfer.transferType === 'intercompany' && currentTransfer.fromCompany) {
-      filtered = filtered.filter(item => 
-        item.businessCompany === currentTransfer.fromCompany || !item.businessCompany
-      );
-    }
-    
+
+    const filtered = availableStock.filter(
+      item => item.location === currentTransfer.fromBranch && !otherOwnerCompany(item.businessCompany)
+    );
+
     console.log(`📦 Filtered stock at ${getCenterName(currentTransfer.fromBranch)}: ${filtered.length} items`);
-    
+
     return filtered;
-  }, [availableStock, currentTransfer?.fromBranch, currentTransfer?.transferType, currentTransfer?.company, currentTransfer?.fromCompany]);
+  }, [availableStock, currentTransfer?.fromBranch, otherOwnerCompany]);
+
+  // Unsold serials at the source center that cannot be picked, with the reason.
+  const blockedSerialsAtSource = useMemo(() => {
+    if (!currentTransfer?.fromBranch) return [];
+    return serialPositions
+      .filter(p => p.location === currentTransfer.fromBranch && p.status !== 'Sold')
+      .map(p => {
+        const owner = otherOwnerCompany(p.businessCompany);
+        const reason =
+          p.status === 'Reserved'
+            ? 'reserved by a pending material out'
+            : p.status === 'Staff assign'
+              ? 'assigned to staff for trial'
+              : owner
+                ? `owned by ${owner} (use an intercompany transfer)`
+                : '';
+        return { ...p, reason };
+      })
+      .filter(p => p.reason)
+      .sort((a, b) => a.name.localeCompare(b.name) || a.serialNumber.localeCompare(b.serialNumber));
+  }, [serialPositions, currentTransfer?.fromBranch, otherOwnerCompany]);
 
   const selectableProducts = useMemo<SelectableStockProduct[]>(() => {
     if (!filteredAvailableStock.length) return [];
@@ -867,8 +616,9 @@ const StockTransferPage = () => {
     const qtyGroups = new Map<string, SelectableStockProduct>();
 
     for (const item of filteredAvailableStock) {
+      // One entry per product so all its serials at the center are listed together.
       if (item.isSerialTracked) {
-        const key = `${item.productId}|${item.businessCompany || ''}|${item.location}`;
+        const key = `${item.productId}|${item.location}`;
         const existing = serialGroups.get(key);
         const sn = item.serialNumber ? String(item.serialNumber).trim() : '';
         if (!existing) {
@@ -887,7 +637,7 @@ const StockTransferPage = () => {
           existing.serialNumbers = Array.from(new Set(combined)).sort((a, b) => a.localeCompare(b));
         }
       } else {
-        const key = `${item.productId}|${item.businessCompany || ''}|${item.location}`;
+        const key = `${item.productId}|${item.location}`;
         const existing = qtyGroups.get(key);
         if (!existing) {
           qtyGroups.set(key, {
@@ -965,6 +715,7 @@ const StockTransferPage = () => {
     setOpenDialog(false);
     setCurrentTransfer(null);
     setAvailableStock([]);
+    setSerialPositions([]);
   };
 
   const handleAddProductToTransfer = () => {
@@ -2130,6 +1881,24 @@ const StockTransferPage = () => {
                       Add to Transfer
                     </Button>
                   </>
+                )}
+
+                {!stockLoading && blockedSerialsAtSource.length > 0 && (
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    <Typography variant="body2" fontWeight="medium" gutterBottom>
+                      {blockedSerialsAtSource.length} serial{blockedSerialsAtSource.length === 1 ? '' : 's'} at {getCenterName(currentTransfer.fromBranch)} cannot be transferred:
+                    </Typography>
+                    {blockedSerialsAtSource.slice(0, 10).map(p => (
+                      <Typography key={`${p.productId}|${p.serialNumber}`} variant="caption" component="div">
+                        {p.name} — {p.serialNumber}: {p.reason}
+                      </Typography>
+                    ))}
+                    {blockedSerialsAtSource.length > 10 && (
+                      <Typography variant="caption" component="div" color="text.secondary">
+                        +{blockedSerialsAtSource.length - 10} more
+                      </Typography>
+                    )}
+                  </Alert>
                 )}
               </Paper>
             )}
